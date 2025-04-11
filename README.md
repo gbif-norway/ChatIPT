@@ -58,7 +58,7 @@ The data is stored in a Postgres database, with different models for Datasets, T
 
 GPT4o is given access to a number of tools/functions which run on the server side, which it can call on to perform tasks in the Django environment. The most important of these is the Python tool which allows it to run any Python code to edit the dataset and dataframes, with certain constraints.
 
-Another important tool is the Publish tool, which the model is instructed to use in its final Task in order to publish data to the GBIF test portal. It creates a Darwin Core Archive using https://github.com/pieterproost/dwca-writer, uploads it to a public repository and uses the GBIF API to register it as a dataset with GBIF.
+Another important tool is the Publish tool, which the model is instructed to use in its final Task in order to publish data to the GBIF test portal. It creates a Darwin Core Archive using https://github.com/pieterprovoost/dwca-writer, uploads it to a public repository and uses the GBIF API to register it as a dataset with GBIF.
 
 # Using DevSpace with ChatIPT
 
