@@ -282,7 +282,7 @@ class SetBasicMetadata(OpenAIBaseModel):
                 dataset.structure_notes = self.structure_notes
             if self.user_language != 'English':
                 dataset.user_language = self.user_language
-            if not self.suitable_for_publication_on_gbif:
+            if self.suitable_for_publication_on_gbif == False:
                 print('Rejecting dataset')
                 dataset.rejected_at = datetime.datetime.now()
             dataset.save()
@@ -346,34 +346,3 @@ class PublishDwC(OpenAIBaseModel):
         except Exception as e:
             return repr(e)[:2000]
 
-
-class EditAlreadyPublishedDwC(OpenAIBaseModel):
-    """
-    Edits the  GBIF. 
-    Generates a darwin core archive and uploads it to a server, then registers it with the GBIF API. 
-    At the moment this only publishes the test GBIF platform, not production.
-    Returns the GBIF URL.
-    """
-    agent_id: PositiveInt = Field(...)
-
-    def run(self):
-        from api.models import Agent
-        try:
-            agent = Agent.objects.get(id=self.agent_id)
-            dataset = agent.dataset
-            tables = dataset.table_set.all()
-            core_table = next((table for table in tables if 'occurrenceID' in table.df.columns), tables[0])
-            extension_tables = [table for table in tables if table != core_table]
-            mof_table =  extension_tables[0] if extension_tables else None
-            if mof_table:
-                url = upload_dwca(core_table.df, dataset.title, dataset.description, mof_table.df)
-            else:
-                url = upload_dwca(core_table.df, dataset.title, dataset.description)
-            dataset.dwca_url = url
-            gbif_url = register_dataset_and_endpoint(dataset.title, dataset.description, dataset.dwca_url)
-            dataset.published_at = datetime.datetime.now()
-            # import pdb; pdb.set_trace()
-            dataset.save()
-            return(f'Successfully published. GBIF URL: {gbif_url}, Darwin core archive upload: {url}')
-        except Exception as e:
-            return repr(e)[:2000]

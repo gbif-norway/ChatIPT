@@ -23,7 +23,7 @@ class Dataset(models.Model):
     orcid = models.CharField(max_length=2000, blank=True)
     file = models.FileField(upload_to='user_files')
     title = models.CharField(max_length=2000, blank=True, default='')
-    structure_notes = models.CharField(max_length=2000, blank=True, default='')
+    structure_notes = models.TextField(default='', blank=True)
     description = models.CharField(max_length=2000, blank=True, default='')
     published_at = models.DateTimeField(null=True, blank=True)
     rejected_at = models.DateTimeField(null=True, blank=True)
@@ -62,7 +62,7 @@ class Dataset(models.Model):
         if last_completed_agent:
             next_task = Task.objects.filter(id__gt=last_completed_agent.task.id).first()
             if next_task:
-                next_task.create_agents_with_system_messages(dataset=self)
+                next_task.create_agent_with_system_messages(dataset=self)
                 return self.next_agent()
             else:
                 print(f'PUBLISHED {self.published_at}')
@@ -111,9 +111,6 @@ class Dataset(models.Model):
 class Task(models.Model):  # See tasks.yaml for the only objects this model is populated with
     name = models.CharField(max_length=300, unique=True)
     text = models.TextField()
-    per_table = models.BooleanField()
-    attempt_autonomous = models.BooleanField()
-    additional_functions = ArrayField(models.CharField(max_length=300, null=True, blank=True), null=True, blank=True)
 
     class Meta:
         get_latest_by = 'id'
@@ -121,24 +118,17 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is 
 
     @property
     def functions(self):
-        functions = [agent_tools.Python.__name__, agent_tools.SetAgentTaskToComplete.__name__]
-        if self.additional_functions:
-            for func in self.additional_functions:
-                functions.append(func)
-        return functions
+        functions = [agent_tools.SetBasicMetadata.__name__,
+                    agent_tools.SetAgentTaskToComplete.__name__,
+                    agent_tools.Python.__name__,
+                    agent_tools.BasicValidationForSomeDwCTerms.__name__,
+                    agent_tools.RollBack.__name__,
+                    agent_tools.PublishDwC.__name__]
+        return [getattr(agent_tools, f) for f in functions]
 
-    def create_agents_with_system_messages(self, dataset:Dataset):
+    def create_agent_with_system_messages(self, dataset:Dataset):
         tables = Table.objects.filter(dataset=dataset)
-        agents = []
-        if self.per_table:  # One agent per table
-            for table in tables:
-                agent = Agent.create_with_system_message(dataset=dataset, task=self, tables=[table])
-                agents.append(agent)
-        else:  # One agent for all the tables
-            agent = Agent.create_with_system_message(dataset=dataset, task=self, tables=tables)
-            agents.append(agent)
-
-        return agents
+        return Agent.create_with_system_message(dataset=dataset, task=self, tables=tables)
 
 
 class Table(models.Model):
@@ -223,10 +213,6 @@ class Agent(models.Model):
     tables = models.ManyToManyField(Table, blank=True)
     busy_thinking = models.BooleanField(default=False)
 
-    @property
-    def callable_functions(self):
-        return [getattr(agent_tools, f) for f in self.task.functions]
-
     class Meta:
         get_latest_by = 'created_at'
         ordering = ['created_at']
@@ -236,7 +222,8 @@ class Agent(models.Model):
         agent = cls.objects.create(dataset=dataset, task=task)
         agent.tables.set([t.id for t in tables])
         system_message_text = render_to_string('prompt.txt', context={ 'agent': agent, 'all_tasks_count': Task.objects.all().count() })
-        # print(system_message_text)
+        print(system_message_text)
+        # import pdb; pdb.set_trace()
         Message.objects.create(agent=agent, openai_obj={'content': system_message_text, 'role': Message.Role.SYSTEM})
 
     def next_message(self):
@@ -251,7 +238,7 @@ class Agent(models.Model):
         self.busy_thinking = True
         self.save()
         try:
-            response_message = create_chat_completion(self.message_set.all(), self.callable_functions)
+            response_message = create_chat_completion(self.message_set.all(), self.task.functions)
         except Exception as e:
             error_message = f'Unfortunately there was a problem querying the OpenAI API. Try again later, and please report this error to the developers. Full error: {e}'
             print(e)

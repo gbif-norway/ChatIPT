@@ -11,15 +11,11 @@ def query_api(args):
     with OpenAI() as client:
         return client.chat.completions.create(**args)  
 
-def create_chat_completion(messages, functions=None, temperature=0.7, model='gpt-4o-2024-05-13'): # gpt-4o-2024-05-13 gpt-4o-2024-08-06
+def create_chat_completion(messages, functions, temperature=1, model='o3'): # gpt-4.1-2025-04-14 gpt-4o-2024-08-06
     print('---')
     print(f'---Calling GPT {model}---')
     openai_args = { 'model': model, 'temperature': temperature, 'messages': [m.openai_obj for m in messages] }
-    if functions:
-        # Look into openai.pydantic_function_tool https://platform.openai.com/docs/guides/function-calling/function-calling-with-structured-outputs
-        # and using https://platform.openai.com/docs/guides/structured-outputs/introduction
-        # https://github.com/openai/openai-python/blob/main/helpers.md
-        openai_args['tools'] = [{'type': 'function', 'function': f.openai_schema()} for f in functions]  
+    openai_args['tools'] = [{'type': 'function', 'function': f.openai_schema()} for f in functions]  
     # print(openai_args)
     response = query_api(openai_args)
     pprint(f'---Response---\n{response}\n---')

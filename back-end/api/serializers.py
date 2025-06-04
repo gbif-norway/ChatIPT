@@ -6,7 +6,7 @@ from api.helpers import discord_bot
 class TaskSerializer(serializers.ModelSerializer):
     class Meta:
         model = Task
-        fields = ['id', 'name', 'per_table', 'attempt_autonomous']
+        fields = ['id', 'name', 'text']
 
 
 class TableSerializer(serializers.ModelSerializer):

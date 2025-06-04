@@ -133,7 +133,16 @@ const Dataset = ({ initialDatasetId }) => {
             <div className="col-12 alerts-div">
               <div className="publishing-heading">Publishing {dataset.file.split(/\//).pop()} (original file name) <span className="badge text-bg-secondary">Started {new Date(dataset.created_at).toLocaleString()}</span></div>
               {dataset.title && (<div className="alert alert-info" role="alert"><strong>Title</strong>: {dataset.title}<br /><strong>Description</strong>: {dataset.description}</div>)}
-              {dataset.structure_notes && (<div className="alert alert-dark" role="alert">Notes about the structure: {dataset.structure_notes}</div>)}
+              {dataset.structure_notes && (
+                <Accordion>
+                  <Accordion.Item eventKey="0">
+                    <Accordion.Header>Notes about the structure</Accordion.Header>
+                    <Accordion.Body>
+                      <small>{dataset.structure_notes}</small>
+                    </Accordion.Body>
+                  </Accordion.Item>
+                </Accordion>
+              )}
               {dataset.rejected_at && (<div className="alert alert-warning" role="alert">This dataset cannot be published on GBIF as it does not contain valid occurrence or checklist data with all the required fields. Please try uploading a new dataset</div>)}
             </div>
           </div>

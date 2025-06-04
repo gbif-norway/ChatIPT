@@ -31,5 +31,5 @@ services:
       - ./front-end/.env
     depends_on:
         - back-end
-    command: ["tail", "-f", "/dev/null"]
-    # command: ["npm", "run", "dev"]
+    # command: ["tail", "-f", "/dev/null"]
+    command: ["npm", "run", "dev"]
