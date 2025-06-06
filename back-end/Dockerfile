@@ -1,9 +1,8 @@
 FROM python:3.12-slim
 ENV PYTHONUNBUFFERED 1
 WORKDIR /app
-RUN pip install uv
 COPY ./requirements.txt /srv/requirements.txt
-RUN uv pip install -r /srv/requirements.txt --system
+RUN pip install -r /srv/requirements.txt
 
 COPY . /app
 
