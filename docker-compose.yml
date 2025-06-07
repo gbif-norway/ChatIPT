@@ -5,7 +5,8 @@ services:
     environment:
         - POSTGRES_HOST_AUTH_METHOD=trust
     platform: linux/amd64
-  back-end:
+  back-end: 
+    # docker buildx build --platform linux/amd64 -t gbifnorway/publishgpt-back-end:$(git rev-parse --short HEAD) -t gbifnorway/publishgpt-back-end:latest --push .
     build: ./back-end
     entrypoint: "tail -f /dev/null"
     # entrypoint: "./manage.py runserver 0.0.0.0:8000"
@@ -18,7 +19,8 @@ services:
       - "8000:8000"
     env_file:
       - ./back-end/.env.dev
-  front-end:
+  front-end: 
+    # docker buildx build --platform linux/amd64 -t gbifnorway/publishgpt-front-end:$(git rev-parse --short HEAD) -t gbifnorway/publishgpt-front-end:latest --push .
     build: ./front-end
     image: gbifnorway/publishgpt-front-end:latest
     volumes:
