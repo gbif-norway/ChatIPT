@@ -217,7 +217,7 @@ class Python(OpenAIBaseModel):
             result = repr(e)
         finally:
             sys.stdout = old_stdout
-        return str(result)[:8000]
+        return str(result)[:3000]
 
 
 class RollBack(OpenAIBaseModel):

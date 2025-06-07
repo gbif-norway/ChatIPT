@@ -8,7 +8,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_t
 
 @retry(retry=retry_if_exception_type(InternalServerError), stop=stop_after_attempt(10), wait=wait_fixed(2))
 def query_api(args):
-    with OpenAI() as client:
+    with OpenAI(timeout=180.0) as client:
         return client.chat.completions.create(**args)  
 
 def create_chat_completion(messages, functions, temperature=1, model='o3'): # gpt-4.1-2025-04-14 gpt-4o-2024-08-06
