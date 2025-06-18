@@ -84,7 +84,7 @@ class Dataset(models.Model):
                     for row in sheet.iter_rows():
                         for cell in row:
                             if cell.data_type == 'f':  # 'f' indicates a formula
-                                cell.value = '' # f'[FORMULA: {cell.value}]'
+                                cell.value = '' # f'[FORMULA: {cell.value}]'
                     for merged_cell in list(sheet.merged_cells.ranges):
                         min_col, min_row, max_col, max_row = merged_cell.min_col, merged_cell.min_row, merged_cell.max_col, merged_cell.max_row
                         value = sheet.cell(row=min_row, column=min_col).value
@@ -108,7 +108,7 @@ class Dataset(models.Model):
         ordering = ['created_at']
 
 
-class Task(models.Model):  # See tasks.yaml for the only objects this model is populated with
+class Task(models.Model):  # See tasks.yaml for the only objects this model is populated with
     name = models.CharField(max_length=300, unique=True)
     text = models.TextField()
 
@@ -123,7 +123,9 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is 
                     agent_tools.Python.__name__,
                     agent_tools.BasicValidationForSomeDwCTerms.__name__,
                     agent_tools.RollBack.__name__,
-                    agent_tools.PublishDwC.__name__]
+                    agent_tools.UploadDwCA.__name__,
+                    agent_tools.PublishToGBIF.__name__,
+                    agent_tools.ValidateDwCA.__name__]
         return [getattr(agent_tools, f) for f in functions]
 
     def create_agent_with_system_messages(self, dataset:Dataset):
@@ -249,13 +251,13 @@ class Agent(models.Model):
             return [Message.objects.create(agent=self, openai_obj={'role': Message.Role.ASSISTANT, 'content': error_message})]
 
         message = Message.objects.create(agent=self, openai_obj=response_message.dict())  # response_message.__dict__
-        if not response_message.tool_calls:  # It's a simple assistant message
+        if not response_message.tool_calls:  # It's a simple assistant message
             self.busy_thinking = False
             self.save()
             return [message]
 
-        messages = [message]  # Store the API response which requests the tool calls
-        for tool_call in response_message.tool_calls:  # Occasionally a single API response requests multiple tool calls
+        messages = [message]  # Store the API response which requests the tool calls
+        for tool_call in response_message.tool_calls:  # Occasionally a single API response requests multiple tool calls
             try:
                 result = self.run_function(tool_call.function)
             except Exception as e:
@@ -263,7 +265,7 @@ class Agent(models.Model):
 
             messages.append(Message.create_function_message(agent=self, function_result=result, tool_call_id=tool_call.id))
 
-        self.refresh_from_db()  # Necessary so that completed_at doesn't get overwritten
+        self.refresh_from_db()  # Necessary so that completed_at doesn't get overwritten
         self.busy_thinking = False
         self.save()
         return messages
