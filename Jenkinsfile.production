@@ -6,7 +6,7 @@ pipeline {
         REGISTRY = 'gbifnorway'
         BACKEND_IMAGE = 'publishgpt-back-end'
         FRONTEND_IMAGE = 'publishgpt-front-end'
-        IMAGE_TAG = 'latest'
+        IMAGE_TAG = "v${env.BUILD_NUMBER}"
         
         // Environment configuration
         ENVIRONMENT = 'production'
@@ -126,19 +126,19 @@ pipeline {
                         
                         // Update the image tags in your ArgoCD configuration using yq
                         script {
-                            // Update backend image tag in values.yaml
-                            if (fileExists('helm/publishgpt/values.yaml')) {
+                            // Update backend image tag in values.production.yaml
+                            if (fileExists('helm/publishgpt/values.production.yaml')) {
                                 sh """
-                                    yq eval '.back-end.image.tag = "${IMAGE_TAG}"' -i helm/publishgpt/values.yaml
-                                    yq eval '.back-end.image.repository = "${REGISTRY}/${BACKEND_IMAGE}"' -i helm/publishgpt/values.yaml
+                                    yq eval '.backEnd.image.tag = \"${IMAGE_TAG}\"' -i helm/publishgpt/values.production.yaml
+                                    yq eval '.backEnd.image.repository = \"${REGISTRY}/${BACKEND_IMAGE}\"' -i helm/publishgpt/values.production.yaml
                                 """
                             }
                             
-                            // Update frontend image tag in values.yaml
-                            if (fileExists('helm/publishgpt/values.yaml')) {
+                            // Update frontend image tag in values.production.yaml
+                            if (fileExists('helm/publishgpt/values.production.yaml')) {
                                 sh """
-                                    yq eval '.front-end.image.tag = "${IMAGE_TAG}"' -i helm/publishgpt/values.yaml
-                                    yq eval '.front-end.image.repository = "${REGISTRY}/${FRONTEND_IMAGE}"' -i helm/publishgpt/values.yaml
+                                    yq eval '.frontEnd.image.tag = \"${IMAGE_TAG}\"' -i helm/publishgpt/values.production.yaml
+                                    yq eval '.frontEnd.image.repository = \"${REGISTRY}/${FRONTEND_IMAGE}\"' -i helm/publishgpt/values.production.yaml
                                 """
                             }
                             
