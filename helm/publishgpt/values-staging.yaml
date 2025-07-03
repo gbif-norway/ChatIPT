@@ -1,11 +1,9 @@
-# Default values for publishgpt.
+# Staging values for publishgpt.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-
 nameOverride: ""
 fullnameOverride: ""
-
 
 podSecurityContext: {}
 
@@ -13,7 +11,7 @@ backEnd:
   replicaCount: 1
   image:
     repository: gbifnorway/publishgpt-back-end
-    tag: latest
+    tag: staging
     pullPolicy: Always
   imagePullSecrets: []
   podAnnotations: {}
@@ -37,7 +35,7 @@ backEnd:
       path: /ready
       port: http
   secretRef:
-    name: backend-env-secrets
+    name: backend-env-secrets-staging
 
   service:
     type: ClusterIP
@@ -51,22 +49,21 @@ backEnd:
       kubernetes.io/ingress.class: nginx
       kubernetes.io/tls-acme: "true"
     hosts:
-      - host: publishgpt-api.svc.gbif.no
+      - host: api.chatipt.svc.gbif.no
         paths:
           - path: /
             pathType: ImplementationSpecific
     tls:
-     - secretName: publishgpt-back-end-tls
+     - secretName: chatipt-back-end-tls-staging
        hosts:
-         - publishgpt-api.svc.gbif.no
+         - api.chatipt.svc.gbif.no
     securityContext: {}
-
 
 frontEnd:
   replicaCount: 1
   image:
     repository: gbifnorway/publishgpt-front-end
-    tag: latest
+    tag: staging
     pullPolicy: Always
   imagePullSecrets: []
   podAnnotations: {}
@@ -91,7 +88,7 @@ frontEnd:
       port: http
   env:
     - name: NEXT_PUBLIC_BASE_API_URL
-      value: "https://api.chatipt.gbif.no/api"
+      value: "https://api.chatipt.svc.gbif.no/api"
 
   service:
     type: ClusterIP
@@ -105,12 +102,12 @@ frontEnd:
       kubernetes.io/ingress.class: nginx
       kubernetes.io/tls-acme: "true"
     hosts:
-      - host: publishgpt.svc.gbif.no
+      - host: chatipt.svc.gbif.no
         paths:
           - path: /
             pathType: ImplementationSpecific
     tls:
-     - secretName: publishgpt-front-end-tls
+     - secretName: chatipt-front-end-tls-staging
        hosts:
-         - publishgpt.svc.gbif.no
-    securityContext: {}
+         - chatipt.svc.gbif.no
+    securityContext: {} 

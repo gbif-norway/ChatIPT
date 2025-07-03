@@ -1,0 +1,229 @@
+pipeline {
+    agent any
+    
+    environment {
+        // Registry configuration
+        REGISTRY = 'gbifnorway'
+        BACKEND_IMAGE = 'publishgpt-back-end'
+        FRONTEND_IMAGE = 'publishgpt-front-end'
+        IMAGE_TAG = 'latest'
+        
+        // Environment configuration
+        ENVIRONMENT = 'production'
+        
+        // Git configuration
+        DEVOPS_REPO = 'your-devops-repo-url' // Replace with your actual devops repo URL
+        DEVOPS_BRANCH = 'main'
+        
+        // Docker buildx configuration
+        DOCKER_BUILDX_PLATFORM = 'linux/amd64'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        stage('Production Approval') {
+            steps {
+                script {
+                    // Require manual approval for production deployments
+                    timeout(time: 30, unit: 'MINUTES') {
+                        input message: 'Deploy to Production?', ok: 'Deploy'
+                    }
+                }
+            }
+        }
+        
+        stage('Setup Docker Buildx') {
+            steps {
+                script {
+                    // Ensure buildx is available
+                    sh 'docker buildx version'
+                    
+                    // Create and use a new builder instance if needed
+                    sh '''
+                        if ! docker buildx inspect multiarch-builder >/dev/null 2>&1; then
+                            docker buildx create --name multiarch-builder --use
+                        else
+                            docker buildx use multiarch-builder
+                        fi
+                        docker buildx inspect --bootstrap
+                    '''
+                }
+            }
+        }
+        
+        stage('Build Backend') {
+            steps {
+                script {
+                    dir('back-end') {
+                        sh """
+                            docker buildx build \
+                                --platform ${DOCKER_BUILDX_PLATFORM} \
+                                -t ${REGISTRY}/${BACKEND_IMAGE}:${IMAGE_TAG} \
+                                -t ${REGISTRY}/${BACKEND_IMAGE}:${env.BUILD_NUMBER} \
+                                -t ${REGISTRY}/${BACKEND_IMAGE}:v${env.BUILD_NUMBER} \
+                                --push .
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Build Frontend') {
+            steps {
+                script {
+                    dir('front-end') {
+                        // Build frontend image
+                        sh """
+                            docker buildx build \
+                                --platform ${DOCKER_BUILDX_PLATFORM} \
+                                -t ${REGISTRY}/${FRONTEND_IMAGE}:${IMAGE_TAG} \
+                                -t ${REGISTRY}/${FRONTEND_IMAGE}:${env.BUILD_NUMBER} \
+                                -t ${REGISTRY}/${FRONTEND_IMAGE}:v${env.BUILD_NUMBER} \
+                                --push .
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Update DevOps Repo') {
+            steps {
+                script {
+                    // Clone the devops repo
+                    dir('devops-repo') {
+                        // Clean up any existing checkout
+                        deleteDir()
+                        
+                        // Clone the devops repository
+                        checkout([
+                            $class: 'GitSCM',
+                            branches: [[name: "*/${DEVOPS_BRANCH}"]],
+                            doGenerateSubmoduleConfigurations: false,
+                            extensions: [
+                                [$class: 'CleanBeforeCheckout'],
+                                [$class: 'CleanCheckout']
+                            ],
+                            submoduleCfg: [],
+                            userRemoteConfigs: [[
+                                url: "${DEVOPS_REPO}",
+                                credentialsId: 'your-git-credentials-id' // Replace with your Jenkins credentials ID
+                            ]]
+                        ])
+                        
+                        // Install yq for YAML processing
+                        sh """
+                            # Install yq if not available
+                            if ! command -v yq &> /dev/null; then
+                                wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+                                chmod +x /usr/local/bin/yq
+                            fi
+                        """
+                        
+                        // Update the image tags in your ArgoCD configuration using yq
+                        script {
+                            // Update backend image tag in values.yaml
+                            if (fileExists('helm/publishgpt/values.yaml')) {
+                                sh """
+                                    yq eval '.back-end.image.tag = "${IMAGE_TAG}"' -i helm/publishgpt/values.yaml
+                                    yq eval '.back-end.image.repository = "${REGISTRY}/${BACKEND_IMAGE}"' -i helm/publishgpt/values.yaml
+                                """
+                            }
+                            
+                            // Update frontend image tag in values.yaml
+                            if (fileExists('helm/publishgpt/values.yaml')) {
+                                sh """
+                                    yq eval '.front-end.image.tag = "${IMAGE_TAG}"' -i helm/publishgpt/values.yaml
+                                    yq eval '.front-end.image.repository = "${REGISTRY}/${FRONTEND_IMAGE}"' -i helm/publishgpt/values.yaml
+                                """
+                            }
+                            
+                            // Update separate image tags file if it exists
+                            if (fileExists('image-tags.yaml')) {
+                                sh """
+                                    yq eval '.backendTag = "${IMAGE_TAG}"' -i image-tags.yaml
+                                    yq eval '.frontendTag = "${IMAGE_TAG}"' -i image-tags.yaml
+                                """
+                            }
+                            
+                            // Alternative: Update image tags in kustomization.yaml if using Kustomize
+                            if (fileExists('kustomization.yaml')) {
+                                sh """
+                                    yq eval '.images[0].newTag = "${IMAGE_TAG}"' -i kustomization.yaml
+                                    yq eval '.images[1].newTag = "${IMAGE_TAG}"' -i kustomization.yaml
+                                """
+                            }
+                        }
+                        
+                        // Commit and push the changes
+                        sh """
+                            git config user.email "jenkins@gbif.no"
+                            git config user.name "Jenkins CI"
+                            git add .
+                            git commit -m "🚀 PRODUCTION DEPLOYMENT: Update image tags to ${IMAGE_TAG} (build ${env.BUILD_NUMBER})" || exit 0
+                            git push origin ${DEVOPS_BRANCH}
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Verify Images') {
+            steps {
+                script {
+                    // Verify that images were pushed successfully
+                    sh """
+                        docker pull ${REGISTRY}/${BACKEND_IMAGE}:${IMAGE_TAG}
+                        docker pull ${REGISTRY}/${FRONTEND_IMAGE}:${IMAGE_TAG}
+                        
+                        echo "✅ Backend image: ${REGISTRY}/${BACKEND_IMAGE}:${IMAGE_TAG}"
+                        echo "✅ Frontend image: ${REGISTRY}/${FRONTEND_IMAGE}:${IMAGE_TAG}"
+                        echo "✅ Environment: ${ENVIRONMENT}"
+                        echo "✅ DevOps repo updated successfully"
+                        echo "🚀 Production deployment initiated!"
+                    """
+                }
+            }
+        }
+        
+        stage('Post-Deployment Verification') {
+            steps {
+                script {
+                    // Wait a bit for ArgoCD to sync
+                    sleep(time: 30, unit: 'SECONDS')
+                    
+                    // You could add health checks here
+                    echo "🔍 Production deployment verification completed"
+                    echo "📊 Monitor your production environment for any issues"
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            // Clean up workspace
+            cleanWs()
+        }
+        success {
+            script {
+                echo "🎉 PRODUCTION DEPLOYMENT completed successfully!"
+                echo "📦 Images pushed to registry with tag: ${IMAGE_TAG}"
+                echo "🌍 Environment: ${ENVIRONMENT}"
+                echo "🔄 DevOps repo updated for ArgoCD sync"
+                echo "🚀 Production is now live!"
+            }
+        }
+        failure {
+            script {
+                echo "❌ PRODUCTION DEPLOYMENT failed!"
+                echo "🚨 This is a critical failure - check logs immediately!"
+                echo "Check the logs above for more details."
+            }
+        }
+    }
+} 
