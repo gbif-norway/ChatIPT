@@ -56,24 +56,24 @@ pipeline {
                     '''
                     
                     // Read the appVersion from Chart.yaml
-                    sh '''
-                        cd gitops-tmp/apps/chatipt
-                        if ! command -v yq &> /dev/null; then
-                            curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
-                            chmod +x yq
-                            YQ=./yq
-                        else
-                            YQ=$(command -v yq)
-                        fi
-                        $YQ --version
-                        APP_VERSION=$($YQ e '.appVersion' Chart.yaml)
-                        echo "Current appVersion from Chart.yaml: $APP_VERSION"
-                        echo "APP_VERSION=$APP_VERSION" > app_version.env
-                    '''
+                    def appVersion = sh(
+                        script: '''
+                            cd gitops-tmp/apps/chatipt
+                            if ! command -v yq &> /dev/null; then
+                                curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
+                                chmod +x yq
+                                YQ=./yq
+                            else
+                                YQ=$(command -v yq)
+                            fi
+                            $YQ --version
+                            $YQ e '.appVersion' Chart.yaml
+                        ''',
+                        returnStdout: true
+                    ).trim()
                     
-                    // Load the appVersion into environment
-                    load 'app_version.env'
-                    env.IMAGE_TAG = "${APP_VERSION}-${env.BUILD_NUMBER}"
+                    echo "Current appVersion from Chart.yaml: ${appVersion}"
+                    env.IMAGE_TAG = "${appVersion}-${env.BUILD_NUMBER}"
                     echo "Generated image tag: ${env.IMAGE_TAG}"
                 }
             }
