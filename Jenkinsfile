@@ -39,37 +39,49 @@ pipeline {
         }
     }
 
+    parameters {
+        choice(
+            name: 'BRANCH',
+            choices: ['staging', 'main'],
+            description: 'Select the branch/environment to build for'
+        )
+    }
+
     environment {
         REGISTRY = 'gbifnorway'
         BACKEND_IMAGE = 'publishgpt-back-end'
         FRONTEND_IMAGE = 'publishgpt-front-end'
+        BRANCH_NAME = "${params.BRANCH}"
         IMAGE_TAG = "${env.BRANCH_NAME}-${env.BUILD_NUMBER}"
         ENVIRONMENT = "${env.BRANCH_NAME}"
     }
 
     stages {
-        stage('Check Branch') {
-            when {
-                not {
-                    anyOf {
-                        branch 'staging'
-                        branch 'main'
+        stage('Set Chart Version') {
+            steps {
+                script {
+                    dir('GitOps-infrastucture/apps/publishgpt') {
+                        sh '''
+                            if ! command -v yq &> /dev/null; then
+                                curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
+                                chmod +x yq
+                                YQ=./yq
+                            else
+                                YQ=$(command -v yq)
+                            fi
+                            $YQ --version
+                            baseVersion=$($YQ e '.version' Chart.yaml | sed 's/-rc.*//')
+                            newVersion="${baseVersion}-${BRANCH_NAME}.${BUILD_NUMBER}"
+                            echo "Setting Chart version to: ${newVersion}"
+                            $YQ e -i ".version = \"${newVersion}\"" Chart.yaml
+                            $YQ e -i ".appVersion = \"${BUILD_NUMBER}\"" Chart.yaml
+                        '''
                     }
                 }
-            }
-            steps {
-                echo "⏭️ Branch '${env.BRANCH_NAME}' is not staging or main - skipping build"
-                script { currentBuild.result = 'SUCCESS' }
             }
         }
 
         stage('Setup Docker Buildx') {
-            when {
-                anyOf {
-                    branch 'staging'
-                    branch 'main'
-                }
-            }
             steps {
                 script {
                     sh 'docker buildx version'
@@ -86,12 +98,6 @@ pipeline {
         }
 
         stage('Build Backend') {
-            when {
-                anyOf {
-                    branch 'staging'
-                    branch 'main'
-                }
-            }
             steps {
                 dir('back-end') {
                     sh """
@@ -105,12 +111,6 @@ pipeline {
         }
 
         stage('Build Frontend') {
-            when {
-                anyOf {
-                    branch 'staging'
-                    branch 'main'
-                }
-            }
             steps {
                 dir('front-end') {
                     sh """
@@ -124,12 +124,6 @@ pipeline {
         }
 
         stage('Update Chart Version in GitOps Repo') {
-            when {
-                anyOf {
-                    branch 'staging'
-                    branch 'main'
-                }
-            }
             steps {
                 script {
                     // Clone the GitOps repo
@@ -166,9 +160,6 @@ pipeline {
                 }
             }
         }
-
-        // Add more stages as needed, e.g., update DevOps repo, verify images, etc.
-        // Use the same `when` block to restrict to staging/main
     }
 
     post {
