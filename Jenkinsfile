@@ -59,7 +59,7 @@ pipeline {
                             fi
                             $YQ --version
                             baseVersion=$($YQ e '.version' Chart.yaml | sed 's/-rc.*//')
-                            newVersion="${BRANCH_NAME}.${BUILD_NUMBER}"
+                            newVersion="${baseVersion}-${BRANCH_NAME}.${BUILD_NUMBER}"
                             echo "Setting Chart version to: ${newVersion}"
                             $YQ e -i ".version = \"${newVersion}\"" Chart.yaml
                             $YQ e -i ".appVersion = \"${BUILD_NUMBER}\"" Chart.yaml
@@ -155,7 +155,7 @@ pipeline {
                         fi
                         $YQ --version
                         baseVersion=$($YQ e '.version' Chart.yaml | sed 's/-rc.*//')
-                        newVersion="${BRANCH_NAME}.${BUILD_NUMBER}"
+                        newVersion="${baseVersion}-${BRANCH_NAME}.${BUILD_NUMBER}"
                         echo "Setting Chart version to: ${newVersion}"
                         $YQ e -i ".version = \"${newVersion}\"" Chart.yaml
                         $YQ e -i ".appVersion = \"${BUILD_NUMBER}\"" Chart.yaml
