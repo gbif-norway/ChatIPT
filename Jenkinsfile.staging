@@ -57,7 +57,7 @@ pipeline {
                     
                     // Read the appVersion from Chart.yaml
                     sh '''
-                        cd gitops-tmp/apps/publishgpt
+                        cd gitops-tmp/apps/chatipt
                         if ! command -v yq &> /dev/null; then
                             curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
                             chmod +x yq
@@ -116,7 +116,7 @@ pipeline {
                 script {
                     // Update image tags in values-staging.yaml
                     sh '''
-                        cd gitops-tmp/apps/publishgpt
+                        cd gitops-tmp/apps/chatipt
                         if ! command -v yq &> /dev/null; then
                             curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
                             chmod +x yq
