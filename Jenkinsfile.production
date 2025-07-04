@@ -26,6 +26,35 @@ pipeline {
             }
         }
         
+        stage('Bump Helm Chart Version') {
+            steps {
+                script {
+                    // Bump the patch version in Chart.yaml for publishgpt
+                    dir('GitOps-infrastucture/apps/publishgpt') {
+                        // Install yq if not available
+                        sh '''
+                            if ! command -v yq &> /dev/null; then
+                                wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+                                chmod +x /usr/local/bin/yq
+                            fi
+                        '''
+                        // Extract current version
+                        def currentVersion = sh(script: "yq e '.version' Chart.yaml", returnStdout: true).trim()
+                        echo "Current Chart version: ${currentVersion}"
+                        // Bump patch version
+                        def versionParts = currentVersion.tokenize('.')
+                        def newVersion = "${versionParts[0]}.${versionParts[1]}.$((versionParts[2].toInteger() + 1))"
+                        echo "New Chart version: ${newVersion}"
+                        // Update Chart.yaml
+                        sh "yq e -i '.version = \"${newVersion}\"' Chart.yaml"
+                        // Optionally, set appVersion to build number
+                        sh "yq e -i '.appVersion = \"${env.BUILD_NUMBER}\"' Chart.yaml"
+                        // Do NOT commit/push here; defer until after image build
+                    }
+                }
+            }
+        }
+        
         stage('Production Approval') {
             steps {
                 script {
@@ -98,7 +127,6 @@ pipeline {
                     dir('devops-repo') {
                         // Clean up any existing checkout
                         deleteDir()
-                        
                         // Clone the devops repository
                         checkout([
                             $class: 'GitSCM',
@@ -111,10 +139,9 @@ pipeline {
                             submoduleCfg: [],
                             userRemoteConfigs: [[
                                 url: "${DEVOPS_REPO}",
-                                credentialsId: 'your-git-credentials-id' // Replace with your Jenkins credentials ID
+                                credentialsId: 'jenkins-git-ssh' // Use the Jenkins SSH credential
                             ]]
                         ])
-                        
                         // Install yq for YAML processing
                         sh """
                             # Install yq if not available
@@ -123,7 +150,6 @@ pipeline {
                                 chmod +x /usr/local/bin/yq
                             fi
                         """
-                        
                         // Update the image tags in your ArgoCD configuration using yq
                         script {
                             // Update backend image tag in values.production.yaml
@@ -133,7 +159,6 @@ pipeline {
                                     yq eval '.backEnd.image.repository = \"${REGISTRY}/${BACKEND_IMAGE}\"' -i helm/publishgpt/values.production.yaml
                                 """
                             }
-                            
                             // Update frontend image tag in values.production.yaml
                             if (fileExists('helm/publishgpt/values.production.yaml')) {
                                 sh """
@@ -141,7 +166,6 @@ pipeline {
                                     yq eval '.frontEnd.image.repository = \"${REGISTRY}/${FRONTEND_IMAGE}\"' -i helm/publishgpt/values.production.yaml
                                 """
                             }
-                            
                             // Update separate image tags file if it exists
                             if (fileExists('image-tags.yaml')) {
                                 sh """
@@ -149,7 +173,6 @@ pipeline {
                                     yq eval '.frontendTag = "${IMAGE_TAG}"' -i image-tags.yaml
                                 """
                             }
-                            
                             // Alternative: Update image tags in kustomization.yaml if using Kustomize
                             if (fileExists('kustomization.yaml')) {
                                 sh """
@@ -158,15 +181,24 @@ pipeline {
                                 """
                             }
                         }
-                        
-                        // Commit and push the changes
-                        sh """
+                        // Commit and push the changes (including Chart.yaml)
+                        sh '''
                             git config user.email "jenkins@gbif.no"
                             git config user.name "Jenkins CI"
                             git add .
-                            git commit -m "🚀 PRODUCTION DEPLOYMENT: Update image tags to ${IMAGE_TAG} (build ${env.BUILD_NUMBER})" || exit 0
-                            git push origin ${DEVOPS_BRANCH}
-                        """
+                            git commit -m "🚀 PRODUCTION DEPLOYMENT: Update image tags and chart version to ${IMAGE_TAG} (build ${env.BUILD_NUMBER})" || exit 0
+                            git push origin ${DEVOPS_BRANCH} || echo "No changes to push"
+                        '''
+                    }
+                    // Also commit and push Chart.yaml in the main repo (if not already done)
+                    dir('GitOps-infrastucture/apps/publishgpt') {
+                        sh '''
+                            git config user.email "jenkins@gbif.no"
+                            git config user.name "Jenkins CI"
+                            git add Chart.yaml
+                            git commit -m "chore: bump chart version to match production deployment [ci skip]" || exit 0
+                            git push || echo "No changes to push"
+                        '''
                     }
                 }
             }

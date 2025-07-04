@@ -26,6 +26,30 @@ pipeline {
             }
         }
         
+        stage('Set Staging Chart Version') {
+            steps {
+                script {
+                    dir('GitOps-infrastucture/apps/publishgpt') {
+                        // Install yq if not available
+                        sh '''
+                            if ! command -v yq &> /dev/null; then
+                                wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+                                chmod +x /usr/local/bin/yq
+                            fi
+                        '''
+                        // Extract base version (strip any -rc.*)
+                        def baseVersion = sh(script: "yq e '.version' Chart.yaml | sed 's/-rc.*//'", returnStdout: true).trim()
+                        // Use Jenkins build number for rc
+                        def rcVersion = "${baseVersion}-rc.${env.BUILD_NUMBER}"
+                        echo "Setting Chart version to: ${rcVersion}"
+                        sh "yq e -i '.version = \"${rcVersion}\"' Chart.yaml"
+                        sh "yq e -i '.appVersion = \"${env.BUILD_NUMBER}\"' Chart.yaml"
+                        // Do NOT commit/push here; defer until after image build
+                    }
+                }
+            }
+        }
+        
         stage('Setup Docker Buildx') {
             steps {
                 script {
@@ -83,7 +107,6 @@ pipeline {
                     dir('devops-repo') {
                         // Clean up any existing checkout
                         deleteDir()
-                        
                         // Clone the devops repository
                         checkout([
                             $class: 'GitSCM',
@@ -96,10 +119,9 @@ pipeline {
                             submoduleCfg: [],
                             userRemoteConfigs: [[
                                 url: "${DEVOPS_REPO}",
-                                credentialsId: 'your-git-credentials-id' // Replace with your Jenkins credentials ID
+                                credentialsId: 'jenkins-git-ssh' // Use the Jenkins SSH credential
                             ]]
                         ])
-                        
                         // Install yq for YAML processing
                         sh """
                             # Install yq if not available
@@ -108,7 +130,6 @@ pipeline {
                                 chmod +x /usr/local/bin/yq
                             fi
                         """
-                        
                         // Update the image tags in your ArgoCD configuration using yq
                         script {
                             // Update backend image tag in values-staging.yaml
@@ -126,15 +147,24 @@ pipeline {
                                 """
                             }
                         }
-                        
-                        // Commit and push the changes
-                        sh """
+                        // Commit and push the changes (including Chart.yaml)
+                        sh '''
                             git config user.email "jenkins@gbif.no"
                             git config user.name "Jenkins CI"
                             git add .
-                            git commit -m "Update image tags to ${IMAGE_TAG} for staging (build ${env.BUILD_NUMBER})" || exit 0
-                            git push origin ${DEVOPS_BRANCH}
-                        """
+                            git commit -m "staging: update image tags and chart version to ${IMAGE_TAG} (build ${env.BUILD_NUMBER})" || exit 0
+                            git push origin ${DEVOPS_BRANCH} || echo "No changes to push"
+                        '''
+                    }
+                    // Also commit and push Chart.yaml in the main repo (if not already done)
+                    dir('GitOps-infrastucture/apps/publishgpt') {
+                        sh '''
+                            git config user.email "jenkins@gbif.no"
+                            git config user.name "Jenkins CI"
+                            git add Chart.yaml
+                            git commit -m "chore: set chart version to match staging deployment [ci skip]" || exit 0
+                            git push || echo "No changes to push"
+                        '''
                     }
                 }
             }
