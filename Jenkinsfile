@@ -57,31 +57,18 @@ pipeline {
     }
 
     stages {
-        stage('Setup Docker Buildx') {
-            steps {
-                script {
-                    sh 'docker buildx version'
-                    sh '''
-                        if ! docker buildx inspect multiarch-builder >/dev/null 2>&1; then
-                            docker buildx create --name multiarch-builder --use
-                        else
-                            docker buildx use multiarch-builder
-                        fi
-                        docker buildx inspect --bootstrap
-                    '''
-                }
-            }
-        }
-
         stage('Build Backend') {
             steps {
                 dir('back-end') {
-                    sh """
-                        docker buildx build \
-                            --platform linux/amd64 \
-                            -t ${REGISTRY}/${BACKEND_IMAGE}:${IMAGE_TAG} \
-                            --push .
-                    """
+                    container('kaniko') {
+                        sh """
+                            /kaniko/executor \
+                                --context . \
+                                --dockerfile Dockerfile \
+                                --destination ${REGISTRY}/${BACKEND_IMAGE}:${IMAGE_TAG} \
+                                --cache=true
+                        """
+                    }
                 }
             }
         }
@@ -89,12 +76,15 @@ pipeline {
         stage('Build Frontend') {
             steps {
                 dir('front-end') {
-                    sh """
-                        docker buildx build \
-                            --platform linux/amd64 \
-                            -t ${REGISTRY}/${FRONTEND_IMAGE}:${IMAGE_TAG} \
-                            --push .
-                    """
+                    container('kaniko') {
+                        sh """
+                            /kaniko/executor \
+                                --context . \
+                                --dockerfile Dockerfile \
+                                --destination ${REGISTRY}/${FRONTEND_IMAGE}:${IMAGE_TAG} \
+                                --cache=true
+                        """
+                    }
                 }
             }
         }
