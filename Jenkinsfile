@@ -150,14 +150,14 @@ pipeline {
                             cd gitops-tmp
                             git config user.email "ci-bot@gbif.no"
                             git config user.name "GBIF Jenkins CI"
-                            git add apps/publishgpt/values-staging.yaml
+                            git add apps/chatipt/values-staging.yaml
                             git commit -m "ci: update image tags in values-staging.yaml for ${BRANCH_NAME}.${BUILD_NUMBER} [skip ci]" || true
                             git push origin main
                         '''
                     } else if (env.BRANCH_NAME == 'main') {
                         // For production, increment the chart version and keep appVersion as the base
                         sh '''
-                            cd gitops-tmp/apps/publishgpt
+                            cd gitops-tmp/apps/chatipt
                             if ! command -v yq &> /dev/null; then
                                 curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
                                 chmod +x yq
@@ -183,7 +183,7 @@ pipeline {
                             cd gitops-tmp
                             git config user.email "ci-bot@gbif.no"
                             git config user.name "GBIF Jenkins CI"
-                            git add apps/publishgpt/Chart.yaml
+                            git add apps/chatipt/Chart.yaml
                             git commit -m "ci: increment chart version to ${newVersion} for production release [skip ci]" || true
                             git push origin main
                         '''

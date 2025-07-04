@@ -135,7 +135,7 @@ pipeline {
                         cd gitops-tmp
                         git config user.email "ci-bot@gbif.no"
                         git config user.name "GBIF Jenkins CI"
-                        git add apps/publishgpt/values-staging.yaml
+                        git add apps/chatipt/values-staging.yaml
                         git commit -m "ci: update image tags in values-staging.yaml to ${IMAGE_TAG} [skip ci]" || true
                         git push origin main
                     '''
