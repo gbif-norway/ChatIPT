@@ -51,15 +51,19 @@ pipeline {
                     dir('GitOps-infrastucture/apps/publishgpt') {
                         sh '''
                             if ! command -v yq &> /dev/null; then
-                                curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
-                                chmod +x /usr/local/bin/yq
+                                curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
+                                chmod +x yq
+                                YQ=./yq
+                            else
+                                YQ=$(command -v yq)
                             fi
+                            $YQ --version
+                            baseVersion=$($YQ e '.version' Chart.yaml | sed 's/-rc.*//')
+                            newVersion="${BRANCH_NAME}.${BUILD_NUMBER}"
+                            echo "Setting Chart version to: ${newVersion}"
+                            $YQ e -i ".version = \"${newVersion}\"" Chart.yaml
+                            $YQ e -i ".appVersion = \"${BUILD_NUMBER}\"" Chart.yaml
                         '''
-                        def baseVersion = sh(script: "yq e '.version' Chart.yaml | sed 's/-rc.*//'", returnStdout: true).trim()
-                        def newVersion = "${baseVersion}-${env.BRANCH_NAME}.${env.BUILD_NUMBER}"
-                        echo "Setting Chart version to: ${newVersion}"
-                        sh "yq e -i '.version = \"${newVersion}\"' Chart.yaml"
-                        sh "yq e -i '.appVersion = \"${env.BUILD_NUMBER}\"' Chart.yaml"
                     }
                 }
             }
