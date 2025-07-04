@@ -123,30 +123,30 @@ pipeline {
             steps {
                 script {
                     // Update image tags in values-staging.yaml
-                    sh '''
+                    sh """
                         cd gitops-tmp/apps/chatipt
                         if ! command -v yq &> /dev/null; then
                             curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
                             chmod +x yq
                             YQ=./yq
                         else
-                            YQ=$(command -v yq)
+                            YQ=\$(command -v yq)
                         fi
-                        $YQ --version
+                        \$YQ --version
                         echo "Updating image tags in values-staging.yaml to ${env.IMAGE_TAG}"
-                        $YQ e -i ".backEnd.image.tag = \"${env.IMAGE_TAG}\"" values-staging.yaml
-                        $YQ e -i ".frontEnd.image.tag = \"${env.IMAGE_TAG}\"" values-staging.yaml
-                    '''
+                        \$YQ e -i ".backEnd.image.tag = \"${env.IMAGE_TAG}\"" values-staging.yaml
+                        \$YQ e -i ".frontEnd.image.tag = \"${env.IMAGE_TAG}\"" values-staging.yaml
+                    """
                     
                     // Commit and push changes
-                    sh '''
+                    sh """
                         cd gitops-tmp
                         git config user.email "ci-bot@gbif.no"
                         git config user.name "GBIF Jenkins CI"
                         git add apps/chatipt/values-staging.yaml
                         git commit -m "ci: update image tags in values-staging.yaml to ${env.IMAGE_TAG} [skip ci]" || true
                         git push origin main
-                    '''
+                    """
                 }
             }
         }
