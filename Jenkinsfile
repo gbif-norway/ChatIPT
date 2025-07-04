@@ -14,63 +14,131 @@
 
 pipeline {
     agent any
-    
+
+    environment {
+        REGISTRY = 'gbifnorway'
+        BACKEND_IMAGE = 'publishgpt-back-end'
+        FRONTEND_IMAGE = 'publishgpt-front-end'
+        IMAGE_TAG = "${env.BRANCH_NAME}-${env.BUILD_NUMBER}"
+        ENVIRONMENT = "${env.BRANCH_NAME}"
+    }
+
     stages {
         stage('Check Branch') {
-            steps {
-                script {
-                    // Only proceed for staging and production branches
-                    if (env.BRANCH_NAME == 'staging') {
-                        echo "🚀 Staging branch detected - proceeding with staging pipeline"
-                        env.PIPELINE_TYPE = 'staging'
-                    } else if (env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master') {
-                        echo "🚀 Production branch detected - proceeding with production pipeline"
-                        env.PIPELINE_TYPE = 'production'
-                    } else {
-                        echo "⏭️ Branch '${env.BRANCH_NAME}' is not staging or production - skipping build"
-                        currentBuild.result = 'SUCCESS'
-                        return
+            when {
+                not {
+                    anyOf {
+                        branch 'staging'
+                        branch 'main'
                     }
                 }
             }
+            steps {
+                echo "⏭️ Branch '${env.BRANCH_NAME}' is not staging or main - skipping build"
+                script { currentBuild.result = 'SUCCESS' }
+            }
         }
-        
-        stage('Load Environment Pipeline') {
+
+        stage('Set Chart Version') {
             when {
                 anyOf {
                     branch 'staging'
                     branch 'main'
-                    branch 'master'
                 }
             }
             steps {
                 script {
-                    def jenkinsfilePath
-                    
-                    if (env.PIPELINE_TYPE == 'staging') {
-                        jenkinsfilePath = 'Jenkinsfile.staging'
-                        echo "🚀 Loading staging pipeline..."
-                    } else if (env.PIPELINE_TYPE == 'production') {
-                        jenkinsfilePath = 'Jenkinsfile.production'
-                        echo "🚀 Loading production pipeline..."
+                    dir('GitOps-infrastucture/apps/publishgpt') {
+                        sh '''
+                            if ! command -v yq &> /dev/null; then
+                                wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+                                chmod +x /usr/local/bin/yq
+                            fi
+                        '''
+                        def baseVersion = sh(script: "yq e '.version' Chart.yaml | sed 's/-rc.*//'", returnStdout: true).trim()
+                        def newVersion = "${baseVersion}-${env.BRANCH_NAME}.${env.BUILD_NUMBER}"
+                        echo "Setting Chart version to: ${newVersion}"
+                        sh "yq e -i '.version = \"${newVersion}\"' Chart.yaml"
+                        sh "yq e -i '.appVersion = \"${env.BUILD_NUMBER}\"' Chart.yaml"
                     }
-                    
-                    // Load and execute the appropriate pipeline
-                    load jenkinsfilePath
                 }
             }
         }
-    }
-    
-    post {
-        always {
-            script {
-                if (env.PIPELINE_TYPE) {
-                    echo "✅ Pipeline completed for ${env.PIPELINE_TYPE}"
-                } else {
-                    echo "⏭️ Build skipped for branch: ${env.BRANCH_NAME}"
+
+        stage('Setup Docker Buildx') {
+            when {
+                anyOf {
+                    branch 'staging'
+                    branch 'main'
                 }
             }
+            steps {
+                script {
+                    sh 'docker buildx version'
+                    sh '''
+                        if ! docker buildx inspect multiarch-builder >/dev/null 2>&1; then
+                            docker buildx create --name multiarch-builder --use
+                        else
+                            docker buildx use multiarch-builder
+                        fi
+                        docker buildx inspect --bootstrap
+                    '''
+                }
+            }
+        }
+
+        stage('Build Backend') {
+            when {
+                anyOf {
+                    branch 'staging'
+                    branch 'main'
+                }
+            }
+            steps {
+                dir('back-end') {
+                    sh """
+                        docker buildx build \
+                            --platform linux/amd64 \
+                            -t ${REGISTRY}/${BACKEND_IMAGE}:${IMAGE_TAG} \
+                            --push .
+                    """
+                }
+            }
+        }
+
+        stage('Build Frontend') {
+            when {
+                anyOf {
+                    branch 'staging'
+                    branch 'main'
+                }
+            }
+            steps {
+                dir('front-end') {
+                    sh """
+                        docker buildx build \
+                            --platform linux/amd64 \
+                            -t ${REGISTRY}/${FRONTEND_IMAGE}:${IMAGE_TAG} \
+                            --push .
+                    """
+                }
+            }
+        }
+
+        // Add more stages as needed, e.g., update DevOps repo, verify images, etc.
+        // Use the same `when` block to restrict to staging/main
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+        success {
+            echo "🎉 Pipeline completed successfully for branch: ${env.BRANCH_NAME}"
+            echo "📦 Images pushed to registry with tag: ${IMAGE_TAG}"
+        }
+        failure {
+            echo "❌ Pipeline failed for branch: ${env.BRANCH_NAME}"
         }
     }
 } 
