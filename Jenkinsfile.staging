@@ -1,0 +1,160 @@
+// This is a Jenkinsfile specifically for staging that builds Docker images and updates GitOps configuration.
+// The pipeline reads the appVersion from the GitOps Chart.yaml and uses it as the base for image tags.
+//
+// JENKINS CONFIGURATION:
+// 1. Create a Pipeline project (not multibranch)
+// 2. In Pipeline → Definition → Pipeline script from SCM:
+//    - SCM: Git
+//    - Repository URL: your-repo-url
+//    - Credentials: your-git-credentials
+//    - Script Path: Jenkinsfile.staging
+// 3. This builds both backend and frontend images, then updates GitOps configuration for staging
+
+pipeline {
+    agent {
+        kubernetes {
+            yaml '''
+                apiVersion: v1
+                kind: Pod
+                spec:
+                  containers:
+                  - name: kaniko
+                    image: gcr.io/kaniko-project/executor:debug
+                    command:
+                    - /busybox/cat
+                    tty: true
+                    volumeMounts:
+                    - name: kaniko-secret
+                      mountPath: /kaniko/.docker
+                  volumes:
+                  - name: kaniko-secret
+                    secret:
+                      secretName: kaniko-secret
+                      items:
+                      - key: .dockerconfigjson
+                        path: config.json
+            '''
+        }
+    }
+
+    environment {
+        REGISTRY = 'gbifnorway'
+        BACKEND_IMAGE = 'publishgpt-back-end'
+        FRONTEND_IMAGE = 'publishgpt-front-end'
+        BRANCH_NAME = 'staging'
+        ENVIRONMENT = 'staging'
+    }
+
+    stages {
+        stage('Get App Version') {
+            steps {
+                script {
+                    // Clone the GitOps repo to get the current appVersion
+                    sh '''
+                        rm -rf gitops-tmp
+                        git clone https://github.com/gbif-norway/gitops.git gitops-tmp
+                    '''
+                    
+                    // Read the appVersion from Chart.yaml
+                    sh '''
+                        cd gitops-tmp/apps/publishgpt
+                        if ! command -v yq &> /dev/null; then
+                            curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
+                            chmod +x yq
+                            YQ=./yq
+                        else
+                            YQ=$(command -v yq)
+                        fi
+                        $YQ --version
+                        APP_VERSION=$($YQ e '.appVersion' Chart.yaml)
+                        echo "Current appVersion from Chart.yaml: $APP_VERSION"
+                        echo "APP_VERSION=$APP_VERSION" > app_version.env
+                    '''
+                    
+                    // Load the appVersion into environment
+                    load 'app_version.env'
+                    env.IMAGE_TAG = "${APP_VERSION}-${env.BUILD_NUMBER}"
+                    echo "Generated image tag: ${env.IMAGE_TAG}"
+                }
+            }
+        }
+
+        stage('Build Backend') {
+            steps {
+                dir('back-end') {
+                    container('kaniko') {
+                        sh """
+                            /kaniko/executor \
+                                --context . \
+                                --dockerfile Dockerfile \
+                                --destination ${REGISTRY}/${BACKEND_IMAGE}:${IMAGE_TAG} \
+                                --cache=true
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Build Frontend') {
+            steps {
+                dir('front-end') {
+                    container('kaniko') {
+                        sh """
+                            /kaniko/executor \
+                                --context . \
+                                --dockerfile Dockerfile \
+                                --destination ${REGISTRY}/${FRONTEND_IMAGE}:${IMAGE_TAG} \
+                                --cache=true
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Update GitOps Repo') {
+            steps {
+                script {
+                    // Update image tags in values-staging.yaml
+                    sh '''
+                        cd gitops-tmp/apps/publishgpt
+                        if ! command -v yq &> /dev/null; then
+                            curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
+                            chmod +x yq
+                            YQ=./yq
+                        else
+                            YQ=$(command -v yq)
+                        fi
+                        $YQ --version
+                        echo "Updating image tags in values-staging.yaml to ${IMAGE_TAG}"
+                        $YQ e -i ".backEnd.image.tag = \"${IMAGE_TAG}\"" values-staging.yaml
+                        $YQ e -i ".frontEnd.image.tag = \"${IMAGE_TAG}\"" values-staging.yaml
+                    '''
+                    
+                    // Commit and push changes
+                    sh '''
+                        cd gitops-tmp
+                        git config user.email "ci-bot@gbif.no"
+                        git config user.name "GBIF Jenkins CI"
+                        git add apps/publishgpt/values-staging.yaml
+                        git commit -m "ci: update image tags in values-staging.yaml to ${IMAGE_TAG} [skip ci]" || true
+                        git push origin main
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            deleteDir()
+        }
+        success {
+            echo "🎉 Staging pipeline completed successfully"
+            echo "📦 Images pushed to registry with tag: ${IMAGE_TAG}"
+            echo "📋 Based on appVersion: ${APP_VERSION}"
+        }
+        failure {
+            echo "❌ Staging pipeline failed"
+        }
+    }
+} 

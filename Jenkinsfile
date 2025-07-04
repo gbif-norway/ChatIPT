@@ -1,16 +1,15 @@
-// This is a dispatcher Jenkinsfile that only builds for staging and production branches
-// Other branches will be skipped entirely.
+// This is a parameterized Jenkinsfile that builds Docker images and updates GitOps configuration
+// for staging and production environments. The pipeline allows manual selection of the target environment.
 //
 // JENKINS CONFIGURATION:
-// 1. Create a Multibranch Pipeline project
-// 2. In Branch Sources → Add source → Git:
+// 1. Create a Pipeline project (not multibranch)
+// 2. In Pipeline → Definition → Pipeline script from SCM:
+//    - SCM: Git
 //    - Repository URL: your-repo-url
 //    - Credentials: your-git-credentials
-// 3. In Behaviors → Add → Filter by name (with wildcards):
-//    - Include: staging, main, master
-//    - Exclude: (leave empty or add patterns like dependabot/*)
-// 4. This will only create pipeline jobs for staging and main/master branches
-// 5. Other branches will be ignored entirely
+//    - Script Path: Jenkinsfile
+// 3. The pipeline will prompt for branch selection (staging/main) when triggered
+// 4. This builds both backend and frontend images, then updates GitOps configuration
 
 pipeline {
     agent {
@@ -52,11 +51,43 @@ pipeline {
         BACKEND_IMAGE = 'publishgpt-back-end'
         FRONTEND_IMAGE = 'publishgpt-front-end'
         BRANCH_NAME = "${params.BRANCH}"
-        IMAGE_TAG = "${env.BRANCH_NAME}-${env.BUILD_NUMBER}"
         ENVIRONMENT = "${env.BRANCH_NAME}"
     }
 
     stages {
+        stage('Get App Version') {
+            steps {
+                script {
+                    // Clone the GitOps repo to get the current appVersion
+                    sh '''
+                        rm -rf gitops-tmp
+                        git clone https://github.com/gbif-norway/gitops.git gitops-tmp
+                    '''
+                    
+                    // Read the appVersion from Chart.yaml
+                    sh '''
+                        cd gitops-tmp/apps/publishgpt
+                        if ! command -v yq &> /dev/null; then
+                            curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
+                            chmod +x yq
+                            YQ=./yq
+                        else
+                            YQ=$(command -v yq)
+                        fi
+                        $YQ --version
+                        APP_VERSION=$($YQ e '.appVersion' Chart.yaml)
+                        echo "Current appVersion from Chart.yaml: $APP_VERSION"
+                        echo "APP_VERSION=$APP_VERSION" > app_version.env
+                    '''
+                    
+                    // Load the appVersion into environment
+                    load 'app_version.env'
+                    env.IMAGE_TAG = "${APP_VERSION}-${env.BUILD_NUMBER}"
+                    echo "Generated image tag: ${env.IMAGE_TAG}"
+                }
+            }
+        }
+
         stage('Build Backend') {
             steps {
                 dir('back-end') {
@@ -95,7 +126,7 @@ pipeline {
                     // Clone the GitOps repo
                     sh '''
                         rm -rf gitops-tmp
-                        git clone https://github.com/uio-mana/GitOps-infrastucture.git gitops-tmp
+                        git clone https://github.com/gbif-norway/gitops.git gitops-tmp
                     '''
                     
                     if (env.BRANCH_NAME == 'staging') {
@@ -124,7 +155,7 @@ pipeline {
                             git push origin main
                         '''
                     } else if (env.BRANCH_NAME == 'main') {
-                        // Update Chart.yaml version for main/release
+                        // For production, increment the chart version and keep appVersion as the base
                         sh '''
                             cd gitops-tmp/apps/publishgpt
                             if ! command -v yq &> /dev/null; then
@@ -135,11 +166,17 @@ pipeline {
                                 YQ=$(command -v yq)
                             fi
                             $YQ --version
-                            baseVersion=$($YQ e '.version' Chart.yaml | sed 's/-rc.*//')
-                            newVersion="${baseVersion}-${BRANCH_NAME}.${BUILD_NUMBER}"
-                            echo "Setting Chart version to: ${newVersion}"
+                            currentVersion=$($YQ e '.version' Chart.yaml)
+                            appVersion=$($YQ e '.appVersion' Chart.yaml)
+                            echo "Current version: ${currentVersion}"
+                            echo "Current appVersion: ${appVersion}"
+                            
+                            # Increment the patch version for production release
+                            newVersion=$(echo $currentVersion | awk -F. '{$NF = $NF + 1;} 1' | sed 's/ /./g')
+                            echo "New version: ${newVersion}"
+                            
                             $YQ e -i ".version = \"${newVersion}\"" Chart.yaml
-                            $YQ e -i ".appVersion = \"${BUILD_NUMBER}\"" Chart.yaml
+                            # Keep appVersion as is - it represents the application version
                         '''
                         // Commit and push changes
                         sh '''
@@ -147,7 +184,7 @@ pipeline {
                             git config user.email "ci-bot@gbif.no"
                             git config user.name "GBIF Jenkins CI"
                             git add apps/publishgpt/Chart.yaml
-                            git commit -m "ci: update Chart.yaml version for ${BRANCH_NAME}.${BUILD_NUMBER} [skip ci]" || true
+                            git commit -m "ci: increment chart version to ${newVersion} for production release [skip ci]" || true
                             git push origin main
                         '''
                     }
