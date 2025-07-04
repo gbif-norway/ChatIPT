@@ -53,7 +53,7 @@ pipeline {
                     // Clone the GitOps repo to get the current appVersion
                     sh '''
                         rm -rf gitops-tmp
-                        git clone https://github.com/gbif-norway/gitops.git gitops-tmp
+                        git clone git@github.com:gbif-norway/gitops.git gitops-tmp
                     '''
                     
                     // Read the appVersion from Chart.yaml
@@ -68,17 +68,22 @@ pipeline {
                                 YQ=$(command -v yq)
                             fi
                             $YQ --version
+                            echo "Reading appVersion from Chart.yaml..."
                             $YQ e '.appVersion' Chart.yaml
                         ''',
                         returnStdout: true
                     ).trim()
                     
+                    echo "Raw appVersion output: '${appVersion}'"
+                    
+                    // Validate that we got a proper version
+                    if (appVersion == null || appVersion.isEmpty() || appVersion == "null") {
+                        error "Failed to read appVersion from Chart.yaml. Got: '${appVersion}'"
+                    }
+                    
                     echo "Current appVersion from Chart.yaml: ${appVersion}"
                     env.IMAGE_TAG = "${appVersion}-${env.BUILD_NUMBER}"
                     echo "Generated image tag: ${env.IMAGE_TAG}"
-                    
-                    // Set the environment variable for subsequent stages
-                    env.IMAGE_TAG = "${appVersion}-${env.BUILD_NUMBER}"
                 }
             }
         }
@@ -136,6 +141,7 @@ pipeline {
                         echo "Updating image tags in values-staging.yaml to ${env.IMAGE_TAG}"
                         \$YQ e -i ".backEnd.image.tag = \"${env.IMAGE_TAG}\"" values-staging.yaml
                         \$YQ e -i ".frontEnd.image.tag = \"${env.IMAGE_TAG}\"" values-staging.yaml
+                        echo "Updated image tags successfully"
                     """
                     
                     // Commit and push changes
