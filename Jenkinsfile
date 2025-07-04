@@ -141,7 +141,7 @@ pipeline {
                     // Clone the GitOps repo
                     sh '''
                         rm -rf gitops-tmp
-                        git clone git@github.com:gbif-norway/GBIF-infrastructure.git gitops-tmp
+                        git clone git@github.com:uio-mana/GitOps-infrastucture.git gitops-tmp
                     '''
                     // Update Chart.yaml in the cloned repo
                     sh '''
