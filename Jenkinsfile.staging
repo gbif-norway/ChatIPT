@@ -43,6 +43,7 @@ pipeline {
         FRONTEND_IMAGE = 'publishgpt-front-end'
         BRANCH_NAME = 'staging'
         ENVIRONMENT = 'staging'
+        IMAGE_TAG = ''
     }
 
     stages {
@@ -75,21 +76,26 @@ pipeline {
                     echo "Current appVersion from Chart.yaml: ${appVersion}"
                     env.IMAGE_TAG = "${appVersion}-${env.BUILD_NUMBER}"
                     echo "Generated image tag: ${env.IMAGE_TAG}"
+                    
+                    // Set the environment variable for subsequent stages
+                    env.IMAGE_TAG = "${appVersion}-${env.BUILD_NUMBER}"
                 }
             }
         }
 
         stage('Build Backend') {
             steps {
-                dir('back-end') {
-                    container('kaniko') {
-                        sh """
-                            /kaniko/executor \
-                                --context . \
-                                --dockerfile Dockerfile \
-                                --destination ${REGISTRY}/${BACKEND_IMAGE}:${IMAGE_TAG} \
-                                --cache=true
-                        """
+                script {
+                    dir('back-end') {
+                        container('kaniko') {
+                            sh """
+                                /kaniko/executor \\
+                                    --context . \\
+                                    --dockerfile Dockerfile \\
+                                    --destination ${REGISTRY}/${BACKEND_IMAGE}:${env.IMAGE_TAG} \\
+                                    --cache=true
+                            """
+                        }
                     }
                 }
             }
@@ -97,15 +103,17 @@ pipeline {
 
         stage('Build Frontend') {
             steps {
-                dir('front-end') {
-                    container('kaniko') {
-                        sh """
-                            /kaniko/executor \
-                                --context . \
-                                --dockerfile Dockerfile \
-                                --destination ${REGISTRY}/${FRONTEND_IMAGE}:${IMAGE_TAG} \
-                                --cache=true
-                        """
+                script {
+                    dir('front-end') {
+                        container('kaniko') {
+                            sh """
+                                /kaniko/executor \\
+                                    --context . \\
+                                    --dockerfile Dockerfile \\
+                                    --destination ${REGISTRY}/${FRONTEND_IMAGE}:${env.IMAGE_TAG} \\
+                                    --cache=true
+                            """
+                        }
                     }
                 }
             }
@@ -125,9 +133,9 @@ pipeline {
                             YQ=$(command -v yq)
                         fi
                         $YQ --version
-                        echo "Updating image tags in values-staging.yaml to ${IMAGE_TAG}"
-                        $YQ e -i ".backEnd.image.tag = \"${IMAGE_TAG}\"" values-staging.yaml
-                        $YQ e -i ".frontEnd.image.tag = \"${IMAGE_TAG}\"" values-staging.yaml
+                        echo "Updating image tags in values-staging.yaml to ${env.IMAGE_TAG}"
+                        $YQ e -i ".backEnd.image.tag = \"${env.IMAGE_TAG}\"" values-staging.yaml
+                        $YQ e -i ".frontEnd.image.tag = \"${env.IMAGE_TAG}\"" values-staging.yaml
                     '''
                     
                     // Commit and push changes
@@ -136,7 +144,7 @@ pipeline {
                         git config user.email "ci-bot@gbif.no"
                         git config user.name "GBIF Jenkins CI"
                         git add apps/chatipt/values-staging.yaml
-                        git commit -m "ci: update image tags in values-staging.yaml to ${IMAGE_TAG} [skip ci]" || true
+                        git commit -m "ci: update image tags in values-staging.yaml to ${env.IMAGE_TAG} [skip ci]" || true
                         git push origin main
                     '''
                 }
