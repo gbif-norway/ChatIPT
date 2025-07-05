@@ -48,8 +48,8 @@ pipeline {
 
     environment {
         REGISTRY = 'gbifnorway'
-        BACKEND_IMAGE = 'publishgpt-back-end'
-        FRONTEND_IMAGE = 'publishgpt-front-end'
+        BACKEND_IMAGE = 'chatipt-back-end'
+        FRONTEND_IMAGE = 'chatipt-front-end'
         BRANCH_NAME = "${params.BRANCH}"
         ENVIRONMENT = "${env.BRANCH_NAME}"
     }
@@ -66,7 +66,7 @@ pipeline {
                     
                     // Read the appVersion from Chart.yaml
                     sh '''
-                        cd gitops-tmp/apps/publishgpt
+                        cd gitops-tmp/apps/chatipt
                         if ! command -v yq &> /dev/null; then
                             curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
                             chmod +x yq
@@ -132,7 +132,7 @@ pipeline {
                     if (env.BRANCH_NAME == 'staging') {
                         // Update image tags in values-staging.yaml for staging
                         sh '''
-                            cd gitops-tmp/apps/publishgpt
+                            cd gitops-tmp/apps/chatipt
                             if ! command -v yq &> /dev/null; then
                                 curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
                                 chmod +x yq

@@ -39,8 +39,8 @@ pipeline {
 
     environment {
         REGISTRY = 'gbifnorway'
-        BACKEND_IMAGE = 'publishgpt-back-end'
-        FRONTEND_IMAGE = 'publishgpt-front-end'
+        BACKEND_IMAGE = 'chatipt-back-end'
+        FRONTEND_IMAGE = 'chatipt-front-end'
         BRANCH_NAME = 'staging'
         ENVIRONMENT = 'staging'
         IMAGE_TAG = ''

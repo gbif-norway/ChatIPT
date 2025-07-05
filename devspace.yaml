@@ -1,5 +1,5 @@
 version: v2beta1
-name: publishgpt
+name: chatipt
 
 # This is a list of `pipelines` that DevSpace can execute (you can define your own)
 pipelines:
@@ -36,7 +36,7 @@ pipelines:
 # We recommend to skip image building during development (devspace dev) as much as possible
 images:
   back-end:
-    image: gbifnorway/publishgpt-back-end
+    image: gbifnorway/chatipt-back-end
     dockerfile: ./back-end/Dockerfile
     context: back-end/
     kaniko:
@@ -47,7 +47,7 @@ images:
       - $(git describe --always)
 
   front-end:
-    image: gbifnorway/publishgpt-front-end
+    image: gbifnorway/chatipt-front-end
     dockerfile: ./front-end/Dockerfile
     context: front-end/
     kaniko:
@@ -59,10 +59,10 @@ images:
 
 # This is a list of `deployments` that DevSpace can create for this project
 deployments:
-  publishgpt:
+  chatipt:
     helm:
       chart:
-        name: ./helm/publishgpt
+        name: ./helm/chatipt
       # values:
       #   backEnd:
       #     image:
@@ -75,7 +75,7 @@ deployments:
 dev:
   back-end:
     # Search for the container that runs this image
-    imageSelector: gbifnorway/publishgpt-back-end:latest
+    imageSelector: gbifnorway/chatipt-back-end:latest
     # Replace the container image with this dev-optimized image (allows to skip image building during development)
     # devImage: ghcr.io/loft-sh/devspace-containers/python:3-alpine
     # Sync files between the local filesystem and the development container
@@ -101,7 +101,7 @@ dev:
     #   - url: http://localhost:8000
 
   front-end:
-    imageSelector: gbifnorway/publishgpt-front-end:latest
+    imageSelector: gbifnorway/chatipt-front-end:latest
     # devImage: ghcr.io/loft-sh/devspace-containers/nodejs:18-alpine
     sync:
       - path: ./front-end:/app

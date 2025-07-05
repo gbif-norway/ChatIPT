@@ -52,7 +52,7 @@ Note: Not suitable for publishing data from a database, or for large data source
 * * *
 ## How it works - technical details
 
-There is a React front end handling the chat interface and displaying the dataframes, and a Python (Django) API which interacts with the OpenAI API for GPT4o. The model is given a series of prompts that it runs through in order to standardise the data - this works better (so far) than trying to do it in single prompt. The generic prompt template is here: https://github.com/gbif-norway/publishgpt/blob/main/back-end/api/templates/prompt.txt, and the specific tasks the model runs through are here: https://github.com/gbif-norway/publishgpt/blob/main/back-end/api/fixtures/tasks.yaml
+There is a React front end handling the chat interface and displaying the dataframes, and a Python (Django) API which interacts with the OpenAI API for GPT4o. The model is given a series of prompts that it runs through in order to standardise the data - this works better (so far) than trying to do it in single prompt. The generic prompt template is here: https://github.com/gbif-norway/chatipt/blob/main/back-end/api/templates/prompt.txt, and the specific tasks the model runs through are here: https://github.com/gbif-norway/chatipt/blob/main/back-end/api/fixtures/tasks.yaml
 
 The data is stored in a Postgres database, with different models for Datasets, Tables (dataframes), Tasks and the Agent/Messages conversation system needed for managing the Tasks.
 
@@ -138,7 +138,7 @@ Both use Kaniko for building, with caching enabled.
 
 ## Helm Deployment
 
-The project uses a Helm chart located at `./helm/publishgpt` for deployment.
+The project uses a Helm chart located at `./helm/chatipt` for deployment.
 
 
 ## Notes
