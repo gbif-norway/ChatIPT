@@ -62,13 +62,20 @@ pipeline {
                         echo "Current directory: $(pwd)"
                         echo "Chart.yaml exists: $(ls -la Chart.yaml)"
                         
-                        if ! command -v yq &> /dev/null; then
+                        # Try to use system yq first
+                        if command -v yq &> /dev/null; then
+                            echo "Using system yq"
+                            YQ=$(command -v yq)
+                        else
                             echo "yq not found, downloading..."
-                            curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
+                            # Use a specific version instead of latest to avoid rate limiting
+                            curl -L https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64 -o yq
+                            if [ ! -f yq ]; then
+                                echo "Failed to download yq, trying alternative method..."
+                                wget -O yq https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64
+                            fi
                             chmod +x yq
                             YQ=./yq
-                        else
-                            YQ=$(command -v yq)
                         fi
                         echo "Using yq: $YQ"
                         $YQ --version
@@ -167,12 +174,20 @@ pipeline {
                     // Update image tags in values-staging.yaml
                     sh """
                         cd gitops-tmp/apps/chatipt
-                        if ! command -v yq &> /dev/null; then
-                            curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
+                        # Try to use system yq first
+                        if command -v yq &> /dev/null; then
+                            echo "Using system yq"
+                            YQ=\$(command -v yq)
+                        else
+                            echo "yq not found, downloading..."
+                            # Use a specific version instead of latest to avoid rate limiting
+                            curl -L https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64 -o yq
+                            if [ ! -f yq ]; then
+                                echo "Failed to download yq, trying alternative method..."
+                                wget -O yq https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64
+                            fi
                             chmod +x yq
                             YQ=./yq
-                        else
-                            YQ=\$(command -v yq)
                         fi
                         \$YQ --version
                         echo "Updating image tags in values-staging.yaml to ${imageTag}"
