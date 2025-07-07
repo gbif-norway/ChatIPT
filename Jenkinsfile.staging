@@ -94,6 +94,11 @@ pipeline {
                     
                     // Store the image tag in a file for subsequent stages
                     writeFile file: 'image_tag.txt', text: imageTag
+                    echo "Wrote image tag to file: '${imageTag}'"
+                    
+                    // Verify the file was written correctly
+                    def verifyTag = readFile('image_tag.txt').trim()
+                    echo "Verified file content: '${verifyTag}'"
                 }
             }
         }
@@ -103,7 +108,12 @@ pipeline {
                 script {
                     // Read the image tag from file
                     def imageTag = readFile('image_tag.txt').trim()
-                    echo "Building backend with image tag: ${imageTag}"
+                    echo "Building backend with image tag: '${imageTag}'"
+                    
+                    // Validate the image tag
+                    if (imageTag == null || imageTag.isEmpty() || imageTag == "null") {
+                        error "Image tag is null or empty in backend build. Got: '${imageTag}'"
+                    }
                     
                     dir('back-end') {
                         container('kaniko') {
@@ -147,7 +157,12 @@ pipeline {
                 script {
                     // Read the image tag from file
                     def imageTag = readFile('image_tag.txt').trim()
-                    echo "Updating GitOps with image tag: ${imageTag}"
+                    echo "Updating GitOps with image tag: '${imageTag}'"
+                    
+                    // Validate the image tag
+                    if (imageTag == null || imageTag.isEmpty() || imageTag == "null") {
+                        error "Image tag is null or empty. Got: '${imageTag}'"
+                    }
                     
                     // Update image tags in values-staging.yaml
                     sh """
@@ -175,6 +190,7 @@ pipeline {
                             git add apps/chatipt/values-staging.yaml
                             git commit -m "ci: update image tags in values-staging.yaml to ${imageTag} [skip ci]" || true
                             git remote set-url origin https://\${GIT_USERNAME}:\${GIT_PASSWORD}@github.com/gbif-norway/gitops.git
+                            echo "Pushing to GitHub with credentials..."
                             git push origin main
                         """
                     }
