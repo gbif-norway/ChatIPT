@@ -56,20 +56,29 @@ pipeline {
                         git clone https://github.com/gbif-norway/gitops.git gitops-tmp
                     '''
                     
-                    // Read the appVersion from Chart.yaml
+                    // Read the appVersion from Chart.yaml with better debugging
                     def appVersion = sh(
                         script: '''
                             cd gitops-tmp/apps/chatipt
+                            echo "Current directory: $(pwd)"
+                            echo "Chart.yaml exists: $(ls -la Chart.yaml)"
+                            echo "Chart.yaml content:"
+                            cat Chart.yaml
+                            
                             if ! command -v yq &> /dev/null; then
+                                echo "yq not found, downloading..."
                                 curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
                                 chmod +x yq
                                 YQ=./yq
                             else
                                 YQ=$(command -v yq)
                             fi
+                            echo "Using yq: $YQ"
                             $YQ --version
                             echo "Reading appVersion from Chart.yaml..."
-                            $YQ e '.appVersion' Chart.yaml
+                            APP_VERSION=$($YQ e '.appVersion' Chart.yaml)
+                            echo "yq output: '$APP_VERSION'"
+                            echo "$APP_VERSION"
                         ''',
                         returnStdout: true
                     ).trim()
@@ -144,15 +153,15 @@ pipeline {
                         echo "Updated image tags successfully"
                     """
                     
-                    // Commit and push changes using credentials
-                    withCredentials([usernamePassword(credentialsId: 'jenkins-git-ssh', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
+                    // Commit and push changes using SSH credentials
+                    sshagent(['jenkins-git-ssh']) {
                         sh """
                             cd gitops-tmp
                             git config user.email "ci-bot@gbif.no"
                             git config user.name "GBIF Jenkins CI"
                             git add apps/chatipt/values-staging.yaml
                             git commit -m "ci: update image tags in values-staging.yaml to ${env.IMAGE_TAG} [skip ci]" || true
-                            git remote set-url origin https://\${GIT_USERNAME}:\${GIT_PASSWORD}@github.com/gbif-norway/gitops.git
+                            git remote set-url origin git@github.com:gbif-norway/gitops.git
                             git push origin main
                         """
                     }
