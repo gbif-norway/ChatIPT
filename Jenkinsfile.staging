@@ -89,11 +89,11 @@ pipeline {
                     }
                     
                     echo "Current appVersion from Chart.yaml: ${appVersion}"
-                    env.IMAGE_TAG = "${appVersion}-${env.BUILD_NUMBER}"
-                    echo "Generated image tag: ${env.IMAGE_TAG}"
+                    def imageTag = "${appVersion}-${env.BUILD_NUMBER}"
+                    echo "Generated image tag: ${imageTag}"
                     
                     // Store the image tag in a file for subsequent stages
-                    writeFile file: 'image_tag.txt', text: "${appVersion}-${env.BUILD_NUMBER}"
+                    writeFile file: 'image_tag.txt', text: imageTag
                 }
             }
         }
