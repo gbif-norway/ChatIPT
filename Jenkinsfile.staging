@@ -166,8 +166,8 @@ pipeline {
                         echo "Updated image tags successfully"
                     """
                     
-                    // Commit and push changes using SSH credentials
-                    sshagent(['jenkins-git-ssh']) {
+                    // Commit and push changes using credentials
+                    withCredentials([sshUserPrivateKey(credentialsId: 'jenkins-git-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
                         sh """
                             cd gitops-tmp
                             git config user.email "ci-bot@gbif.no"
@@ -175,6 +175,8 @@ pipeline {
                             git add apps/chatipt/values-staging.yaml
                             git commit -m "ci: update image tags in values-staging.yaml to ${imageTag} [skip ci]" || true
                             git remote set-url origin git@github.com:gbif-norway/gitops.git
+                            eval \$(ssh-agent -s)
+                            ssh-add \$SSH_KEY
                             git push origin main
                         """
                     }
