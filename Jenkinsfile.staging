@@ -1,5 +1,5 @@
 // This is a Jenkinsfile specifically for staging that builds Docker images and updates GitOps configuration.
-// The pipeline reads the appVersion from the GitOps Chart.yaml and uses it as the base for image tags.
+// The pipeline uses git tags as the source of truth for versioning.
 //
 // JENKINS CONFIGURATION:
 // 1. Create a Pipeline project (not multibranch)
@@ -43,90 +43,50 @@ pipeline {
         FRONTEND_IMAGE = 'chatipt-front-end'
         BRANCH_NAME = 'staging'
         ENVIRONMENT = 'staging'
-        IMAGE_TAG = ''
     }
 
     stages {
-        stage('Get App Version') {
+        stage('Get Version from Git') {
             steps {
                 script {
-                    // Clone the GitOps repo to get the current appVersion
+                    // Get version from git - more robust approach
                     sh '''
-                        rm -rf gitops-tmp
-                        git clone https://github.com/gbif-norway/gitops.git gitops-tmp
+                        echo "Getting version from git..."
+                        
+                        # For staging, we want to use the current commit SHA or a timestamp
+                        # This ensures we always have a unique version for staging builds
+                        
+                        # Get short commit SHA
+                        COMMIT_SHA=$(git rev-parse --short HEAD)
+                        echo "Commit SHA: $COMMIT_SHA"
+                        
+                        # Get current timestamp for uniqueness
+                        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+                        echo "Timestamp: $TIMESTAMP"
+                        
+                        # Create version string
+                        VERSION="staging-${COMMIT_SHA}-${TIMESTAMP}"
+                        echo "Generated version: $VERSION"
+                        
+                        # Generate image tag (no build number needed since timestamp provides uniqueness)
+                        IMAGE_TAG="${VERSION}"
+                        echo "Generated image tag: $IMAGE_TAG"
+                        
+                        # Store version info for later stages
+                        echo "$VERSION" > version.txt
+                        echo "$IMAGE_TAG" > image_tag.txt
                     '''
                     
-                    // Read the appVersion from Chart.yaml using kaniko container
-                    container('kaniko') {
-                        sh '''
-                            cd gitops-tmp/apps/chatipt
-                            echo "Current directory: $(pwd)"
-                            echo "Chart.yaml exists: $(ls -la Chart.yaml)"
-                            
-                            # Try to use system yq first
-                            YQ=""
-                            if command -v yq &> /dev/null; then
-                                echo "Using system yq"
-                                YQ=$(command -v yq)
-                                echo "System yq path: $YQ"
-                            fi
-                            
-                            # If system yq not found, download it
-                            if [ -z "$YQ" ]; then
-                                echo "yq not found in system, downloading..."
-                                # Use a specific version instead of latest to avoid rate limiting
-                                curl -L https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64 -o yq
-                                if [ ! -f yq ]; then
-                                    echo "Failed to download yq with curl, trying wget..."
-                                    wget -O yq https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64
-                                fi
-                                if [ -f yq ]; then
-                                    chmod +x yq
-                                    YQ=./yq
-                                    echo "Downloaded yq to: $YQ"
-                                else
-                                    echo "ERROR: Failed to download yq with both curl and wget"
-                                    exit 1
-                                fi
-                            fi
-                            
-                            # Verify yq is available
-                            if [ -z "$YQ" ]; then
-                                echo "ERROR: yq is not available and could not be downloaded"
-                                exit 1
-                            fi
-                            
-                            echo "Using yq: $YQ"
-                            echo "YQ variable content: '$YQ'"
-                            $YQ --version
-                            echo "Reading appVersion from Chart.yaml..."
-                            APP_VERSION=$($YQ e '.appVersion' Chart.yaml)
-                            echo "yq output: '$APP_VERSION'"
-                            echo "$APP_VERSION" > app_version.txt
-                        '''
-                    }
+                    // Read the version info
+                    def version = readFile('version.txt').trim()
+                    def imageTag = readFile('image_tag.txt').trim()
                     
-                    // Read the appVersion from the file
-                    def appVersion = readFile('gitops-tmp/apps/chatipt/app_version.txt').trim()
+                    echo "Version: ${version}"
+                    echo "Image tag: ${imageTag}"
                     
-                    echo "Raw appVersion output: '${appVersion}'"
-                    
-                    // Validate that we got a proper version
-                    if (appVersion == null || appVersion.isEmpty() || appVersion == "null") {
-                        error "Failed to read appVersion from Chart.yaml. Got: '${appVersion}'"
-                    }
-                    
-                    echo "Current appVersion from Chart.yaml: ${appVersion}"
-                    def imageTag = "${appVersion}-${env.BUILD_NUMBER}"
-                    echo "Generated image tag: ${imageTag}"
-                    
-                    // Store the image tag in a file for subsequent stages
-                    writeFile file: 'image_tag.txt', text: imageTag
-                    echo "Wrote image tag to file: '${imageTag}'"
-                    
-                    // Verify the file was written correctly
-                    def verifyTag = readFile('image_tag.txt').trim()
-                    echo "Verified file content: '${verifyTag}'"
+                    // Store in environment for post actions
+                    env.VERSION = version
+                    env.IMAGE_TAG = imageTag
                 }
             }
         }
@@ -134,14 +94,8 @@ pipeline {
         stage('Build Backend') {
             steps {
                 script {
-                    // Read the image tag from file
                     def imageTag = readFile('image_tag.txt').trim()
-                    echo "Building backend with image tag: '${imageTag}'"
-                    
-                    // Validate the image tag
-                    if (imageTag == null || imageTag.isEmpty() || imageTag == "null") {
-                        error "Image tag is null or empty in backend build. Got: '${imageTag}'"
-                    }
+                    echo "Building backend with image tag: ${imageTag}"
                     
                     dir('back-end') {
                         container('kaniko') {
@@ -161,7 +115,6 @@ pipeline {
         stage('Build Frontend') {
             steps {
                 script {
-                    // Read the image tag from file
                     def imageTag = readFile('image_tag.txt').trim()
                     echo "Building frontend with image tag: ${imageTag}"
                     
@@ -183,63 +136,39 @@ pipeline {
         stage('Update GitOps Repo') {
             steps {
                 script {
-                    // Read the image tag from file
                     def imageTag = readFile('image_tag.txt').trim()
-                    echo "Updating GitOps with image tag: '${imageTag}'"
+                    echo "Updating GitOps with image tag: ${imageTag}"
                     
-                    // Validate the image tag
-                    if (imageTag == null || imageTag.isEmpty() || imageTag == "null") {
-                        error "Image tag is null or empty. Got: '${imageTag}'"
-                    }
+                    // Clone the GitOps repo
+                    sh '''
+                        rm -rf gitops-tmp
+                        git clone https://github.com/gbif-norway/gitops.git gitops-tmp
+                    '''
                     
-                    // Update image tags in values-staging.yaml using kaniko container
+                    // Update image tags in values-staging.yaml
                     container('kaniko') {
                         sh """
                             cd gitops-tmp/apps/chatipt
-                            # Try to use system yq first
-                            YQ=""
-                            if command -v yq &> /dev/null; then
-                                echo "Using system yq"
-                                YQ=\$(command -v yq)
-                                echo "System yq path: \$YQ"
-                            fi
-                            
-                            # If system yq not found, download it
-                            if [ -z "\$YQ" ]; then
-                                echo "yq not found in system, downloading..."
-                                # Use a specific version instead of latest to avoid rate limiting
-                                curl -L https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64 -o yq
-                                if [ ! -f yq ]; then
-                                    echo "Failed to download yq with curl, trying wget..."
-                                    wget -O yq https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64
-                                fi
-                                if [ -f yq ]; then
-                                    chmod +x yq
-                                    YQ=./yq
-                                    echo "Downloaded yq to: \$YQ"
-                                else
-                                    echo "ERROR: Failed to download yq with both curl and wget"
-                                    exit 1
-                                fi
-                            fi
-                            
-                            # Verify yq is available
-                            if [ -z "\$YQ" ]; then
-                                echo "ERROR: yq is not available and could not be downloaded"
-                                exit 1
-                            fi
-                            
-                            echo "Using yq: \$YQ"
-                            echo "YQ variable content: '\$YQ'"
-                            \$YQ --version
                             echo "Updating image tags in values-staging.yaml to ${imageTag}"
-                            \$YQ e -i '.backEnd.image.tag = "${imageTag}"' values-staging.yaml
-                            \$YQ e -i '.frontEnd.image.tag = "${imageTag}"' values-staging.yaml
+                            
+                            # Create backup of original file
+                            cp values-staging.yaml values-staging.yaml.backup
+                            
+                            # Update backend image tag
+                            sed -i "/^[[:space:]]*backEnd:/,/^[[:space:]]*frontEnd:/ s/^[[:space:]]*tag:[[:space:]]*.*/    tag: ${imageTag}/" values-staging.yaml
+                            
+                            # Update frontend image tag
+                            sed -i "/^[[:space:]]*frontEnd:/,/^[[:space:]]*$/ s/^[[:space:]]*tag:[[:space:]]*.*/    tag: ${imageTag}/" values-staging.yaml
+                            
+                            # Verify the changes
+                            echo "Updated values-staging.yaml:"
+                            grep -A 5 -B 5 "tag:" values-staging.yaml
+                            
                             echo "Updated image tags successfully"
                         """
                     }
                     
-                    // Commit and push changes using HTTPS credentials
+                    // Commit and push changes
                     withCredentials([usernamePassword(credentialsId: 'jenkins-git-https', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
                         sh """
                             cd gitops-tmp
@@ -263,8 +192,8 @@ pipeline {
         }
         success {
             echo "🎉 Staging pipeline completed successfully"
-            echo "📦 Images pushed to registry with tag: ${IMAGE_TAG}"
-            echo "📋 Based on appVersion: ${APP_VERSION}"
+            echo "📦 Images pushed to registry with tag: ${env.IMAGE_TAG}"
+            echo "📋 Based on version: ${env.VERSION}"
         }
         failure {
             echo "❌ Staging pipeline failed"
