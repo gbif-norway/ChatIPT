@@ -77,6 +77,13 @@ pipeline {
                             chmod +x yq
                             YQ=./yq
                         fi
+                        
+                        # Verify yq is available
+                        if [ -z "$YQ" ]; then
+                            echo "ERROR: yq is not available and could not be downloaded"
+                            exit 1
+                        fi
+                        
                         echo "Using yq: $YQ"
                         $YQ --version
                         echo "Reading appVersion from Chart.yaml..."
@@ -189,6 +196,13 @@ pipeline {
                             chmod +x yq
                             YQ=./yq
                         fi
+                        
+                        # Verify yq is available
+                        if [ -z "\$YQ" ]; then
+                            echo "ERROR: yq is not available and could not be downloaded"
+                            exit 1
+                        fi
+                        
                         \$YQ --version
                         echo "Updating image tags in values-staging.yaml to ${imageTag}"
                         \$YQ e -i '.backEnd.image.tag = "${imageTag}"' values-staging.yaml
