@@ -171,7 +171,7 @@ pipeline {
                     }
                     
                     // Commit and push changes
-                    withCredentials([usernamePassword(credentialsId: 'jenkins-git-https', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
+                    withCredentials([sshUserPrivateKey(credentialsId: 'jenkins-git-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
                         withEnv(["IMAGE_TAG=${imageTag}"]) {
                             sh '''
                                 cd gitops-tmp
@@ -179,9 +179,9 @@ pipeline {
                                 git config user.name "GBIF Jenkins CI"
                                 git add apps/chatipt/values-staging.yaml
                                 git commit -m "ci: update image tags in values-staging.yaml to $IMAGE_TAG [skip ci]" || true
-                                git remote set-url origin https://$GIT_USERNAME:$GIT_PASSWORD@github.com/gbif-norway/gitops.git
-                                echo "Pushing to GitHub with credentials..."
-                                git push origin main
+                                git remote set-url origin git@github.com:gbif-norway/gitops.git
+                                echo "Pushing to GitHub with SSH..."
+                                GIT_SSH_COMMAND="ssh -i $SSH_KEY -o StrictHostKeyChecking=no" git push origin main
                             '''
                         }
                     }
