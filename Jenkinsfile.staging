@@ -56,41 +56,55 @@ pipeline {
                         git clone https://github.com/gbif-norway/gitops.git gitops-tmp
                     '''
                     
-                    // Read the appVersion from Chart.yaml - separate debug and capture
-                    sh '''
-                        cd gitops-tmp/apps/chatipt
-                        echo "Current directory: $(pwd)"
-                        echo "Chart.yaml exists: $(ls -la Chart.yaml)"
-                        
-                        # Try to use system yq first
-                        if command -v yq &> /dev/null; then
-                            echo "Using system yq"
-                            YQ=$(command -v yq)
-                        else
-                            echo "yq not found, downloading..."
-                            # Use a specific version instead of latest to avoid rate limiting
-                            curl -L https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64 -o yq
-                            if [ ! -f yq ]; then
-                                echo "Failed to download yq, trying alternative method..."
-                                wget -O yq https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64
+                    // Read the appVersion from Chart.yaml using kaniko container
+                    container('kaniko') {
+                        sh '''
+                            cd gitops-tmp/apps/chatipt
+                            echo "Current directory: $(pwd)"
+                            echo "Chart.yaml exists: $(ls -la Chart.yaml)"
+                            
+                            # Try to use system yq first
+                            YQ=""
+                            if command -v yq &> /dev/null; then
+                                echo "Using system yq"
+                                YQ=$(command -v yq)
+                                echo "System yq path: $YQ"
                             fi
-                            chmod +x yq
-                            YQ=./yq
-                        fi
-                        
-                        # Verify yq is available
-                        if [ -z "$YQ" ]; then
-                            echo "ERROR: yq is not available and could not be downloaded"
-                            exit 1
-                        fi
-                        
-                        echo "Using yq: $YQ"
-                        $YQ --version
-                        echo "Reading appVersion from Chart.yaml..."
-                        APP_VERSION=$($YQ e '.appVersion' Chart.yaml)
-                        echo "yq output: '$APP_VERSION'"
-                        echo "$APP_VERSION" > app_version.txt
-                    '''
+                            
+                            # If system yq not found, download it
+                            if [ -z "$YQ" ]; then
+                                echo "yq not found in system, downloading..."
+                                # Use a specific version instead of latest to avoid rate limiting
+                                curl -L https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64 -o yq
+                                if [ ! -f yq ]; then
+                                    echo "Failed to download yq with curl, trying wget..."
+                                    wget -O yq https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64
+                                fi
+                                if [ -f yq ]; then
+                                    chmod +x yq
+                                    YQ=./yq
+                                    echo "Downloaded yq to: $YQ"
+                                else
+                                    echo "ERROR: Failed to download yq with both curl and wget"
+                                    exit 1
+                                fi
+                            fi
+                            
+                            # Verify yq is available
+                            if [ -z "$YQ" ]; then
+                                echo "ERROR: yq is not available and could not be downloaded"
+                                exit 1
+                            fi
+                            
+                            echo "Using yq: $YQ"
+                            echo "YQ variable content: '$YQ'"
+                            $YQ --version
+                            echo "Reading appVersion from Chart.yaml..."
+                            APP_VERSION=$($YQ e '.appVersion' Chart.yaml)
+                            echo "yq output: '$APP_VERSION'"
+                            echo "$APP_VERSION" > app_version.txt
+                        '''
+                    }
                     
                     // Read the appVersion from the file
                     def appVersion = readFile('gitops-tmp/apps/chatipt/app_version.txt').trim()
@@ -178,37 +192,52 @@ pipeline {
                         error "Image tag is null or empty. Got: '${imageTag}'"
                     }
                     
-                    // Update image tags in values-staging.yaml
-                    sh """
-                        cd gitops-tmp/apps/chatipt
-                        # Try to use system yq first
-                        if command -v yq &> /dev/null; then
-                            echo "Using system yq"
-                            YQ=\$(command -v yq)
-                        else
-                            echo "yq not found, downloading..."
-                            # Use a specific version instead of latest to avoid rate limiting
-                            curl -L https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64 -o yq
-                            if [ ! -f yq ]; then
-                                echo "Failed to download yq, trying alternative method..."
-                                wget -O yq https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64
+                    // Update image tags in values-staging.yaml using kaniko container
+                    container('kaniko') {
+                        sh """
+                            cd gitops-tmp/apps/chatipt
+                            # Try to use system yq first
+                            YQ=""
+                            if command -v yq &> /dev/null; then
+                                echo "Using system yq"
+                                YQ=\$(command -v yq)
+                                echo "System yq path: \$YQ"
                             fi
-                            chmod +x yq
-                            YQ=./yq
-                        fi
-                        
-                        # Verify yq is available
-                        if [ -z "\$YQ" ]; then
-                            echo "ERROR: yq is not available and could not be downloaded"
-                            exit 1
-                        fi
-                        
-                        \$YQ --version
-                        echo "Updating image tags in values-staging.yaml to ${imageTag}"
-                        \$YQ e -i '.backEnd.image.tag = "${imageTag}"' values-staging.yaml
-                        \$YQ e -i '.frontEnd.image.tag = "${imageTag}"' values-staging.yaml
-                        echo "Updated image tags successfully"
-                    """
+                            
+                            # If system yq not found, download it
+                            if [ -z "\$YQ" ]; then
+                                echo "yq not found in system, downloading..."
+                                # Use a specific version instead of latest to avoid rate limiting
+                                curl -L https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64 -o yq
+                                if [ ! -f yq ]; then
+                                    echo "Failed to download yq with curl, trying wget..."
+                                    wget -O yq https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64
+                                fi
+                                if [ -f yq ]; then
+                                    chmod +x yq
+                                    YQ=./yq
+                                    echo "Downloaded yq to: \$YQ"
+                                else
+                                    echo "ERROR: Failed to download yq with both curl and wget"
+                                    exit 1
+                                fi
+                            fi
+                            
+                            # Verify yq is available
+                            if [ -z "\$YQ" ]; then
+                                echo "ERROR: yq is not available and could not be downloaded"
+                                exit 1
+                            fi
+                            
+                            echo "Using yq: \$YQ"
+                            echo "YQ variable content: '\$YQ'"
+                            \$YQ --version
+                            echo "Updating image tags in values-staging.yaml to ${imageTag}"
+                            \$YQ e -i '.backEnd.image.tag = "${imageTag}"' values-staging.yaml
+                            \$YQ e -i '.frontEnd.image.tag = "${imageTag}"' values-staging.yaml
+                            echo "Updated image tags successfully"
+                        """
+                    }
                     
                     // Commit and push changes using HTTPS credentials
                     withCredentials([usernamePassword(credentialsId: 'jenkins-git-https', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
