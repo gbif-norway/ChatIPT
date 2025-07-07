@@ -149,7 +149,7 @@ pipeline {
                     container('kaniko') {
                         sh """
                             cd gitops-tmp/apps/chatipt
-                            echo "Updating image tags in values-staging.yaml to ${imageTag}"
+                            echo "Updating image tags in values-staging.yaml to \${imageTag}"
                             
                             # Create backup of original file
                             cp values-staging.yaml values-staging.yaml.backup
