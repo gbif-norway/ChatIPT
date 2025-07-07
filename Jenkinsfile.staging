@@ -56,32 +56,30 @@ pipeline {
                         git clone https://github.com/gbif-norway/gitops.git gitops-tmp
                     '''
                     
-                    // Read the appVersion from Chart.yaml with better debugging
-                    def appVersion = sh(
-                        script: '''
-                            cd gitops-tmp/apps/chatipt
-                            echo "Current directory: $(pwd)"
-                            echo "Chart.yaml exists: $(ls -la Chart.yaml)"
-                            echo "Chart.yaml content:"
-                            cat Chart.yaml
-                            
-                            if ! command -v yq &> /dev/null; then
-                                echo "yq not found, downloading..."
-                                curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
-                                chmod +x yq
-                                YQ=./yq
-                            else
-                                YQ=$(command -v yq)
-                            fi
-                            echo "Using yq: $YQ"
-                            $YQ --version
-                            echo "Reading appVersion from Chart.yaml..."
-                            APP_VERSION=$($YQ e '.appVersion' Chart.yaml)
-                            echo "yq output: '$APP_VERSION'"
-                            echo "$APP_VERSION"
-                        ''',
-                        returnStdout: true
-                    ).trim()
+                    // Read the appVersion from Chart.yaml - separate debug and capture
+                    sh '''
+                        cd gitops-tmp/apps/chatipt
+                        echo "Current directory: $(pwd)"
+                        echo "Chart.yaml exists: $(ls -la Chart.yaml)"
+                        
+                        if ! command -v yq &> /dev/null; then
+                            echo "yq not found, downloading..."
+                            curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
+                            chmod +x yq
+                            YQ=./yq
+                        else
+                            YQ=$(command -v yq)
+                        fi
+                        echo "Using yq: $YQ"
+                        $YQ --version
+                        echo "Reading appVersion from Chart.yaml..."
+                        APP_VERSION=$($YQ e '.appVersion' Chart.yaml)
+                        echo "yq output: '$APP_VERSION'"
+                        echo "$APP_VERSION" > app_version.txt
+                    '''
+                    
+                    // Read the appVersion from the file
+                    def appVersion = readFile('gitops-tmp/apps/chatipt/app_version.txt').trim()
                     
                     echo "Raw appVersion output: '${appVersion}'"
                     
