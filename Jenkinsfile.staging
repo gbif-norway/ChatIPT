@@ -166,17 +166,15 @@ pipeline {
                         echo "Updated image tags successfully"
                     """
                     
-                    // Commit and push changes using credentials
-                    withCredentials([sshUserPrivateKey(credentialsId: 'jenkins-git-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+                    // Commit and push changes using HTTPS credentials
+                    withCredentials([usernamePassword(credentialsId: 'jenkins-git-https', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
                         sh """
                             cd gitops-tmp
                             git config user.email "ci-bot@gbif.no"
                             git config user.name "GBIF Jenkins CI"
                             git add apps/chatipt/values-staging.yaml
                             git commit -m "ci: update image tags in values-staging.yaml to ${imageTag} [skip ci]" || true
-                            git remote set-url origin git@github.com:gbif-norway/gitops.git
-                            eval \$(ssh-agent -s)
-                            ssh-add \$SSH_KEY
+                            git remote set-url origin https://\${GIT_USERNAME}:\${GIT_PASSWORD}@github.com/gbif-norway/gitops.git
                             git push origin main
                         """
                     }
