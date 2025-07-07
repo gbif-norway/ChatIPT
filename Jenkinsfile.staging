@@ -43,6 +43,7 @@ pipeline {
         FRONTEND_IMAGE = 'chatipt-front-end'
         BRANCH_NAME = 'staging'
         ENVIRONMENT = 'staging'
+        NEXT_PUBLIC_BASE_API_URL = 'https://staging-api.chatipt.svc.gbif.no'
     }
 
     stages {
@@ -125,6 +126,7 @@ pipeline {
                                     --context . \\
                                     --dockerfile Dockerfile \\
                                     --destination ${REGISTRY}/${FRONTEND_IMAGE}:${imageTag} \\
+                                    --build-arg NEXT_PUBLIC_BASE_API_URL=${NEXT_PUBLIC_BASE_API_URL} \\
                                     --cache=true
                             """
                         }
