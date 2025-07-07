@@ -155,10 +155,10 @@ pipeline {
                             cp values-staging.yaml values-staging.yaml.backup
                             
                             # Update backend image tag
-                            sed -i "/^[[:space:]]*backEnd:/,/^[[:space:]]*frontEnd:/ s/^[[:space:]]*tag:[[:space:]]*.*/    tag: ${imageTag}/" values-staging.yaml
+                            sed -i "/^[[:space:]]*backEnd:/,/^[[:space:]]*frontEnd:/ s/^[[:space:]]*tag:[[:space:]]*.*/    tag: \${imageTag}/" values-staging.yaml
                             
                             # Update frontend image tag
-                            sed -i "/^[[:space:]]*frontEnd:/,/^[[:space:]]*$/ s/^[[:space:]]*tag:[[:space:]]*.*/    tag: ${imageTag}/" values-staging.yaml
+                            sed -i "/^[[:space:]]*frontEnd:/,/^[[:space:]]*$/ s/^[[:space:]]*tag:[[:space:]]*.*/    tag: \${imageTag}/" values-staging.yaml
                             
                             # Verify the changes
                             echo "Updated values-staging.yaml:"
