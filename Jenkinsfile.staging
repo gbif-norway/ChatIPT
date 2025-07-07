@@ -161,8 +161,8 @@ pipeline {
                         fi
                         \$YQ --version
                         echo "Updating image tags in values-staging.yaml to ${imageTag}"
-                        \$YQ e -i ".backEnd.image.tag = \"${imageTag}\"" values-staging.yaml
-                        \$YQ e -i ".frontEnd.image.tag = \"${imageTag}\"" values-staging.yaml
+                        \$YQ e -i '.backEnd.image.tag = "${imageTag}"' values-staging.yaml
+                        \$YQ e -i '.frontEnd.image.tag = "${imageTag}"' values-staging.yaml
                         echo "Updated image tags successfully"
                     """
                     
