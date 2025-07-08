@@ -43,7 +43,7 @@ pipeline {
         FRONTEND_IMAGE = 'chatipt-front-end'
         BRANCH_NAME = 'staging'
         ENVIRONMENT = 'staging'
-        NEXT_PUBLIC_BASE_API_URL = 'https://staging-api.chatipt.svc.gbif.no'
+        NEXT_PUBLIC_BASE_API_URL = 'https://staging-api.chatipt.svc.gbif.no/api'
     }
 
     stages {
