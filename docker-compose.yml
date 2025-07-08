@@ -1,16 +1,16 @@
 services:
   db:
-    image: postgres:latest # To clear database: docker rm -v publishgpt-db-1
+    image: postgres:latest # To clear database: docker rm -v chatipt-db-1
     shm_size: 5g
     environment:
         - POSTGRES_HOST_AUTH_METHOD=trust
     platform: linux/amd64
   back-end: 
-    # docker buildx build --platform linux/amd64 -t gbifnorway/publishgpt-back-end:$(git rev-parse --short HEAD) -t gbifnorway/publishgpt-back-end:latest --push .
+    # docker buildx build --platform linux/amd64 -t gbifnorway/chatipt-back-end:$(git rev-parse --short HEAD) -t gbifnorway/chatipt-back-end:latest --push .
     build: ./back-end
     entrypoint: "tail -f /dev/null"
     # entrypoint: "./manage.py runserver 0.0.0.0:8000"
-    image: gbifnorway/publishgpt-back-end:latest
+    image: gbifnorway/chatipt-back-end:latest
     volumes:
       - ./back-end:/app
     depends_on:
@@ -20,9 +20,9 @@ services:
     env_file:
       - ./back-end/.env.dev
   front-end: 
-    # docker buildx build --platform linux/amd64 --build-arg NEXT_PUBLIC_BASE_API_URL=https://api.chatipt.svc.gbif.no/api -t gbifnorway/publishgpt-front-end:$(git rev-parse --short HEAD) -t gbifnorway/publishgpt-front-end:latest --push .
+    # docker buildx build --platform linux/amd64 --build-arg NEXT_PUBLIC_BASE_API_URL=https://api.chatipt.svc.gbif.no/api -t gbifnorway/chatipt-front-end:$(git rev-parse --short HEAD) -t gbifnorway/chatipt-front-end:latest --push .
     build: ./front-end
-    image: gbifnorway/publishgpt-front-end:latest
+    image: gbifnorway/chatipt-front-end:latest
     volumes:
       - ./front-end:/app
     stdin_open: true
