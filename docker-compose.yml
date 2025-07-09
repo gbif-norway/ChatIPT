@@ -8,8 +8,6 @@ services:
   back-end: 
     # docker buildx build --platform linux/amd64 -t gbifnorway/chatipt-back-end:$(git rev-parse --short HEAD) -t gbifnorway/chatipt-back-end:latest --push .
     build: ./back-end
-    entrypoint: "tail -f /dev/null"
-    # entrypoint: "./manage.py runserver 0.0.0.0:8000"
     image: gbifnorway/chatipt-back-end:latest
     volumes:
       - ./back-end:/app
@@ -19,6 +17,13 @@ services:
       - "8000:8000"
     env_file:
       - ./back-end/.env.dev
+    environment:
+      # ORCID OAuth2 credentials (override from env file if needed)
+      - ORCID_CLIENT_ID=${ORCID_CLIENT_ID}
+      - ORCID_CLIENT_SECRET=${ORCID_CLIENT_SECRET}
+      # Optional: Create superuser on startup
+      - DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL:-}
+      - DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD:-}
   front-end: 
     # docker buildx build --platform linux/amd64 --build-arg NEXT_PUBLIC_BASE_API_URL=https://api.chatipt.svc.gbif.no/api -t gbifnorway/chatipt-front-end:$(git rev-parse --short HEAD) -t gbifnorway/chatipt-front-end:latest --push .
     build: ./front-end
