@@ -64,6 +64,6 @@ class AgentAdmin(admin.ModelAdmin):
 @admin.register(Message)
 class MessageAdmin(admin.ModelAdmin):
     list_display = ('agent', 'role', 'created_at')
-    list_filter = ('role', 'created_at')
+    list_filter = ('created_at',)  # Removed 'role' since it's a property
     search_fields = ('agent__dataset__title',)
     readonly_fields = ('created_at',) 
