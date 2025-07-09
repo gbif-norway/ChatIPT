@@ -2,6 +2,7 @@ import traceback
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.contrib.postgres.fields import ArrayField
+from django.contrib.auth.models import AbstractUser
 from api import agent_tools
 from api.helpers.openai_helpers import create_chat_completion
 from picklefield.fields import PickledObjectField
@@ -18,8 +19,26 @@ import numpy as np
 import io
 
 
+class CustomUser(AbstractUser):
+    """Custom user model with ORCID integration"""
+    orcid_id = models.CharField(max_length=50, blank=True, help_text="ORCID identifier")
+    orcid_access_token = models.TextField(blank=True, help_text="ORCID OAuth access token")
+    orcid_refresh_token = models.TextField(blank=True, help_text="ORCID OAuth refresh token")
+    institution = models.CharField(max_length=500, blank=True, help_text="User's institution")
+    department = models.CharField(max_length=500, blank=True, help_text="User's department")
+    country = models.CharField(max_length=100, blank=True, help_text="User's country")
+    
+    def __str__(self):
+        return f"{self.email} ({self.orcid_id})"
+    
+    class Meta:
+        verbose_name = "User"
+        verbose_name_plural = "Users"
+
+
 class Dataset(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='datasets', null=True, blank=True)
     orcid = models.CharField(max_length=2000, blank=True)
     file = models.FileField(upload_to='user_files')
     title = models.CharField(max_length=2000, blank=True, default='')
@@ -84,7 +103,7 @@ class Dataset(models.Model):
                     for row in sheet.iter_rows():
                         for cell in row:
                             if cell.data_type == 'f':  # 'f' indicates a formula
-                                cell.value = '' # f'[FORMULA: {cell.value}]'
+                                cell.value = '' # f'[FORMULA: {cell.value}]'
                     for merged_cell in list(sheet.merged_cells.ranges):
                         min_col, min_row, max_col, max_row = merged_cell.min_col, merged_cell.min_row, merged_cell.max_col, merged_cell.max_row
                         value = sheet.cell(row=min_row, column=min_col).value
@@ -108,7 +127,7 @@ class Dataset(models.Model):
         ordering = ['created_at']
 
 
-class Task(models.Model):  # See tasks.yaml for the only objects this model is populated with
+class Task(models.Model):  # See tasks.yaml for the only objects this model is populated with
     name = models.CharField(max_length=300, unique=True)
     text = models.TextField()
 
@@ -249,13 +268,13 @@ class Agent(models.Model):
             return [Message.objects.create(agent=self, openai_obj={'role': Message.Role.ASSISTANT, 'content': error_message})]
 
         message = Message.objects.create(agent=self, openai_obj=response_message.dict())  # response_message.__dict__
-        if not response_message.tool_calls:  # It's a simple assistant message
+        if not response_message.tool_calls:  # It's a simple assistant message
             self.busy_thinking = False
             self.save()
             return [message]
 
-        messages = [message]  # Store the API response which requests the tool calls
-        for tool_call in response_message.tool_calls:  # Occasionally a single API response requests multiple tool calls
+        messages = [message]  # Store the API response which requests the tool calls
+        for tool_call in response_message.tool_calls:  # Occasionally a single API response requests multiple tool calls
             try:
                 result = self.run_function(tool_call.function)
             except Exception as e:
@@ -263,7 +282,7 @@ class Agent(models.Model):
 
             messages.append(Message.create_function_message(agent=self, function_result=result, tool_call_id=tool_call.id))
 
-        self.refresh_from_db()  # Necessary so that completed_at doesn't get overwritten
+        self.refresh_from_db()  # Necessary so that completed_at doesn't get overwritten
         self.busy_thinking = False
         self.save()
         return messages

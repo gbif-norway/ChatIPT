@@ -29,7 +29,11 @@ router.register(r'agents', api_views.AgentViewSet)
 router.register(r'tasks', api_views.TaskViewSet)  
 
 urlpatterns = [
+    path('admin/', admin.site.urls),
+    path('accounts/', include('allauth.urls')),
     path('api/', include(router.urls)),
+    path('api/auth/status/', api_views.auth_status, name='auth_status'),
+    path('api/auth/profile/', api_views.user_profile, name='user_profile'),
     path('api-auth/', include('rest_framework.urls', namespace='rest_framework')),
     path('api-schema/', SpectacularAPIView.as_view(), name='schema'),
     path('', views.DatasetListView.as_view(), name='index'),
