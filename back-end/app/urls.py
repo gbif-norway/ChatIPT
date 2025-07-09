@@ -22,11 +22,11 @@ from drf_spectacular.views import SpectacularAPIView
 from website import views
 
 router = routers.DefaultRouter()
-router.register(r'datasets', api_views.DatasetViewSet)
-router.register(r'tables', api_views.TableViewSet)
-router.register(r'messages', api_views.MessageViewSet)
-router.register(r'agents', api_views.AgentViewSet)  
-router.register(r'tasks', api_views.TaskViewSet)  
+router.register(r'datasets', api_views.DatasetViewSet, basename='dataset')
+router.register(r'tables', api_views.TableViewSet, basename='table')
+router.register(r'messages', api_views.MessageViewSet, basename='message')
+router.register(r'agents', api_views.AgentViewSet, basename='agent')  
+router.register(r'tasks', api_views.TaskViewSet, basename='task')  
 
 urlpatterns = [
     path('admin/', admin.site.urls),

@@ -88,10 +88,13 @@ class TableViewSet(viewsets.ModelViewSet):
 
 
 class TaskViewSet(viewsets.ModelViewSet):
-    queryset = Task.objects.all()
     serializer_class = TaskSerializer
-    filterset_fields = '__all__'
     permission_classes = [IsAuthenticated]
+    filterset_fields = '__all__'
+
+    def get_queryset(self):
+        """Return all tasks (they are system-wide, not user-specific)"""
+        return Task.objects.all()
 
 
 class MessageViewSet(viewsets.ModelViewSet):
