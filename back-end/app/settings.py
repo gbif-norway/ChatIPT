@@ -221,10 +221,6 @@ if MINIO_URI and MINIO_ACCESS_KEY and MINIO_SECRET_KEY and MINIO_STATIC_BUCKET:
                 "use_ssl": True,
                 "verify": False,
                 "addressing_style": "virtual",
-                # Disable content SHA256 validation for MinIO compatibility
-                "s3_addressing_style": "virtual",
-                "s3_use_accelerate_endpoint": False,
-                "s3_use_dualstack_endpoint": False,
             },
         },
     }
