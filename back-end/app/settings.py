@@ -198,6 +198,7 @@ if MINIO_URI and MINIO_ACCESS_KEY and MINIO_SECRET_KEY and MINIO_STATIC_BUCKET:
     
     # Disable content SHA256 validation for MinIO compatibility
     os.environ['AWS_S3_DISABLE_CONTENT_SHA256'] = 'true'
+    os.environ['AWS_S3_ADDRESSING_STYLE'] = 'path'
     
     # Modern STORAGES configuration (Django 4.2+)
     STORAGES = {
