@@ -184,6 +184,25 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+# S3/MinIO Static Files Configuration
+if os.environ.get('USE_S3_STATIC', 'False').lower() == 'true':
+    # Use S3/MinIO for static files (reusing existing MinIO env vars)
+    STATICFILES_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    AWS_ACCESS_KEY_ID = os.environ.get('MINIO_ACCESS_KEY')
+    AWS_SECRET_ACCESS_KEY = os.environ.get('MINIO_SECRET_KEY')
+    AWS_STORAGE_BUCKET_NAME = os.environ.get('MINIO_STATIC_BUCKET', os.environ.get('MINIO_BUCKET'))
+    AWS_S3_ENDPOINT_URL = f"https://{os.environ.get('MINIO_URI')}"
+    AWS_S3_CUSTOM_DOMAIN = f"{os.environ.get('MINIO_URI')}/{AWS_STORAGE_BUCKET_NAME}"
+    AWS_DEFAULT_ACL = None
+    AWS_S3_OBJECT_PARAMETERS = {
+        'CacheControl': 'max-age=86400',
+    }
+    AWS_LOCATION = 'static'
+    STATIC_URL = f"{AWS_S3_CUSTOM_DOMAIN}/{AWS_LOCATION}/"
+else:
+    # Use local filesystem for static files
+    STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
