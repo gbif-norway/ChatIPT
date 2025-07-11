@@ -15,7 +15,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ("auth", "0012_alter_user_first_name_max_length"),
+        ("auth", "0001_initial"),
     ]
 
     operations = [
@@ -224,19 +224,7 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "dwc_extensions",
-                    django.contrib.postgres.fields.ArrayField(
-                        base_field=models.CharField(
-                            choices=[
-                                ("simple_multimedia", "Simple Multimedia"),
-                                ("measurement_or_fact", "Measurement Or Fact"),
-                                ("gbif_releve", "Gbif Releve"),
-                            ],
-                            max_length=500,
-                        ),
-                        blank=True,
-                        null=True,
-                        size=None,
-                    ),
+                    models.TextField(blank=True, null=True),
                 ),
                 (
                     "user",
