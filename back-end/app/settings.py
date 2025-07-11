@@ -196,6 +196,9 @@ if MINIO_URI and MINIO_ACCESS_KEY and MINIO_SECRET_KEY and MINIO_STATIC_BUCKET:
     # Use S3/MinIO storage with modern STORAGES configuration
     STATICFILES_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
     
+    # Disable content SHA256 validation for MinIO compatibility
+    os.environ['AWS_S3_DISABLE_CONTENT_SHA256'] = 'true'
+    
     # Modern STORAGES configuration (Django 4.2+)
     STORAGES = {
         "default": {
@@ -218,15 +221,10 @@ if MINIO_URI and MINIO_ACCESS_KEY and MINIO_SECRET_KEY and MINIO_STATIC_BUCKET:
                 "use_ssl": True,
                 "verify": False,
                 "addressing_style": "virtual",
-                # Boto3 config to avoid SHA256 mismatch with MinIO
-                "config": {
-                    "s3": {
-                        "addressing_style": "virtual",
-                        "use_accelerate_endpoint": False,
-                        "use_dualstack_endpoint": False,
-                        "payload_signing_enabled": False,  # Disable content SHA256 validation
-                    }
-                }
+                # Disable content SHA256 validation for MinIO compatibility
+                "s3_addressing_style": "virtual",
+                "s3_use_accelerate_endpoint": False,
+                "s3_use_dualstack_endpoint": False,
             },
         },
     }
