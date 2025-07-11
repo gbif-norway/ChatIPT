@@ -220,7 +220,7 @@ if MINIO_URI and MINIO_ACCESS_KEY and MINIO_SECRET_KEY and MINIO_STATIC_BUCKET:
                 # MinIO compatibility settings
                 "use_ssl": True,
                 "verify": False,
-                "addressing_style": "virtual",
+                "addressing_style": "path",
             },
         },
     }
