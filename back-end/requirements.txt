@@ -60,3 +60,4 @@ xlrd==2.0.1
 xmltodict==0.14.2
 django-allauth==0.60.1
 django-storages==1.14.2
+boto3==1.39.4
