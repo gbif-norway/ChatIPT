@@ -185,18 +185,48 @@ USE_TZ = True
 STATIC_URL = 'static/'
 
 # S3/MinIO Static Files Configuration
-STATICFILES_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
-AWS_ACCESS_KEY_ID = os.environ.get('MINIO_ACCESS_KEY')
-AWS_SECRET_ACCESS_KEY = os.environ.get('MINIO_SECRET_KEY')
-AWS_STORAGE_BUCKET_NAME = os.environ.get('MINIO_STATIC_BUCKET', os.environ.get('MINIO_BUCKET'))
-AWS_S3_ENDPOINT_URL = f"https://{os.environ.get('MINIO_URI')}"
-AWS_S3_CUSTOM_DOMAIN = f"{os.environ.get('MINIO_URI')}/{AWS_STORAGE_BUCKET_NAME}"
-AWS_DEFAULT_ACL = None
-AWS_S3_OBJECT_PARAMETERS = {
-    'CacheControl': 'max-age=86400',
-}
-AWS_LOCATION = 'static'
-STATIC_URL = f"{AWS_S3_CUSTOM_DOMAIN}/{AWS_LOCATION}/"
+# Check if required environment variables are set
+MINIO_URI = os.environ.get('MINIO_URI')
+MINIO_ACCESS_KEY = os.environ.get('MINIO_ACCESS_KEY')
+MINIO_SECRET_KEY = os.environ.get('MINIO_SECRET_KEY')
+MINIO_BUCKET = os.environ.get('MINIO_BUCKET')
+MINIO_STATIC_BUCKET = os.environ.get('MINIO_STATIC_BUCKET', MINIO_BUCKET)
+
+if MINIO_URI and MINIO_ACCESS_KEY and MINIO_SECRET_KEY and MINIO_STATIC_BUCKET:
+    # Use S3/MinIO storage with newer django-storages format
+    STATICFILES_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    
+    # Modern STORAGES configuration (Django 4.2+)
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+            "OPTIONS": {
+                "access_key": MINIO_ACCESS_KEY,
+                "secret_key": MINIO_SECRET_KEY,
+                "bucket_name": MINIO_STATIC_BUCKET,
+                "endpoint_url": f"https://{MINIO_URI}",
+                "custom_domain": f"{MINIO_URI}/{MINIO_STATIC_BUCKET}",
+                "default_acl": None,
+                "object_parameters": {
+                    "CacheControl": "max-age=86400",
+                },
+                "location": "static",
+            },
+        },
+    }
+    
+    # Static files URL
+    STATIC_URL = f"https://{MINIO_URI}/{MINIO_STATIC_BUCKET}/static/"
+    
+    print(f"Using S3/MinIO storage: https://{MINIO_URI}/{MINIO_STATIC_BUCKET}")
+else:
+    # Fallback to local filesystem if MinIO env vars are missing
+    print("Warning: MinIO environment variables not set, using local filesystem for static files")
+    STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+    STATIC_URL = 'static/'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
