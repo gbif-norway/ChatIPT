@@ -193,12 +193,8 @@ MINIO_BUCKET = os.environ.get('MINIO_BUCKET')
 MINIO_STATIC_BUCKET = os.environ.get('MINIO_STATIC_BUCKET', MINIO_BUCKET)
 
 if MINIO_URI and MINIO_ACCESS_KEY and MINIO_SECRET_KEY and MINIO_STATIC_BUCKET:
-    # Use S3/MinIO storage with modern STORAGES configuration
-    STATICFILES_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
-    
-    # Disable content SHA256 validation for MinIO compatibility
-    os.environ['AWS_S3_DISABLE_CONTENT_SHA256'] = 'true'
-    os.environ['AWS_S3_ADDRESSING_STYLE'] = 'path'
+    # Use custom MinIO storage backend
+    STATICFILES_STORAGE = 'api.storage.MinIOStorage'
     
     # Modern STORAGES configuration (Django 4.2+)
     STORAGES = {
@@ -206,22 +202,13 @@ if MINIO_URI and MINIO_ACCESS_KEY and MINIO_SECRET_KEY and MINIO_STATIC_BUCKET:
             "BACKEND": "django.core.files.storage.FileSystemStorage",
         },
         "staticfiles": {
-            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+            "BACKEND": "api.storage.MinIOStorage",
             "OPTIONS": {
                 "access_key": MINIO_ACCESS_KEY,
                 "secret_key": MINIO_SECRET_KEY,
                 "bucket_name": MINIO_STATIC_BUCKET,
-                "endpoint_url": f"https://{MINIO_URI}",
-                "custom_domain": f"{MINIO_URI}/{MINIO_STATIC_BUCKET}",
-                "default_acl": None,
-                "object_parameters": {
-                    "CacheControl": "max-age=86400",
-                },
+                "endpoint_url": MINIO_URI,
                 "location": "static",
-                # MinIO compatibility settings
-                "use_ssl": True,
-                "verify": False,
-                "addressing_style": "path",
             },
         },
     }
