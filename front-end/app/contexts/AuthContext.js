@@ -47,13 +47,17 @@ export const AuthProvider = ({ children }) => {
   }
 
   const login = () => {
+    // Get base URL without /api/ suffix for auth endpoints
+    const baseUrl = config.baseApiUrl.replace(/\/api\/?$/, '')
     // Redirect to Django's ORCID login endpoint
-    window.location.href = `${config.baseApiUrl}/accounts/orcid/login/`
+    window.location.href = `${baseUrl}/accounts/orcid/login/`
   }
 
   const logout = async () => {
     try {
-      await fetch(`${config.baseApiUrl}/accounts/logout/`, {
+      // Get base URL without /api/ suffix for auth endpoints
+      const baseUrl = config.baseApiUrl.replace(/\/api\/?$/, '')
+      await fetch(`${baseUrl}/accounts/logout/`, {
         method: 'GET',
         credentials: 'include'
       })
