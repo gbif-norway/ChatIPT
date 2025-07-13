@@ -2,6 +2,8 @@ import './globals.css'
 import { Inter, IBM_Plex_Serif } from 'next/font/google'
 import 'bootstrap/dist/css/bootstrap.min.css';
 import 'bootstrap-icons/font/bootstrap-icons.css';
+import { AuthProvider } from './contexts/AuthContext'
+import Header from './components/Header'
 
 const inter = Inter({ subsets: ['latin'] })
 const ibmPlexSerif = IBM_Plex_Serif({ subsets: ['latin'], weight: '400' });
@@ -18,8 +20,11 @@ export default function RootLayout({ children }) {
         <title>ChatIPT</title>
       </head>
       <body className={inter.className}>
-        <h1 className={`${ibmPlexSerif.className} title`}>ChatIPT</h1>
-        {children}
+        <AuthProvider>
+          <h1 className={`${ibmPlexSerif.className} title`}>ChatIPT</h1>
+          <Header />
+          {children}
+        </AuthProvider>
       </body>
     </html>
   )

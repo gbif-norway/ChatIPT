@@ -111,10 +111,10 @@ ACCOUNT_UNIQUE_EMAIL = True
 ACCOUNT_EMAIL_SUBJECT_PREFIX = '[ChatIPT] '
 ACCOUNT_DEFAULT_HTTP_PROTOCOL = 'https'
 
-# Disable allauth's default redirects since React will handle them
+# Allauth redirect settings for React frontend
 ACCOUNT_LOGOUT_ON_GET = True
-ACCOUNT_LOGOUT_REDIRECT_URL = None
-LOGIN_REDIRECT_URL = None
+ACCOUNT_LOGOUT_REDIRECT_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+LOGIN_REDIRECT_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
 # Social account settings
 SOCIALACCOUNT_PROVIDERS = {
@@ -240,7 +240,19 @@ REST_FRAMEWORK = {
     ],
 }
 
-CORS_ALLOW_ALL_ORIGINS = True
+# CORS settings for React frontend
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+CORS_ALLOWED_ORIGINS = [
+    FRONTEND_URL,
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+# Allow credentials (cookies) for session authentication
+CORS_ALLOW_CREDENTIALS = True
+
+# For development, you can use this instead of CORS_ALLOWED_ORIGINS
+# CORS_ALLOW_ALL_ORIGINS = True
 
 LOGGING = {
     'version': 1,

@@ -8,7 +8,10 @@ import Tab from 'react-bootstrap/Tab';
 import config from '../config.js';
 
 const fetchData = async (url, options = {}) => {
-  const response = await fetch(url, options);
+  const response = await fetch(url, {
+    ...options,
+    credentials: 'include' // Include credentials for authenticated requests
+  });
   if (!response.ok) throw new Error('Network response was not ok');
   return response.json();
 };
