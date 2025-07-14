@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import Accordion from 'react-bootstrap/Accordion';
 import Badge from 'react-bootstrap/Badge';
 import config from '../config.js';
+import { getCsrfToken } from '../utils/csrf.js';
 
 const Agent = ({ agent, refreshDataset }) => {
   const [userInput, setUserInput] = useState("");
@@ -42,9 +43,16 @@ const Agent = ({ agent, refreshDataset }) => {
       setLoadingMessage("Working...");
 
       try {
+        const csrfToken = await getCsrfToken();
+        const headers = { 'Content-Type': 'application/json' };
+        
+        if (csrfToken) {
+          headers['X-CSRFToken'] = csrfToken;
+        }
+
         await fetch(`${config.baseUrl}/api/messages/`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ openai_obj: { content: userInput, role: 'user' }, agent: agent.id }),
           credentials: 'include' // Include credentials for authenticated requests
         });

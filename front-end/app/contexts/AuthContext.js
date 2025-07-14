@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect } from 'react'
 import config from '../config'
+import { clearCsrfToken } from '../utils/csrf'
 
 const AuthContext = createContext()
 
@@ -62,6 +63,7 @@ export const AuthProvider = ({ children }) => {
     } finally {
       setUser(null)
       setAuthenticated(false)
+      clearCsrfToken() // Clear CSRF token on logout
     }
   }
 

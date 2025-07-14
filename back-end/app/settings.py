@@ -257,6 +257,15 @@ CORS_ALLOWED_ORIGINS = [
 # Allow credentials (cookies) for session authentication
 CORS_ALLOW_CREDENTIALS = True
 
+# CSRF settings for cross-domain requests
+CSRF_TRUSTED_ORIGINS = [
+    "https://staging.chatipt.svc.gbif.no",
+    "https://chatipt.svc.gbif.no",
+    "https://api.chatipt.svc.gbif.no",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
 # Session settings for cross-domain authentication
 SESSION_COOKIE_SECURE = False  # Set to True in production with HTTPS
 SESSION_COOKIE_HTTPONLY = True

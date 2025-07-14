@@ -47,6 +47,14 @@ def auth_status(request):
 
 
 @api_view(['GET'])
+@permission_classes([AllowAny])
+def csrf_token(request):
+    """Get CSRF token for frontend"""
+    from django.middleware.csrf import get_token
+    return Response({'csrfToken': get_token(request)})
+
+
+@api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def user_profile(request):
     """Get current user's profile information"""

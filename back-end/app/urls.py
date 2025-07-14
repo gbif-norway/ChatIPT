@@ -34,6 +34,7 @@ urlpatterns = [
     path('api/', include(router.urls)),
     path('api/auth/status/', api_views.auth_status, name='auth_status'),
     path('api/auth/profile/', api_views.user_profile, name='user_profile'),
+    path('api/auth/csrf-token/', api_views.csrf_token, name='csrf_token'),
     path('api/auth/orcid/login/', api_views.orcid_login, name='orcid_login'),
     path('api/auth/orcid/callback/', api_views.orcid_callback, name='orcid_callback'),
     path('api-auth/', include('rest_framework.urls', namespace='rest_framework')),
