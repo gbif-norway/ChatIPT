@@ -238,6 +238,9 @@ class Agent(models.Model):
 
     @classmethod
     def create_with_system_message(cls, dataset, task, tables):
+        if not task:
+            raise ValueError("Task cannot be None. Please ensure tasks are loaded in the database.")
+        
         agent = cls.objects.create(dataset=dataset, task=task)
         agent.tables.set([t.id for t in tables])
         system_message_text = render_to_string('prompt.txt', context={ 'agent': agent, 'all_tasks_count': Task.objects.all().count() })

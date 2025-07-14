@@ -22,6 +22,10 @@ python manage.py migrate
 echo "Setting up ORCID provider..."
 python manage.py setup_orcid
 
+# Load tasks from fixtures (removes existing tasks first)
+echo "Loading tasks from fixtures..."
+python manage.py load_tasks
+
 # Create superuser if environment variables are set
 if [ -n "$DJANGO_SUPERUSER_EMAIL" ] && [ -n "$DJANGO_SUPERUSER_PASSWORD" ]; then
     echo "Creating superuser..."
