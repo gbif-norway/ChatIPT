@@ -184,7 +184,8 @@ def orcid_callback(request):
         
         # Log the user in
         from django.contrib.auth import login
-        login(request, user)
+        from django.contrib.auth.backends import ModelBackend
+        login(request, user, backend='django.contrib.auth.backends.ModelBackend')
         
         # Redirect back to frontend
         return redirect(settings.FRONTEND_URL)
