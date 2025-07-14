@@ -10,6 +10,9 @@ from rest_framework.serializers import ModelSerializer
 from django.conf import settings
 import requests
 from urllib.parse import urlencode
+import logging
+
+logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
@@ -62,26 +65,32 @@ def orcid_login(request):
     params = {
         'client_id': client_id,
         'response_type': 'code',
-        'scope': 'openid /read-limited',
+        'scope': 'openid',
         'redirect_uri': redirect_uri,
     }
     
+    auth_url_with_params = f"{auth_url}?{urlencode(params)}"
+    logger.info(f"Redirecting to ORCID: {auth_url_with_params}")
+    
     # Redirect to ORCID
-    return redirect(f"{auth_url}?{urlencode(params)}")
+    return redirect(auth_url_with_params)
 
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def orcid_callback(request):
     """Handle ORCID OAuth2 callback"""
+    logger.info(f"ORCID callback received with params: {dict(request.GET)}")
+    
     code = request.GET.get('code')
     error = request.GET.get('error')
     
     if error:
-        # Handle error
+        logger.error(f"ORCID returned error: {error}")
         return redirect(f"{settings.FRONTEND_URL}?error={error}")
     
     if not code:
+        logger.error("No authorization code received from ORCID")
         return redirect(f"{settings.FRONTEND_URL}?error=no_code")
     
     try:
@@ -104,9 +113,9 @@ def orcid_callback(request):
         response.raise_for_status()
         token_info = response.json()
         
-        print(f"Token response status: {response.status_code}")
-        print(f"Token info keys: {list(token_info.keys())}")
-        print(f"Access token present: {'access_token' in token_info}")
+        logger.info(f"Token response status: {response.status_code}")
+        logger.info(f"Token info keys: {list(token_info.keys())}")
+        logger.info(f"Access token present: {'access_token' in token_info}")
         
         # Get user info from ORCID
         access_token = token_info['access_token']
@@ -122,7 +131,7 @@ def orcid_callback(request):
         # Get ORCID ID from userinfo
         orcid_id = user_info.get('sub')
         if not orcid_id:
-            print(f"ORCID userinfo response: {user_info}")
+            logger.error(f"ORCID userinfo response: {user_info}")
             return redirect(f"{settings.FRONTEND_URL}?error=no_orcid_id")
         
         # Get detailed user info from ORCID member API
@@ -151,10 +160,10 @@ def orcid_callback(request):
         if not email:
             email = f"{orcid_id}@orcid.org"
         
-        print(f"ORCID ID: {orcid_id}")
-        print(f"Email: {email}")
-        print(f"User info: {user_info}")
-        print(f"Member data keys: {list(member_data.keys()) if member_data else 'No member data'}")
+        logger.info(f"ORCID ID: {orcid_id}")
+        logger.info(f"Email: {email}")
+        logger.info(f"User info: {user_info}")
+        logger.info(f"Member data keys: {list(member_data.keys()) if member_data else 'No member data'}")
         
         user, created = User.objects.get_or_create(
             email=email,
@@ -181,9 +190,9 @@ def orcid_callback(request):
         return redirect(settings.FRONTEND_URL)
         
     except Exception as e:
-        print(f"ORCID callback error: {e}")
+        logger.error(f"ORCID callback error: {e}")
         import traceback
-        traceback.print_exc()
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return redirect(f"{settings.FRONTEND_URL}?error=callback_failed")
 
 
