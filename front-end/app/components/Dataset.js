@@ -18,7 +18,7 @@ const fetchData = async (url, options = {}) => {
 
 const wait = (n) => new Promise((resolve) => setTimeout(resolve, n));
 
-const Dataset = ({ initialDatasetId }) => {
+const Dataset = ({ initialDatasetId, onNewDataset }) => {
   const [error, setError] = useState(null);
   const [dataset, setDataset] = useState(null);
   const [activeDatasetID, setActiveDatasetID] = useState(null);
@@ -103,6 +103,17 @@ const Dataset = ({ initialDatasetId }) => {
     <div className="container-fluid">
       {!dataset ? (
         <div className="col-lg-9 mx-auto">
+          {onNewDataset && (
+            <div className="text-end mb-3">
+              <button 
+                className="btn btn-outline-primary btn-sm"
+                onClick={onNewDataset}
+              >
+                <i className="bi bi-plus-circle me-1"></i>
+                New Dataset
+              </button>
+            </div>
+          )}
           <div className="agent-task initialise">
             <div className="messages">
               <div className="message assistant-message d-flex">
@@ -134,7 +145,18 @@ const Dataset = ({ initialDatasetId }) => {
         <div>
           <div className="row mx-auto p-4 no-bottom-margin no-bottom-padding no-top-padding">
             <div className="col-12 alerts-div">
-              <div className="publishing-heading">Publishing {dataset.file.split(/\//).pop()} (original file name) <span className="badge text-bg-secondary">Started {new Date(dataset.created_at).toLocaleString()}</span></div>
+              <div className="d-flex justify-content-between align-items-center mb-3">
+                <div className="publishing-heading">Publishing {dataset.file.split(/\//).pop()} (original file name) <span className="badge text-bg-secondary">Started {new Date(dataset.created_at).toLocaleString()}</span></div>
+                {onNewDataset && (
+                  <button 
+                    className="btn btn-outline-primary btn-sm"
+                    onClick={onNewDataset}
+                  >
+                    <i className="bi bi-plus-circle me-1"></i>
+                    New Dataset
+                  </button>
+                )}
+              </div>
               {dataset.title && (<div className="alert alert-info" role="alert"><strong>Title</strong>: {dataset.title}<br /><strong>Description</strong>: {dataset.description}</div>)}
               {dataset.structure_notes && (
                 <Accordion>

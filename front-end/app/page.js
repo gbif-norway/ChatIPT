@@ -2,12 +2,16 @@
 
 import styles from './app.css'
 import Dataset from './components/Dataset'
+import Sidebar from './components/Sidebar'
+import SidebarToggle from './components/SidebarToggle'
 import ProtectedRoute from './components/ProtectedRoute'
 import { useAuth } from './contexts/AuthContext'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 const Home = () => {
   const { authenticated } = useAuth()
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [currentDatasetId, setCurrentDatasetId] = useState(null)
 
   useEffect(() => {
     // Only show welcome modal if user is authenticated
@@ -30,10 +34,35 @@ const Home = () => {
     }
   }, [authenticated]);
 
+  const handleDatasetSelect = (datasetId) => {
+    setCurrentDatasetId(datasetId)
+    setSidebarOpen(false) // Close sidebar on mobile after selection
+  }
+
+  const handleNewDataset = () => {
+    setCurrentDatasetId(null)
+    setSidebarOpen(false)
+  }
+
   return (
     <ProtectedRoute>
-      <main>
-        <Dataset initialDatasetId={null} />
+      <main style={{ marginLeft: sidebarOpen ? '320px' : '0', transition: 'margin-left 0.3s ease-in-out' }}>
+        <SidebarToggle 
+          isOpen={sidebarOpen} 
+          onToggle={() => setSidebarOpen(!sidebarOpen)} 
+        />
+        
+        <Sidebar 
+          isOpen={sidebarOpen}
+          onToggle={() => setSidebarOpen(!sidebarOpen)}
+          onDatasetSelect={handleDatasetSelect}
+          currentDatasetId={currentDatasetId}
+        />
+
+        <Dataset 
+          initialDatasetId={currentDatasetId}
+          onNewDataset={handleNewDataset}
+        />
 
         <div className="modal modal-lg fade" id="myModal" tabIndex="-1" aria-labelledby="exampleModalLabel" aria-hidden="true">
           <div className="modal-dialog">
