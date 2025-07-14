@@ -16,6 +16,7 @@ const FileDrop = ({ onFileAccepted, onError }) => {
       const response = await fetch(`${config.baseUrl}/api/datasets/`, {
         method: 'POST',
         body: formData,
+        credentials: 'include', // Include credentials for authenticated requests
       });
       if (!response.ok) {
         let errorMessage = 'Upload failed';

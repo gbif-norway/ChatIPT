@@ -45,7 +45,8 @@ const Agent = ({ agent, refreshDataset }) => {
         await fetch(`${config.baseUrl}/api/messages/`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ openai_obj: { content: userInput, role: 'user' }, agent: agent.id })
+          body: JSON.stringify({ openai_obj: { content: userInput, role: 'user' }, agent: agent.id }),
+          credentials: 'include' // Include credentials for authenticated requests
         });
         setUserInput("");
         await refreshDataset();

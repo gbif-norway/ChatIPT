@@ -253,6 +253,14 @@ CORS_ALLOWED_ORIGINS = [
 # Allow credentials (cookies) for session authentication
 CORS_ALLOW_CREDENTIALS = True
 
+# Session settings for cross-domain authentication
+SESSION_COOKIE_SECURE = False  # Set to True in production with HTTPS
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'  # Allows cross-site requests with credentials
+SESSION_COOKIE_DOMAIN = None  # Allow cookies for all domains
+SESSION_COOKIE_AGE = 86400  # 24 hours
+SESSION_SAVE_EVERY_REQUEST = True  # Save session on every request
+
 # For development, you can use this instead of CORS_ALLOWED_ORIGINS
 # CORS_ALLOW_ALL_ORIGINS = True
 

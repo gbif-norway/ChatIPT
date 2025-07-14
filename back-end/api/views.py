@@ -28,6 +28,11 @@ class UserSerializer(ModelSerializer):
 @permission_classes([AllowAny])
 def auth_status(request):
     """Check authentication status and return user info if authenticated"""
+    logger.info(f"Auth status check - User authenticated: {request.user.is_authenticated}")
+    logger.info(f"User ID: {request.user.id if request.user.is_authenticated else 'None'}")
+    logger.info(f"Session ID: {request.session.session_key}")
+    logger.info(f"Session data: {dict(request.session)}")
+    
     if request.user.is_authenticated:
         serializer = UserSerializer(request.user)
         return Response({
@@ -172,6 +177,7 @@ def orcid_callback(request):
                 'orcid_id': orcid_id,
                 'orcid_access_token': access_token,
                 'orcid_refresh_token': token_info.get('refresh_token', ''),
+                'is_active': True,  # Ensure user is active
             }
         )
         
@@ -180,12 +186,17 @@ def orcid_callback(request):
             user.orcid_id = orcid_id
             user.orcid_access_token = access_token
             user.orcid_refresh_token = token_info.get('refresh_token', '')
+            user.is_active = True  # Ensure user is active
             user.save()
+        
+        logger.info(f"User created/updated: {user.id}, Email: {user.email}, Is Active: {user.is_active}")
         
         # Log the user in
         from django.contrib.auth import login
         from django.contrib.auth.backends import ModelBackend
         login(request, user, backend='django.contrib.auth.backends.ModelBackend')
+        
+        logger.info(f"User logged in: {request.user.is_authenticated}, User ID: {request.user.id if request.user.is_authenticated else 'None'}")
         
         # Redirect back to frontend
         return redirect(settings.FRONTEND_URL)
@@ -204,10 +215,14 @@ class DatasetViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Filter datasets to only show those belonging to the authenticated user"""
+        logger.info(f"DatasetViewSet.get_queryset - User authenticated: {self.request.user.is_authenticated}")
+        logger.info(f"User ID: {self.request.user.id if self.request.user.is_authenticated else 'None'}")
+        logger.info(f"Session ID: {self.request.session.session_key}")
         return Dataset.objects.filter(user=self.request.user)
 
     def perform_create(self, serializer):
         """Automatically assign the current user to the dataset"""
+        logger.info(f"DatasetViewSet.perform_create - User ID: {self.request.user.id}")
         serializer.save(user=self.request.user)
 
     # @action(detail=True)
