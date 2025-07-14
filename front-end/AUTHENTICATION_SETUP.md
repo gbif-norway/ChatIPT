@@ -9,9 +9,12 @@ The frontend now requires ORCID authentication before users can access the ChatI
 1. User visits the application
 2. If not authenticated, they see a login page
 3. User clicks "Sign in with ORCID" 
-4. User is redirected to ORCID for authentication
-5. After successful authentication, user is redirected back to the application
-6. User can now access ChatIPT with their datasets linked to their ORCID account
+4. Frontend redirects to backend OAuth2 endpoint
+5. Backend redirects to ORCID for authentication
+6. ORCID redirects back to backend callback endpoint
+7. Backend creates/updates user and logs them in
+8. Backend redirects back to frontend
+9. User can now access ChatIPT with their datasets linked to their ORCID account
 
 ## Environment Configuration
 

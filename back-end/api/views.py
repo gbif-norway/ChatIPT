@@ -4,9 +4,12 @@ from api.models import Dataset, Table, Message, Agent, Task
 from rest_framework.response import Response
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, redirect
 from django.contrib.auth import get_user_model
 from rest_framework.serializers import ModelSerializer
+from django.conf import settings
+import requests
+from urllib.parse import urlencode
 
 User = get_user_model()
 
@@ -41,6 +44,109 @@ def user_profile(request):
     """Get current user's profile information"""
     serializer = UserSerializer(request.user)
     return Response(serializer.data)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def orcid_login(request):
+    """Redirect to ORCID OAuth2 authorization endpoint"""
+    client_id = settings.SOCIALACCOUNT_PROVIDERS['orcid']['APP']['client_id']
+    # Callback should go to backend, not frontend
+    base_url = request.build_absolute_uri('/').rstrip('/')
+    redirect_uri = f"{base_url}/api/auth/orcid/callback/"
+    
+    # ORCID OAuth2 authorization URL
+    auth_url = "https://orcid.org/oauth/authorize"
+    
+    # OAuth2 parameters
+    params = {
+        'client_id': client_id,
+        'response_type': 'code',
+        'scope': 'openid',
+        'redirect_uri': redirect_uri,
+    }
+    
+    # Redirect to ORCID
+    return redirect(f"{auth_url}?{urlencode(params)}")
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def orcid_callback(request):
+    """Handle ORCID OAuth2 callback"""
+    code = request.GET.get('code')
+    error = request.GET.get('error')
+    
+    if error:
+        # Handle error
+        return redirect(f"{settings.FRONTEND_URL}?error={error}")
+    
+    if not code:
+        return redirect(f"{settings.FRONTEND_URL}?error=no_code")
+    
+    try:
+        # Exchange code for access token
+        token_url = "https://orcid.org/oauth/token"
+        client_id = settings.SOCIALACCOUNT_PROVIDERS['orcid']['APP']['client_id']
+        client_secret = settings.SOCIALACCOUNT_PROVIDERS['orcid']['APP']['secret']
+        base_url = request.build_absolute_uri('/').rstrip('/')
+        redirect_uri = f"{base_url}/api/auth/orcid/callback/"
+        
+        token_data = {
+            'grant_type': 'authorization_code',
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'code': code,
+            'redirect_uri': redirect_uri,
+        }
+        
+        response = requests.post(token_url, data=token_data)
+        response.raise_for_status()
+        token_info = response.json()
+        
+        # Get user info from ORCID
+        access_token = token_info['access_token']
+        user_info_url = "https://orcid.org/oauth/userinfo"
+        headers = {'Authorization': f'Bearer {access_token}'}
+        
+        user_response = requests.get(user_info_url, headers=headers)
+        user_response.raise_for_status()
+        user_info = user_response.json()
+        
+        # Create or get user
+        orcid_id = user_info.get('sub')
+        email = user_info.get('email')
+        
+        if not orcid_id or not email:
+            return redirect(f"{settings.FRONTEND_URL}?error=invalid_user_info")
+        
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                'username': email,
+                'orcid_id': orcid_id,
+                'orcid_access_token': access_token,
+                'orcid_refresh_token': token_info.get('refresh_token', ''),
+            }
+        )
+        
+        if not created:
+            # Update existing user's ORCID info
+            user.orcid_id = orcid_id
+            user.orcid_access_token = access_token
+            user.orcid_refresh_token = token_info.get('refresh_token', '')
+            user.save()
+        
+        # Log the user in
+        from django.contrib.auth import login
+        login(request, user)
+        
+        # Redirect back to frontend
+        return redirect(settings.FRONTEND_URL)
+        
+    except Exception as e:
+        print(f"ORCID callback error: {e}")
+        return redirect(f"{settings.FRONTEND_URL}?error=callback_failed")
 
 
 class DatasetViewSet(viewsets.ModelViewSet):

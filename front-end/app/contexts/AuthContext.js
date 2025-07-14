@@ -47,10 +47,8 @@ export const AuthProvider = ({ children }) => {
   }
 
   const login = () => {
-    // Get base URL without /api/ suffix for auth endpoints
-    const baseUrl = config.baseApiUrl.replace(/\/api\/?$/, '')
-    // Redirect to Django's ORCID login endpoint
-    window.location.href = `${baseUrl}/accounts/orcid/login/`
+    // Redirect to our custom OAuth2 endpoint which will redirect to ORCID
+    window.location.href = `${config.baseApiUrl}/api/auth/orcid/login/`
   }
 
   const logout = async () => {

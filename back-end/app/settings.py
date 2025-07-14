@@ -246,6 +246,8 @@ CORS_ALLOWED_ORIGINS = [
     FRONTEND_URL,
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://staging-api.chatipt.svc.gbif.no",
+    
 ]
 
 # Allow credentials (cookies) for session authentication
