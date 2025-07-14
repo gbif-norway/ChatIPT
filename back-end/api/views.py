@@ -58,11 +58,11 @@ def orcid_login(request):
     # ORCID OAuth2 authorization URL
     auth_url = "https://orcid.org/oauth/authorize"
     
-    # OAuth2 parameters
+    # OAuth2 parameters - expanded scope to get more user info
     params = {
         'client_id': client_id,
         'response_type': 'code',
-        'scope': 'openid',
+        'scope': 'openid /read-limited',
         'redirect_uri': redirect_uri,
     }
     
@@ -104,8 +104,14 @@ def orcid_callback(request):
         response.raise_for_status()
         token_info = response.json()
         
+        print(f"Token response status: {response.status_code}")
+        print(f"Token info keys: {list(token_info.keys())}")
+        print(f"Access token present: {'access_token' in token_info}")
+        
         # Get user info from ORCID
         access_token = token_info['access_token']
+        
+        # First get basic user info from userinfo endpoint
         user_info_url = "https://orcid.org/oauth/userinfo"
         headers = {'Authorization': f'Bearer {access_token}'}
         
@@ -113,12 +119,42 @@ def orcid_callback(request):
         user_response.raise_for_status()
         user_info = user_response.json()
         
-        # Create or get user
+        # Get ORCID ID from userinfo
         orcid_id = user_info.get('sub')
-        email = user_info.get('email')
+        if not orcid_id:
+            print(f"ORCID userinfo response: {user_info}")
+            return redirect(f"{settings.FRONTEND_URL}?error=no_orcid_id")
         
-        if not orcid_id or not email:
-            return redirect(f"{settings.FRONTEND_URL}?error=invalid_user_info")
+        # Get detailed user info from ORCID member API
+        member_url = f"https://pub.orcid.org/v3.0/{orcid_id}"
+        member_headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Accept': 'application/json'
+        }
+        
+        member_response = requests.get(member_url, headers=member_headers)
+        member_response.raise_for_status()
+        member_data = member_response.json()
+        
+        # Extract email from member data
+        email = None
+        if 'person' in member_data and 'emails' in member_data['person']:
+            emails = member_data['person']['emails']['email']
+            if emails:
+                email = emails[0].get('email')
+        
+        # If no email in member data, try to get it from userinfo
+        if not email:
+            email = user_info.get('email')
+        
+        # If still no email, create a placeholder email
+        if not email:
+            email = f"{orcid_id}@orcid.org"
+        
+        print(f"ORCID ID: {orcid_id}")
+        print(f"Email: {email}")
+        print(f"User info: {user_info}")
+        print(f"Member data keys: {list(member_data.keys()) if member_data else 'No member data'}")
         
         user, created = User.objects.get_or_create(
             email=email,
@@ -146,6 +182,8 @@ def orcid_callback(request):
         
     except Exception as e:
         print(f"ORCID callback error: {e}")
+        import traceback
+        traceback.print_exc()
         return redirect(f"{settings.FRONTEND_URL}?error=callback_failed")
 
 
