@@ -20,7 +20,7 @@ export const AuthProvider = ({ children }) => {
 
   const checkAuthStatus = async () => {
     try {
-      const response = await fetch(`${config.baseApiUrl}/api/auth/status/`, {
+      const response = await fetch(`${config.baseUrl}/api/auth/status/`, {
         credentials: 'include'
       })
       
@@ -48,14 +48,12 @@ export const AuthProvider = ({ children }) => {
 
   const login = () => {
     // Redirect to our custom OAuth2 endpoint which will redirect to ORCID
-    window.location.href = `${config.baseApiUrl}/api/auth/orcid/login/`
+    window.location.href = `${config.baseUrl}/api/auth/orcid/login/`
   }
 
   const logout = async () => {
     try {
-      // Get base URL without /api/ suffix for auth endpoints
-      const baseUrl = config.baseApiUrl.replace(/\/api\/?$/, '')
-      await fetch(`${baseUrl}/accounts/logout/`, {
+      await fetch(`${config.baseUrl}/accounts/logout/`, {
         method: 'GET',
         credentials: 'include'
       })

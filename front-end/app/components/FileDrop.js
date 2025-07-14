@@ -13,7 +13,7 @@ const FileDrop = ({ onFileAccepted, onError }) => {
     formData.append('file', acceptedFiles[0]);
 
     try {
-      const response = await fetch(`${config.baseApiUrl}/datasets/`, {
+      const response = await fetch(`${config.baseUrl}/api/datasets/`, {
         method: 'POST',
         body: formData,
       });

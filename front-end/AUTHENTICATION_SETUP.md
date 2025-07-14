@@ -21,11 +21,11 @@ The frontend now requires ORCID authentication before users can access the ChatI
 Create a `.env.local` file in the frontend directory with:
 
 ```bash
-# Backend API URL (without /api/ suffix)
+# Backend base URL (clean, without /api/ suffix)
 NEXT_PUBLIC_BASE_API_URL=http://localhost:8000
 ```
 
-For production, update this to your backend URL. **Important**: Do not include `/api/` in the URL as it will be automatically handled.
+For production, update this to your backend URL. **Important**: Use the clean base URL without `/api/` - the full API paths are specified in each request.
 
 ## Components
 

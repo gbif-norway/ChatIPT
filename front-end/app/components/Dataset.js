@@ -29,7 +29,7 @@ const Dataset = ({ initialDatasetId }) => {
 
   const refreshTables = useCallback(async () => {
     console.log('refreshing tables');
-    const tables = await fetchData(`${config.baseApiUrl}/tables?dataset=${activeDatasetID}`);
+    const tables = await fetchData(`${config.baseUrl}/api/tables?dataset=${activeDatasetID}`);
     const updatedTables = tables.map(item => {
       const df = JSON.parse(item.df_json);
       delete item.df_json;
@@ -45,7 +45,7 @@ const Dataset = ({ initialDatasetId }) => {
     console.log(dataset);
     try {
       console.log('refreshing dataset');
-      const refreshedDataset = await fetchData(`${config.baseApiUrl}/datasets/${activeDatasetID}/refresh`);
+      const refreshedDataset = await fetchData(`${config.baseUrl}/api/datasets/${activeDatasetID}/refresh`);
       setDataset(refreshedDataset);
       setActiveAgentKey(refreshedDataset.visible_agent_set.at(-1).id);
       await refreshTables();
@@ -87,8 +87,8 @@ const Dataset = ({ initialDatasetId }) => {
   const initialLoadDataset = async (datasetId) => {
     try {
       setLoading(true);
-      console.log(`loading dataset with ${config.baseApiUrl}/datasets/${datasetId}/refresh`);
-      const refreshedDataset = await fetchData(`${config.baseApiUrl}/datasets/${datasetId}/refresh`);
+      console.log(`loading dataset with ${config.baseUrl}/api/datasets/${datasetId}/refresh`);
+      const refreshedDataset = await fetchData(`${config.baseUrl}/api/datasets/${datasetId}/refresh`);
       setActiveDatasetID(datasetId); 
       setDataset(refreshedDataset);
     } catch (error) {

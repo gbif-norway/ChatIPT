@@ -42,7 +42,7 @@ const Agent = ({ agent, refreshDataset }) => {
       setLoadingMessage("Working...");
 
       try {
-        await fetch(`${config.baseApiUrl}/messages/`, {
+        await fetch(`${config.baseUrl}/api/messages/`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ openai_obj: { content: userInput, role: 'user' }, agent: agent.id })
