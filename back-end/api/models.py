@@ -69,7 +69,8 @@ class Dataset(models.Model):
     def next_agent(self):
         self.refresh_from_db()
         if self.rejected_at:
-            print('rejected')
+            logger = logging.getLogger(__name__)
+            logger.info('rejected')
             return None
 
         next_agent = self.agent_set.filter(completed_at=None).first()
@@ -77,17 +78,30 @@ class Dataset(models.Model):
             return next_agent
 
         last_completed_agent = self.agent_set.last()  # self.agent_set.exclude(completed_at=None).last()
-        print(f'No next agent found, making new agent for new task based on {last_completed_agent}')
+        logger = logging.getLogger(__name__)
+        logger.info(f'No next agent found, making new agent for new task based on {last_completed_agent}')
         if last_completed_agent:
             next_task = Task.objects.filter(id__gt=last_completed_agent.task.id).first()
             if next_task:
                 next_task.create_agent_with_system_messages(dataset=self)
                 return self.next_agent()
             else:
-                print(f'PUBLISHED {self.published_at}')
+                logger.info(f'PUBLISHED {self.published_at}')
                 return None  # It's been published... self.published_at = datetime.now() # self.save()
         else:
-            raise Exception('Agent set for this dataset appears to be empty')
+            # No agents exist for this dataset - create the first agent
+            logger.info('No agents found for dataset, creating first agent')
+            first_task = Task.objects.first()
+            if not first_task:
+                raise Exception('No tasks are configured in the system. Please contact the administrator to load the required tasks.')
+            
+            # Get tables for this dataset
+            tables = Table.objects.filter(dataset=self)
+            if not tables.exists():
+                raise Exception('No tables found for this dataset. Please ensure the dataset has been properly processed.')
+            
+            first_task.create_agent_with_system_messages(dataset=self)
+            return self.next_agent()
 
     @staticmethod
     def get_dfs_from_user_file(file, file_name):
@@ -244,7 +258,8 @@ class Agent(models.Model):
         agent = cls.objects.create(dataset=dataset, task=task)
         agent.tables.set([t.id for t in tables])
         system_message_text = render_to_string('prompt.txt', context={ 'agent': agent, 'all_tasks_count': Task.objects.all().count() })
-        print(system_message_text)
+        logger = logging.getLogger(__name__)
+        logger.info(system_message_text)
         # import pdb; pdb.set_trace()
         Message.objects.create(agent=agent, openai_obj={'content': system_message_text, 'role': Message.Role.SYSTEM})
 

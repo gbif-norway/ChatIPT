@@ -327,14 +327,21 @@ class DatasetViewSet(viewsets.ModelViewSet):
     def refresh(self, request, *args, **kwargs):
         dataset = self.get_object()
 
-        # Do a refresh of agents and messages, so we get the next one of each if necessary
-        next_agent = dataset.next_agent()
-        if next_agent:
-            next_agent.next_message()
-            dataset.refresh_from_db()
+        try:
+            # Do a refresh of agents and messages, so we get the next one of each if necessary
+            next_agent = dataset.next_agent()
+            if next_agent:
+                next_agent.next_message()
+                dataset.refresh_from_db()
 
-        serializer = self.get_serializer(dataset)
-        return Response(serializer.data)
+            serializer = self.get_serializer(dataset)
+            return Response(serializer.data)
+        except Exception as e:
+            logger.error(f"Error refreshing dataset {dataset.id}: {e}")
+            return Response(
+                {'error': f'Failed to refresh dataset: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class TableViewSet(viewsets.ModelViewSet):
