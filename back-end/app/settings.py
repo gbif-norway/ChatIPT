@@ -264,6 +264,7 @@ CSRF_TRUSTED_ORIGINS = [
     "https://api.chatipt.svc.gbif.no",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://staging-api.chatipt.svc.gbif.no",
 ]
 
 # Session settings for cross-domain authentication
