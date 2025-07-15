@@ -1,20 +1,27 @@
 'use client'
 
 import { useAuth } from '../contexts/AuthContext'
+import { useTheme } from '../contexts/ThemeContext'
+import ThemeToggle from './ThemeToggle'
 
 const Header = () => {
   const { user, logout } = useAuth()
+  const { isDark } = useTheme()
 
   if (!user) {
     return null
   }
 
   return (
-    <nav className="navbar navbar-expand-lg navbar-dark bg-dark border-bottom">
+    <nav className={`navbar navbar-expand-lg border-bottom ${isDark ? 'navbar-dark bg-dark' : 'navbar-light bg-light'}`}>
       <div className="container">
         <span className="navbar-brand">ChatIPT</span>
         
         <div className="navbar-nav ms-auto">
+          <div className="nav-item me-3 d-flex align-items-center">
+            <ThemeToggle />
+          </div>
+          
           <div className="nav-item dropdown">
             <a 
               className="nav-link dropdown-toggle d-flex align-items-center" 

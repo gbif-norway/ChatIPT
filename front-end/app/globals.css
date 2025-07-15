@@ -3,8 +3,16 @@
   box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
 }
 
-.dataset-item:hover {
-  background-color: #f8f9fa !important;
+/* Dark theme dataset item hover */
+.dark .dataset-item:hover {
+  background-color: #495057 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* Light theme dataset item hover */
+.light .dataset-item:hover {
+  background-color: #e9ecef !important;
   transform: translateY(-1px);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
@@ -20,20 +28,38 @@
   }
 }
 
-/* Custom scrollbar for sidebar */
-.sidebar::-webkit-scrollbar {
+/* Custom scrollbar for sidebar - dark theme */
+.dark .sidebar::-webkit-scrollbar {
   width: 6px;
 }
 
-.sidebar::-webkit-scrollbar-track {
+.dark .sidebar::-webkit-scrollbar-track {
+  background: #343a40;
+}
+
+.dark .sidebar::-webkit-scrollbar-thumb {
+  background: #6c757d;
+  border-radius: 3px;
+}
+
+.dark .sidebar::-webkit-scrollbar-thumb:hover {
+  background: #adb5bd;
+}
+
+/* Custom scrollbar for sidebar - light theme */
+.light .sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.light .sidebar::-webkit-scrollbar-track {
   background: #f1f1f1;
 }
 
-.sidebar::-webkit-scrollbar-thumb {
+.light .sidebar::-webkit-scrollbar-thumb {
   background: #c1c1c1;
   border-radius: 3px;
 }
 
-.sidebar::-webkit-scrollbar-thumb:hover {
+.light .sidebar::-webkit-scrollbar-thumb:hover {
   background: #a8a8a8;
 }

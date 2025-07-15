@@ -2,10 +2,12 @@
 
 import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
+import { useTheme } from '../contexts/ThemeContext'
 import config from '../config'
 
 const Sidebar = ({ isOpen, onToggle, onDatasetSelect, currentDatasetId }) => {
   const { user } = useAuth()
+  const { isDark } = useTheme()
   const [datasets, setDatasets] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -81,6 +83,35 @@ const Sidebar = ({ isOpen, onToggle, onDatasetSelect, currentDatasetId }) => {
     }
   }
 
+  // Theme-specific styles
+  const sidebarStyles = {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    height: '100vh',
+    width: '320px',
+    backgroundColor: isDark ? '#212529' : '#f8f9fa',
+    borderRight: `1px solid ${isDark ? '#495057' : '#dee2e6'}`,
+    zIndex: 1050,
+    transform: isOpen ? 'translateX(0)' : 'translateX(-100%)',
+    transition: 'transform 0.3s ease-in-out',
+    overflowY: 'auto'
+  }
+
+  const headerStyles = {
+    backgroundColor: isDark ? '#343a40' : '#fff',
+    borderBottomColor: isDark ? '#495057 !important' : '#dee2e6 !important'
+  }
+
+  const getDatasetItemStyles = (isActive) => ({
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    backgroundColor: isActive 
+      ? (isDark ? 'rgba(13, 110, 253, 0.25)' : 'rgba(13, 110, 253, 0.1)')
+      : (isDark ? '#343a40' : '#fff'),
+    borderColor: isActive ? '#0d6efd' : (isDark ? '#6c757d' : '#dee2e6')
+  })
+
   return (
     <>
       {/* Overlay for mobile */}
@@ -101,25 +132,15 @@ const Sidebar = ({ isOpen, onToggle, onDatasetSelect, currentDatasetId }) => {
       )}
 
       {/* Sidebar */}
-      <div className={`sidebar ${isOpen ? 'open' : ''}`} style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        height: '100vh',
-        width: '320px',
-        backgroundColor: '#f8f9fa',
-        borderRight: '1px solid #dee2e6',
-        zIndex: 1050,
-        transform: isOpen ? 'translateX(0)' : 'translateX(-100%)',
-        transition: 'transform 0.3s ease-in-out',
-        overflowY: 'auto'
-      }}>
+      <div className={`sidebar ${isOpen ? 'open' : ''}`} style={sidebarStyles}>
         {/* Header */}
-        <div className="sidebar-header p-3 border-bottom" style={{ backgroundColor: '#fff' }}>
+        <div className="sidebar-header p-3 border-bottom" style={headerStyles}>
           <div className="d-flex justify-content-between align-items-center">
-            <h6 className="mb-0 fw-bold">Dataset History</h6>
+            <h6 className={`mb-0 fw-bold ${isDark ? 'text-light' : 'text-dark'}`}>
+              Dataset History
+            </h6>
             <button 
-              className="btn btn-sm btn-outline-secondary d-lg-none"
+              className={`btn btn-sm ${isDark ? 'btn-outline-light' : 'btn-outline-secondary'} d-lg-none`}
               onClick={onToggle}
             >
               <i className="bi bi-x-lg"></i>
@@ -131,17 +152,19 @@ const Sidebar = ({ isOpen, onToggle, onDatasetSelect, currentDatasetId }) => {
         <div className="sidebar-content p-3">
           {loading ? (
             <div className="text-center py-4">
-              <div className="spinner-border spinner-border-sm" role="status">
+              <div className={`spinner-border spinner-border-sm ${isDark ? 'text-light' : 'text-dark'}`} role="status">
                 <span className="visually-hidden">Loading...</span>
               </div>
-              <p className="mt-2 text-muted small">Loading datasets...</p>
+              <p className={`mt-2 small ${isDark ? 'text-light-50' : 'text-muted'}`}>
+                Loading datasets...
+              </p>
             </div>
           ) : error ? (
             <div className="text-center py-4">
               <i className="bi bi-exclamation-triangle text-warning fs-4"></i>
-              <p className="mt-2 text-muted small">{error}</p>
+              <p className={`mt-2 small ${isDark ? 'text-light-50' : 'text-muted'}`}>{error}</p>
               <button 
-                className="btn btn-sm btn-outline-primary"
+                className={`btn btn-sm ${isDark ? 'btn-outline-light' : 'btn-outline-primary'}`}
                 onClick={fetchDatasets}
               >
                 Try Again
@@ -149,9 +172,11 @@ const Sidebar = ({ isOpen, onToggle, onDatasetSelect, currentDatasetId }) => {
             </div>
           ) : datasets.length === 0 ? (
             <div className="text-center py-4">
-              <i className="bi bi-folder text-muted fs-4"></i>
-              <p className="mt-2 text-muted small">No datasets yet</p>
-              <p className="text-muted small">Upload your first dataset to get started</p>
+              <i className={`bi bi-folder fs-4 ${isDark ? 'text-light-50' : 'text-muted'}`}></i>
+              <p className={`mt-2 small ${isDark ? 'text-light-50' : 'text-muted'}`}>No datasets yet</p>
+              <p className={`small ${isDark ? 'text-light-50' : 'text-muted'}`}>
+                Upload your first dataset to get started
+              </p>
             </div>
           ) : (
             <div className="dataset-list">
@@ -164,17 +189,13 @@ const Sidebar = ({ isOpen, onToggle, onDatasetSelect, currentDatasetId }) => {
                   <div 
                     key={dataset.id}
                     className={`dataset-item p-3 border rounded mb-2 cursor-pointer ${
-                      isActive ? 'border-primary bg-primary bg-opacity-10' : 'border-light'
+                      isActive ? 'border-primary' : ''
                     }`}
                     onClick={() => onDatasetSelect(dataset.id)}
-                    style={{ 
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      ':hover': { backgroundColor: '#f8f9fa' }
-                    }}
+                    style={getDatasetItemStyles(isActive)}
                   >
                     <div className="d-flex justify-content-between align-items-start mb-2">
-                      <h6 className="mb-1 text-truncate" style={{ maxWidth: '200px' }}>
+                      <h6 className={`mb-1 text-truncate ${isDark ? 'text-light' : 'text-dark'}`} style={{ maxWidth: '200px' }}>
                         {title}
                       </h6>
                       <small className={`${status.class}`}>
@@ -184,19 +205,19 @@ const Sidebar = ({ isOpen, onToggle, onDatasetSelect, currentDatasetId }) => {
                     </div>
                     
                     <div className="d-flex justify-content-between align-items-center">
-                      <small className="text-muted">
+                      <small className={isDark ? 'text-light-50' : 'text-muted'}>
                         {formatDate(dataset.created_at)}
                       </small>
                       
                       {dataset.visible_agent_set && dataset.visible_agent_set.length > 0 && (
-                        <small className="text-muted">
+                        <small className={isDark ? 'text-light-50' : 'text-muted'}>
                           {dataset.visible_agent_set.length} step{dataset.visible_agent_set.length !== 1 ? 's' : ''}
                         </small>
                       )}
                     </div>
                     
                     {dataset.description && (
-                      <p className="text-muted small mb-0 mt-2" style={{
+                      <p className={`small mb-0 mt-2 ${isDark ? 'text-light-50' : 'text-muted'}`} style={{
                         display: '-webkit-box',
                         WebkitLineClamp: 2,
                         WebkitBoxOrient: 'vertical',

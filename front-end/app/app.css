@@ -90,3 +90,199 @@ svg { margin-right: 10px; }
 code { margin-bottom: 10px;}
 
 .footer { margin: 0 20px; }
+
+/* Light theme styles */
+.light .rdt_Pagination svg { fill: #000 !important; }
+
+.light .user-input-loading { 
+    background-color: rgba(0, 0, 0, 0.1);
+}
+
+.light h1.title { 
+    color: #198754; 
+}
+
+.light svg .s0 { 
+    fill: rgba(0, 0, 0, 0.1) 
+}
+
+.light svg .s1 { 
+    fill: rgb(25, 135, 84) 
+}
+
+/* Dark theme styles */
+.dark .rdt_Pagination svg { 
+    fill: #FFF !important; 
+}
+
+.dark .user-input-loading { 
+    background-color: rgba(102, 102, 102, 0.2);
+}
+
+.dark h1.title { 
+    color: #c5ffc0; 
+}
+
+.dark svg .s0 { 
+    fill: rgba(255, 255, 255, 0.1) 
+}
+
+.dark svg .s1 { 
+    fill: rgb(127, 198, 136) 
+}
+
+/* DataTable dark theme customizations */
+.dark .rdt_Table {
+    background-color: #212529 !important;
+    color: #f8f9fa !important;
+}
+
+.dark .rdt_TableHead {
+    background-color: #343a40 !important;
+    color: #f8f9fa !important;
+}
+
+.dark .rdt_TableHeadRow {
+    background-color: #343a40 !important;
+    border-bottom: 1px solid #495057 !important;
+}
+
+.dark .rdt_TableRow {
+    background-color: #212529 !important;
+    color: #f8f9fa !important;
+    border-bottom: 1px solid #495057 !important;
+}
+
+.dark .rdt_TableRow:hover {
+    background-color: #343a40 !important;
+}
+
+.dark .rdt_Pagination {
+    background-color: #212529 !important;
+    color: #f8f9fa !important;
+    border-top: 1px solid #495057 !important;
+}
+
+.dark .rdt_Pagination button {
+    background-color: #343a40 !important;
+    color: #f8f9fa !important;
+    border: 1px solid #495057 !important;
+}
+
+.dark .rdt_Pagination button:hover {
+    background-color: #495057 !important;
+}
+
+.dark .rdt_Pagination button:disabled {
+    background-color: #212529 !important;
+    color: #6c757d !important;
+    border-color: #495057 !important;
+}
+
+/* DataTable light theme customizations */
+.light .rdt_Table {
+    background-color: #ffffff !important;
+    color: #212529 !important;
+}
+
+.light .rdt_TableHead {
+    background-color: #f8f9fa !important;
+    color: #212529 !important;
+}
+
+.light .rdt_TableHeadRow {
+    background-color: #f8f9fa !important;
+    border-bottom: 1px solid #dee2e6 !important;
+}
+
+.light .rdt_TableRow {
+    background-color: #ffffff !important;
+    color: #212529 !important;
+    border-bottom: 1px solid #dee2e6 !important;
+}
+
+.light .rdt_TableRow:hover {
+    background-color: #f8f9fa !important;
+}
+
+.light .rdt_Pagination {
+    background-color: #ffffff !important;
+    color: #212529 !important;
+    border-top: 1px solid #dee2e6 !important;
+}
+
+.light .rdt_Pagination button {
+    background-color: #f8f9fa !important;
+    color: #212529 !important;
+    border: 1px solid #dee2e6 !important;
+}
+
+.light .rdt_Pagination button:hover {
+    background-color: #e9ecef !important;
+}
+
+.light .rdt_Pagination button:disabled {
+    background-color: #ffffff !important;
+    color: #6c757d !important;
+    border-color: #dee2e6 !important;
+}
+
+/* Tab styling for dark theme */
+.dark .nav-tabs {
+    border-bottom: 1px solid #495057 !important;
+}
+
+.dark .nav-tabs .nav-link {
+    background-color: #343a40 !important;
+    color: #f8f9fa !important;
+    border: 1px solid #495057 !important;
+    border-bottom: none !important;
+}
+
+.dark .nav-tabs .nav-link:hover {
+    background-color: #495057 !important;
+    border-color: #6c757d !important;
+}
+
+.dark .nav-tabs .nav-link.active {
+    background-color: #212529 !important;
+    color: #f8f9fa !important;
+    border-color: #495057 !important;
+    border-bottom-color: #212529 !important;
+}
+
+.dark .tab-content {
+    background-color: #212529 !important;
+    border: 1px solid #495057 !important;
+    border-top: none !important;
+}
+
+/* Tab styling for light theme */
+.light .nav-tabs {
+    border-bottom: 1px solid #dee2e6 !important;
+}
+
+.light .nav-tabs .nav-link {
+    background-color: #f8f9fa !important;
+    color: #212529 !important;
+    border: 1px solid #dee2e6 !important;
+    border-bottom: none !important;
+}
+
+.light .nav-tabs .nav-link:hover {
+    background-color: #e9ecef !important;
+    border-color: #adb5bd !important;
+}
+
+.light .nav-tabs .nav-link.active {
+    background-color: #ffffff !important;
+    color: #212529 !important;
+    border-color: #dee2e6 !important;
+    border-bottom-color: #ffffff !important;
+}
+
+.light .tab-content {
+    background-color: #ffffff !important;
+    border: 1px solid #dee2e6 !important;
+    border-top: none !important;
+}
