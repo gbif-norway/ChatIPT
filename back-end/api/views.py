@@ -71,14 +71,18 @@ def orcid_login(request):
     base_url = request.build_absolute_uri('/').rstrip('/')
     redirect_uri = f"{base_url}/api/auth/orcid/callback/"
     
+    logger.info(f"ORCID login - Base URL: {base_url}")
+    logger.info(f"ORCID login - Redirect URI: {redirect_uri}")
+    logger.info(f"ORCID login - Client ID: {client_id}")
+    
     # ORCID OAuth2 authorization URL
     auth_url = "https://orcid.org/oauth/authorize"
     
-    # OAuth2 parameters - expanded scope to get more user info
+    # OAuth2 parameters - using public API scopes only
     params = {
         'client_id': client_id,
         'response_type': 'code',
-        'scope': 'openid /read-limited',
+        'scope': 'openid /authenticate',
         'redirect_uri': redirect_uri,
     }
     
@@ -147,18 +151,28 @@ def orcid_callback(request):
             logger.error(f"ORCID userinfo response: {user_info}")
             return redirect(f"{settings.FRONTEND_URL}?error=no_orcid_id")
         
-        # Get detailed user info from ORCID member API
-        member_url = f"https://pub.orcid.org/v3.0/{orcid_id}"
-        member_headers = {
-            'Authorization': f'Bearer {access_token}',
+        # Get public profile info from ORCID public API
+        public_url = f"https://pub.orcid.org/v3.0/{orcid_id}"
+        public_headers = {
             'Accept': 'application/json'
         }
         
-        member_response = requests.get(member_url, headers=member_headers)
-        member_response.raise_for_status()
-        member_data = member_response.json()
+        logger.info(f"Fetching public profile data from: {public_url}")
+        public_response = requests.get(public_url, headers=public_headers)
+        logger.info(f"Public API response status: {public_response.status_code}")
         
-        # Extract user information from member data
+        if public_response.status_code != 200:
+            logger.error(f"Public API error: {public_response.text}")
+            # Try alternative endpoint
+            public_url = f"https://pub.orcid.org/v3.0/{orcid_id}/record"
+            logger.info(f"Trying alternative endpoint: {public_url}")
+            public_response = requests.get(public_url, headers=public_headers)
+            logger.info(f"Alternative endpoint response status: {public_response.status_code}")
+        
+        public_response.raise_for_status()
+        public_data = public_response.json()
+        
+        # Extract user information from public data
         email = None
         first_name = None
         last_name = None
@@ -166,10 +180,10 @@ def orcid_callback(request):
         department = None
         country = None
         
-        if 'person' in member_data:
-            person = member_data['person']
+        if 'person' in public_data:
+            person = public_data['person']
             
-            # Extract name information
+            # Extract name information (available in public profile)
             if 'name' in person:
                 name = person['name']
                 if 'given-names' in name:
@@ -177,13 +191,7 @@ def orcid_callback(request):
                 if 'family-name' in name:
                     last_name = name['family-name'].get('value', '')
             
-            # Extract email information
-            if 'emails' in person:
-                emails = person['emails']['email']
-                if emails:
-                    email = emails[0].get('email')
-            
-            # Extract employment information (institution, department, country)
+            # Extract employment information from public profile
             if 'employments' in person and 'employment-summary' in person['employments']:
                 employments = person['employments']['employment-summary']
                 if employments:
@@ -213,13 +221,14 @@ def orcid_callback(request):
                             if 'country' in address:
                                 country = address['country']
         
-        # If no email in member data, try to get it from userinfo
+        # Try to get email from userinfo (may not be available with public API)
         if not email:
             email = user_info.get('email')
         
-        # If still no email, create a placeholder email
+        # If no email available, create a placeholder email using ORCID ID
         if not email:
             email = f"{orcid_id}@orcid.org"
+            logger.info(f"No email found in ORCID profile, using placeholder: {email}")
         
         logger.info(f"ORCID ID: {orcid_id}")
         logger.info(f"Email: {email}")
@@ -229,11 +238,11 @@ def orcid_callback(request):
         logger.info(f"Department: {department}")
         logger.info(f"Country: {country}")
         logger.info(f"User info: {user_info}")
-        logger.info(f"Member data keys: {list(member_data.keys()) if member_data else 'No member data'}")
+        logger.info(f"Public data keys: {list(public_data.keys()) if public_data else 'No public data'}")
         
         # Debug employment data structure
-        if 'person' in member_data and 'employments' in member_data['person']:
-            logger.info(f"Employment data structure: {member_data['person']['employments']}")
+        if 'person' in public_data and 'employments' in public_data['person']:
+            logger.info(f"Employment data structure: {public_data['person']['employments']}")
         
         user, created = User.objects.get_or_create(
             email=email,

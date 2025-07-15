@@ -126,9 +126,7 @@ SOCIALACCOUNT_PROVIDERS = {
         },
         "SCOPE": [
             "openid",
-            "authenticate",
-            "/read-limited",
-            "/activities/update",
+            "/authenticate",
         ],
     }
 }

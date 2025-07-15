@@ -24,9 +24,15 @@ This guide explains how to set up ORCID OAuth2 authentication for the ChatIPT ap
    - **Application website**: Your domain (e.g., https://chatipt.svc.gbif.no)
    - **Application description**: ChatIPT is a chatbot for students and researchers who are new to data publication
    - **Redirect URIs**: 
-     - For development: `http://localhost:8000/accounts/orcid/login/callback/`
-     - For production: `https://yourdomain.com/accounts/orcid/login/callback/`
+     - For development: `http://localhost:8000/api/auth/orcid/callback/`
+     - For production: `https://yourdomain.com/api/auth/orcid/callback/`
 5. Save the application
+
+**Note**: This setup uses the ORCID Public API, which means:
+- Only public profile information is accessible
+- Email addresses are not available through the public API
+- Employment information is limited to what users have made public
+- For full access to user data, ORCID membership is required
 
 ## Step 2: Get Your Credentials
 
