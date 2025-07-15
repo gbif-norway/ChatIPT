@@ -27,6 +27,20 @@ const Dataset = ({ initialDatasetId, onNewDataset }) => {
   const [activeTableId, setActiveTableId] = useState(null);
   const [loading, setLoading] = useState(false);  
 
+  const loadTablesForDataset = useCallback(async (datasetId) => {
+    console.log('loading tables for dataset', datasetId);
+    const tables = await fetchData(`${config.baseUrl}/api/tables?dataset=${datasetId}`);
+    const updatedTables = tables.map(item => {
+      const df = JSON.parse(item.df_json);
+      delete item.df_json;
+      return { ...item, df };
+    });
+    console.log(updatedTables);
+    setTables(updatedTables);
+    const sortedTables = tables.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+    setActiveTableId(sortedTables[0]?.id);
+  }, []);
+
   const refreshTables = useCallback(async () => {
     console.log('refreshing tables');
     const tables = await fetchData(`${config.baseUrl}/api/tables?dataset=${activeDatasetID}`);
@@ -87,10 +101,18 @@ const Dataset = ({ initialDatasetId, onNewDataset }) => {
   const initialLoadDataset = async (datasetId) => {
     try {
       setLoading(true);
-      console.log(`loading dataset with ${config.baseUrl}/api/datasets/${datasetId}/refresh`);
-      const refreshedDataset = await fetchData(`${config.baseUrl}/api/datasets/${datasetId}/refresh`);
+      console.log(`loading dataset with ${config.baseUrl}/api/datasets/${datasetId}/`);
+      const refreshedDataset = await fetchData(`${config.baseUrl}/api/datasets/${datasetId}/`);
       setActiveDatasetID(datasetId); 
       setDataset(refreshedDataset);
+      
+      // Set the active agent key to the last agent
+      if (refreshedDataset.visible_agent_set && refreshedDataset.visible_agent_set.length > 0) {
+        setActiveAgentKey(refreshedDataset.visible_agent_set.at(-1).id);
+      }
+      
+      // Load tables for this dataset
+      await loadTablesForDataset(datasetId);
     } catch (error) {
       setError(error.message);
     } finally {
