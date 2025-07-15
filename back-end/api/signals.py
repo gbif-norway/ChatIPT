@@ -40,25 +40,58 @@ def handle_user_signed_up(sender, request, user, **kwargs):
                         org = latest_employment['organization']
                         if 'name' in org:
                             user.institution = org['name']
-                        if 'address' in org and 'city' in org['address']:
-                            user.country = org['address'].get('country', '')
+                        if 'address' in org:
+                            address = org['address']
+                            if 'city' in address:
+                                user.department = address['city']
+                            if 'country' in address:
+                                user.country = address['country']
         
         user.save()
 
 
 @receiver(pre_social_login)
 def handle_pre_social_login(sender, request, sociallogin, **kwargs):
-    """Handle pre-social login to update ORCID tokens"""
+    """Handle pre-social login to update ORCID tokens and profile information"""
     if sociallogin.account.provider == 'orcid':
         user = sociallogin.user
         social_account = sociallogin.account
+        extra_data = social_account.extra_data
         
         # Update ORCID tokens
         user.orcid_access_token = social_account.token
         user.orcid_refresh_token = social_account.token_secret
         
         # Update ORCID ID if not already set
-        if not user.orcid_id and 'orcid-identifier' in social_account.extra_data:
-            user.orcid_id = social_account.extra_data['orcid-identifier'].get('path', '')
+        if not user.orcid_id and 'orcid-identifier' in extra_data:
+            user.orcid_id = extra_data['orcid-identifier'].get('path', '')
+        
+        # Update name information if available
+        if 'person' in extra_data:
+            person = extra_data['person']
+            if 'name' in person:
+                name = person['name']
+                if 'given-names' in name:
+                    user.first_name = name['given-names'].get('value', '')
+                if 'family-name' in name:
+                    user.last_name = name['family-name'].get('value', '')
+        
+        # Update employment information if available
+        if 'activities-summary' in extra_data:
+            activities = extra_data['activities-summary']
+            if 'employments' in activities and 'employment-summary' in activities['employments']:
+                employments = activities['employments']['employment-summary']
+                if employments:
+                    latest_employment = employments[0]  # Most recent employment
+                    if 'organization' in latest_employment:
+                        org = latest_employment['organization']
+                        if 'name' in org:
+                            user.institution = org['name']
+                        if 'address' in org:
+                            address = org['address']
+                            if 'city' in address:
+                                user.department = address['city']
+                            if 'country' in address:
+                                user.country = address['country']
         
         user.save() 

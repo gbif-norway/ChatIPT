@@ -78,7 +78,7 @@ def orcid_login(request):
     params = {
         'client_id': client_id,
         'response_type': 'code',
-        'scope': 'openid',
+        'scope': 'openid /read-limited',
         'redirect_uri': redirect_uri,
     }
     
@@ -158,12 +158,60 @@ def orcid_callback(request):
         member_response.raise_for_status()
         member_data = member_response.json()
         
-        # Extract email from member data
+        # Extract user information from member data
         email = None
-        if 'person' in member_data and 'emails' in member_data['person']:
-            emails = member_data['person']['emails']['email']
-            if emails:
-                email = emails[0].get('email')
+        first_name = None
+        last_name = None
+        institution = None
+        department = None
+        country = None
+        
+        if 'person' in member_data:
+            person = member_data['person']
+            
+            # Extract name information
+            if 'name' in person:
+                name = person['name']
+                if 'given-names' in name:
+                    first_name = name['given-names'].get('value', '')
+                if 'family-name' in name:
+                    last_name = name['family-name'].get('value', '')
+            
+            # Extract email information
+            if 'emails' in person:
+                emails = person['emails']['email']
+                if emails:
+                    email = emails[0].get('email')
+            
+            # Extract employment information (institution, department, country)
+            if 'employments' in person and 'employment-summary' in person['employments']:
+                employments = person['employments']['employment-summary']
+                if employments:
+                    # Get the most recent employment
+                    latest_employment = employments[0]
+                    if 'employment-summary' in latest_employment:
+                        employment = latest_employment['employment-summary']
+                        if 'organization' in employment:
+                            org = employment['organization']
+                            if 'name' in org:
+                                institution = org['name']
+                            if 'address' in org:
+                                address = org['address']
+                                if 'city' in address:
+                                    department = address['city']
+                                if 'country' in address:
+                                    country = address['country']
+                    elif 'organization' in latest_employment:
+                        # Alternative structure
+                        org = latest_employment['organization']
+                        if 'name' in org:
+                            institution = org['name']
+                        if 'address' in org:
+                            address = org['address']
+                            if 'city' in address:
+                                department = address['city']
+                            if 'country' in address:
+                                country = address['country']
         
         # If no email in member data, try to get it from userinfo
         if not email:
@@ -175,8 +223,17 @@ def orcid_callback(request):
         
         logger.info(f"ORCID ID: {orcid_id}")
         logger.info(f"Email: {email}")
+        logger.info(f"First Name: {first_name}")
+        logger.info(f"Last Name: {last_name}")
+        logger.info(f"Institution: {institution}")
+        logger.info(f"Department: {department}")
+        logger.info(f"Country: {country}")
         logger.info(f"User info: {user_info}")
         logger.info(f"Member data keys: {list(member_data.keys()) if member_data else 'No member data'}")
+        
+        # Debug employment data structure
+        if 'person' in member_data and 'employments' in member_data['person']:
+            logger.info(f"Employment data structure: {member_data['person']['employments']}")
         
         user, created = User.objects.get_or_create(
             email=email,
@@ -185,16 +242,34 @@ def orcid_callback(request):
                 'orcid_id': orcid_id,
                 'orcid_access_token': access_token,
                 'orcid_refresh_token': token_info.get('refresh_token', ''),
+                'first_name': first_name or '',
+                'last_name': last_name or '',
+                'institution': institution or '',
+                'department': department or '',
+                'country': country or '',
                 'is_active': True,  # Ensure user is active
             }
         )
         
         if not created:
-            # Update existing user's ORCID info
+            # Update existing user's ORCID info and profile data
             user.orcid_id = orcid_id
             user.orcid_access_token = access_token
             user.orcid_refresh_token = token_info.get('refresh_token', '')
             user.is_active = True  # Ensure user is active
+            
+            # Update profile information if available
+            if first_name:
+                user.first_name = first_name
+            if last_name:
+                user.last_name = last_name
+            if institution:
+                user.institution = institution
+            if department:
+                user.department = department
+            if country:
+                user.country = country
+            
             user.save()
         
         logger.info(f"User created/updated: {user.id}, Email: {user.email}, Is Active: {user.is_active}")
