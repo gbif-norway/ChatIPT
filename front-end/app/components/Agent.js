@@ -15,7 +15,7 @@ const Agent = ({ agent, refreshDataset }) => {
         console.log('running this for every agent I think?')
         console.log(agent);
         var last_message_role = null;
-        if (agent.message_set.length > 0) { last_message_role = agent.message_set.at(-1).role }
+        if (agent.message_set && agent.message_set.length > 0) { last_message_role = agent.message_set.at(-1).role }
         if (agent.completed_at === null && last_message_role != 'user') { 
           setIsLoading(true);
           console.log('running this only once when component is loaded if completed_at is null for agent ' + agent.id);

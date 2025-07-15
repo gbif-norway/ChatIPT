@@ -61,12 +61,14 @@ const Dataset = ({ initialDatasetId, onNewDataset }) => {
       console.log('refreshing dataset');
       const refreshedDataset = await fetchData(`${config.baseUrl}/api/datasets/${activeDatasetID}/refresh`);
       setDataset(refreshedDataset);
-      setActiveAgentKey(refreshedDataset.visible_agent_set.at(-1).id);
+      if (refreshedDataset.visible_agent_set && refreshedDataset.visible_agent_set.length > 0) {
+        setActiveAgentKey(refreshedDataset.visible_agent_set.at(-1).id);
+      }
       await refreshTables();
       console.log('finished refreshing tables');
 
       // If the dataset is published, don't do any more
-      if(refreshedDataset.published_at != null && refreshedDataset.visible_agent_set.at(-1).completed_at != null) { return }
+      if(refreshedDataset.published_at != null && refreshedDataset.visible_agent_set && refreshedDataset.visible_agent_set.length > 0 && refreshedDataset.visible_agent_set.at(-1).completed_at != null) { return }
       console.log('dataset is not yet published')
 
       // If the dataset is not suitable for publication, don't do any more
@@ -75,7 +77,9 @@ const Dataset = ({ initialDatasetId, onNewDataset }) => {
       if(refreshedDataset.rejected_at != null) { return }
 
       // If the latest agent message is not an assistant message, we need to refresh again
-      if(refreshedDataset.visible_agent_set.at(-1).message_set.at(-1).role != 'assistant') {
+      if(refreshedDataset.visible_agent_set && refreshedDataset.visible_agent_set.length > 0 && 
+         refreshedDataset.visible_agent_set.at(-1).message_set && refreshedDataset.visible_agent_set.at(-1).message_set.length > 0 &&
+         refreshedDataset.visible_agent_set.at(-1).message_set.at(-1).role != 'assistant') {
         console.log('about to start looping')
         console.log(refreshedDataset.visible_agent_set.at(-1).message_set.at(-1));
         console.log(refreshedDataset.visible_agent_set.at(-1).message_set.at(-1).role);
@@ -106,9 +110,22 @@ const Dataset = ({ initialDatasetId, onNewDataset }) => {
       setActiveDatasetID(datasetId); 
       setDataset(refreshedDataset);
       
-      // Set the active agent key to the last agent
-      if (refreshedDataset.visible_agent_set && refreshedDataset.visible_agent_set.length > 0) {
-        setActiveAgentKey(refreshedDataset.visible_agent_set.at(-1).id);
+      // Check if the dataset has any agents - if not, we need to use the refresh endpoint
+      // to ensure agents are created (this handles incomplete datasets)
+      if (!refreshedDataset.visible_agent_set || refreshedDataset.visible_agent_set.length === 0) {
+        console.log('No agents found, using refresh endpoint to initialize dataset');
+        const refreshedDatasetWithAgents = await fetchData(`${config.baseUrl}/api/datasets/${datasetId}/refresh`);
+        setDataset(refreshedDatasetWithAgents);
+        
+        // Set the active agent key to the last agent
+        if (refreshedDatasetWithAgents.visible_agent_set && refreshedDatasetWithAgents.visible_agent_set.length > 0) {
+          setActiveAgentKey(refreshedDatasetWithAgents.visible_agent_set.at(-1).id);
+        }
+      } else {
+        // Set the active agent key to the last agent
+        if (refreshedDataset.visible_agent_set && refreshedDataset.visible_agent_set.length > 0) {
+          setActiveAgentKey(refreshedDataset.visible_agent_set.at(-1).id);
+        }
       }
       
       // Load tables for this dataset
@@ -195,14 +212,21 @@ const Dataset = ({ initialDatasetId, onNewDataset }) => {
           </div>
           <div className="row mx-auto p-4">
             <div className="col-6">
-              {Array.isArray(dataset.visible_agent_set) && dataset.visible_agent_set.length > 0 &&
+              {Array.isArray(dataset.visible_agent_set) && dataset.visible_agent_set.length > 0 ? (
                 <Accordion activeKey={activeAgentKey} onSelect={(key) => setActiveAgentKey(key)}>
                   {dataset.visible_agent_set.map(agent => (
                     <Agent key={agent.id} agent={agent} refreshDataset={refreshDataset} />
                   ))}
                 </Accordion>
-              }
-              {(dataset.visible_agent_set.at(-1).completed_at != null && dataset.published_at == null) && (
+              ) : (
+                <div className="message assistant-message">
+                  <div className="inner-message">
+                    <strong>Initializing dataset...</strong><br />
+                    This dataset is being set up for processing. Please wait while the system prepares your data.
+                  </div>
+                </div>
+              )}
+              {(dataset.visible_agent_set && dataset.visible_agent_set.length > 0 && dataset.visible_agent_set.at(-1).completed_at != null && dataset.published_at == null) && (
                 <div className="message user-input-loading">
                   <div className="d-flex align-items-center">
                     <strong>Loading next task</strong>
