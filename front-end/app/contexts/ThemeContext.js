@@ -20,21 +20,27 @@ export const ThemeProvider = ({ children }) => {
   // Get initial theme from localStorage and set up system theme detection
   useEffect(() => {
     const savedTheme = localStorage.getItem('chatipt-theme')
+    console.log('ThemeContext: Saved theme from localStorage:', savedTheme)
+    
     if (savedTheme) {
       setTheme(savedTheme)
     }
     
     // Initialize resolved theme based on current theme setting
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-    if (savedTheme === 'auto') {
-      setResolvedTheme(mediaQuery.matches ? 'dark' : 'light')
+    console.log('ThemeContext: System prefers dark mode:', mediaQuery.matches)
+    
+    let initialResolvedTheme = 'dark' // default fallback
+    
+    if (savedTheme === 'auto' || !savedTheme) {
+      initialResolvedTheme = mediaQuery.matches ? 'dark' : 'light'
+      console.log('ThemeContext: Auto mode, resolved to:', initialResolvedTheme)
     } else if (savedTheme) {
-      setResolvedTheme(savedTheme)
-    } else {
-      // Default to auto mode
-      setResolvedTheme(mediaQuery.matches ? 'dark' : 'light')
+      initialResolvedTheme = savedTheme
+      console.log('ThemeContext: Manual mode, resolved to:', initialResolvedTheme)
     }
     
+    setResolvedTheme(initialResolvedTheme)
     setIsInitialized(true)
   }, [])
 
@@ -43,17 +49,24 @@ export const ThemeProvider = ({ children }) => {
     if (!isInitialized) return
     
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    console.log('ThemeContext: Setting up system theme listener, current theme:', theme)
     
     const handleSystemThemeChange = (e) => {
+      console.log('ThemeContext: System theme changed, prefers dark:', e.matches)
       if (theme === 'auto') {
-        setResolvedTheme(e.matches ? 'dark' : 'light')
+        const newResolvedTheme = e.matches ? 'dark' : 'light'
+        console.log('ThemeContext: Auto mode, updating resolved theme to:', newResolvedTheme)
+        setResolvedTheme(newResolvedTheme)
       }
     }
 
-    // Set initial resolved theme
+    // Set initial resolved theme for current theme setting
     if (theme === 'auto') {
-      setResolvedTheme(mediaQuery.matches ? 'dark' : 'light')
+      const newResolvedTheme = mediaQuery.matches ? 'dark' : 'light'
+      console.log('ThemeContext: Auto mode, setting resolved theme to:', newResolvedTheme)
+      setResolvedTheme(newResolvedTheme)
     } else {
+      console.log('ThemeContext: Manual mode, setting resolved theme to:', theme)
       setResolvedTheme(theme)
     }
 
@@ -67,6 +80,7 @@ export const ThemeProvider = ({ children }) => {
 
   // Update document theme when resolved theme changes
   useEffect(() => {
+    console.log('ThemeContext: Updating document theme to:', resolvedTheme)
     const html = document.documentElement
     const body = document.body
 
@@ -74,14 +88,17 @@ export const ThemeProvider = ({ children }) => {
       html.setAttribute('data-bs-theme', 'dark')
       html.classList.add('dark')
       html.classList.remove('light')
+      console.log('ThemeContext: Applied dark theme to document')
     } else {
       html.setAttribute('data-bs-theme', 'light')
       html.classList.add('light')
       html.classList.remove('dark')
+      console.log('ThemeContext: Applied light theme to document')
     }
   }, [resolvedTheme])
 
   const changeTheme = (newTheme) => {
+    console.log('ThemeContext: Changing theme to:', newTheme)
     setTheme(newTheme)
     localStorage.setItem('chatipt-theme', newTheme)
   }

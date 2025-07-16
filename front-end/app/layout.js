@@ -23,27 +23,51 @@ export default function RootLayout({ children }) {
           dangerouslySetInnerHTML={{
             __html: `
               (function() {
-                try {
-                  const savedTheme = localStorage.getItem('chatipt-theme');
-                  const isAuto = !savedTheme || savedTheme === 'auto';
-                  const isDark = isAuto 
-                    ? window.matchMedia('(prefers-color-scheme: dark)').matches
-                    : savedTheme === 'dark';
-                  
-                  if (isDark) {
+                function applyTheme() {
+                  try {
+                    const savedTheme = localStorage.getItem('chatipt-theme');
+                    const isAuto = !savedTheme || savedTheme === 'auto';
+                    let isDark = false;
+                    
+                    if (isAuto) {
+                      // Check if matchMedia is available
+                      if (window.matchMedia) {
+                        isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                      } else {
+                        // Fallback: check if we're in a dark environment
+                        isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                      }
+                    } else {
+                      isDark = savedTheme === 'dark';
+                    }
+                    
+                    const html = document.documentElement;
+                    if (isDark) {
+                      html.setAttribute('data-bs-theme', 'dark');
+                      html.classList.add('dark');
+                      html.classList.remove('light');
+                    } else {
+                      html.setAttribute('data-bs-theme', 'light');
+                      html.classList.add('light');
+                      html.classList.remove('dark');
+                    }
+                  } catch (e) {
+                    console.warn('Theme detection failed:', e);
+                    // Fallback to dark theme if there's an error
                     document.documentElement.setAttribute('data-bs-theme', 'dark');
                     document.documentElement.classList.add('dark');
-                    document.documentElement.classList.remove('light');
-                  } else {
-                    document.documentElement.setAttribute('data-bs-theme', 'light');
-                    document.documentElement.classList.add('light');
-                    document.documentElement.classList.remove('dark');
                   }
-                } catch (e) {
-                  // Fallback to dark theme if there's an error
-                  document.documentElement.setAttribute('data-bs-theme', 'dark');
-                  document.documentElement.classList.add('dark');
                 }
+                
+                // Apply theme immediately if DOM is ready
+                if (document.readyState === 'loading') {
+                  document.addEventListener('DOMContentLoaded', applyTheme);
+                } else {
+                  applyTheme();
+                }
+                
+                // Also apply on window load to ensure everything is ready
+                window.addEventListener('load', applyTheme);
               })();
             `,
           }}
