@@ -15,17 +15,33 @@ export const useTheme = () => {
 export const ThemeProvider = ({ children }) => {
   const [theme, setTheme] = useState('auto')
   const [resolvedTheme, setResolvedTheme] = useState('dark')
+  const [isInitialized, setIsInitialized] = useState(false)
 
-  // Get initial theme from localStorage or default to 'auto'
+  // Get initial theme from localStorage and set up system theme detection
   useEffect(() => {
     const savedTheme = localStorage.getItem('chatipt-theme')
     if (savedTheme) {
       setTheme(savedTheme)
     }
+    
+    // Initialize resolved theme based on current theme setting
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    if (savedTheme === 'auto') {
+      setResolvedTheme(mediaQuery.matches ? 'dark' : 'light')
+    } else if (savedTheme) {
+      setResolvedTheme(savedTheme)
+    } else {
+      // Default to auto mode
+      setResolvedTheme(mediaQuery.matches ? 'dark' : 'light')
+    }
+    
+    setIsInitialized(true)
   }, [])
 
   // Handle system theme changes
   useEffect(() => {
+    if (!isInitialized) return
+    
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
     
     const handleSystemThemeChange = (e) => {
@@ -47,7 +63,7 @@ export const ThemeProvider = ({ children }) => {
     return () => {
       mediaQuery.removeEventListener('change', handleSystemThemeChange)
     }
-  }, [theme])
+  }, [theme, isInitialized])
 
   // Update document theme when resolved theme changes
   useEffect(() => {

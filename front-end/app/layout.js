@@ -16,9 +16,38 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" data-bs-theme="dark" className="dark">
+    <html lang="en">
       <head>
         <title>ChatIPT</title>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  const savedTheme = localStorage.getItem('chatipt-theme');
+                  const isAuto = !savedTheme || savedTheme === 'auto';
+                  const isDark = isAuto 
+                    ? window.matchMedia('(prefers-color-scheme: dark)').matches
+                    : savedTheme === 'dark';
+                  
+                  if (isDark) {
+                    document.documentElement.setAttribute('data-bs-theme', 'dark');
+                    document.documentElement.classList.add('dark');
+                    document.documentElement.classList.remove('light');
+                  } else {
+                    document.documentElement.setAttribute('data-bs-theme', 'light');
+                    document.documentElement.classList.add('light');
+                    document.documentElement.classList.remove('dark');
+                  }
+                } catch (e) {
+                  // Fallback to dark theme if there's an error
+                  document.documentElement.setAttribute('data-bs-theme', 'dark');
+                  document.documentElement.classList.add('dark');
+                }
+              })();
+            `,
+          }}
+        />
       </head>
       <body className={inter.className}>
         <ThemeProvider>
