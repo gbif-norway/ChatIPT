@@ -20,10 +20,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId }) => {
           setIsLoading(true);
           console.log('running this only once when component is loaded if completed_at is null for agent ' + agent.id);
           console.log(agent.completed_at);
-          // Only refresh if we're still viewing the same dataset
-          if (currentDatasetId === agent.dataset) {
-            await refreshDataset();
-          }
+          await refreshDataset();
           setIsLoading(false);
         } else {
           setIsLoading(false);
@@ -60,10 +57,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId }) => {
           credentials: 'include' // Include credentials for authenticated requests
         });
         setUserInput("");
-        // Only refresh if we're still viewing the same dataset
-        if (currentDatasetId === agent.dataset) {
-          await refreshDataset();
-        }
+        await refreshDataset();
         setIsLoading(false);
       } catch (error) {
         console.error("Error:", error);

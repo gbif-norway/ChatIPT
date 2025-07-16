@@ -6,12 +6,13 @@ import Sidebar from './components/Sidebar'
 import SidebarToggle from './components/SidebarToggle'
 import ProtectedRoute from './components/ProtectedRoute'
 import { useAuth } from './contexts/AuthContext'
+import { DatasetProvider, useDataset } from './contexts/DatasetContext'
 import { useEffect, useState } from 'react'
 
-const Home = () => {
+const HomeContent = () => {
   const { authenticated } = useAuth()
+  const { currentDatasetId, loadDataset, setCurrentDatasetId } = useDataset()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [currentDatasetId, setCurrentDatasetId] = useState(null)
 
   useEffect(() => {
     // Only show welcome modal if user is authenticated
@@ -35,7 +36,7 @@ const Home = () => {
   }, [authenticated]);
 
   const handleDatasetSelect = (datasetId) => {
-    setCurrentDatasetId(datasetId)
+    loadDataset(datasetId)
     setSidebarOpen(false) // Close sidebar on mobile after selection
   }
 
@@ -60,7 +61,6 @@ const Home = () => {
         />
 
         <Dataset 
-          initialDatasetId={currentDatasetId}
           onNewDataset={handleNewDataset}
         />
 
@@ -128,6 +128,14 @@ const Home = () => {
         </div>
       </main>
     </ProtectedRoute>
+  )
+}
+
+const Home = () => {
+  return (
+    <DatasetProvider>
+      <HomeContent />
+    </DatasetProvider>
   )
 }
 
