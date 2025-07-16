@@ -222,7 +222,7 @@ const Dataset = ({ initialDatasetId, onNewDataset }) => {
               {Array.isArray(dataset.visible_agent_set) && dataset.visible_agent_set.length > 0 ? (
                 <Accordion activeKey={activeAgentKey} onSelect={(key) => setActiveAgentKey(key)}>
                   {dataset.visible_agent_set.map(agent => (
-                    <Agent key={agent.id} agent={agent} refreshDataset={refreshDataset} />
+                    <Agent key={agent.id} agent={agent} refreshDataset={refreshDataset} currentDatasetId={activeDatasetID} />
                   ))}
                 </Accordion>
               ) : (

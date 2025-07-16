@@ -5,7 +5,7 @@ import Badge from 'react-bootstrap/Badge';
 import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
 
-const Agent = ({ agent, refreshDataset }) => {
+const Agent = ({ agent, refreshDataset, currentDatasetId }) => {
   const [userInput, setUserInput] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState("Working...");
@@ -20,14 +20,17 @@ const Agent = ({ agent, refreshDataset }) => {
           setIsLoading(true);
           console.log('running this only once when component is loaded if completed_at is null for agent ' + agent.id);
           console.log(agent.completed_at);
-          await refreshDataset();
+          // Only refresh if we're still viewing the same dataset
+          if (currentDatasetId === agent.dataset) {
+            await refreshDataset();
+          }
           setIsLoading(false);
         } else {
           setIsLoading(false);
         }
     };
     runAsyncEffect();
-  }, []);
+  }, []); // Only run once when component mounts
 
   const formatTableIDs = (ids) => {
     if (!ids || !ids.length) return "[Deleted table(s)]";
@@ -57,7 +60,10 @@ const Agent = ({ agent, refreshDataset }) => {
           credentials: 'include' // Include credentials for authenticated requests
         });
         setUserInput("");
-        await refreshDataset();
+        // Only refresh if we're still viewing the same dataset
+        if (currentDatasetId === agent.dataset) {
+          await refreshDataset();
+        }
         setIsLoading(false);
       } catch (error) {
         console.error("Error:", error);
