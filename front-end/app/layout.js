@@ -32,7 +32,15 @@ export default function RootLayout({ children }) {
                     if (isAuto) {
                       // Check if matchMedia is available
                       if (window.matchMedia) {
-                        isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                        const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+                        const lightQuery = window.matchMedia('(prefers-color-scheme: light)');
+                        
+                        // If neither is true, default to light mode
+                        if (!darkQuery.matches && !lightQuery.matches) {
+                          isDark = false;
+                        } else {
+                          isDark = darkQuery.matches;
+                        }
                       } else {
                         // Fallback: check if we're in a dark environment
                         isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;

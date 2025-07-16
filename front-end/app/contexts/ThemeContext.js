@@ -26,14 +26,34 @@ export const ThemeProvider = ({ children }) => {
       setTheme(savedTheme)
     }
     
-    // Initialize resolved theme based on current theme setting
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-    console.log('ThemeContext: System prefers dark mode:', mediaQuery.matches)
+    // Force a fresh media query detection
+    const getSystemTheme = () => {
+      try {
+        // Create a fresh media query instance
+        const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+        console.log('ThemeContext: Fresh media query - prefers dark mode:', mediaQuery.matches)
+        
+        // Also check for light mode explicitly
+        const lightMediaQuery = window.matchMedia('(prefers-color-scheme: light)')
+        console.log('ThemeContext: Fresh media query - prefers light mode:', lightMediaQuery.matches)
+        
+        // If both are false, default to light mode
+        if (!mediaQuery.matches && !lightMediaQuery.matches) {
+          console.log('ThemeContext: Neither dark nor light detected, defaulting to light')
+          return 'light'
+        }
+        
+        return mediaQuery.matches ? 'dark' : 'light'
+      } catch (error) {
+        console.error('ThemeContext: Error detecting system theme:', error)
+        return 'light' // Default to light mode on error
+      }
+    }
     
-    let initialResolvedTheme = 'dark' // default fallback
+    let initialResolvedTheme = 'light' // default to light mode
     
     if (savedTheme === 'auto' || !savedTheme) {
-      initialResolvedTheme = mediaQuery.matches ? 'dark' : 'light'
+      initialResolvedTheme = getSystemTheme()
       console.log('ThemeContext: Auto mode, resolved to:', initialResolvedTheme)
     } else if (savedTheme) {
       initialResolvedTheme = savedTheme
@@ -48,13 +68,28 @@ export const ThemeProvider = ({ children }) => {
   useEffect(() => {
     if (!isInitialized) return
     
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
     console.log('ThemeContext: Setting up system theme listener, current theme:', theme)
+    
+    const getSystemTheme = () => {
+      try {
+        const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+        const lightMediaQuery = window.matchMedia('(prefers-color-scheme: light)')
+        
+        if (!mediaQuery.matches && !lightMediaQuery.matches) {
+          return 'light'
+        }
+        
+        return mediaQuery.matches ? 'dark' : 'light'
+      } catch (error) {
+        console.error('ThemeContext: Error detecting system theme:', error)
+        return 'light'
+      }
+    }
     
     const handleSystemThemeChange = (e) => {
       console.log('ThemeContext: System theme changed, prefers dark:', e.matches)
       if (theme === 'auto') {
-        const newResolvedTheme = e.matches ? 'dark' : 'light'
+        const newResolvedTheme = getSystemTheme()
         console.log('ThemeContext: Auto mode, updating resolved theme to:', newResolvedTheme)
         setResolvedTheme(newResolvedTheme)
       }
@@ -62,7 +97,7 @@ export const ThemeProvider = ({ children }) => {
 
     // Set initial resolved theme for current theme setting
     if (theme === 'auto') {
-      const newResolvedTheme = mediaQuery.matches ? 'dark' : 'light'
+      const newResolvedTheme = getSystemTheme()
       console.log('ThemeContext: Auto mode, setting resolved theme to:', newResolvedTheme)
       setResolvedTheme(newResolvedTheme)
     } else {
@@ -71,6 +106,7 @@ export const ThemeProvider = ({ children }) => {
     }
 
     // Listen for system theme changes
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
     mediaQuery.addEventListener('change', handleSystemThemeChange)
 
     return () => {
