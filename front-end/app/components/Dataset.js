@@ -90,7 +90,14 @@ const Dataset = ({ initialDatasetId, onNewDataset }) => {
         console.log(refreshedDataset.visible_agent_set.at(-1).busy_thinking);
         await wait(500);
         console.log('finished waiting, refreshing again');
-        refreshDataset();
+        
+        // Check if we're still viewing the same dataset before continuing the refresh loop
+        // This prevents the refresh loop from continuing when the user has switched to a different dataset
+        if (refreshedDataset.id === activeDatasetID) {
+          refreshDataset();
+        } else {
+          console.log('Dataset changed, stopping refresh loop');
+        }
       }
       console.log('end of refreshing dataset');
     } catch (err) {
