@@ -62,7 +62,7 @@ const ThemeToggle = () => {
         <li>
           <button
             className={`dropdown-item ${isAuto ? 'active' : ''}`}
-            onClick={() => handleThemeChange('auto')}
+            onClick={() => handleThemeChange('system')}
           >
             <i className="bi bi-circle-half me-2"></i>
             Auto

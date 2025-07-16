@@ -16,70 +16,9 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <title>ChatIPT</title>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              (function() {
-                function applyTheme() {
-                  try {
-                    const savedTheme = localStorage.getItem('chatipt-theme');
-                    const isAuto = !savedTheme || savedTheme === 'auto';
-                    let isDark = false;
-                    
-                    if (isAuto) {
-                      // Check if matchMedia is available
-                      if (window.matchMedia) {
-                        const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
-                        const lightQuery = window.matchMedia('(prefers-color-scheme: light)');
-                        
-                        // If neither is true, default to light mode
-                        if (!darkQuery.matches && !lightQuery.matches) {
-                          isDark = false;
-                        } else {
-                          isDark = darkQuery.matches;
-                        }
-                      } else {
-                        // Fallback: check if we're in a dark environment
-                        isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-                      }
-                    } else {
-                      isDark = savedTheme === 'dark';
-                    }
-                    
-                    const html = document.documentElement;
-                    if (isDark) {
-                      html.setAttribute('data-bs-theme', 'dark');
-                      html.classList.add('dark');
-                      html.classList.remove('light');
-                    } else {
-                      html.setAttribute('data-bs-theme', 'light');
-                      html.classList.add('light');
-                      html.classList.remove('dark');
-                    }
-                  } catch (e) {
-                    console.warn('Theme detection failed:', e);
-                    // Fallback to dark theme if there's an error
-                    document.documentElement.setAttribute('data-bs-theme', 'dark');
-                    document.documentElement.classList.add('dark');
-                  }
-                }
-                
-                // Apply theme immediately if DOM is ready
-                if (document.readyState === 'loading') {
-                  document.addEventListener('DOMContentLoaded', applyTheme);
-                } else {
-                  applyTheme();
-                }
-                
-                // Also apply on window load to ensure everything is ready
-                window.addEventListener('load', applyTheme);
-              })();
-            `,
-          }}
-        />
       </head>
       <body className={inter.className}>
         <ThemeProvider>
