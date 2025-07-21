@@ -23,14 +23,21 @@ def create_chat_completion(messages, functions, temperature=1, model='o3'): # gp
 
 def custom_schema(cls: BaseModel) -> Dict[str, Any]:
     parameters = cls.schema()
+    # Remove internal Pydantic helper fields we never want to expose
     parameters['properties'] = {
         k: v
         for k, v in parameters['properties'].items()
         if k not in ('v__duplicate_kwargs', 'args', 'kwargs')
     }
-    parameters['required'] = sorted(parameters['properties'])
-    for key in ['title', 'additionalProperties', 'description']:
-         _remove_a_key(key, 'title')
+
+    # Pydantic already sets the correct list of required fields in the schema.  
+    # Don't overwrite it with *all* properties (that turned every optional field into a required one).
+    # We only ensure the key exists so OpenAI gets a well-formed JSON Schema.
+    parameters['required'] = parameters.get('required', [])
+
+    # Clean out noisy keys that inflate the schema size.
+    for remove_key in ['title', 'additionalProperties', 'description']:
+        _remove_a_key(parameters, remove_key)
     return {
         'name': cls.__name__,
         'description': cls.__doc__,

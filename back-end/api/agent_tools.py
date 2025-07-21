@@ -1,11 +1,11 @@
 import sys
 from io import StringIO
-from pydantic import Field, PositiveInt
+from pydantic import Field, PositiveInt, BaseModel, EmailStr
 import re
 import pandas as pd
 import numpy as np
 from api.helpers.openai_helpers import OpenAIBaseModel
-from typing import Optional
+from typing import Optional, List
 from api.helpers.publish import upload_dwca, register_dataset_and_endpoint
 import datetime
 import uuid
@@ -16,6 +16,9 @@ from django.db.models import Q
 from api.helpers import discord_bot
 import json
 from tenacity import retry, stop_after_attempt, wait_fixed
+import os
+from requests.auth import HTTPBasicAuth
+import requests
 
 
 # Allowed Darwin Core terms
@@ -68,6 +71,14 @@ DARWIN_CORE_TERMS = {
     "measurementID", "parentMeasurementID", "measurementType", "measurementValue", "measurementAccuracy", "measurementUnit",
     "measurementDeterminedBy", "measurementDeterminedDate", "measurementMethod", "measurementRemarks"
 }
+
+class EMLUser(BaseModel):
+    """Representation of an individual associated with the dataset."""
+    first_name: str
+    last_name: str
+    email: EmailStr
+    orcid: Optional[str] = None
+
 
 class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
     """
@@ -283,9 +294,45 @@ class RollBack(OpenAIBaseModel):
         discord_bot.send_discord_message(f"Dataset tables rolled back for Dataset id {agent.dataset.id}.")
         return json.dumps({'new_table_ids': [t.id for t in tables], 'code_snippets': code_snippets})
 
+class SetEML(OpenAIBaseModel):
+    """Sets the EML (Metdata) for a Dataset via an Agent, returns a success or error message. Note that SetBasicMetadata should be used to set the dataset Title and Description."""
+    agent_id: PositiveInt = Field(...)
+    temporal_scope: Optional[str] = Field(None, description="Optional temporal coverage of the dataset (e.g. 1990-2020)")
+    geographic_scope: Optional[str] = Field(None, description="Optional geographic coverage of the dataset (e.g. Amazon Basin, Brazil)")
+    taxonomic_scope: Optional[str] = Field(None, description="Optional taxonomic coverage (e.g. Lepidoptera, Aves)")
+    methodology: Optional[str] = Field(None, description="Optional description of the sampling / data collection methodology")
+    users: Optional[List[EMLUser]] = Field(
+        None,
+        description="Optional list of people involved in the dataset. Each entry should be an object with first_name, last_name, email, and orcid keys."
+    )
+
+    def run(self):
+        try:
+            from api.models import Agent
+            agent = Agent.objects.get(id=self.agent_id)
+            dataset = agent.dataset
+            eml = dataset.eml or {}
+            if self.temporal_scope is not None:
+                eml["temporal_scope"] = self.temporal_scope
+            if self.geographic_scope is not None:
+                eml["geographic_scope"] = self.geographic_scope
+            if self.taxonomic_scope is not None:
+                eml["taxonomic_scope"] = self.taxonomic_scope
+            if self.methodology is not None:
+                eml["methodology"] = self.methodology
+            if self.users is not None:
+                # Ensure we store plain dicts, not Pydantic objects
+                eml["users"] = [u.dict() for u in self.users]
+            dataset.eml = eml
+            dataset.save()
+            return 'EML has been successfully set.'
+        except Exception as e:
+            print('There has been an error with SetEML')
+            return repr(e)[:2000]
+
 
 class SetBasicMetadata(OpenAIBaseModel):
-    """Sets the title and description (Metadata) for a Dataset via an Agent, returns a success message or an error message"""
+    """Sets the title and description (Metadata) for a Dataset via an Agent, returns a success or error message."""
     agent_id: PositiveInt = Field(...)
     title: str = Field(..., description="A short but descriptive title for the dataset as a whole")
     description: str = Field(..., description="A longer description of what the dataset contains, including any important information about why the data was gathered (e.g. for a study) as well as how it was gathered.")
@@ -414,10 +461,21 @@ class ValidateDwCA(OpenAIBaseModel):
                 return 'Error: No DwCA URL found. Run UploadDwCA first.'
             auth = HTTPBasicAuth(os.getenv('GBIF_USER'), os.getenv('GBIF_PASSWORD'))
 
-            # Submit validation request (will raise for non-202 response)
-            submit_resp = requests.post('https://api.gbif.org/v1/validation/url', json={'url': dataset.dwca_url}, auth=auth, timeout=30)
-            if submit_resp.status_code != 202:
+            # Align with GBIF Validator API: send the DwCA URL as a multipart/form-data field named "fileUrl" and
+            # request a JSON response (same behaviour as: curl -u user:pass -H "Accept: application/json" \
+            #   -F "fileUrl=<dwca_url>" https://api.gbif.org/v1/validation/url )
+            headers = {'Accept': 'application/json'}
+            files = {'fileUrl': (None, dataset.dwca_url)}  # (None, ...) ensures we send as a simple form field, not a file
+            submit_resp = requests.post(
+                'https://api.gbif.org/v1/validation/url',
+                auth=auth,
+                headers=headers,
+                files=files,
+                timeout=30,
+            )
+            if submit_resp.status_code not in (200, 201, 202):
                 return f'Validator submission failed. Status: {submit_resp.status_code}, Body: {submit_resp.text}'
+
             key = submit_resp.json().get('key')
             if not key:
                 return f'Validator response did not contain a key: {submit_resp.text}'
