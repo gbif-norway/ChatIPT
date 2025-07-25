@@ -60,91 +60,125 @@ GPT4o is given access to a number of tools/functions which run on the server sid
 
 Another important tool is the Publish tool, which the model is instructed to use in its final Task in order to publish data to the GBIF test portal. It creates a Darwin Core Archive using https://github.com/pieterprovoost/dwca-writer, uploads it to a public repository and uses the GBIF API to register it as a dataset with GBIF.
 
-# Using DevSpace with ChatIPT
+# Development and Deployment
 
-This project uses DevSpace for development and deployment. Here's how to use it:
+This project uses Jenkins for CI/CD and Docker for containerization. The application is deployed using GitOps principles with ArgoCD.
 
-## Setup
+## Architecture
 
-1. Install DevSpace: Follow the instructions at [https://devspace.sh/cli/docs/getting-started/installation](https://devspace.sh/cli/docs/getting-started/installation)
-2. Ensure you have access to a Kubernetes cluster and `kubectl` is configured correctly
+The application consists of two main components:
+- **Backend**: Python Django API (`./back-end/`)
+- **Frontend**: React application (`./front-end/`)
 
-Set up namespace with:
-```bash
-devspace use namespace publishbot
-```
+Both components are containerized using Docker and deployed to Kubernetes.
 
-## Development
+## Local Development
+
+### Prerequisites
+
+- Docker and Docker Compose
+- Python 3.8+ (for backend development)
+- Node.js 18+ (for frontend development)
 
 ### Backend Development
 
-To start developing the backend:
+1. Navigate to the backend directory:
+   ```bash
+   cd back-end
+   ```
 
-```bash
-devspace dev
-```
+2. Install Python dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-This command will:
-1. Deploy any dependencies
-2. Ensure pull secrets
-3. Deploy Helm charts and manifests
-4. Start the backend in development mode
-   - Sync files between your local `./back-end` directory and the container
-   - Open a terminal in the container running `./devspace_start.sh`
-   - Enable SSH for IDE connections
-   - Forward port 8000
-   - Open `http://localhost:8000` when available
+3. Run the Django development server:
+   ```bash
+   python manage.py runserver
+   ```
+
+The backend will be available at `http://localhost:8000`
 
 ### Frontend Development
 
-To start developing the frontend:
+1. Navigate to the frontend directory:
+   ```bash
+   cd front-end
+   ```
+
+2. Install Node.js dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Start the development server:
+   ```bash
+   npm run dev
+   ```
+
+The frontend will be available at `http://localhost:3000`
+
+### Using Docker Compose
+
+For a complete local setup with all dependencies:
 
 ```bash
-devspace run-pipeline dev-fe
+docker-compose up
 ```
 
-This command is similar to backend development but focuses on the frontend:
-- Syncs files from `./front-end`
-- Forwards port 3000
-- Opens `http://localhost:3000` when available
+This will start both the backend and frontend services along with the PostgreSQL database.
+
+## CI/CD Pipeline
+
+The project uses Jenkins pipelines for automated builds and deployments:
+
+### Staging Pipeline (`Jenkinsfile.staging`)
+- Builds Docker images for staging environment
+- Updates GitOps configuration in `values-staging.yaml`
+- Deploys to staging environment
+
+### Production Pipeline (`Jenkinsfile`)
+- Builds Docker images for production environment
+- Updates GitOps configuration in `values-prod.yaml`
+- Increments chart version in `Chart.yaml`
+- Deploys to production environment
+
+### Pipeline Features
+- **Version Management**: Uses git commit SHA and timestamp for unique versioning
+- **Docker Builds**: Uses Kaniko for secure, efficient Docker builds
+- **GitOps Integration**: Automatically updates Helm values and chart versions
+- **Secure Git Operations**: Uses SSH keys for repository access
 
 ## Deployment
 
-To build and deploy the entire application:
+The application is deployed using GitOps principles:
 
-```bash
-devspace deploy
-```
+1. **Jenkins Pipeline**: Builds and pushes Docker images
+2. **GitOps Repository**: Updates deployment configuration
+3. **ArgoCD**: Automatically deploys changes to Kubernetes
 
-This will:
-1. Deploy dependencies
-2. Ensure pull secrets
-3. Build and push Docker images with tags based on the git commit hash
-4. Deploy Helm charts and manifests
+### Environments
+- **Staging**: `https://staging.chatipt.svc.gbif.no`
+- **Production**: `https://chatipt.svc.gbif.no`
 
-To deploy without rebuilding images:
+## Docker Images
 
-```bash
-devspace run-pipeline deploy-only
-```
+The project defines two Docker images:
+- `gbifnorway/chatipt-back-end`: Django API backend
+- `gbifnorway/chatipt-front-end`: React frontend
 
-## Images
+Both images are built using Kaniko with caching enabled for faster builds.
 
-The project defines two images:
-- `back-end`: Built from `./back-end/Dockerfile`
-- `front-end`: Built from `./front-end/Dockerfile`
+## Helm Charts
 
-Both use Kaniko for building, with caching enabled.
-
-## Helm Deployment
-
-The project uses a Helm chart located at `./helm/chatipt` for deployment.
-
+The deployment uses Helm charts located in the GitOps repository:
+- Chart configuration: `gitops/apps/chatipt/Chart.yaml`
+- Staging values: `gitops/apps/chatipt/values-staging.yaml`
+- Production values: `gitops/apps/chatipt/values-prod.yaml`
 
 ## Notes
 
-- The configuration uses git commit hashes for image tagging.
-- Development modes inject a lightweight SSH server for IDE connections.
-- Proxy commands are set up to make `devspace`, `kubectl`, `helm`, and git credentials available in dev containers.
-
-For more detailed information about DevSpace and its capabilities, refer to the [DevSpace documentation](https://devspace.sh/cli/docs/introduction).
+- Image tags are generated using git commit SHA and timestamp for uniqueness
+- The pipeline automatically handles version increments for production releases
+- All deployments are managed through GitOps for consistency and auditability
+- SSH credentials are required for Jenkins to push to the GitOps repository

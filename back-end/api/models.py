@@ -2,6 +2,7 @@ import traceback
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.contrib.postgres.fields import ArrayField
+from django.contrib.auth.models import AbstractUser
 from api import agent_tools
 from api.helpers.openai_helpers import create_chat_completion
 from picklefield.fields import PickledObjectField
@@ -18,8 +19,26 @@ import numpy as np
 import io
 
 
+class CustomUser(AbstractUser):
+    """Custom user model with ORCID integration"""
+    orcid_id = models.CharField(max_length=50, blank=True, help_text="ORCID identifier")
+    orcid_access_token = models.TextField(blank=True, help_text="ORCID OAuth access token")
+    orcid_refresh_token = models.TextField(blank=True, help_text="ORCID OAuth refresh token")
+    institution = models.CharField(max_length=500, blank=True, help_text="User's institution")
+    department = models.CharField(max_length=500, blank=True, help_text="User's department")
+    country = models.CharField(max_length=100, blank=True, help_text="User's country")
+    
+    def __str__(self):
+        return f"{self.email} ({self.orcid_id})"
+    
+    class Meta:
+        verbose_name = "User"
+        verbose_name_plural = "Users"
+
+
 class Dataset(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='datasets', null=True, blank=True)
     orcid = models.CharField(max_length=2000, blank=True)
     file = models.FileField(upload_to='user_files')
     title = models.CharField(max_length=2000, blank=True, default='')
@@ -51,7 +70,8 @@ class Dataset(models.Model):
     def next_agent(self):
         self.refresh_from_db()
         if self.rejected_at:
-            print('rejected')
+            logger = logging.getLogger(__name__)
+            logger.info('rejected')
             return None
 
         next_agent = self.agent_set.filter(completed_at=None).first()
@@ -59,17 +79,30 @@ class Dataset(models.Model):
             return next_agent
 
         last_completed_agent = self.agent_set.last()  # self.agent_set.exclude(completed_at=None).last()
-        print(f'No next agent found, making new agent for new task based on {last_completed_agent}')
+        logger = logging.getLogger(__name__)
+        logger.info(f'No next agent found, making new agent for new task based on {last_completed_agent}')
         if last_completed_agent:
             next_task = Task.objects.filter(id__gt=last_completed_agent.task.id).first()
             if next_task:
                 next_task.create_agent_with_system_messages(dataset=self)
                 return self.next_agent()
             else:
-                print(f'PUBLISHED {self.published_at}')
+                logger.info(f'PUBLISHED {self.published_at}')
                 return None  # It's been published... self.published_at = datetime.now() # self.save()
         else:
-            raise Exception('Agent set for this dataset appears to be empty')
+            # No agents exist for this dataset - create the first agent
+            logger.info('No agents found for dataset, creating first agent')
+            first_task = Task.objects.first()
+            if not first_task:
+                raise Exception('No tasks are configured in the system. Please contact the administrator to load the required tasks.')
+            
+            # Get tables for this dataset
+            tables = Table.objects.filter(dataset=self)
+            if not tables.exists():
+                raise Exception('No tables found for this dataset. Please ensure the dataset has been properly processed.')
+            
+            first_task.create_agent_with_system_messages(dataset=self)
+            return self.next_agent()
 
     @staticmethod
     def get_dfs_from_user_file(file, file_name):
@@ -85,6 +118,7 @@ class Dataset(models.Model):
                     for row in sheet.iter_rows():
                         for cell in row:
                             if cell.data_type == 'f':  # 'f' indicates a formula
+                                cell.value = '' # f'[FORMULA: {cell.value}]'
                                 cell.value = '' # f'[FORMULA: {cell.value}]'
                     for merged_cell in list(sheet.merged_cells.ranges):
                         min_col, min_row, max_col, max_row = merged_cell.min_col, merged_cell.min_row, merged_cell.max_col, merged_cell.max_row
@@ -109,6 +143,7 @@ class Dataset(models.Model):
         ordering = ['created_at']
 
 
+class Task(models.Model):  # See tasks.yaml for the only objects this model is populated with
 class Task(models.Model):  # See tasks.yaml for the only objects this model is populated with
     name = models.CharField(max_length=300, unique=True)
     text = models.TextField()
@@ -223,10 +258,14 @@ class Agent(models.Model):
 
     @classmethod
     def create_with_system_message(cls, dataset, task, tables):
+        if not task:
+            raise ValueError("Task cannot be None. Please ensure tasks are loaded in the database.")
+        
         agent = cls.objects.create(dataset=dataset, task=task)
         agent.tables.set([t.id for t in tables])
         system_message_text = render_to_string('prompt.txt', context={ 'agent': agent, 'all_tasks_count': Task.objects.all().count() })
-        print(system_message_text)
+        logger = logging.getLogger(__name__)
+        logger.info(system_message_text)
         # import pdb; pdb.set_trace()
         Message.objects.create(agent=agent, openai_obj={'content': system_message_text, 'role': Message.Role.SYSTEM})
 

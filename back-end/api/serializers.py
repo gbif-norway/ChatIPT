@@ -78,6 +78,14 @@ class DatasetSerializer(serializers.ModelSerializer):
         for sheet_name, df in dfs.items():
             if not df.empty:
                 tables.append(Table.objects.create(dataset=dataset, title=sheet_name, df=df))
-        agent = Agent.create_with_system_message(dataset=dataset, task=Task.objects.first(), tables=tables)
+        
+        # Check if tasks exist
+        first_task = Task.objects.first()
+        if not first_task:
+            raise serializers.ValidationError(
+                "No tasks are configured in the system. Please contact the administrator to load the required tasks."
+            )
+        
+        agent = Agent.create_with_system_message(dataset=dataset, task=first_task, tables=tables)
         discord_bot.send_discord_message(f"Dataset ID assigned: {dataset.id}.")
         return dataset

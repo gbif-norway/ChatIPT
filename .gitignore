@@ -373,3 +373,6 @@ user_files/
 
 # Ignore DevSpace cache and log folder
 .devspace/
+.cursor
+back-end/.env.prod
+back-end/.env.staging

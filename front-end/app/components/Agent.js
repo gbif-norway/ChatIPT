@@ -3,8 +3,9 @@ import { useState, useEffect } from 'react';
 import Accordion from 'react-bootstrap/Accordion';
 import Badge from 'react-bootstrap/Badge';
 import config from '../config.js';
+import { getCsrfToken } from '../utils/csrf.js';
 
-const Agent = ({ agent, refreshDataset }) => {
+const Agent = ({ agent, refreshDataset, currentDatasetId }) => {
   const [userInput, setUserInput] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState("Working...");
@@ -14,7 +15,7 @@ const Agent = ({ agent, refreshDataset }) => {
         console.log('running this for every agent I think?')
         console.log(agent);
         var last_message_role = null;
-        if (agent.message_set.length > 0) { last_message_role = agent.message_set.at(-1).role }
+        if (agent.message_set && agent.message_set.length > 0) { last_message_role = agent.message_set.at(-1).role }
         if (agent.completed_at === null && last_message_role != 'user') { 
           setIsLoading(true);
           console.log('running this only once when component is loaded if completed_at is null for agent ' + agent.id);
@@ -26,7 +27,7 @@ const Agent = ({ agent, refreshDataset }) => {
         }
     };
     runAsyncEffect();
-  }, []);
+  }, []); // Only run once when component mounts
 
   const formatTableIDs = (ids) => {
     if (!ids || !ids.length) return "[Deleted table(s)]";
@@ -42,10 +43,18 @@ const Agent = ({ agent, refreshDataset }) => {
       setLoadingMessage("Working...");
 
       try {
-        await fetch(`${config.baseApiUrl}/messages/`, {
+        const csrfToken = await getCsrfToken();
+        const headers = { 'Content-Type': 'application/json' };
+        
+        if (csrfToken) {
+          headers['X-CSRFToken'] = csrfToken;
+        }
+
+        await fetch(`${config.baseUrl}/api/messages/`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ openai_obj: { content: userInput, role: 'user' }, agent: agent.id })
+          headers,
+          body: JSON.stringify({ openai_obj: { content: userInput, role: 'user' }, agent: agent.id }),
+          credentials: 'include' // Include credentials for authenticated requests
         });
         setUserInput("");
         await refreshDataset();

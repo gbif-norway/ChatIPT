@@ -22,14 +22,21 @@ from drf_spectacular.views import SpectacularAPIView
 from website import views
 
 router = routers.DefaultRouter()
-router.register(r'datasets', api_views.DatasetViewSet)
-router.register(r'tables', api_views.TableViewSet)
-router.register(r'messages', api_views.MessageViewSet)
-router.register(r'agents', api_views.AgentViewSet)  
-router.register(r'tasks', api_views.TaskViewSet)  
+router.register(r'datasets', api_views.DatasetViewSet, basename='dataset')
+router.register(r'tables', api_views.TableViewSet, basename='table')
+router.register(r'messages', api_views.MessageViewSet, basename='message')
+router.register(r'agents', api_views.AgentViewSet, basename='agent')  
+router.register(r'tasks', api_views.TaskViewSet, basename='task')  
 
 urlpatterns = [
+    path('admin/', admin.site.urls),
+    path('accounts/', include('allauth.urls')),
     path('api/', include(router.urls)),
+    path('api/auth/status/', api_views.auth_status, name='auth_status'),
+    path('api/auth/profile/', api_views.user_profile, name='user_profile'),
+    path('api/auth/csrf-token/', api_views.csrf_token, name='csrf_token'),
+    path('api/auth/orcid/login/', api_views.orcid_login, name='orcid_login'),
+    path('api/auth/orcid/callback/', api_views.orcid_callback, name='orcid_callback'),
     path('api-auth/', include('rest_framework.urls', namespace='rest_framework')),
     path('api-schema/', SpectacularAPIView.as_view(), name='schema'),
     path('', views.DatasetListView.as_view(), name='index'),

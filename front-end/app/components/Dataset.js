@@ -1,4 +1,7 @@
-import { useEffect, useState, useCallback } from 'react';
+'use client'
+
+import React, { useState, useCallback, useEffect } from 'react';
+import { useDataset } from '../contexts/DatasetContext';
 import Agent from './Agent';
 import FileDrop from './FileDrop';
 import Accordion from 'react-bootstrap/Accordion';
@@ -7,26 +10,26 @@ import Tabs from 'react-bootstrap/Tabs';
 import Tab from 'react-bootstrap/Tab';
 import config from '../config.js';
 
-const fetchData = async (url, options = {}) => {
-  const response = await fetch(url, options);
-  if (!response.ok) throw new Error('Network response was not ok');
-  return response.json();
-};
-
-const wait = (n) => new Promise((resolve) => setTimeout(resolve, n));
-
-const Dataset = ({ initialDatasetId }) => {
-  const [error, setError] = useState(null);
-  const [dataset, setDataset] = useState(null);
-  const [activeDatasetID, setActiveDatasetID] = useState(null);
-  const [activeAgentKey, setActiveAgentKey] = useState(null);
+const Dataset = ({ onNewDataset }) => {
+  const { currentDataset, currentDatasetId, loading, error, refreshDataset } = useDataset();
   const [tables, setTables] = useState([]);
   const [activeTableId, setActiveTableId] = useState(null);
-  const [loading, setLoading] = useState(false);  
+  const [activeAgentKey, setActiveAgentKey] = useState(null);
 
-  const refreshTables = useCallback(async () => {
-    console.log('refreshing tables');
-    const tables = await fetchData(`${config.baseApiUrl}/tables?dataset=${activeDatasetID}`);
+  // Helper function to fetch data
+  const fetchData = async (url) => {
+    const response = await fetch(url, {
+      credentials: 'include'
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    return response.json();
+  };
+
+  const loadTablesForDataset = useCallback(async (datasetId) => {
+    console.log('loading tables for dataset', datasetId);
+    const tables = await fetchData(`${config.baseUrl}/api/tables?dataset=${datasetId}`);
     const updatedTables = tables.map(item => {
       const df = JSON.parse(item.df_json);
       delete item.df_json;
@@ -36,70 +39,52 @@ const Dataset = ({ initialDatasetId }) => {
     setTables(updatedTables);
     const sortedTables = tables.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
     setActiveTableId(sortedTables[0]?.id);
-  }, [activeDatasetID]);
+  }, []);
 
-  const refreshDataset = useCallback(async () => {
-    console.log(dataset);
-    try {
-      console.log('refreshing dataset');
-      const refreshedDataset = await fetchData(`${config.baseApiUrl}/datasets/${activeDatasetID}/refresh`);
-      setDataset(refreshedDataset);
-      setActiveAgentKey(refreshedDataset.visible_agent_set.at(-1).id);
-      await refreshTables();
-      console.log('finished refreshing tables');
+  const refreshTables = useCallback(async () => {
+    console.log('refreshing tables');
+    const tables = await fetchData(`${config.baseUrl}/api/tables?dataset=${currentDatasetId}`);
+    const updatedTables = tables.map(item => {
+      const df = JSON.parse(item.df_json);
+      delete item.df_json;
+      return { ...item, df };
+    });
+    console.log(updatedTables);
+    setTables(updatedTables);
+    const sortedTables = tables.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+    setActiveTableId(sortedTables[0]?.id);
+  }, [currentDatasetId]);
 
-      // If the dataset is published, don't do any more
-      if(refreshedDataset.published_at != null && refreshedDataset.visible_agent_set.at(-1).completed_at != null) { return }
-      console.log('dataset is not yet published')
-
-      // If the dataset is not suitable for publication, don't do any more
-      console.log('suitable for publication on gbif:')
-      console.log(refreshedDataset.rejected_at);
-      if(refreshedDataset.rejected_at != null) { return }
-
-      // If the latest agent message is not an assistant message, we need to refresh again
-      if(refreshedDataset.visible_agent_set.at(-1).message_set.at(-1).role != 'assistant') {
-        console.log('about to start looping')
-        console.log(refreshedDataset.visible_agent_set.at(-1).message_set.at(-1));
-        console.log(refreshedDataset.visible_agent_set.at(-1).message_set.at(-1).role);
-        // If the latest agent is not complete we should mark it as busy thinking
-        if(refreshedDataset.visible_agent_set.at(-1).completed_at == null) { 
-          refreshedDataset.visible_agent_set.at(-1).busy_thinking = true;
-        }
-        console.log(refreshedDataset.visible_agent_set.at(-1).busy_thinking);
-        await wait(500);
-        console.log('finished waiting, refreshing again');
-        refreshDataset();
-      }
-      console.log('end of refreshing dataset');
-    } catch (err) {
-      console.log(err.message);
-    } finally {
-      setLoading(false); // Stop loading when dataset is fully refreshed
+  // Load tables when dataset changes
+  useEffect(() => {
+    if (currentDatasetId) {
+      loadTablesForDataset(currentDatasetId);
     }
-  }, [dataset, activeDatasetID, refreshTables]);
+  }, [currentDatasetId, loadTablesForDataset]);
 
-  useEffect(() => {if (initialDatasetId) { initialLoadDataset(initialDatasetId); }}, [initialDatasetId]);
-
-  const initialLoadDataset = async (datasetId) => {
-    try {
-      setLoading(true);
-      console.log(`loading dataset with ${config.baseApiUrl}/datasets/${datasetId}/refresh`);
-      const refreshedDataset = await fetchData(`${config.baseApiUrl}/datasets/${datasetId}/refresh`);
-      setActiveDatasetID(datasetId); 
-      setDataset(refreshedDataset);
-    } catch (error) {
-      setError(error.message);
-    } finally {
-      setLoading(false);
+  // Set active agent when dataset changes
+  useEffect(() => {
+    if (currentDataset && currentDataset.visible_agent_set && currentDataset.visible_agent_set.length > 0) {
+      setActiveAgentKey(currentDataset.visible_agent_set.at(-1).id);
     }
-  }
-  const CustomTabTitle = ({ children }) => <span dangerouslySetInnerHTML={{ __html: children }} />;
+  }, [currentDataset]);
 
-  return (
-    <div className="container-fluid">
-      {!dataset ? (
+  // If no dataset is selected, show the file drop interface
+  if (!currentDatasetId) {
+    return (
+      <div className="container-fluid">
         <div className="col-lg-9 mx-auto">
+          {onNewDataset && (
+            <div className="text-end mb-3">
+              <button 
+                className="btn btn-outline-primary btn-sm"
+                onClick={onNewDataset}
+              >
+                <i className="bi bi-plus-circle me-1"></i>
+                New Dataset
+              </button>
+            </div>
+          )}
           <div className="agent-task initialise">
             <div className="messages">
               <div className="message assistant-message d-flex">
@@ -118,95 +103,157 @@ const Dataset = ({ initialDatasetId }) => {
               ) : (
                 <FileDrop
                   onFileAccepted={(data) => { 
-                    initialLoadDataset(data);
+                    // This will be handled by the context when a new dataset is created
                   }}
-                  onError={(errorMessage) => setError(errorMessage)}
+                  onError={(errorMessage) => {
+                    // Handle error
+                  }}
                 />
               )}
               {error && <div className="message assistant-message assistant-message-error">{error}</div>}
             </div>
           </div>
         </div>
-      ) : (
-        <div>
-          <div className="row mx-auto p-4 no-bottom-margin no-bottom-padding no-top-padding">
-            <div className="col-12 alerts-div">
-              <div className="publishing-heading">Publishing {dataset.file.split(/\//).pop()} (original file name) <span className="badge text-bg-secondary">Started {new Date(dataset.created_at).toLocaleString()}</span></div>
-              {dataset.title && (<div className="alert alert-info" role="alert"><strong>Title</strong>: {dataset.title}<br /><strong>Description</strong>: {dataset.description}</div>)}
-              {dataset.structure_notes && (
-                <Accordion>
-                  <Accordion.Item eventKey="0">
-                    <Accordion.Header>Notes about the structure</Accordion.Header>
-                    <Accordion.Body>
-                      <small>{dataset.structure_notes}</small>
-                    </Accordion.Body>
-                  </Accordion.Item>
-                </Accordion>
-              )}
-              {dataset.rejected_at && (<div className="alert alert-warning" role="alert">This dataset cannot be published on GBIF as it does not contain valid occurrence or checklist data with all the required fields. Please try uploading a new dataset</div>)}
-            </div>
-          </div>
-          <div className="row mx-auto p-4">
-            <div className="col-6">
-              {Array.isArray(dataset.visible_agent_set) && dataset.visible_agent_set.length > 0 &&
-                <Accordion activeKey={activeAgentKey} onSelect={(key) => setActiveAgentKey(key)}>
-                  {dataset.visible_agent_set.map(agent => (
-                    <Agent key={agent.id} agent={agent} refreshDataset={refreshDataset} />
-                  ))}
-                </Accordion>
-              }
-              {(dataset.visible_agent_set.at(-1).completed_at != null && dataset.published_at == null) && (
-                <div className="message user-input-loading">
-                  <div className="d-flex align-items-center">
-                    <strong>Loading next task</strong>
-                    <div className="spinner-border ms-auto" role="status" aria-hidden="true"></div>
-                  </div>
-                </div>
-              )}
-              {dataset.published_at != null && (
-                <div className="message user-message">
-                  <div className="d-flex align-items-center">
-                  <div class="alert alert-success" role="alert">
-                    <strong>🎉 Your dataset has now been published! 🎉</strong>
-                    <hr />
-                    <a href={dataset.gbif_url} className="btn btn-outline-primary" role="button" aria-pressed="true">View on GBIF</a> 
-                    &nbsp;
-                    <a href={dataset.dwca_url} className="btn btn-outline-secondary" role="button" aria-pressed="true">Download your Darwin Core Archive file</a>
-                    <br /><br />
-                    Editing and updating options will be available in the future. <strong>But for now, thanks for trying out ChatIPT.</strong></div>
-                  </div>
-                </div>
-              )}
-              {dataset.rejected_at && (<div className="alert alert-warning" role="alert">This dataset cannot be published on GBIF as it does not contain valid occurrence or checklist data with all the required fields. Please try uploading a new dataset</div>)}
-            </div>
-            <div className="col-6">
-              <div className="sticky-top">
-                {tables.length > 0 && (
-                  <Tabs activeKey={activeTableId} onSelect={(k) => setActiveTableId(k)} className="mb-3">
-                    {tables.map((table) => (
-                      <Tab eventKey={table.id}
-                        title={<CustomTabTitle>{`${table.title} <small>(ID ${table.id})</small>`}</CustomTabTitle>}
-                        key={table.id}>
-                        <DataTable
-                          columns={table.df[0] ? Object.keys(table.df[0]).map(column => ({
-                            name: column,
-                            selector: row => row[column],
-                            sortable: true,
-                          })) : []}
-                          data={table.df}
-                          theme="dark"
-                          pagination
-                          dense
-                        />
-                      </Tab>
-                    ))}
-                  </Tabs>
-                )}
-              </div>
+      </div>
+    );
+  }
+
+  // If loading, show loading state
+  if (loading) {
+    return (
+      <div className="container-fluid">
+        <div className="col-lg-9 mx-auto">
+          <div className="spinner"></div>
+        </div>
+      </div>
+    );
+  }
+
+  // If error, show error state
+  if (error) {
+    return (
+      <div className="container-fluid">
+        <div className="col-lg-9 mx-auto">
+          <div className="message assistant-message assistant-message-error">{error}</div>
+        </div>
+      </div>
+    );
+  }
+
+  // If no dataset data, show empty state
+  if (!currentDataset) {
+    return (
+      <div className="container-fluid">
+        <div className="col-lg-9 mx-auto">
+          <div className="message assistant-message">
+            <div className="inner-message">
+              <strong>No dataset found</strong><br />
+              The selected dataset could not be loaded.
             </div>
           </div>
         </div>
-      )}
+      </div>
+    );
+  }
+
+  const CustomTabTitle = ({ children }) => <span dangerouslySetInnerHTML={{ __html: children }} />;
+
+  return (
+    <div className="container-fluid">
+      <div className="row mx-auto p-4 no-bottom-margin no-bottom-padding no-top-padding">
+        <div className="col-12 alerts-div">
+          <div className="d-flex justify-content-between align-items-center mb-3">
+            <div className="publishing-heading">Publishing {currentDataset.file.split(/\//).pop()} (original file name) <span className="badge text-bg-secondary">Started {new Date(currentDataset.created_at).toLocaleString()}</span></div>
+            {onNewDataset && (
+              <button 
+                className="btn btn-outline-primary btn-sm"
+                onClick={onNewDataset}
+              >
+                <i className="bi bi-plus-circle me-1"></i>
+                New Dataset
+              </button>
+            )}
+          </div>
+          {currentDataset.title && (<div className="alert alert-info" role="alert"><strong>Title</strong>: {currentDataset.title}<br /><strong>Description</strong>: {currentDataset.description}</div>)}
+          {currentDataset.structure_notes && (
+            <Accordion>
+              <Accordion.Item eventKey="0">
+                <Accordion.Header>Notes about the structure</Accordion.Header>
+                <Accordion.Body>
+                  <small>{currentDataset.structure_notes}</small>
+                </Accordion.Body>
+              </Accordion.Item>
+            </Accordion>
+          )}
+          {currentDataset.rejected_at && (<div className="alert alert-warning" role="alert">This dataset cannot be published on GBIF as it does not contain valid occurrence or checklist data with all the required fields. Please try uploading a new dataset</div>)}
+        </div>
+      </div>
+      <div className="row mx-auto p-4">
+        <div className="col-6">
+          {Array.isArray(currentDataset.visible_agent_set) && currentDataset.visible_agent_set.length > 0 ? (
+            <Accordion activeKey={activeAgentKey} onSelect={(key) => setActiveAgentKey(key)}>
+              {currentDataset.visible_agent_set.map(agent => (
+                <Agent key={agent.id} agent={agent} refreshDataset={() => refreshDataset(currentDatasetId)} currentDatasetId={currentDatasetId} />
+              ))}
+            </Accordion>
+          ) : (
+            <div className="message assistant-message">
+              <div className="inner-message">
+                <strong>Initializing dataset...</strong><br />
+                This dataset is being set up for processing. Please wait while the system prepares your data.
+              </div>
+            </div>
+          )}
+          {(currentDataset.visible_agent_set && currentDataset.visible_agent_set.length > 0 && currentDataset.visible_agent_set.at(-1).completed_at != null && currentDataset.published_at == null) && (
+            <div className="message user-input-loading">
+              <div className="d-flex align-items-center">
+                <strong>Loading next task</strong>
+                <div className="spinner-border ms-auto" role="status" aria-hidden="true"></div>
+              </div>
+            </div>
+          )}
+          {currentDataset.published_at != null && (
+            <div className="message user-message">
+              <div className="d-flex align-items-center">
+              <div class="alert alert-success" role="alert">
+                <strong>🎉 Your dataset has now been published! 🎉</strong>
+                <hr />
+                <a href={currentDataset.gbif_url} className="btn btn-outline-primary" role="button" aria-pressed="true">View on GBIF</a> 
+                &nbsp;
+                <a href={currentDataset.dwca_url} className="btn btn-outline-secondary" role="button" aria-pressed="true">Download your Darwin Core Archive file</a>
+                <br /><br />
+                Editing and updating options will be available in the future. <strong>But for now, thanks for trying out ChatIPT.</strong></div>
+              </div>
+            </div>
+          )}
+          {currentDataset.rejected_at && (<div className="alert alert-warning" role="alert">This dataset cannot be published on GBIF as it does not contain valid occurrence or checklist data with all the required fields. Please try uploading a new dataset</div>)}
+        </div>
+        <div className="col-6">
+          <div className="sticky-top">
+            {tables.length > 0 && (
+              <Tabs activeKey={activeTableId} onSelect={(k) => setActiveTableId(k)} className="mb-3">
+                {tables.map((table) => (
+                  <Tab eventKey={table.id}
+                    title={<CustomTabTitle>{`${table.title} <small>(ID ${table.id})</small>`}</CustomTabTitle>}
+                    key={table.id}>
+                    <DataTable
+                      columns={table.df[0] ? Object.keys(table.df[0]).map(column => ({
+                        name: column,
+                        selector: row => row[column],
+                        sortable: true,
+                      })) : []}
+                      data={table.df}
+                      theme="dark"
+                      pagination
+                      dense
+                    />
+                  </Tab>
+                ))}
+              </Tabs>
+            )}
+          </div>
+        </div>
+      </div>
 
       <div className="row">
         <div className="col-lg-9 mx-auto">

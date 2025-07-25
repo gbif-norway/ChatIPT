@@ -2,6 +2,7 @@ import React from 'react';
 import { useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import config from '../config.js';
+import { getCsrfToken } from '../utils/csrf.js';
 
 const FileDrop = ({ onFileAccepted, onError }) => {
   const [loading, setLoading] = useState(false);  
@@ -13,9 +14,18 @@ const FileDrop = ({ onFileAccepted, onError }) => {
     formData.append('file', acceptedFiles[0]);
 
     try {
-      const response = await fetch(`${config.baseApiUrl}/datasets/`, {
+      const csrfToken = await getCsrfToken();
+      const headers = {};
+      
+      if (csrfToken) {
+        headers['X-CSRFToken'] = csrfToken;
+      }
+
+      const response = await fetch(`${config.baseUrl}/api/datasets/`, {
         method: 'POST',
         body: formData,
+        headers,
+        credentials: 'include', // Include credentials for authenticated requests
       });
       if (!response.ok) {
         let errorMessage = 'Upload failed';
