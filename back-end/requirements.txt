@@ -13,8 +13,10 @@ django-cors-headers==4.7.0
 django-filter==25.1
 django-picklefield==3.3
 djangorestframework==3.16.0
+dnspython==2.7.0
 drf-spectacular==0.28.0
 dwca-writer==0.2.0
+email_validator==2.2.0
 et_xmlfile==2.0.0
 gunicorn==23.0.0
 h11==0.16.0

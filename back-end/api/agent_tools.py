@@ -488,7 +488,7 @@ class ValidateDwCA(OpenAIBaseModel):
                     raise requests.HTTPError(f'Status fetch failed with {resp.status_code}')
                 data = resp.json()
                 # If still running, raise to retry
-                if data.get('status') not in ('SUCCEEDED', 'FAILED'):
+                if data.get('status') not in ('SUCCEEDED', 'FAILED', 'FINISHED'):
                     raise Exception('Validation still running')
                 return resp.text
 
