@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import config from '../config.js';
+import { getCsrfToken } from '../utils/csrf.js';
 
 const DatasetContext = createContext();
 
@@ -134,6 +135,55 @@ export const DatasetProvider = ({ children }) => {
     setCurrentDatasetId(null);
   }, []);
 
+  // Helper to re-fetch datasets list for dashboard
+  const refetchDatasetsList = useCallback(async () => {
+    try {
+      const response = await fetch(`${config.baseUrl}/api/my-datasets/`, {
+        credentials: 'include'
+      });
+      if (response.ok) {
+        const datasetsList = await response.json();
+        // This could be used by components that need to refresh the dashboard
+        return datasetsList;
+      } else {
+        throw new Error('Failed to fetch datasets list');
+      }
+    } catch (error) {
+      console.error('Error fetching datasets list:', error);
+      throw error;
+    }
+  }, []);
+
+  // Delete a dataset
+  const deleteDataset = useCallback(async (datasetId) => {
+    try {
+      const csrfToken = await getCsrfToken();
+      const headers = {};
+      
+      if (csrfToken) {
+        headers['X-CSRFToken'] = csrfToken;
+      }
+
+      const response = await fetch(`${config.baseUrl}/api/datasets/${datasetId}/`, {
+        method: 'DELETE',
+        headers,
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to delete dataset: ${response.status}`);
+      }
+      
+      // Remove from local state
+      clearDataset(datasetId);
+      
+      return true;
+    } catch (error) {
+      console.error('Error deleting dataset:', error);
+      throw error;
+    }
+  }, [clearDataset]);
+
   const value = {
     currentDataset,
     currentDatasetId,
@@ -143,6 +193,8 @@ export const DatasetProvider = ({ children }) => {
     refreshDataset,
     clearDataset,
     clearAllDatasets,
+    refetchDatasetsList,
+    deleteDataset,
     setCurrentDatasetId
   };
 

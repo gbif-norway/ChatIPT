@@ -23,7 +23,7 @@ export default function RootLayout({ children }) {
       <body className={inter.className}>
         <ThemeProvider>
           <AuthProvider>
-            <h1 className={`${ibmPlexSerif.className} title`}>ChatIPT</h1>
+
             <Header />
             {children}
           </AuthProvider>

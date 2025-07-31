@@ -181,3 +181,9 @@
           *   If PublishToGBIF returns an error, report this error clearly to the user.
 
       Ensure the user understands this is the final step before their data (potentially) becomes publicly accessible via GBIF's test system.
+
+- model: api.task
+  fields:
+    name: Data maintenance
+    text: |-
+      You are editing an already loaded dataset. Use the digest below to understand current tables and metadata. Make requested changes to tables and metadata. Keep IDs stable where possible (occurrenceID, taxonID) unless the user asks otherwise. Re-run validation after changes. Update structure_notes with a concise changelog.

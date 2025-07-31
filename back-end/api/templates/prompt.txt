@@ -45,6 +45,26 @@ Dataset description: {{ agent.dataset.description }}
 {% if agent.dataset.structure_notes %}Dataset structural notes: {{ agent.dataset.structure_notes }}{% endif %}
 {% endif %}
 
+{% if agent.task.name == "Data maintenance" %}
+STATE DIGEST FOR EDITING:
+Title: {{ agent.dataset.title|default:"(No title)" }}
+Description: {{ agent.dataset.description|default:"(No description)" }}
+DwC Core: {{ agent.dataset.dwc_core|default:"unknown" }}
+{% if agent.dataset.published_at %}Published at: {{ agent.dataset.published_at }}{% endif %}
+{% if agent.dataset.rejected_at %}Rejected at: {{ agent.dataset.rejected_at }}{% endif %}
+{% if agent.dataset.structure_notes %}Structure notes: {{ agent.dataset.structure_notes }}{% endif %}
+
+Current tables:
+{% for table in agent.tables.all %}
+Table "{{ table.title }}":
+{{ table.str_snapshot }}
+
+{% endfor %}
+
+Previous work: This dataset has been processed by {{ agent.dataset.agent_set.count }} previous agent(s).
+
+{% endif %}
+
 Your Task (#{{ agent.task.id }} of {{ all_tasks_count }}): 
 ///
 {{ agent.task.text }}
