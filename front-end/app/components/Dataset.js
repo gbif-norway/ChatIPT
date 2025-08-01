@@ -5,6 +5,7 @@ import { useDataset } from '../contexts/DatasetContext';
 import Agent from './Agent';
 
 import Accordion from 'react-bootstrap/Accordion';
+import { getCsrfToken } from '../utils/csrf';
 import DataTable from 'react-data-table-component';
 import Tabs from 'react-bootstrap/Tabs';
 import Tab from 'react-bootstrap/Tab';
@@ -15,6 +16,43 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const [tables, setTables] = useState([]);
   const [activeTableId, setActiveTableId] = useState(null);
   const [activeAgentKey, setActiveAgentKey] = useState(null);
+
+  // Helper function to fetch data
+
+  const handleEditDataset = useCallback(async () => {
+    try {
+      // Get the "Data maintenance" task
+      const tasks = await fetchData(`${config.baseUrl}/api/tasks/`);
+      const maintenanceTask = tasks.find(task => task.name === 'Data maintenance');
+
+      if (!maintenanceTask) {
+        console.error('Data maintenance task not found');
+        return;
+      }
+
+      // CSRF token for POST
+      const csrfToken = await getCsrfToken();
+      const headers = { 'Content-Type': 'application/json' };
+      if (csrfToken) {
+        headers['X-CSRFToken'] = csrfToken;
+      }
+
+      const response = await fetch(`${config.baseUrl}/api/agents/`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({ dataset: currentDatasetId, task: maintenanceTask.id })
+      });
+
+      if (response.ok) {
+        await refreshDataset();
+      } else {
+        console.error('Failed to create edit agent');
+      }
+    } catch (error) {
+      console.error('Error creating edit agent:', error);
+    }
+  }, [currentDatasetId, refreshDataset]);
 
   // Helper function to fetch data
   const fetchData = async (url) => {
@@ -185,7 +223,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                   agent={agent}
                   refreshDataset={() => refreshDataset(currentDatasetId)}
                   currentDatasetId={currentDatasetId}
-                  datasetPublished={currentDataset.published_at != null}
+                  
                 />
               ))}
             </Accordion>
@@ -213,6 +251,12 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                 <a href={currentDataset.gbif_url} className="btn btn-outline-primary" role="button" aria-pressed="true" target="_blank" rel="noopener noreferrer">View on GBIF</a> 
                 &nbsp;
                 <a href={currentDataset.dwca_url} className="btn btn-outline-secondary" role="button" aria-pressed="true">Download your Darwin Core Archive file</a>
+                <br /><br />
+                <button className="btn btn-success" onClick={handleEditDataset}>
+                  <i className="bi bi-pencil-square me-1"></i>
+                  Edit with ChatIPT
+                </button>
+                <br /><small className="text-muted">Make further changes to your published dataset</small>
 
               </div>
             </div>

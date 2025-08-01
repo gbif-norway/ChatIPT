@@ -5,7 +5,7 @@ import Badge from 'react-bootstrap/Badge';
 import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
 
-const Agent = ({ agent, refreshDataset, currentDatasetId, datasetPublished = false }) => {
+const Agent = ({ agent, refreshDataset, currentDatasetId }) => {
   const [userInput, setUserInput] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState("Working...");
@@ -153,7 +153,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, datasetPublished = fal
           )}
 
           {/* Only show the chat input when the assistant is explicitly waiting for a user reply */}
-          {!agent.completed_at && !datasetPublished && !isLoading && !agent.busy_thinking && assistantWaitingForReply && (
+          {!agent.completed_at && !isLoading && !agent.busy_thinking && assistantWaitingForReply && (
             <div className="input-group">
               <input type="text" className="form-control user-input" value={userInput} onKeyPress={handleUserInput} onChange={e => setUserInput(e.target.value)} placeholder="Message ChatIPT" />
               <div className="input-group-append"><span className="input-group-text"><i className="bi bi-arrow-up-circle"></i></span></div>
