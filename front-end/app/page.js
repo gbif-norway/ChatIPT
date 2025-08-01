@@ -76,37 +76,35 @@ const HomeContent = () => {
         {mode === 'upload' && (
           <div className="container p-4">
             <div className="row">
-              <div className="col-lg-6 mx-auto">
-                <div className="d-flex justify-content-between align-items-center mb-4">
-                  <h2>Upload New Dataset</h2>
-                  <button 
-                    className="btn btn-outline-secondary"
-                    onClick={handleBackToDashboard}
-                  >
-                    <i className="bi bi-arrow-left me-1"></i>
-                    Back to Dashboard
-                  </button>
-                </div>
-                
-                <div className="card">
-                  <div className="card-body">
-                    <h5 className="card-title">Choose your data file</h5>
-                    <p className="card-text">
-                      Upload a CSV or Excel file containing your biodiversity data. 
-                      ChatIPT will help you clean and standardize it for publication on GBIF.
-                    </p>
-                    
-                    <FileDrop
-                      onFileAccepted={handleFileAccepted}
-                      onError={handleFileError}
-                    />
-                    
-                    {uploadError && (
-                      <div className="alert alert-danger mt-3">
-                        {uploadError}
-                      </div>
-                    )}
-                  </div>
+              <div className="d-flex justify-content-between align-items-center mb-4">
+                <h2>Upload New Dataset</h2>
+                <button 
+                  className="btn btn-outline-secondary btn-sm"
+                  onClick={handleBackToDashboard}
+                >
+                  <i className="bi bi-arrow-left me-1"></i>
+                  Dashboard
+                </button>
+              </div>
+              
+              <div className="card">
+                <div className="card-body">
+                  <h5 className="card-title">Choose your data file</h5>
+                  <p className="card-text">
+                    Upload a CSV or Excel file containing your biodiversity data. 
+                    ChatIPT will help you clean and standardize it for publication on GBIF.
+                  </p>
+                  
+                  <FileDrop
+                    onFileAccepted={handleFileAccepted}
+                    onError={handleFileError}
+                  />
+                  
+                  {uploadError && (
+                    <div className="alert alert-danger mt-3">
+                      {uploadError}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

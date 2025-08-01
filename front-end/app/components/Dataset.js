@@ -55,45 +55,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     setActiveTableId(sortedTables[0]?.id);
   }, [currentDatasetId]);
 
-  const handleEditDataset = useCallback(async () => {
-    try {
-      // First, get the "Data maintenance" task
-      const tasks = await fetchData(`${config.baseUrl}/api/tasks/`);
-      const maintenanceTask = tasks.find(task => task.name === 'Data maintenance');
-      
-      if (!maintenanceTask) {
-        console.error('Data maintenance task not found');
-        return;
-      }
 
-      // Create new agent with edit task
-      const response = await fetch(`${config.baseUrl}/api/agents/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          dataset: currentDatasetId,
-          task: maintenanceTask.id
-        })
-      });
-
-      if (response.ok) {
-        // Refresh dataset to show the new agent
-        await refreshDataset();
-        // Auto-focus the newly created agent (it will be the last one)
-        if (currentDataset.visible_agent_set && currentDataset.visible_agent_set.length > 0) {
-          const newAgentKey = `agent-${currentDataset.visible_agent_set.length - 1}`;
-          setActiveAgentKey(newAgentKey);
-        }
-      } else {
-        console.error('Failed to create edit agent');
-      }
-    } catch (error) {
-      console.error('Error creating edit agent:', error);
-    }
-  }, [currentDatasetId, refreshDataset, currentDataset]);
 
   // Load tables when dataset changes
   useEffect(() => {
@@ -171,7 +133,21 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       <div className="row mx-auto p-4 no-bottom-margin no-bottom-padding no-left-padding">
         <div className="col-12 alerts-div">
           <div className="d-flex justify-content-between align-items-center mb-3">
-            <div className="publishing-heading">Publishing {currentDataset.file.split(/\//).pop()} (original file name) <span className="badge text-bg-secondary">Started {new Date(currentDataset.created_at).toLocaleString()}</span></div>
+            <div className="d-flex align-items-center gap-2">
+              <h2>{currentDataset.title || currentDataset.file.split(/\//).pop().replace(/\([^)]*\)/g, '').trim()}</h2>
+              <span className="badge text-bg-secondary">Started {new Date(currentDataset.created_at).toLocaleString()}</span>
+              {currentDataset.structure_notes && (
+                <button 
+                  className="btn btn-info btn-sm" 
+                  data-bs-toggle="modal" 
+                  data-bs-target="#structureNotesModal"
+                  title="View structure notes"
+                >
+                  <i className="bi bi-info-circle me-1"></i>
+                  Structure Notes
+                </button>
+              )}
+            </div>
             <div className="d-flex gap-2">
               {onBackToDashboard && (
                 <button 
@@ -193,26 +169,24 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
               )}
             </div>
           </div>
-          {currentDataset.title && (<div className="alert alert-info" role="alert"><strong>Title</strong>: {currentDataset.title}<br /><strong>Description</strong>: {currentDataset.description}</div>)}
-          {currentDataset.structure_notes && (
-            <Accordion>
-              <Accordion.Item eventKey="0">
-                <Accordion.Header>Notes about the structure</Accordion.Header>
-                <Accordion.Body>
-                  <small>{currentDataset.structure_notes}</small>
-                </Accordion.Body>
-              </Accordion.Item>
-            </Accordion>
+          {currentDataset.description && (
+            <p className="mb-3">{currentDataset.description}</p>
           )}
           {currentDataset.rejected_at && (<div className="alert alert-warning" role="alert">This dataset cannot be published on GBIF as it does not contain valid occurrence or checklist data with all the required fields. Please try uploading a new dataset</div>)}
         </div>
       </div>
-      <div className="row mx-auto p-4">
+      <div className="row mx-auto p-4 no-left-padding">
         <div className="col-6">
           {Array.isArray(currentDataset.visible_agent_set) && currentDataset.visible_agent_set.length > 0 ? (
             <Accordion activeKey={activeAgentKey} onSelect={(key) => setActiveAgentKey(key)}>
               {currentDataset.visible_agent_set.map(agent => (
-                <Agent key={agent.id} agent={agent} refreshDataset={() => refreshDataset(currentDatasetId)} currentDatasetId={currentDatasetId} />
+                <Agent
+                  key={agent.id}
+                  agent={agent}
+                  refreshDataset={() => refreshDataset(currentDatasetId)}
+                  currentDatasetId={currentDatasetId}
+                  datasetPublished={currentDataset.published_at != null}
+                />
               ))}
             </Accordion>
           ) : (
@@ -232,53 +206,22 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
             </div>
           )}
           {currentDataset.published_at != null && (
-            <div className="message user-message">
-              <div className="d-flex align-items-center">
-              <div class="alert alert-success" role="alert">
+            <div className="message final-message">
+              <div className="alert alert-success" role="alert">
                 <strong>🎉 Your dataset has now been published! 🎉</strong>
                 <hr />
-                <a href={currentDataset.gbif_url} className="btn btn-outline-primary" role="button" aria-pressed="true">View on GBIF</a> 
+                <a href={currentDataset.gbif_url} className="btn btn-outline-primary" role="button" aria-pressed="true" target="_blank" rel="noopener noreferrer">View on GBIF</a> 
                 &nbsp;
                 <a href={currentDataset.dwca_url} className="btn btn-outline-secondary" role="button" aria-pressed="true">Download your Darwin Core Archive file</a>
-                <br /><br />
-                <button className="btn btn-success" onClick={handleEditDataset}>
-                  <i className="bi bi-pencil-square me-1"></i>
-                  Edit with ChatIPT
-                </button>
-                <br /><small className="text-muted">Make changes to your published dataset</small>
-              </div>
+
               </div>
             </div>
           )}
-          {/* Show edit button for completed datasets that aren't published */}
-          {(currentDataset.visible_agent_set && 
-            currentDataset.visible_agent_set.length > 0 && 
-            currentDataset.visible_agent_set.at(-1).completed_at != null && 
-            currentDataset.published_at == null && 
-            currentDataset.rejected_at == null) && (
-            <div className="message user-message">
-              <div className="d-flex align-items-center">
-                <div className="alert alert-info" role="alert">
-                  <strong>Dataset processing complete</strong>
-                  <hr />
-                  <button className="btn btn-primary" onClick={handleEditDataset}>
-                    <i className="bi bi-pencil-square me-1"></i>
-                    Edit with ChatIPT
-                  </button>
-                  <br /><small className="text-muted">Make additional changes to your dataset</small>
-                </div>
-              </div>
-            </div>
-          )}
+
           {currentDataset.rejected_at && (
             <div className="alert alert-warning" role="alert">
               This dataset cannot be published on GBIF as it does not contain valid occurrence or checklist data with all the required fields.
-              <hr />
-              <button className="btn btn-warning" onClick={handleEditDataset}>
-                <i className="bi bi-pencil-square me-1"></i>
-                Edit with ChatIPT
-              </button>
-              <br /><small className="text-muted">Try to fix the issues with your dataset</small>
+
             </div>
           )}
         </div>
@@ -310,10 +253,33 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       </div>
 
       <div className="row">
-        <div className="col-lg-9 mx-auto">
-          <div className="footer"><hr />Something not working? Please send me an email with feedback: <a href="mailto:rukayasj@uio.no" target="_blank">rukayasj@uio.no</a></div>
-        </div>
+        <div className="footer"><hr />Something not working? Please send me an email with feedback: <a href="mailto:rukayasj@uio.no" target="_blank">rukayasj@uio.no</a></div>
       </div>
+
+      {/* Structure Notes Modal */}
+      {currentDataset.structure_notes && (
+        <div className="modal fade" id="structureNotesModal" tabIndex="-1" aria-labelledby="structureNotesModalLabel" aria-hidden="true">
+          <div className="modal-dialog modal-lg">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title" id="structureNotesModalLabel">
+                  <i className="bi bi-info-circle me-2"></i>
+                  Structure Notes
+                </h5>
+                <button type="button" className="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              </div>
+              <div className="modal-body">
+                <div style={{ whiteSpace: 'pre-wrap' }}>
+                  {currentDataset.structure_notes}
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
