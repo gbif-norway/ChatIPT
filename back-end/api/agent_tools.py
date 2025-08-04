@@ -434,7 +434,14 @@ class PublishToGBIF(OpenAIBaseModel):
             dataset.published_at = datetime.datetime.now()
             dataset.save()
 
+            # Automatically mark the current agent as complete and trigger the next task (e.g., "Data maintenance")
+            agent.completed_at = datetime.datetime.now()
+            agent.save()
 
+            # Create the next agent in the workflow and kick it off, if any
+            new_agent = dataset.next_agent()
+            if new_agent:
+                new_agent.next_message()
 
             return f'Successfully registered dataset with GBIF. URL: {gbif_url}'
         except Exception as e:
