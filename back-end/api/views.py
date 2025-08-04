@@ -78,7 +78,8 @@ def get_orcid_url(endpoint: str) -> str:
         'public_api': 'https://pub.orcid.org/v3.0',
         'public_api_record': 'https://pub.orcid.org/v3.0',
     }
-    if settings.DEBUG:
+    # Use the environment variable set in settings to decide which ORCID host to use
+    if settings.ORCID_ENV == "sandbox":
         return sandbox[endpoint]
     return production[endpoint]
 
