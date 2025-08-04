@@ -33,10 +33,11 @@ def make_eml(title, description):
 
 @retry(stop=stop_after_attempt(10), wait=wait_fixed(2))
 def upload_file(client, bucket_name, object_name, local_path):
-    client.fput_object(bucket_name, object_name, local_path)
+    client.fput_object(bucket_name, object_name, local_path, content_type="application/zip")
 
 def get_id_col_index(df, col_name='occurrenceID'):
-    columns_lower = [col.lower() for col in df.columns]
+    # Ensure all column names are treated as strings before lowercase comparison
+    columns_lower = [str(col).lower() for col in df.columns]
 
     if col_name.lower() in columns_lower:
         ind = columns_lower.index(col_name.lower())
@@ -47,6 +48,7 @@ def get_id_col_index(df, col_name='occurrenceID'):
     else:
         # No ID col exists, create with random UUIDs
         df[col_name] = [str(uuid.uuid4()) for _ in range(len(df))]
+        # Update columns_lower to include the new column
         return df.columns.get_loc(col_name)
 
 def upload_dwca(df_core, title, description, df_extension=None):

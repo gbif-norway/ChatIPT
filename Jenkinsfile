@@ -67,8 +67,12 @@ pipeline {
                         else
                             YQ=$(command -v yq)
                         fi
-                        $YQ --version
+                        $YQ --version   
                         APP_VERSION=$($YQ e '.appVersion' Chart.yaml)
+
+                        # Strip off any suffix (anything after the first hyphen)
+                        APP_VERSION=$(echo "$APP_VERSION" | cut -d- -f1)
+                        
                         echo "Current appVersion from Chart.yaml: $APP_VERSION"
                         
                         # Get short commit SHA

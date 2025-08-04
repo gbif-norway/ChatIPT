@@ -3,6 +3,9 @@
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
 import ThemeToggle from './ThemeToggle'
+import { IBM_Plex_Serif } from 'next/font/google'
+
+const ibmPlexSerif = IBM_Plex_Serif({ subsets: ['latin'], weight: '400' })
 
 const Header = () => {
   const { user, logout } = useAuth()
@@ -15,7 +18,7 @@ const Header = () => {
   return (
     <nav className={`navbar navbar-expand-lg border-bottom ${isDark ? 'navbar-dark bg-dark' : 'navbar-light bg-light'}`}>
       <div className="container">
-        <span className="navbar-brand">ChatIPT</span>
+        <h1 className={`navbar-brand mb-0 ${ibmPlexSerif.className}`} style={{color: isDark ? '#c5ffc0' : '#198754', fontSize: '3em', paddingLeft: '0.5rem'}}>ChatIPT</h1>
         
         <div className="navbar-nav ms-auto">
           <div className="nav-item me-3 d-flex align-items-center">

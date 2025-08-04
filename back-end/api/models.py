@@ -44,6 +44,7 @@ class Dataset(models.Model):
     title = models.CharField(max_length=2000, blank=True, default='')
     structure_notes = models.TextField(default='', blank=True)
     description = models.CharField(max_length=2000, blank=True, default='')
+    eml = models.JSONField(null=True, blank=True)
     published_at = models.DateTimeField(null=True, blank=True)
     rejected_at = models.DateTimeField(null=True, blank=True)
     dwca_url = models.CharField(max_length=2000, blank=True)
@@ -55,12 +56,6 @@ class Dataset(models.Model):
         OCCURRENCE = 'occurrence'
         TAXONOMY = 'taxonomy'
     dwc_core = models.CharField(max_length=30, choices=DWCCore.choices, blank=True)
-
-    class DWCExtensions(models.TextChoices):
-        SIMPLE_MULTIMEDIA = 'simple_multimedia'
-        MEASUREMENT_OR_FACT = 'measurement_or_fact'
-        GBIF_RELEVE = 'gbif_releve'
-    dwc_extensions = ArrayField(base_field=models.CharField(max_length=500, choices=DWCExtensions.choices), null=True, blank=True)
 
     @property
     def filename(self):
@@ -118,6 +113,7 @@ class Dataset(models.Model):
                         for cell in row:
                             if cell.data_type == 'f':  # 'f' indicates a formula
                                 cell.value = '' # f'[FORMULA: {cell.value}]'
+                                cell.value = '' # f'[FORMULA: {cell.value}]'
                     for merged_cell in list(sheet.merged_cells.ranges):
                         min_col, min_row, max_col, max_row = merged_cell.min_col, merged_cell.min_row, merged_cell.max_col, merged_cell.max_row
                         value = sheet.cell(row=min_row, column=min_col).value
@@ -152,11 +148,14 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
     @property
     def functions(self):
         functions = [agent_tools.SetBasicMetadata.__name__,
+                    agent_tools.SetEML.__name__,
                     agent_tools.SetAgentTaskToComplete.__name__,
                     agent_tools.Python.__name__,
                     agent_tools.BasicValidationForSomeDwCTerms.__name__,
                     agent_tools.RollBack.__name__,
-                    agent_tools.PublishDwC.__name__]
+                    agent_tools.UploadDwCA.__name__,
+                    agent_tools.PublishToGBIF.__name__,
+                    agent_tools.ValidateDwCA.__name__]
         return [getattr(agent_tools, f) for f in functions]
 
     def create_agent_with_system_messages(self, dataset:Dataset):
@@ -275,35 +274,67 @@ class Agent(models.Model):
         self.busy_thinking = True
         self.save()
         try:
+            # Main GPT interaction
             response_message = create_chat_completion(self.message_set.all(), self.task.functions)
+
+            # Store the assistant message returned by OpenAI
+            message = Message.objects.create(agent=self, openai_obj=response_message.dict())  # response_message.__dict__
+
+            # If no tool calls are requested, simply return the assistant message
+            if not response_message.tool_calls:
+                return [message]
+
+            # One or more tool calls requested – execute them in sequence
+            messages = [message]
+            for tool_call in response_message.tool_calls:
+                try:
+                    result = self.run_function(tool_call.function)
+                except Exception as e:
+                    # Capture any error raised during the function execution but keep going so we don't strand busy_thinking
+                    result = (
+                        f'ERROR CALLING FUNCTION: Invalid JSON or code provided in your last response '
+                        f'(Calling {tool_call.function.name} with the given arguments for {tool_call.id}), please try again. '\
+                        f'\nError: {e}'
+                    )
+
+                messages.append(
+                    Message.create_function_message(
+                        agent=self,
+                        function_result=result,
+                        tool_call_id=tool_call.id,
+                    )
+                )
+
+            # Refresh the agent so later updates (e.g. completed_at) are not overwritten
+            self.refresh_from_db()
+
+            return messages
+
         except Exception as e:
-            error_message = f'Unfortunately there was a problem querying the OpenAI API. Try again later, and please report this error to the developers. Full error: {e}'
+            # Any unexpected error – report back to the user
+            error_message = (
+                'Unfortunately there was a problem querying the OpenAI API or processing your request. '
+                'Try again later, and please report this error to the developers. '
+                f'Full error: {e}'
+            )
             print(e)
             print("Error in next_message:")
             traceback.print_exc()
-            self.busy_thinking = False
-            self.save()
-            return [Message.objects.create(agent=self, openai_obj={'role': Message.Role.ASSISTANT, 'content': error_message})]
+            return [
+                Message.objects.create(
+                    agent=self,
+                    openai_obj={
+                        'role': Message.Role.ASSISTANT,
+                        'content': error_message,
+                    },
+                )
+            ]
 
-        message = Message.objects.create(agent=self, openai_obj=response_message.dict())  # response_message.__dict__
-        if not response_message.tool_calls:  # It's a simple assistant message
-            self.busy_thinking = False
-            self.save()
-            return [message]
-
-        messages = [message]  # Store the API response which requests the tool calls
-        for tool_call in response_message.tool_calls:  # Occasionally a single API response requests multiple tool calls
-            try:
-                result = self.run_function(tool_call.function)
-            except Exception as e:
-                result = f'ERROR CALLING FUNCTION: Invalid JSON or code provided in your last response (Calling {tool_call.function.name} with the given arguments for {tool_call.id}), please try again. \nError: {e}'
-
-            messages.append(Message.create_function_message(agent=self, function_result=result, tool_call_id=tool_call.id))
-
-        self.refresh_from_db()  # Necessary so that completed_at doesn't get overwritten
-        self.busy_thinking = False
-        self.save()
-        return messages
+        finally:
+            # Always clear the busy flag so the UI can recover even if we hit an exception
+            if self.busy_thinking:
+                self.busy_thinking = False
+                self.save()
 
     def run_function(self, fn):
         function_model_class = getattr(agent_tools, fn.name)

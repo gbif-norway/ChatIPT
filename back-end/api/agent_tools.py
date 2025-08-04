@@ -1,11 +1,11 @@
 import sys
 from io import StringIO
-from pydantic import Field, PositiveInt
+from pydantic import Field, PositiveInt, BaseModel, EmailStr
 import re
 import pandas as pd
 import numpy as np
 from api.helpers.openai_helpers import OpenAIBaseModel
-from typing import Optional
+from typing import Optional, List
 from api.helpers.publish import upload_dwca, register_dataset_and_endpoint
 import datetime
 import uuid
@@ -15,6 +15,10 @@ from django.template.loader import render_to_string
 from django.db.models import Q
 from api.helpers import discord_bot
 import json
+from tenacity import retry, stop_after_attempt, wait_fixed
+import os
+from requests.auth import HTTPBasicAuth
+import requests
 
 
 # Allowed Darwin Core terms
@@ -68,6 +72,14 @@ DARWIN_CORE_TERMS = {
     "measurementDeterminedBy", "measurementDeterminedDate", "measurementMethod", "measurementRemarks"
 }
 
+class EMLUser(BaseModel):
+    """Representation of an individual associated with the dataset."""
+    first_name: str
+    last_name: str
+    email: EmailStr
+    orcid: Optional[str] = None
+
+
 class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
     """
     A few automatic basic checks for an Agent's tables against the Darwin Core standard.
@@ -84,17 +96,23 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
                     if isinstance(date_value, pd.Timestamp):  # Already a datetime object
                         formatted_date = date_value.isoformat()
                     elif isinstance(date_value, str):
-                        # Handle date ranges
-                        if "/" in str(date_value):
-                            start_date, end_date = date_value.split("/")
-                            start_date_parsed = parse(start_date).isoformat()
-                            end_date_parsed = parse(end_date).isoformat()
-                            formatted_date = f"{start_date_parsed}/{end_date_parsed}"
-                            df.at[idx, "eventDate"] = formatted_date
-                        else:
-                            # Parse single date and format as ISO
+                        # First, try parsing the value directly – this covers most single-date strings
+                        try:
                             formatted_date = parse(date_value).isoformat()
                             df.at[idx, "eventDate"] = formatted_date
+                        except (ParserError, ValueError):
+                            # If direct parsing fails **and** the string contains '/', treat it as a date range
+                            if "/" in date_value:
+                                try:
+                                    start_date, end_date = date_value.split("/", 1)
+                                    start_date_parsed = parse(start_date).isoformat()
+                                    end_date_parsed = parse(end_date).isoformat()
+                                    formatted_date = f"{start_date_parsed}/{end_date_parsed}"
+                                    df.at[idx, "eventDate"] = formatted_date
+                                except (ParserError, ValueError):
+                                    failed_indices.append(idx)
+                            else:
+                                failed_indices.append(idx)
                     else: 
                         failed_indices.append(idx)
                 
@@ -116,15 +134,24 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
             if all(isinstance(col, int) for col in df.columns):            
                 table_results[table.id]['table_errors'] = f'Table {table.id} appears to only have ints as column headers - most probably the column headers are row 1 or you need to make column headers. Fix this and run the validation report again.'
             else:
-                standardized_columns = {col.lower(): col for col in df.columns}
+                # Cast every column header to string first so mixed-type headers (e.g. ints) do not raise
+                standardized_columns = {str(col).lower(): col for col in df.columns}
                 matched_columns = {}
                 for term in DARWIN_CORE_TERMS:
                     if term.lower() in standardized_columns:
                         original_col = standardized_columns[term.lower()]
                         matched_columns[term] = original_col
-                        if term != original_col:
-                            df.rename(columns={original_col: term}, inplace=True)
-                table_results[table.id]['unmatched_columns'] = [col for col in df.columns if col not in matched_columns.values()]
+
+                # Determine columns that couldn't be matched *before* any renaming
+                unmatched_columns = [col for col in df.columns if col not in matched_columns.values()]
+
+                # Apply renaming now (mapping original ➜ standard term) so downstream logic sees the correct headers
+                if matched_columns:
+                    rename_mapping = {orig: term for term, orig in matched_columns.items() if term != orig}
+                    if rename_mapping:
+                        df.rename(columns=rename_mapping, inplace=True)
+
+                table_results[table.id]['unmatched_columns'] = unmatched_columns
                 
                 validation_errors = {}
                 allowed_basis_of_record = {'MaterialEntity', 'PreservedSpecimen', 'FossilSpecimen', 'LivingSpecimen', 'MaterialSample', 'Event', 'HumanObservation', 'MachineObservation', 'Taxon', 'Occurrence', 'MaterialCitation'}
@@ -133,18 +160,24 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
                     if not invalid_basis.empty:
                         validation_errors['basisOfRecord'] = invalid_basis.index.tolist()
                 if 'decimalLatitude' in df.columns:
-                    df['decimalLatitude'] = pd.to_numeric(df['decimalLatitude'], errors='coerce')
-                    invalid_latitude = df[(df['decimalLatitude'] < -90) | (df['decimalLatitude'] > 90)]
+                    lat_numeric = pd.to_numeric(df['decimalLatitude'], errors='coerce')
+                    # Update the DataFrame so the column is stored as numeric (NaNs where conversion failed)
+                    df['decimalLatitude'] = lat_numeric
+                    invalid_latitude = df[lat_numeric.isna() | (lat_numeric < -90) | (lat_numeric > 90)]
                     if not invalid_latitude.empty:
                         validation_errors['decimalLatitude'] = invalid_latitude.index.tolist()
                 if 'decimalLongitude' in df.columns:
-                    df['decimalLongitude'] = pd.to_numeric(df['decimalLongitude'], errors='coerce')
-                    invalid_longitude = df[(df['decimalLongitude'] < -180) | (df['decimalLongitude'] > 180)]
+                    lon_numeric = pd.to_numeric(df['decimalLongitude'], errors='coerce')
+                    # Persist numeric conversion back to the DataFrame
+                    df['decimalLongitude'] = lon_numeric
+                    invalid_longitude = df[lon_numeric.isna() | (lon_numeric < -180) | (lon_numeric > 180)]
                     if not invalid_longitude.empty:
                         validation_errors['decimalLongitude'] = invalid_longitude.index.tolist()
                 if 'individualCount' in df.columns:
-                    df['individualCount'] = pd.to_numeric(df['individualCount'], errors='coerce')
-                    invalid_individual_count = df[(df['individualCount'] <= 0) | (df['individualCount'] % 1 != 0)]
+                    ind_numeric = pd.to_numeric(df['individualCount'], errors='coerce')
+                    # Persist numeric conversion back to the DataFrame
+                    df['individualCount'] = ind_numeric
+                    invalid_individual_count = df[ind_numeric.isna() | (ind_numeric <= 0) | (ind_numeric % 1 != 0)]
                     if not invalid_individual_count.empty:
                         validation_errors['individualCount'] = invalid_individual_count.index.tolist()
                 
@@ -183,8 +216,8 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
 class Python(OpenAIBaseModel):
     """
     Run python code using `exec(code, globals={'Dataset': Dataset, 'Table': Table, 'pd': pd, 'np': np, 'uuid': uuid, 'datetime': datetime, 're': re, 'utm': utm}, {})`. 
-    I.e., you have access to an environment with those libraries and a Django database with models `Table` and `Dataset`. You cannot import anything else.
-    E.g. code: `table = Table.objects.get(id=df_id); print(table.df.to_string()); dataset = Dataset.objects.get(id=1);` etc
+    I.e., you have access to an environment with those libraries and a Django database with models `Table` and `Dataset` (already in scope, do not need importing). You cannot import anything else.
+    NB - *DO NOT* IMPORT Table, Dataset, etc, just use them, they are available in the current scope. E.g. code = `table = Table.objects.get(id=df_id); print(table.df.to_string()); dataset = Dataset.objects.get(id=1);` etc
     Notes: - Edit, delete or create new Table objects as required - remember to save changes to the database (e.g. `table.save()`). 
     - Use print() if you want to see output - a string of stdout, truncated to 2000 chars 
     - IMPORTANT NOTE #1: State does not persist - Every time this function is called, the slate is wiped clean and you will not have access to objects created previously.
@@ -261,9 +294,45 @@ class RollBack(OpenAIBaseModel):
         discord_bot.send_discord_message(f"Dataset tables rolled back for Dataset id {agent.dataset.id}.")
         return json.dumps({'new_table_ids': [t.id for t in tables], 'code_snippets': code_snippets})
 
+class SetEML(OpenAIBaseModel):
+    """Sets the EML (Metdata) for a Dataset via an Agent, returns a success or error message. Note that SetBasicMetadata should be used to set the dataset Title and Description."""
+    agent_id: PositiveInt = Field(...)
+    temporal_scope: Optional[str] = Field(None, description="Optional temporal coverage of the dataset (e.g. 1990-2020)")
+    geographic_scope: Optional[str] = Field(None, description="Optional geographic coverage of the dataset (e.g. Amazon Basin, Brazil)")
+    taxonomic_scope: Optional[str] = Field(None, description="Optional taxonomic coverage (e.g. Lepidoptera, Aves)")
+    methodology: Optional[str] = Field(None, description="Optional description of the sampling / data collection methodology")
+    users: Optional[List[EMLUser]] = Field(
+        None,
+        description="Optional list of people involved in the dataset. Each entry should be an object with first_name, last_name, email, and orcid keys."
+    )
+
+    def run(self):
+        try:
+            from api.models import Agent
+            agent = Agent.objects.get(id=self.agent_id)
+            dataset = agent.dataset
+            eml = dataset.eml or {}
+            if self.temporal_scope is not None:
+                eml["temporal_scope"] = self.temporal_scope
+            if self.geographic_scope is not None:
+                eml["geographic_scope"] = self.geographic_scope
+            if self.taxonomic_scope is not None:
+                eml["taxonomic_scope"] = self.taxonomic_scope
+            if self.methodology is not None:
+                eml["methodology"] = self.methodology
+            if self.users is not None:
+                # Ensure we store plain dicts, not Pydantic objects
+                eml["users"] = [u.dict() for u in self.users]
+            dataset.eml = eml
+            dataset.save()
+            return 'EML has been successfully set.'
+        except Exception as e:
+            print('There has been an error with SetEML')
+            return repr(e)[:2000]
+
 
 class SetBasicMetadata(OpenAIBaseModel):
-    """Sets the title and description (Metadata) for a Dataset via an Agent, returns a success message or an error message"""
+    """Sets the title and description (Metadata) for a Dataset via an Agent, returns a success or error message."""
     agent_id: PositiveInt = Field(...)
     title: str = Field(..., description="A short but descriptive title for the dataset as a whole")
     description: str = Field(..., description="A longer description of what the dataset contains, including any important information about why the data was gathered (e.g. for a study) as well as how it was gathered.")
@@ -308,12 +377,10 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
             return repr(e)[:2000]
 
 
-class PublishDwC(OpenAIBaseModel):
+class UploadDwCA(OpenAIBaseModel):
     """
-    The final step required to publish the user's data to GBIF. 
-    Generates a darwin core archive and uploads it to a server, then registers it with the GBIF API. 
-    At the moment this only publishes the test GBIF platform, not production.
-    Returns the GBIF URL.
+    Generates a Darwin Core Archive from the dataset and uploads it to object storage.
+    Returns the publicly accessible DwCA URL.
     """
     agent_id: PositiveInt = Field(...)
 
@@ -323,26 +390,124 @@ class PublishDwC(OpenAIBaseModel):
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
             tables = dataset.table_set.all()
-            
-            core_table = next((table for table in tables if 'scientificName' in table.df.columns), None)
-            if not core_table:
-                core_table = next((table for table in tables if 'kingdom' in table.df.columns), tables[0])
-            if not core_table:
-                return 'Validation error: The occurrence core table should contain species names/identifications in a field called scientificName. If species identifications are not known, this can even be as broad as kingdom level, i.e. df["scientificName"] = "Animalia"'
 
-            extension_tables = [table for table in tables if table != core_table]
-            mof_table =  extension_tables[0] if extension_tables else None
+            # Choose a core table – prefer one containing scientificName, otherwise fall back to any table with kingdom, otherwise first table
+            core_table = next((t for t in tables if 'scientificName' in t.df.columns), None)
+            if not core_table:
+                core_table = next((t for t in tables if 'kingdom' in t.df.columns), tables.first())
+            if not core_table:
+                return 'Validation error: Could not identify a suitable core table (requires at least a scientificName or kingdom column).'
+
+            # If we find additional tables, treat the first as a MeasurementOrFact extension for now
+            extension_tables = [tbl for tbl in tables if tbl != core_table]
+            mof_table = extension_tables[0] if extension_tables else None
+
             if mof_table:
-                url = upload_dwca(core_table.df, dataset.title, dataset.description, mof_table.df)
+                dwca_url = upload_dwca(core_table.df, dataset.title, dataset.description, mof_table.df)
             else:
-                url = upload_dwca(core_table.df, dataset.title, dataset.description)
-            dataset.dwca_url = url
+                dwca_url = upload_dwca(core_table.df, dataset.title, dataset.description)
+
+            dataset.dwca_url = dwca_url
+            dataset.save()
+            return f'DwCA successfully created and uploaded: {dwca_url}'
+        except Exception as e:
+            return repr(e)[:2000]
+
+
+class PublishToGBIF(OpenAIBaseModel):
+    """
+    Registers an existing DwCA (previously uploaded with UploadDwCA) with the GBIF API.
+    Returns the GBIF dataset URL on success.
+    """
+    agent_id: PositiveInt = Field(...)
+
+    def run(self):
+        from api.models import Agent
+        try:
+            agent = Agent.objects.get(id=self.agent_id)
+            dataset = agent.dataset
+            if not dataset.dwca_url:
+                return 'Error: Dataset has no DwCA URL. Please run UploadDwCA first.'
+
             gbif_url = register_dataset_and_endpoint(dataset.title, dataset.description, dataset.dwca_url)
             dataset.gbif_url = gbif_url
             dataset.published_at = datetime.datetime.now()
-            # import pdb; pdb.set_trace()
             dataset.save()
-            return(f'Successfully published. GBIF URL: {gbif_url}, Darwin core archive upload: {url}')
+
+            # Automatically mark the current agent as complete and trigger the next task (e.g., "Data maintenance")
+            agent.completed_at = datetime.datetime.now()
+            agent.save()
+
+            # Create the next agent in the workflow and kick it off, if any
+            new_agent = dataset.next_agent()
+            if new_agent:
+                new_agent.next_message()
+
+            return f'Successfully registered dataset with GBIF. URL: {gbif_url}'
+        except Exception as e:
+            return repr(e)[:2000]
+
+
+class ValidateDwCA(OpenAIBaseModel):
+    """
+    Submits the dataset's DwCA URL to the GBIF validator, then polls the validator until the job finishes.
+
+    This can take a long time (often >10 min). The calling agent should keep the user informed while polling.
+    The polling interval can be customised via `poll_interval_seconds`; default is 60 seconds (1 min).
+    """
+    agent_id: PositiveInt = Field(...)
+    poll_interval_seconds: PositiveInt = Field(60, description="Seconds to wait between polling attempts.")
+
+    def run(self):
+        from api.models import Agent
+        import requests, time
+        from requests.auth import HTTPBasicAuth
+        from tenacity import retry, stop_after_attempt, wait_fixed
+
+        try:
+            agent = Agent.objects.get(id=self.agent_id)
+            dataset = agent.dataset
+            if not dataset.dwca_url:
+                return 'Error: No DwCA URL found. Run UploadDwCA first.'
+            auth = HTTPBasicAuth(os.getenv('GBIF_USER'), os.getenv('GBIF_PASSWORD'))
+
+            # Align with GBIF Validator API: send the DwCA URL as a multipart/form-data field named "fileUrl" and
+            # request a JSON response (same behaviour as: curl -u user:pass -H "Accept: application/json" \
+            #   -F "fileUrl=<dwca_url>" https://api.gbif.org/v1/validation/url )
+            headers = {'Accept': 'application/json'}
+            files = {'fileUrl': (None, dataset.dwca_url)}  # (None, ...) ensures we send as a simple form field, not a file
+            submit_resp = requests.post(
+                'https://api.gbif.org/v1/validation/url',
+                auth=auth,
+                headers=headers,
+                files=files,
+                timeout=30,
+            )
+            if submit_resp.status_code not in (200, 201, 202):
+                return f'Validator submission failed. Status: {submit_resp.status_code}, Body: {submit_resp.text}'
+
+            key = submit_resp.json().get('key')
+            if not key:
+                return f'Validator response did not contain a key: {submit_resp.text}'
+
+            @retry(stop=stop_after_attempt(1000), wait=wait_fixed(self.poll_interval_seconds))
+            def fetch_status():
+                resp = requests.get(f'https://api.gbif.org/v1/validation/{key}', auth=auth, timeout=30)
+                if resp.status_code != 200:
+                    # Retry on HTTP error
+                    raise requests.HTTPError(f'Status fetch failed with {resp.status_code}')
+                data = resp.json()
+                # If still running, raise to retry
+                if data.get('status') not in ('SUCCEEDED', 'FAILED', 'FINISHED'):
+                    raise Exception('Validation still running')
+                return resp.text
+
+            try:
+                result_json = fetch_status()
+                return result_json
+            except Exception as e:
+                return f'Validation polling stopped after many attempts. Last error: {e}'
+
         except Exception as e:
             return repr(e)[:2000]
 

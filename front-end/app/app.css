@@ -22,6 +22,7 @@
     background-color: rgb(196 255 122 / 0%); 
 }
 .user-message { width: 100%; display: flex; justify-content: flex-end; margin-top: 10px; margin-bottom: 10px; }
+.final-message { margin-top: 10px; }
 .user-message > .inner-message { 
     background-color: rgba(190, 255, 206, 0.2); 
     max-width: 70%;
@@ -46,16 +47,24 @@ body { overflow: auto !important }
 .rdt_Pagination svg { fill: #FFF !important; }
 button small { font-size: 0.6em; }
 button.results { background-color: #6c9de7; }
-.publishing-heading { 
-    text-align: center;
-    margin-top: -5px;
-    margin-bottom: 20px;
+button.code-and-results { background-color: #7b4397; border-color: #7b4397; font-size: 0.8em;}
+button.results-only { background-color: #9ba3b0; border-color: #9ba3b0; opacity: 0.8; font-size: 0.8em; }
+.code-section-title { 
+    font-size: 0.85em; 
+    font-weight: 600; 
+    margin-bottom: 8px; 
+    margin-top: 12px;
+    color: #888;
 }
+.code-section { margin-bottom: 16px; }
+.results-section { margin-bottom: 8px; }
+
 .alerts-div .alert { margin-bottom: 5px; }
 h1.title { text-align: center; margin-top: 20px; color: #c5ffc0; margin-bottom: 20px; }
 .no-bottom-margin { margin-bottom: 0; }
 .no-bottom-padding { padding-bottom: 0 !important; }
 .no-top-padding { padding-top: 0 !important; }
+.no-left-padding { padding-left: 0 !important; }
 
 .spinner {
     border: 4px solid rgba(0, 0, 0, 0.1);
@@ -87,7 +96,7 @@ svg { margin-right: 10px; }
 .user-input-loading .spinner-border { margin-left: 20px; }
 .modal-content li { padding-bottom: 10px; }
 .modal-content li li {padding-bottom: 0; }
-code { margin-bottom: 10px;}
+code { margin-bottom: 10px; font-size: 0.7em !important; }
 
 .footer { margin: 0 20px; }
 
@@ -100,6 +109,19 @@ code { margin-bottom: 10px;}
 
 .light h1.title { 
     color: #198754; 
+}
+
+.light button.code-and-results { 
+    background-color: #a777c4; 
+}
+
+.light button.results-only { 
+    background-color: #6c757d; 
+    opacity: 0.7; 
+}
+
+.light .code-section-title { 
+    color: #555; 
 }
 
 .light svg .s0 { 
