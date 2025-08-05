@@ -1,5 +1,5 @@
 from rest_framework import viewsets, status
-from api.serializers import DatasetSerializer, TableSerializer, MessageSerializer, AgentSerializer, TaskSerializer
+from api.serializers import DatasetSerializer, DatasetListSerializer, TableSerializer, MessageSerializer, AgentSerializer, TaskSerializer
 from api.models import Dataset, Table, Message, Agent, Task
 from rest_framework.response import Response
 from rest_framework.decorators import action, api_view, permission_classes
@@ -62,6 +62,28 @@ def user_profile(request):
     return Response(serializer.data)
 
 
+def get_orcid_url(endpoint: str) -> str:
+    """Return the correct ORCID URL (sandbox or production) for a given endpoint ('authorize', 'token', 'userinfo', 'public_api', 'public_api_record')."""
+    sandbox = {
+        'authorize': 'https://sandbox.orcid.org/oauth/authorize',
+        'token': 'https://sandbox.orcid.org/oauth/token',
+        'userinfo': 'https://sandbox.orcid.org/oauth/userinfo',
+        'public_api': 'https://pub.sandbox.orcid.org/v3.0',
+        'public_api_record': 'https://pub.sandbox.orcid.org/v3.0',
+    }
+    production = {
+        'authorize': 'https://orcid.org/oauth/authorize',
+        'token': 'https://orcid.org/oauth/token',
+        'userinfo': 'https://orcid.org/oauth/userinfo',
+        'public_api': 'https://pub.orcid.org/v3.0',
+        'public_api_record': 'https://pub.orcid.org/v3.0',
+    }
+    # Use the environment variable set in settings to decide which ORCID host to use
+    if settings.ORCID_ENV == "sandbox":
+        return sandbox[endpoint]
+    return production[endpoint]
+
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def orcid_login(request):
@@ -76,7 +98,7 @@ def orcid_login(request):
     logger.info(f"ORCID login - Client ID: {client_id}")
     
     # ORCID OAuth2 authorization URL
-    auth_url = "https://orcid.org/oauth/authorize"
+    auth_url = get_orcid_url('authorize')
     
     # OAuth2 parameters - using public API scopes only
     params = {
@@ -112,7 +134,7 @@ def orcid_callback(request):
     
     try:
         # Exchange code for access token
-        token_url = "https://orcid.org/oauth/token"
+        token_url = get_orcid_url('token')
         client_id = settings.SOCIALACCOUNT_PROVIDERS['orcid']['APP']['client_id']
         client_secret = settings.SOCIALACCOUNT_PROVIDERS['orcid']['APP']['secret']
         base_url = request.build_absolute_uri('/').rstrip('/')
@@ -138,7 +160,7 @@ def orcid_callback(request):
         access_token = token_info['access_token']
         
         # First get basic user info from userinfo endpoint
-        user_info_url = "https://orcid.org/oauth/userinfo"
+        user_info_url = get_orcid_url('userinfo')
         headers = {'Authorization': f'Bearer {access_token}'}
         
         user_response = requests.get(user_info_url, headers=headers)
@@ -152,7 +174,7 @@ def orcid_callback(request):
             return redirect(f"{settings.FRONTEND_URL}?error=no_orcid_id")
         
         # Get public profile info from ORCID public API
-        public_url = f"https://pub.orcid.org/v3.0/{orcid_id}"
+        public_url = f"{get_orcid_url('public_api')}/{orcid_id}"
         public_headers = {
             'Accept': 'application/json'
         }
@@ -164,7 +186,7 @@ def orcid_callback(request):
         if public_response.status_code != 200:
             logger.error(f"Public API error: {public_response.text}")
             # Try alternative endpoint
-            public_url = f"https://pub.orcid.org/v3.0/{orcid_id}/record"
+            public_url = f"{get_orcid_url('public_api_record')}/{orcid_id}/record"
             logger.info(f"Trying alternative endpoint: {public_url}")
             public_response = requests.get(public_url, headers=public_headers)
             logger.info(f"Alternative endpoint response status: {public_response.status_code}")
@@ -300,6 +322,15 @@ def orcid_callback(request):
         return redirect(f"{settings.FRONTEND_URL}?error=callback_failed")
 
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def my_datasets(request):
+    """Return list of datasets for dashboard with lightweight card data"""
+    datasets = Dataset.objects.filter(user=request.user).order_by('-created_at')
+    serializer = DatasetListSerializer(datasets, many=True)
+    return Response(serializer.data)
+
+
 class DatasetViewSet(viewsets.ModelViewSet):
     serializer_class = DatasetSerializer
     permission_classes = [IsAuthenticated]
@@ -383,3 +414,34 @@ class AgentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Filter agents to only show those belonging to the authenticated user's datasets"""
         return Agent.objects.filter(dataset__user=self.request.user)
+    
+    def create(self, request, *args, **kwargs):
+        """Create a new agent with resume vs create-new + digest logic"""
+        dataset_id = request.data.get('dataset')
+        task_id = request.data.get('task')
+        
+        if not dataset_id or not task_id:
+            return Response(
+                {'error': 'Both dataset and task are required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            dataset = Dataset.objects.get(id=dataset_id, user=request.user)
+            task = Task.objects.get(id=task_id)
+        except (Dataset.DoesNotExist, Task.DoesNotExist):
+            return Response(
+                {'error': 'Dataset or task not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Rule 1: If an agent is in progress → resume it
+        active_agent = dataset.agent_set.filter(completed_at__isnull=True).first()
+        if active_agent:
+            serializer = self.get_serializer(active_agent)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        # Rule 2: Else → create a new agent with state digest
+        agent = task.create_agent_with_system_messages(dataset=dataset)
+        serializer = self.get_serializer(agent)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)

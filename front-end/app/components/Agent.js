@@ -66,11 +66,73 @@ const Agent = ({ agent, refreshDataset, currentDatasetId }) => {
     }
   };
 
+  const renderGroupedMessages = (messages) => {
+    const groupedComponents = [];
+    let i = 0;
+    
+    while (i < messages.length) {
+      const message = messages[i];
+      
+      // Handle assistant messages with python tool calls
+      if (message.role === 'assistant' && message.openai_obj.tool_calls) {
+        const python_calls = message.openai_obj.tool_calls.filter(
+          tool_call => tool_call.function.name === 'Python'
+        );
+        
+        if (python_calls.length > 0) {
+          // Look ahead for corresponding tool result messages
+          const toolResults = [];
+          let j = i + 1;
+          
+          // Collect consecutive tool messages that correspond to the python calls
+          while (j < messages.length && messages[j].role === 'tool') {
+            toolResults.push(messages[j]);
+            j++;
+          }
+          
+          // Render python calls with their results
+          python_calls.forEach((python_call, callIndex) => {
+            const correspondingResult = toolResults[callIndex];
+            
+            groupedComponents.push(
+              <Message 
+                key={`grouped-${message.id}-${python_call.id}`} 
+                message={{
+                  ...message,
+                  id: `grouped-${message.id}-${python_call.id}`,
+                  openai_obj: {
+                    ...message.openai_obj,
+                    tool_calls: [python_call]
+                  }
+                }}
+                toolResult={correspondingResult}
+              />
+            );
+          });
+          
+          // Skip the processed tool result messages
+          i = j;
+          continue;
+        }
+      }
+      
+      // Handle regular messages (including standalone tool results)
+      groupedComponents.push(<Message key={message.id} message={message} />);
+      i++;
+    }
+    
+    return groupedComponents;
+  };
+
+  // Determine if the assistant is waiting for a reply from the user
+  const lastMessage = (agent.message_set && agent.message_set.length > 0) ? agent.message_set[agent.message_set.length - 1] : null;
+  const assistantWaitingForReply = lastMessage && lastMessage.role === 'assistant' && (!lastMessage.openai_obj.tool_calls || lastMessage.openai_obj.tool_calls.length === 0);
+
   return (
     <>
       <Accordion.Item eventKey={agent.id}>
         <Accordion.Header>
-          Task: {agent.task.name.replace(/^[-_]*(.)/, (_, c) => c.toUpperCase()).replace(/[-_]+(.)/g, (_, c) => ' ' + c.toUpperCase())} 
+          Task: {agent.task.name.replace(/^[-_]*(.)/, (_, c) => c.toUpperCase()).replace(/[-_]+(.)/g, (_, c) => ' ' + c.toUpperCase())}
           &nbsp;-&nbsp;<small>{formatTableIDs(agent.tables)}</small>
           {agent.completed_at != null && (
             <span className={`agent-id-${agent.id}-message`}>&nbsp;<Badge bg="secondary">complete <i className="bi-check-square"></i></Badge></span>
@@ -78,8 +140,10 @@ const Agent = ({ agent, refreshDataset, currentDatasetId }) => {
           &nbsp;
         </Accordion.Header>
         <Accordion.Body>
-          {agent.message_set.map((message) => ( <Message key={message.id} message={message} /> ))}
-          {(isLoading || agent.busy_thinking) && (
+          {renderGroupedMessages(agent.message_set)}
+
+          {/* Show spinner while loading, thinking, or when the assistant hasn't yet asked for a reply */}
+          {(isLoading || agent.busy_thinking || (!assistantWaitingForReply && !agent.completed_at)) && (
             <div className="message user-input-loading">
               <div className="d-flex align-items-center">
                 <strong>{loadingMessage}</strong>
@@ -87,7 +151,9 @@ const Agent = ({ agent, refreshDataset, currentDatasetId }) => {
               </div>
             </div>
           )}
-          {!agent.completed_at && !isLoading && !agent.busy_thinking && (
+
+          {/* Only show the chat input when the assistant is explicitly waiting for a user reply */}
+          {!agent.completed_at && !isLoading && !agent.busy_thinking && assistantWaitingForReply && (
             <div className="input-group">
               <input type="text" className="form-control user-input" value={userInput} onKeyPress={handleUserInput} onChange={e => setUserInput(e.target.value)} placeholder="Message ChatIPT" />
               <div className="input-group-append"><span className="input-group-text"><i className="bi bi-arrow-up-circle"></i></span></div>

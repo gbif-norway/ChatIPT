@@ -2,8 +2,8 @@
 
 import styles from './app.css'
 import Dataset from './components/Dataset'
-import Sidebar from './components/Sidebar'
-import SidebarToggle from './components/SidebarToggle'
+import DatasetsGrid from './components/DatasetsGrid'
+import FileDrop from './components/FileDrop'
 import ProtectedRoute from './components/ProtectedRoute'
 import { useAuth } from './contexts/AuthContext'
 import { DatasetProvider, useDataset } from './contexts/DatasetContext'
@@ -12,7 +12,8 @@ import { useEffect, useState } from 'react'
 const HomeContent = () => {
   const { authenticated } = useAuth()
   const { currentDatasetId, loadDataset, setCurrentDatasetId } = useDataset()
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [mode, setMode] = useState('dashboard') // 'dashboard', 'upload', 'dataset'
+  const [uploadError, setUploadError] = useState(null)
 
   useEffect(() => {
     // Only show welcome modal if user is authenticated
@@ -37,32 +38,85 @@ const HomeContent = () => {
 
   const handleDatasetSelect = (datasetId) => {
     loadDataset(datasetId)
-    setSidebarOpen(false) // Close sidebar on mobile after selection
+    setMode('dataset')
   }
 
   const handleNewDataset = () => {
+    setMode('upload')
+    setUploadError(null)
+  }
+
+  const handleBackToDashboard = () => {
+    setMode('dashboard')
     setCurrentDatasetId(null)
-    setSidebarOpen(false)
+    setUploadError(null)
+  }
+
+  const handleFileAccepted = (datasetId) => {
+    loadDataset(datasetId)
+    setMode('dataset')
+  }
+
+  const handleFileError = (error) => {
+    setUploadError(error)
   }
 
   return (
     <ProtectedRoute>
-      <main style={{ marginLeft: sidebarOpen ? '320px' : '0', transition: 'margin-left 0.3s ease-in-out' }}>
-        <SidebarToggle 
-          isOpen={sidebarOpen} 
-          onToggle={() => setSidebarOpen(!sidebarOpen)} 
-        />
+      <main>
+        {mode === 'dashboard' && (
+          <div className="container p-4">
+            <DatasetsGrid 
+              onOpenDataset={handleDatasetSelect}
+              onNewDataset={handleNewDataset}
+            />
+          </div>
+        )}
         
-        <Sidebar 
-          isOpen={sidebarOpen}
-          onToggle={() => setSidebarOpen(!sidebarOpen)}
-          onDatasetSelect={handleDatasetSelect}
-          currentDatasetId={currentDatasetId}
-        />
-
-        <Dataset 
-          onNewDataset={handleNewDataset}
-        />
+        {mode === 'upload' && (
+          <div className="container p-4">
+            <div className="row">
+              <div className="d-flex justify-content-between align-items-center mb-4">
+                <h2>Upload New Dataset</h2>
+                <button 
+                  className="btn btn-outline-secondary btn-sm"
+                  onClick={handleBackToDashboard}
+                >
+                  <i className="bi bi-arrow-left me-1"></i>
+                  Dashboard
+                </button>
+              </div>
+              
+              <div className="card">
+                <div className="card-body">
+                  <h5 className="card-title">Choose your data file</h5>
+                  <p className="card-text">
+                    Upload a CSV or Excel file containing your biodiversity data. 
+                    ChatIPT will help you clean and standardize it for publication on GBIF.
+                  </p>
+                  
+                  <FileDrop
+                    onFileAccepted={handleFileAccepted}
+                    onError={handleFileError}
+                  />
+                  
+                  {uploadError && (
+                    <div className="alert alert-danger mt-3">
+                      {uploadError}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {mode === 'dataset' && currentDatasetId && (
+          <Dataset 
+            onNewDataset={handleNewDataset}
+            onBackToDashboard={handleBackToDashboard}
+          />
+        )}
 
         <div className="modal modal-lg fade" id="myModal" tabIndex="-1" aria-labelledby="exampleModalLabel" aria-hidden="true">
           <div className="modal-dialog">

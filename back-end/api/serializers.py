@@ -89,3 +89,50 @@ class DatasetSerializer(serializers.ModelSerializer):
         agent = Agent.create_with_system_message(dataset=dataset, task=first_task, tables=tables)
         discord_bot.send_discord_message(f"Dataset ID assigned: {dataset.id}.")
         return dataset
+
+
+class DatasetListSerializer(serializers.ModelSerializer):
+    record_count = serializers.SerializerMethodField()
+    last_updated = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
+    progress = serializers.SerializerMethodField()
+    last_message_preview = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Dataset
+        fields = [
+            'id', 'title', 'description', 'filename', 'dwc_core',
+            'created_at', 'published_at', 'rejected_at',
+            'record_count', 'last_updated', 'status', 'progress', 'last_message_preview'
+        ]
+
+    def get_record_count(self, obj):
+        # sum table rows; df is PickledObjectField on Table
+        return sum(getattr(t.df, 'shape', [0])[0] for t in obj.table_set.all())
+
+    def get_last_updated(self, obj):
+        ts = [t.updated_at for t in obj.table_set.all()]
+        return max(ts) if ts else obj.created_at
+
+    def get_status(self, obj):
+        if obj.rejected_at: 
+            return 'rejected'
+        if obj.published_at: 
+            return 'published'
+        has_active = obj.agent_set.filter(completed_at__isnull=True).exists()
+        return 'processing' if has_active else 'draft'
+
+    def get_progress(self, obj):
+        total = Task.objects.count()
+        done = obj.agent_set.filter(completed_at__isnull=False).count()
+        return {'done': done, 'total': total}
+
+    def get_last_message_preview(self, obj):
+        a = obj.agent_set.order_by('-created_at').first()
+        if not a: 
+            return ''
+        m = a.message_set.order_by('-created_at').first()
+        if not m or 'content' not in (m.openai_obj or {}): 
+            return ''
+        c = str(m.openai_obj['content'])
+        return (c[:140] + '…') if len(c) > 140 else c

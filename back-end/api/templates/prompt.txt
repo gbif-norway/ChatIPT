@@ -45,6 +45,26 @@ Dataset description: {{ agent.dataset.description }}
 {% if agent.dataset.structure_notes %}Dataset structural notes: {{ agent.dataset.structure_notes }}{% endif %}
 {% endif %}
 
+{% if agent.task.name == "Data maintenance" %}
+STATE DIGEST FOR EDITING:
+Title: {{ agent.dataset.title|default:"(No title)" }}
+Description: {{ agent.dataset.description|default:"(No description)" }}
+DwC Core: {{ agent.dataset.dwc_core|default:"unknown" }}
+{% if agent.dataset.published_at %}Published at: {{ agent.dataset.published_at }}{% endif %}
+{% if agent.dataset.rejected_at %}Rejected at: {{ agent.dataset.rejected_at }}{% endif %}
+{% if agent.dataset.structure_notes %}Structure notes: {{ agent.dataset.structure_notes }}{% endif %}
+
+Current tables:
+{% for table in agent.tables.all %}
+Table "{{ table.title }}":
+{{ table.str_snapshot }}
+
+{% endfor %}
+
+Previous work: This dataset has been processed by {{ agent.dataset.agent_set.count }} previous agent(s).
+
+{% endif %}
+
 Your Task (#{{ agent.task.id }} of {{ all_tasks_count }}): 
 ///
 {{ agent.task.text }}
@@ -81,4 +101,4 @@ measurementorfact.csv, with the ids relating back to the main occurrence table:
 As the data standardisation chatbot system progresses through Tasks, each Agent (i.e. you) should shape the data so it becomes closer and closer to one these examples. It is vital you keep this in mind as you run through your Task.  
 
 - FINAL NOTE: Be VERY cautious about deleting things from dataframes. 
-- END GOAL: Once you complete this Task, call the SetAgentTaskToComplete function with agent_id = {{ agent.id }}. This is your primary goal: complete your task (calling any necessary functions) and SetAgentTaskToComplete. Do not ask the user if you should set your task to complete - they will not know what you mean, instead you can ask "is there anything else you'd like me to do for this step?" or similar.
+- END GOAL: Once you complete this Task, call the SetAgentTaskToComplete function with agent_id = {{ agent.id }}. This is your primary goal: complete your task (calling any necessary functions) and SetAgentTaskToComplete. Do not ask the user if you should set your task to complete - they will not know what you mean, instead use your best judgement as to whether anything else needs doing. You are in control of this process, not the user.

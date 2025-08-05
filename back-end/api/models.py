@@ -57,12 +57,6 @@ class Dataset(models.Model):
         TAXONOMY = 'taxonomy'
     dwc_core = models.CharField(max_length=30, choices=DWCCore.choices, blank=True)
 
-    class DWCExtensions(models.TextChoices):
-        SIMPLE_MULTIMEDIA = 'simple_multimedia'
-        MEASUREMENT_OR_FACT = 'measurement_or_fact'
-        GBIF_RELEVE = 'gbif_releve'
-    dwc_extensions = ArrayField(base_field=models.CharField(max_length=500, choices=DWCExtensions.choices), null=True, blank=True)
-
     @property
     def filename(self):
         return os.path.basename(self.file.name)
@@ -143,7 +137,6 @@ class Dataset(models.Model):
         ordering = ['created_at']
 
 
-class Task(models.Model):  # See tasks.yaml for the only objects this model is populated with
 class Task(models.Model):  # See tasks.yaml for the only objects this model is populated with
     name = models.CharField(max_length=300, unique=True)
     text = models.TextField()

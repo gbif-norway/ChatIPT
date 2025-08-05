@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:latest # To clear database: docker rm -v publishgpt-db-1
+    image: postgres:latest # To clear database: docker rm -v chatipt-db-1
     shm_size: 5g
     environment:
         - POSTGRES_HOST_AUTH_METHOD=trust
@@ -17,13 +17,15 @@ services:
       - "8000:8000"
     env_file:
       - ./back-end/.env.dev
-    environment:
-      # ORCID OAuth2 credentials (override from env file if needed)
-      - ORCID_CLIENT_ID=${ORCID_CLIENT_ID}
-      - ORCID_CLIENT_SECRET=${ORCID_CLIENT_SECRET}
-      # Optional: Create superuser on startup
-      - DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL:-}
-      - DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD:-}
+    # environment:
+      # # ORCID OAuth2 credentials (override from env file if needed)
+      # - ORCID_CLIENT_ID=${ORCID_CLIENT_ID}
+      # - ORCID_CLIENT_SECRET=${ORCID_CLIENT_SECRET}
+      # # Optional: Create superuser on startup
+      # - DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL:-}
+      # - DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["tail -f /dev/null"]
   front-end: 
     # docker buildx build --platform linux/amd64 --build-arg NEXT_PUBLIC_BASE_API_URL=https://api.chatipt.svc.gbif.no/api -t gbifnorway/chatipt-front-end:$(git rev-parse --short HEAD) -t gbifnorway/chatipt-front-end:latest --push .
     build: ./front-end
@@ -38,5 +40,5 @@ services:
       - ./front-end/.env
     depends_on:
         - back-end
-    # command: ["tail", "-f", "/dev/null"]
-    command: ["npm", "run", "dev"]
+    command: ["tail", "-f", "/dev/null"]
+    # command: ["npm", "run", "dev"]

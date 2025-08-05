@@ -216,8 +216,8 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
 class Python(OpenAIBaseModel):
     """
     Run python code using `exec(code, globals={'Dataset': Dataset, 'Table': Table, 'pd': pd, 'np': np, 'uuid': uuid, 'datetime': datetime, 're': re, 'utm': utm}, {})`. 
-    I.e., you have access to an environment with those libraries and a Django database with models `Table` and `Dataset`. You cannot import anything else.
-    E.g. code: `table = Table.objects.get(id=df_id); print(table.df.to_string()); dataset = Dataset.objects.get(id=1);` etc
+    I.e., you have access to an environment with those libraries and a Django database with models `Table` and `Dataset` (already in scope, do not need importing). You cannot import anything else.
+    NB - *DO NOT* IMPORT Table, Dataset, etc, just use them, they are available in the current scope. E.g. code = `table = Table.objects.get(id=df_id); print(table.df.to_string()); dataset = Dataset.objects.get(id=1);` etc
     Notes: - Edit, delete or create new Table objects as required - remember to save changes to the database (e.g. `table.save()`). 
     - Use print() if you want to see output - a string of stdout, truncated to 2000 chars 
     - IMPORTANT NOTE #1: State does not persist - Every time this function is called, the slate is wiped clean and you will not have access to objects created previously.
@@ -433,6 +433,16 @@ class PublishToGBIF(OpenAIBaseModel):
             dataset.gbif_url = gbif_url
             dataset.published_at = datetime.datetime.now()
             dataset.save()
+
+            # Automatically mark the current agent as complete and trigger the next task (e.g., "Data maintenance")
+            agent.completed_at = datetime.datetime.now()
+            agent.save()
+
+            # Create the next agent in the workflow and kick it off, if any
+            new_agent = dataset.next_agent()
+            if new_agent:
+                new_agent.next_message()
+
             return f'Successfully registered dataset with GBIF. URL: {gbif_url}'
         except Exception as e:
             return repr(e)[:2000]
@@ -443,10 +453,10 @@ class ValidateDwCA(OpenAIBaseModel):
     Submits the dataset's DwCA URL to the GBIF validator, then polls the validator until the job finishes.
 
     This can take a long time (often >10 min). The calling agent should keep the user informed while polling.
-    The polling interval can be customised via `poll_interval_seconds`; default is 240 seconds (4 min).
+    The polling interval can be customised via `poll_interval_seconds`; default is 60 seconds (1 min).
     """
     agent_id: PositiveInt = Field(...)
-    poll_interval_seconds: PositiveInt = Field(240, description="Seconds to wait between polling attempts.")
+    poll_interval_seconds: PositiveInt = Field(60, description="Seconds to wait between polling attempts.")
 
     def run(self):
         from api.models import Agent

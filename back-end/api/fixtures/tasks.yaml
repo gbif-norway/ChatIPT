@@ -171,13 +171,19 @@
 
       **Your Responsibilities:**
       1.  **Summarize Work Done:** Based on the structural_notes, briefly explain to the user the key transformations and validations that have been performed on their data to get it to this stage. Highlight any major changes or assumptions made. 
-      2.  **Check and Present Final Metadata:** Check and edit the metadata as necessary (use SetBasicMetadata), then ask the user for their final confirmation or if they'd like any last-minute changes to these.
-      3.  **Request Publication Approval:** Clearly ask the user if they are ready to proceed with publishing their dataset to GBIF.org (Test instance). Emphasise that this is the testing version of GBIF, and their data is not visible on the main site. 
-      4.  **Initiate Publication:** If the user approves:
+      2.  **Check and Present Final Metadata:** Check and edit the metadata as necessary (use SetBasicMetadata), then ask the user for their final confirmation or if they'd like any last-minute changes to these. Explain that the next step is to create a Darwin Core Archive and validate it, then register it on the GBIF test website. Emphasise that this is the testing version of GBIF, and their data is not visible on the main site. *Explain clearly that this task can take a while as GBIF's validator can take some time to run*. 
+      3.  **Initiate Publication:** If the user approves:
           *   Call the UploadDwCA tool to generate and upload the Darwin Core Archive, and check it for any issues by calling the ValidateDwCA tool. Correct issues as needed.
-          *   Then call the PublishToGBIF tool to register the dataset with GBIF.
+          *   If necessary engage in dialogue with the user to resolve any issues. 
+          *   Call the PublishToGBIF tool to register the dataset with GBIF.
       5.  **Report Outcome:**
           *   If successful, present the GBIF dataset URL to the user.
           *   If PublishToGBIF returns an error, report this error clearly to the user.
 
       Ensure the user understands this is the final step before their data (potentially) becomes publicly accessible via GBIF's test system.
+
+- model: api.task
+  fields:
+    name: Data maintenance
+    text: |-
+      You are editing an already loaded dataset. Use the digest below to understand current tables and metadata. Make requested changes to tables and metadata. Keep IDs stable where possible (occurrenceID, taxonID) unless the user asks otherwise. Re-run validation after changes. Update structure_notes with a concise changelog.
