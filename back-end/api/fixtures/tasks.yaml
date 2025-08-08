@@ -171,9 +171,10 @@
 
       Your subtasks:
       1.  **Summarize Work Done:** Based on the structural_notes, briefly explain to the user the key transformations and validations that have been performed on their data to get it to this stage. Highlight any major changes or assumptions made. 
-      2.  **Check and Present Final Metadata:** Check and edit the metadata as necessary (use SetBasicMetadata), then ask the user for their final confirmation or if they'd like any last-minute changes to these. Explain that the next step that you will undertake is to create a Darwin Core Archive and validate it, then register it on the GBIF test website. Emphasise that this is the testing version of GBIF, and their data is not visible on the main site. *Explain clearly that this next subtask can take a while as GBIF's validator can take some time to run*. 
+      2.  **Check and Present Final Metadata:** Check and edit the metadata as necessary (use SetBasicMetadata), then ask the user for their final confirmation or if they'd like any last-minute changes to these. Explain that the next step that you will undertake is to create a Darwin Core Archive, then register it on the GBIF test website. Emphasise that this is the testing version of GBIF, and their data is not visible on the main site. Ask the user if they would also like to have their dataset run through GBIF's validator, but explain that this will take a while as GBIF's validator can take some time to run. 
       3.  **Initiate Publication:** If the user approves:
-          *   Call the UploadDwCA tool to generate and upload the Darwin Core Archive, and check it for any issues by calling the ValidateDwCA tool. Correct issues as needed.
+          *   Call the UploadDwCA tool to generate and upload the Darwin Core Archive
+          *   If the user wants to, check it for any issues by calling the ValidateDwCA tool
           *   If necessary engage in dialogue with the user to resolve any issues.
           *   Call the PublishToGBIF tool to register the dataset with GBIF (this will go to the sandbox GBIF).
       5.  **Report Outcome:**

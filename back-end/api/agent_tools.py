@@ -396,7 +396,10 @@ class UploadDwCA(OpenAIBaseModel):
             if not core_table:
                 core_table = next((t for t in tables if 'kingdom' in t.df.columns), tables.first())
             if not core_table:
-                return 'Validation error: Could not identify a suitable core table (requires at least a scientificName or kingdom column).'
+                error_msg = 'Validation error: Could not identify a suitable core table (requires at least a scientificName or kingdom column).'
+                # Notify developers of core table validation failure
+                discord_bot.send_discord_message(f"⚠️ Core Table Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
+                return error_msg
 
             # If we find additional tables, treat the first as a MeasurementOrFact extension for now
             extension_tables = [tbl for tbl in tables if tbl != core_table]
@@ -427,7 +430,10 @@ class PublishToGBIF(OpenAIBaseModel):
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
             if not dataset.dwca_url:
-                return 'Error: Dataset has no DwCA URL. Please run UploadDwCA first.'
+                error_msg = 'Error: Dataset has no DwCA URL. Please run UploadDwCA first.'
+                # Notify developers of missing DwCA URL for publishing
+                discord_bot.send_discord_message(f"⚠️ Publishing Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
+                return error_msg
 
             gbif_url = register_dataset_and_endpoint(dataset.title, dataset.description, dataset.dwca_url)
             dataset.gbif_url = gbif_url
@@ -484,11 +490,17 @@ class ValidateDwCA(OpenAIBaseModel):
                 timeout=30,
             )
             if submit_resp.status_code not in (200, 201, 202):
-                return f'Validator submission failed. Status: {submit_resp.status_code}, Body: {submit_resp.text}'
+                error_msg = f'Validator submission failed. Status: {submit_resp.status_code}, Body: {submit_resp.text}'
+                # Notify developers of GBIF validator submission failure
+                discord_bot.send_discord_message(f"🚨 GBIF Validator Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
+                return error_msg
 
             key = submit_resp.json().get('key')
             if not key:
-                return f'Validator response did not contain a key: {submit_resp.text}'
+                error_msg = f'Validator response did not contain a key: {submit_resp.text}'
+                # Notify developers of missing validation key
+                discord_bot.send_discord_message(f"⚠️ GBIF Validator Key Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
+                return error_msg
 
             @retry(stop=stop_after_attempt(1000), wait=wait_fixed(self.poll_interval_seconds))
             def fetch_status():
@@ -506,8 +518,38 @@ class ValidateDwCA(OpenAIBaseModel):
                 result_json = fetch_status()
                 return result_json
             except Exception as e:
-                return f'Validation polling stopped after many attempts. Last error: {e}'
+                error_msg = f'Validation polling stopped after many attempts. Last error: {e}'
+                # Notify developers of validation polling timeout
+                discord_bot.send_discord_message(f"⏰ GBIF Validator Timeout: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
+                return error_msg
 
         except Exception as e:
-            return repr(e)[:2000]
+            error_msg = repr(e)[:2000]
+            # Notify developers of general validation error
+            discord_bot.send_discord_message(f"❌ GBIF Validator Exception: {error_msg}\nAgent ID: {self.agent_id}")
+            return error_msg
+
+
+class SendDiscordMessage(OpenAIBaseModel):
+    """
+    Send a message to developers via Discord webhook when errors or important events occur.
+    This tool should be used to notify developers of validation failures, critical errors, 
+    or other issues that require attention during dataset processing.
+    """
+    message: str = Field(..., description="The message to send to developers")
+    urgent: bool = Field(False, description="Whether this is an urgent message that needs immediate attention")
+
+    def run(self):
+        try:
+            # Format the message with context if urgent
+            formatted_message = self.message
+            if self.urgent:
+                formatted_message = f"🚨 **URGENT** 🚨\n{self.message}"
+            
+            # Use the existing Discord bot functionality
+            discord_bot.send_discord_message(formatted_message)
+            return "Message sent successfully to developers via Discord"
+        
+        except Exception as e:
+            return f"Failed to send Discord message: {repr(e)}"
 
