@@ -41,9 +41,9 @@ class Dataset(models.Model):
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='datasets', null=True, blank=True)
     orcid = models.CharField(max_length=2000, blank=True)
     file = models.FileField(upload_to='user_files')
-    title = models.CharField(max_length=2000, blank=True, default='')
+    title = models.CharField(max_length=5000, blank=True, default='')
     structure_notes = models.TextField(default='', blank=True)
-    description = models.CharField(max_length=2000, blank=True, default='')
+    description = models.CharField(max_length=5000, blank=True, default='')
     eml = models.JSONField(null=True, blank=True)
     published_at = models.DateTimeField(null=True, blank=True)
     rejected_at = models.DateTimeField(null=True, blank=True)
@@ -155,7 +155,8 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
                     agent_tools.RollBack.__name__,
                     agent_tools.UploadDwCA.__name__,
                     agent_tools.PublishToGBIF.__name__,
-                    agent_tools.ValidateDwCA.__name__]
+                    agent_tools.ValidateDwCA.__name__,
+                    agent_tools.SendDiscordMessage.__name__]
         return [getattr(agent_tools, f) for f in functions]
 
     def create_agent_with_system_messages(self, dataset:Dataset):
@@ -241,7 +242,7 @@ class Agent(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE)
-    task = models.ForeignKey(Task, on_delete=models.CASCADE)
+    task = models.ForeignKey(Task, on_delete=models.PROTECT)
     tables = models.ManyToManyField(Table, blank=True)
     busy_thinking = models.BooleanField(default=False)
 
