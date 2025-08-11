@@ -406,9 +406,22 @@ class UploadDwCA(OpenAIBaseModel):
             mof_table = extension_tables[0] if extension_tables else None
 
             if mof_table:
-                dwca_url = upload_dwca(core_table.df, dataset.title, dataset.description, mof_table.df)
+                dwca_url = upload_dwca(
+                    core_table.df,
+                    dataset.title,
+                    dataset.description,
+                    mof_table.df,
+                    dataset.user,
+                    eml_extra=dataset.eml,
+                )
             else:
-                dwca_url = upload_dwca(core_table.df, dataset.title, dataset.description)
+                dwca_url = upload_dwca(
+                    core_table.df,
+                    dataset.title,
+                    dataset.description,
+                    user=dataset.user,
+                    eml_extra=dataset.eml,
+                )
 
             dataset.dwca_url = dwca_url
             dataset.save()

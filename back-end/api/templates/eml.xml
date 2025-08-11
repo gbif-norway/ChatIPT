@@ -1,130 +1,167 @@
-<eml xmlns:eml="eml://ecoinformatics.org/eml-2.1.1" xmlns:dc="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="eml://ecoinformatics.org/eml-2.1.1 http://rs.gbif.org/schema/eml-gbif-profile/1.1/eml.xsd" packageId="https://ipt.gbif.no/resource?id=test/v1.1" system="http://gbif.org" scope="system" xml:lang="eng">
-   <dataset>
-      <alternateIdentifier />
-      <title xml:lang="eng" />
-      <creator>
-         <individualName>
-            <givenName />
-            <surName />
-         </individualName>
-         <organizationName />
-         <positionName />
-         <userId directory="http://orcid.org/" />
-      </creator>
-      <metadataProvider>
-         <individualName>
-            <givenName />
-            <surName />
-         </individualName>
-         <organizationName />
-         <positionName />
-         <userId directory="http://orcid.org/" />
-      </metadataProvider>
-      <language />
+<eml
+  xmlns="eml://ecoinformatics.org/eml-2.1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="eml://ecoinformatics.org/eml-2.1.1 http://rs.gbif.org/schema/eml-gbif-profile/1.1/eml.xsd"
+  packageId="https://ipt.gbif.no/resource?id=test/v1.1"
+  system="http://gbif.org"
+  scope="system"
+  xml:lang="en">
+  <dataset>
+    <!-- <alternateIdentifier/>  -->
+
+    <title xml:lang="en"/>
+
+    <creator>
+      <individualName>
+        <givenName/>
+        <surName/>
+      </individualName>
+      <!-- <organizationName/>  Not collected -->
+      <!-- <positionName/>      Not collected -->
+      <userId directory="http://orcid.org/"/>
+    </creator>
+
+    <metadataProvider>
+      <individualName>
+        <givenName/>
+        <surName/>
+      </individualName>
+      <!-- <organizationName/>  Not collected -->
+      <!-- <positionName/>      Not collected -->
+      <userId directory="http://orcid.org/"/>
+    </metadataProvider>
+
+    <language>en</language>
+
+    <abstract>
+      <para/>
+    </abstract>
+
+    <!-- We do not currently collect keywords
+    <keywordSet>
+      <keyword/>
+    </keywordSet>
+    -->
+
+    <intellectualRights>
+      <para>
+        This work is licensed under a
+        <ulink url="http://creativecommons.org/licenses/by/4.0/legalcode">
+          <citetitle>Creative Commons Attribution (CC-BY) 4.0 License</citetitle>
+        </ulink>.
+      </para>
+    </intellectualRights>
+
+    <!-- Distribution URL is not known at EML generation time
+    <distribution scope="document">
+      <online>
+        <url function="information"/>
+      </online>
+    </distribution>
+    -->
+
+    <coverage>
+      <geographicCoverage>
+        <geographicDescription/>
+        <!-- Bounding box not collected
+        <boundingCoordinates>
+          <westBoundingCoordinate/>
+          <eastBoundingCoordinate/>
+          <northBoundingCoordinate/>
+          <southBoundingCoordinate/>
+        </boundingCoordinates>
+        -->
+      </geographicCoverage>
+
+      <temporalCoverage>
+        <singleDateTime>
+          <calendarDate/>
+        </singleDateTime>
+      </temporalCoverage>
+
+      <temporalCoverage>
+        <rangeOfDates>
+          <beginDate>
+            <calendarDate/>
+          </beginDate>
+          <endDate>
+            <calendarDate/>
+          </endDate>
+        </rangeOfDates>
+      </temporalCoverage>
+
+      <taxonomicCoverage>
+        <generalTaxonomicCoverage/>
+        <!-- Detailed classification not collected
+        <taxonomicClassification>
+          <taxonRankName/>
+          <taxonRankValue/>
+          <commonName/>
+        </taxonomicClassification>
+        -->
+      </taxonomicCoverage>
+    </coverage>
+
+    <!-- Purpose is not collected
+    <purpose>
+      <para/>
+    </purpose>
+    -->
+
+    <methods>
+      <methodStep>
+        <description>
+          <para/>
+        </description>
+      </methodStep>
+      <!-- Sampling and quality control not collected
+      <sampling>
+        <studyExtent>
+          <description>
+            <para/>
+          </description>
+        </studyExtent>
+        <samplingDescription>
+          <para/>
+        </samplingDescription>
+      </sampling>
+      <qualityControl>
+        <description>
+          <para/>
+        </description>
+      </qualityControl>
+      -->
+    </methods>
+
+    <project>
+      <!-- Users/personnel will be added dynamically if provided -->
+      <!--
+      <title/>
+      <personnel>
+        <individualName>
+          <givenName/>
+          <surName/>
+        </individualName>
+        <userId directory="http://orcid.org/"/>
+        <role/>
+      </personnel>
       <abstract>
-         <para />
+        <para/>
       </abstract>
-      <keywordSet>
-         <keyword />
-      </keywordSet>
-      <intellectualRights>
-         <para>
-            This work is licensed under a
-            <ulink url="http://creativecommons.org/licenses/by/4.0/legalcode">
-               <citetitle>Creative Commons Attribution (CC-BY) 4.0 License</citetitle>
-            </ulink>.
-         </para>
-      </intellectualRights>
-      <distribution scope="document">
-         <online>
-            <url function="information" />
-         </online>
-      </distribution>
-      <coverage>
-         <geographicCoverage>
-            <geographicDescription />
-            <boundingCoordinates>
-               <westBoundingCoordinate />
-               <eastBoundingCoordinate />
-               <northBoundingCoordinate />
-               <southBoundingCoordinate />
-            </boundingCoordinates>
-         </geographicCoverage>
-         <temporalCoverage>
-            <singleDateTime>
-               <calendarDate />
-            </singleDateTime>
-         </temporalCoverage>
-         <temporalCoverage>
-            <rangeOfDates>
-              <beginDate>
-                <calendarDate />
-              </beginDate>
-              <endDate>
-                <calendarDate />
-              </endDate>
-            </rangeOfDates>
-         </temporalCoverage>
-         <taxonomicCoverage>
-            <generalTaxonomicCoverage />
-            <taxonomicClassification>
-               <taxonRankName />
-               <taxonRankValue />
-               <commonName />
-            </taxonomicClassification>
-         </taxonomicCoverage>
-      </coverage>
-      <purpose>
-         <para />
-      </purpose>
-      <methods>
-         <methodStep>
-            <description>
-               <para />
-            </description>
-         </methodStep>
-         <sampling>
-            <studyExtent>
-               <description>
-                  <para />
-               </description>
-            </studyExtent>
-            <samplingDescription>
-               <para />
-            </samplingDescription>
-         </sampling>
-         <qualityControl>
-            <description>
-               <para />
-            </description>
-         </qualityControl>
-      </methods>
-      <project>
-         <title />
-         <personnel>
-            <individualName>
-               <givenName />
-               <surName />
-            </individualName>
-            <userId directory="" />
-            <role />
-         </personnel>
-         <abstract>
-            <para />
-         </abstract>
-         <funding>
-            <para />
-         </funding>
-         <studyAreaDescription>
-            <descriptor name="generic" citableClassificationSystem="false">
-               <descriptorValue />
-            </descriptor>
-         </studyAreaDescription>
-         <designDescription>
-            <description>
-               <para />
-            </description>
-         </designDescription>
-      </project>
-   </dataset>
+      <funding>
+        <para/>
+      </funding>
+      <studyAreaDescription>
+        <descriptor name="generic" citableClassificationSystem="false">
+          <descriptorValue/>
+        </descriptor>
+      </studyAreaDescription>
+      <designDescription>
+        <description>
+          <para/>
+        </description>
+      </designDescription>
+      -->
+    </project>
+  </dataset>
 </eml>
