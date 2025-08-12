@@ -5,7 +5,7 @@ import Badge from 'react-bootstrap/Badge';
 import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
 
-const Agent = ({ agent, refreshDataset, currentDatasetId }) => {
+const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
   const [userInput, setUserInput] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState("Working...");
@@ -21,6 +21,9 @@ const Agent = ({ agent, refreshDataset, currentDatasetId }) => {
           console.log('running this only once when component is loaded if completed_at is null for agent ' + agent.id);
           console.log(agent.completed_at);
           await refreshDataset();
+          if (typeof refreshTables === 'function') {
+            await refreshTables();
+          }
           setIsLoading(false);
         } else {
           setIsLoading(false);
@@ -58,6 +61,9 @@ const Agent = ({ agent, refreshDataset, currentDatasetId }) => {
         });
         setUserInput("");
         await refreshDataset();
+        if (typeof refreshTables === 'function') {
+          await refreshTables();
+        }
         setIsLoading(false);
       } catch (error) {
         console.error("Error:", error);

@@ -382,8 +382,8 @@ class TableViewSet(viewsets.ModelViewSet):
     ordering = ['-updated_at']
 
     def get_queryset(self):
-        """Filter tables to only show those belonging to the authenticated user's datasets"""
-        return Table.objects.filter(dataset__user=self.request.user)
+        """Filter tables to only show those belonging to the authenticated user's datasets, newest first"""
+        return Table.objects.filter(dataset__user=self.request.user).order_by('-updated_at', '-id')
 
 
 class TaskViewSet(viewsets.ModelViewSet):

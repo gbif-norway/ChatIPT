@@ -215,13 +215,21 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
 
 class Python(OpenAIBaseModel):
     """
-    Run python code using `exec(code, globals={'Dataset': Dataset, 'Table': Table, 'pd': pd, 'np': np, 'uuid': uuid, 'datetime': datetime, 're': re, 'utm': utm}, {})`. 
-    I.e., you have access to an environment with those libraries and a Django database with models `Table` and `Dataset` (already in scope, do not need importing). You cannot import anything else.
-    NB - *DO NOT* IMPORT Table, Dataset, etc, just use them, they are available in the current scope. E.g. code = `table = Table.objects.get(id=df_id); print(table.df.to_string()); dataset = Dataset.objects.get(id=1);` etc
-    Notes: - Edit, delete or create new Table objects as required - remember to save changes to the database (e.g. `table.save()`). 
-    - Use print() if you want to see output - a string of stdout, truncated to 2000 chars 
-    - IMPORTANT NOTE #1: State does not persist - Every time this function is called, the slate is wiped clean and you will not have access to objects created previously.
-    - IMPORTANT NOTE #2: If you merge or create a new Table based on old Tables, tidy up after yourself and delete irrelevant/out of date Tables.
+    Run python code using `exec(code, globals={'Dataset': Dataset, 'Table': Table, 'pd': pd, 'np': np, 'uuid': uuid, 'datetime': datetime, 're': re, 'utm': utm, 'replace_table': replace_table, 'create_or_replace': create_or_replace, 'delete_tables': delete_tables}, {})`.
+    You have access to a Django ORM with models `Table` and `Dataset` in scope. Do NOT import them.
+
+    CRITICAL RULES FOR TABLE MANAGEMENT:
+    - Prefer updating an existing Table in-place rather than creating a new one. Example:
+      `t = Table.objects.get(id=old_id); t.df = new_df; t.title = 'occurrence_dwca'; t.save()`
+    - If you DO create a replacement table, you MUST delete the superseded one(s) before finishing, e.g. `old.delete()`.
+    - Helper functions are provided to make this safe and easy:
+        • `replace_table(old_table_id, new_df, new_title=None, description=None) -> int` updates in place and returns the table id.
+        • `create_or_replace(dataset_id, title, new_df, description=None) -> int` updates the latest table with the same title if it exists, else creates one; returns the table id.
+        • `delete_tables(dataset_id, exclude_ids=None) -> list[int]` deletes all tables for the dataset except those in `exclude_ids` and returns deleted ids.
+
+    Other notes:
+    - Use print() for output – stdout is captured and truncated to 2000 chars.
+    - State does not persist between calls.
     """
     code: str = Field(..., description="String containing valid python code to be executed in `exec()`")
 
@@ -235,9 +243,56 @@ class Python(OpenAIBaseModel):
         try:
             from api.models import Dataset, Table
 
-            locals = {}
-            globals = { 'Dataset': Dataset, 'Table': Table, 'pd': pd, 'np': np, 'uuid': uuid, 'datetime': datetime, 're': re, 'utm': utm }
-            combined_context = globals.copy()
+            # Helper utilities for safe table replacement/deletion
+            def replace_table(old_table_id, new_df, new_title=None, description=None):
+                table = Table.objects.get(id=old_table_id)
+                table.df = new_df
+                if new_title is not None:
+                    table.title = new_title
+                if description is not None:
+                    table.description = description
+                table.save()
+                print(f"Replaced table {old_table_id} in-place")
+                return table.id
+
+            def create_or_replace(dataset_id, title, new_df, description=None):
+                existing = Table.objects.filter(dataset_id=dataset_id, title=title).order_by('-updated_at', '-id').first()
+                if existing is None:
+                    t = Table(dataset_id=dataset_id, title=title, df=new_df, description=description or '')
+                    t.save()
+                    print(f"Created table {t.id} with title '{title}'")
+                    return t.id
+                existing.df = new_df
+                if description is not None:
+                    existing.description = description
+                existing.save()
+                print(f"Updated existing table {existing.id} with title '{title}'")
+                return existing.id
+
+            def delete_tables(dataset_id, exclude_ids=None):
+                exclude_ids = exclude_ids or []
+                qs = Table.objects.filter(dataset_id=dataset_id).exclude(id__in=exclude_ids)
+                deleted_ids = list(qs.values_list('id', flat=True))
+                qs.delete()
+                if deleted_ids:
+                    print(f"Deleted tables {deleted_ids}")
+                return deleted_ids
+
+            context_locals = {}
+            context_globals = {
+                'Dataset': Dataset,
+                'Table': Table,
+                'pd': pd,
+                'np': np,
+                'uuid': uuid,
+                'datetime': datetime,
+                're': re,
+                'utm': utm,
+                'replace_table': replace_table,
+                'create_or_replace': create_or_replace,
+                'delete_tables': delete_tables,
+            }
+            combined_context = context_globals.copy()
             combined_context.update(locals)
             exec(code, combined_context, combined_context)  # See https://github.com/python/cpython/issues/86084
             stdout_value = new_stdout.getvalue()
