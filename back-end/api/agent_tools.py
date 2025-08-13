@@ -293,7 +293,7 @@ class Python(OpenAIBaseModel):
                 'delete_tables': delete_tables,
             }
             combined_context = context_globals.copy()
-            combined_context.update(locals)
+            combined_context.update(context_locals)
             exec(code, combined_context, combined_context)  # See https://github.com/python/cpython/issues/86084
             stdout_value = new_stdout.getvalue()
             
