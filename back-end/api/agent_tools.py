@@ -216,7 +216,7 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
 class Python(OpenAIBaseModel):
     """
     Run python code using `exec(code, globals={'Dataset': Dataset, 'Table': Table, 'pd': pd, 'np': np, 'uuid': uuid, 'datetime': datetime, 're': re, 'utm': utm, 'replace_table': replace_table, 'create_or_replace': create_or_replace, 'delete_tables': delete_tables}, {})`.
-    You have access to a Django ORM with models `Table` and `Dataset` in scope. Do NOT import them.
+    You have access to a Django ORM with models `Table` and `Dataset` in scope. Do NOT import them, just start using them immediately, e.g. DO code="t = Table.objects.get(id=1); print(t.iloc[0])" NOT code="from Table import Table; t = Table.objects.get(id=1); print(t.iloc[0])"
 
     CRITICAL RULES FOR TABLE MANAGEMENT:
     - Prefer updating an existing Table in-place rather than creating a new one. Example:
@@ -440,7 +440,7 @@ class UploadDwCA(OpenAIBaseModel):
     agent_id: PositiveInt = Field(...)
 
     def run(self):
-        from api.models import Agent
+        from api.models import Agent, Task
         try:
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
@@ -508,14 +508,17 @@ class PublishToGBIF(OpenAIBaseModel):
             dataset.published_at = datetime.datetime.now()
             dataset.save()
 
-            # Automatically mark the current agent as complete and trigger the next task (e.g., "Data maintenance")
-            agent.completed_at = datetime.datetime.now()
-            agent.save()
+            # If this is NOT the final task, automatically mark complete and advance.
+            # For the final task (e.g., Data maintenance), keep the conversation open.
+            last_task = Task.objects.last()
+            if agent.task_id != (last_task.id if last_task else None):
+                agent.completed_at = datetime.datetime.now()
+                agent.save()
 
-            # Create the next agent in the workflow and kick it off, if any
-            new_agent = dataset.next_agent()
-            if new_agent:
-                new_agent.next_message()
+                # Create the next agent in the workflow and kick it off, if any
+                new_agent = dataset.next_agent()
+                if new_agent:
+                    new_agent.next_message()
 
             return f'Successfully registered dataset with GBIF. URL: {gbif_url}'
         except Exception as e:

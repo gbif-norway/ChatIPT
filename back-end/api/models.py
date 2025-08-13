@@ -147,7 +147,8 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
 
     @property
     def functions(self):
-        functions = [agent_tools.SetBasicMetadata.__name__,
+        functions = [
+                    agent_tools.SetBasicMetadata.__name__,
                     agent_tools.SetEML.__name__,
                     agent_tools.SetAgentTaskToComplete.__name__,
                     agent_tools.Python.__name__,
@@ -156,7 +157,15 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
                     agent_tools.UploadDwCA.__name__,
                     agent_tools.PublishToGBIF.__name__,
                     agent_tools.ValidateDwCA.__name__,
-                    agent_tools.SendDiscordMessage.__name__]
+                    agent_tools.SendDiscordMessage.__name__
+                   ]
+
+        # Exclude the completion tool for the final task (Data maintenance),
+        # so it remains indefinitely open to conversation with the user.
+        last_task = Task.objects.last()
+        if last_task and last_task.id == self.id:
+            functions = [f for f in functions if f != agent_tools.SetAgentTaskToComplete.__name__]
+
         return [getattr(agent_tools, f) for f in functions]
 
     def create_agent_with_system_messages(self, dataset:Dataset):
