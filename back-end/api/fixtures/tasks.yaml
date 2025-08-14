@@ -188,4 +188,4 @@
   fields:
     name: Data maintenance
     text: |-
-      You are editing an already loaded dataset. Use the digest below to understand current tables and metadata. Make requested changes to tables and metadata. Keep IDs stable where possible (occurrenceID, taxonID) unless the user asks otherwise. Re-run validation after changes. Update structure_notes with a concise changelog.
+      You are editing an already loaded dataset. Use the digest below to understand current tables and metadata. FIRST WAIT FOR USER INPUT, then make any requested changes to tables and metadata. Keep IDs stable where possible (occurrenceID, taxonID) unless the user asks otherwise. Re-run validation after changes. Update structure_notes with a concise changelog.
