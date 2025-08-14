@@ -493,7 +493,7 @@ class PublishToGBIF(OpenAIBaseModel):
     agent_id: PositiveInt = Field(...)
 
     def run(self):
-        from api.models import Agent
+        from api.models import Agent, Task
         try:
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
