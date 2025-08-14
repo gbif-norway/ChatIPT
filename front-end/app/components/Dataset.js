@@ -185,7 +185,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                   agent={agent}
                   refreshDataset={() => refreshDataset(currentDatasetId)}
                   currentDatasetId={currentDatasetId}
-                  
+                  refreshTables={refreshTables}
                 />
               ))}
             </Accordion>

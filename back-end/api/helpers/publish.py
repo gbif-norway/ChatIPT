@@ -9,26 +9,155 @@ import requests
 from requests.auth import HTTPBasicAuth
 import uuid
 
-def make_eml(title, description):
+def make_eml(title, description, user=None, eml_extra: dict | None = None):
+    """Render an EML document populated with available metadata and prune empty elements.
+
+    Args:
+        title: Dataset title
+        description: Dataset description (abstract)
+        user: Primary user (creator/metadataProvider)
+        eml_extra: Optional dict from `dataset.eml` with keys like
+                   geographic_scope, temporal_scope, taxonomic_scope, methodology, users
+    """
     tree = ET.parse('api/templates/eml.xml')
     root = tree.getroot()
-    placeholder_user = {'givenName': 'Test', 'surName': 'User', 'userId': '0000-0002-1825-0097'}
-    values = {
-        'title': title,
-        'creator': placeholder_user, 
-        'metadataProvider': placeholder_user,
-        'abstract' : { 'para': description }
+
+    NS = 'eml://ecoinformatics.org/eml-2.1.1'
+    NSMAP = {'eml': NS}
+
+    def q(tag: str) -> str:
+        return f'{{{NS}}}{tag}'
+
+    def find(elem, path: str):
+        return elem.find(path, namespaces=NSMAP)
+
+    def findall(elem, path: str):
+        return elem.findall(path, namespaces=NSMAP)
+
+    def get_or_create(parent, tag: str):
+        child = find(parent, f'eml:{tag}')
+        if child is None:
+            child = ET.SubElement(parent, q(tag))
+        return child
+
+    def set_text(elem, text: str | None):
+        if elem is not None and text not in (None, ''):
+            elem.text = str(text)
+
+    dataset_node = find(root, 'eml:dataset')
+    if dataset_node is None:
+        dataset_node = ET.SubElement(root, q('dataset'))
+
+    # Title
+    set_text(get_or_create(dataset_node, 'title'), title)
+
+    # Language
+    set_text(get_or_create(dataset_node, 'language'), 'en')
+
+    # Abstract
+    abstract = get_or_create(dataset_node, 'abstract')
+    set_text(get_or_create(abstract, 'para'), description)
+
+    # Helper to set a person into creator/metadataProvider/personnel
+    def set_person(parent_node, person: dict, include_role: bool = False, role_value: str | None = None):
+        individual = get_or_create(parent_node, 'individualName')
+        set_text(get_or_create(individual, 'givenName'), person.get('first_name') or person.get('givenName') or '')
+        set_text(get_or_create(individual, 'surName'), person.get('last_name') or person.get('surName') or '')
+        user_id = get_or_create(parent_node, 'userId')
+        user_id.set('directory', 'http://orcid.org/')
+        set_text(user_id, person.get('orcid') or person.get('userId') or '')
+        if include_role:
+            set_text(get_or_create(parent_node, 'role'), role_value or 'metadataProvider')
+
+    # Primary user as creator and metadataProvider
+    primary_person = {
+        'first_name': getattr(user, 'first_name', 'Unknown') if user else 'Test',
+        'last_name': getattr(user, 'last_name', 'Unknown') if user else 'User',
+        'orcid': getattr(user, 'orcid_id', '0000-0000-0000-0000') if user else '0000-0002-1825-0097',
     }
 
-    def fill_node(node, values):
-        for key, value in values.items():
-            child = node.find(f'.//{key}')
-            if child is not None:
-                if isinstance(value, dict):
-                    fill_node(child, value)
-                else:
-                    child.text = value
-    fill_node(root, values)
+    creator_node = get_or_create(dataset_node, 'creator')
+    set_person(creator_node, primary_person)
+
+    metadata_provider_node = get_or_create(dataset_node, 'metadataProvider')
+    set_person(metadata_provider_node, primary_person)
+
+    # Optional additional metadata
+    eml_extra = eml_extra or {}
+
+    # Users array: add additional creators and project personnel
+    users_list = eml_extra.get('users') or []
+    # Append additional creators for any extra users beyond the primary
+    for idx, person in enumerate(users_list):
+        # If this user is effectively the same as primary, skip duplicating as extra
+        is_primary_like = (
+            (person.get('first_name') or '') == primary_person.get('first_name') and
+            (person.get('last_name') or '') == primary_person.get('last_name')
+        )
+        # Always include in project personnel; add as extra creator only for non-primary users
+        if not is_primary_like:
+            extra_creator = ET.SubElement(dataset_node, q('creator'))
+            set_person(extra_creator, person)
+
+    # Project personnel
+    project_node = find(dataset_node, 'eml:project')
+    if project_node is None:
+        project_node = ET.SubElement(dataset_node, q('project'))
+    for person in users_list:
+        personnel = ET.SubElement(project_node, q('personnel'))
+        set_person(personnel, person, include_role=True, role_value='metadataProvider')
+
+    # Coverage
+    coverage = get_or_create(dataset_node, 'coverage')
+    # Geographic
+    geo = get_or_create(coverage, 'geographicCoverage')
+    set_text(get_or_create(geo, 'geographicDescription'), eml_extra.get('geographic_scope'))
+    # Temporal
+    temporal_value = eml_extra.get('temporal_scope')
+    if temporal_value:
+        # Try to detect range vs single date
+        temporal_value_str = str(temporal_value).strip()
+        if any(sep in temporal_value_str for sep in ['/', '-', '–', ' to ']):
+            # Split on first common separators
+            for sep in ['/', ' to ', '-', '–']:
+                if sep in temporal_value_str:
+                    start, end = [s.strip() for s in temporal_value_str.split(sep, 1)]
+                    break
+            range_node = get_or_create(coverage, 'temporalCoverage')
+            rnd = get_or_create(range_node, 'rangeOfDates')
+            set_text(get_or_create(get_or_create(rnd, 'beginDate'), 'calendarDate'), start)
+            set_text(get_or_create(get_or_create(rnd, 'endDate'), 'calendarDate'), end)
+        else:
+            single_node = get_or_create(coverage, 'temporalCoverage')
+            sdt = get_or_create(single_node, 'singleDateTime')
+            set_text(get_or_create(sdt, 'calendarDate'), temporal_value_str)
+
+    # Taxonomic
+    tax = get_or_create(coverage, 'taxonomicCoverage')
+    set_text(get_or_create(tax, 'generalTaxonomicCoverage'), eml_extra.get('taxonomic_scope'))
+
+    # Methods / methodology
+    methods = get_or_create(dataset_node, 'methods')
+    method_step = get_or_create(methods, 'methodStep')
+    description_node = get_or_create(method_step, 'description')
+    set_text(get_or_create(description_node, 'para'), eml_extra.get('methodology'))
+
+    # Prune empty elements except root and dataset and intellectualRights
+    def is_empty(element: ET.Element) -> bool:
+        has_text = (element.text or '').strip() != ''
+        has_children = len(element) > 0
+        return not has_text and not has_children
+
+    def prune(element: ET.Element):
+        # Copy list to avoid modification during iteration
+        for child in list(element):
+            prune(child)
+            # Preserve intellectualRights if present, even if empty (it has license text in template anyway)
+            if is_empty(child) and child.tag not in {q('dataset'), q('eml'), q('intellectualRights')}:
+                element.remove(child)
+
+    prune(root)
+
     return ET.tostring(root, encoding='utf-8', xml_declaration=True).decode('utf-8')
 
 @retry(stop=stop_after_attempt(10), wait=wait_fixed(2))
@@ -51,9 +180,9 @@ def get_id_col_index(df, col_name='occurrenceID'):
         # Update columns_lower to include the new column
         return df.columns.get_loc(col_name)
 
-def upload_dwca(df_core, title, description, df_extension=None):
+def upload_dwca(df_core, title, description, df_extension=None, user=None, eml_extra: dict | None = None):
     archive = Archive()
-    archive.eml_text = make_eml(title, description)
+    archive.eml_text = make_eml(title, description, user, eml_extra)
 
     core_table = Table(spec='https://rs.gbif.org/core/dwc_occurrence_2022-02-02.xml', data=df_core, id_index=get_id_col_index(df_core, 'occurrenceID'), only_mapped_columns=True)
     archive.core = core_table

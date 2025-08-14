@@ -215,13 +215,21 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
 
 class Python(OpenAIBaseModel):
     """
-    Run python code using `exec(code, globals={'Dataset': Dataset, 'Table': Table, 'pd': pd, 'np': np, 'uuid': uuid, 'datetime': datetime, 're': re, 'utm': utm}, {})`. 
-    I.e., you have access to an environment with those libraries and a Django database with models `Table` and `Dataset` (already in scope, do not need importing). You cannot import anything else.
-    NB - *DO NOT* IMPORT Table, Dataset, etc, just use them, they are available in the current scope. E.g. code = `table = Table.objects.get(id=df_id); print(table.df.to_string()); dataset = Dataset.objects.get(id=1);` etc
-    Notes: - Edit, delete or create new Table objects as required - remember to save changes to the database (e.g. `table.save()`). 
-    - Use print() if you want to see output - a string of stdout, truncated to 2000 chars 
-    - IMPORTANT NOTE #1: State does not persist - Every time this function is called, the slate is wiped clean and you will not have access to objects created previously.
-    - IMPORTANT NOTE #2: If you merge or create a new Table based on old Tables, tidy up after yourself and delete irrelevant/out of date Tables.
+    Run python code using `exec(code, globals={'Dataset': Dataset, 'Table': Table, 'pd': pd, 'np': np, 'uuid': uuid, 'datetime': datetime, 're': re, 'utm': utm, 'replace_table': replace_table, 'create_or_replace': create_or_replace, 'delete_tables': delete_tables}, {})`.
+    You have access to a Django ORM with models `Table` and `Dataset` in scope. Do NOT import them, just start using them immediately, e.g. DO code="t = Table.objects.get(id=1); print(t.iloc[0])" NOT code="from Table import Table; t = Table.objects.get(id=1); print(t.iloc[0])"
+
+    CRITICAL RULES FOR TABLE MANAGEMENT:
+    - Prefer updating an existing Table in-place rather than creating a new one. Example:
+      `t = Table.objects.get(id=old_id); t.df = new_df; t.title = 'occurrence_dwca'; t.save()`
+    - If you DO create a replacement table, you MUST delete the superseded one(s) before finishing, e.g. `old.delete()`.
+    - Helper functions are provided to make this safe and easy:
+        • `replace_table(old_table_id, new_df, new_title=None, description=None) -> int` updates in place and returns the table id.
+        • `create_or_replace(dataset_id, title, new_df, description=None) -> int` updates the latest table with the same title if it exists, else creates one; returns the table id.
+        • `delete_tables(dataset_id, exclude_ids=None) -> list[int]` deletes all tables for the dataset except those in `exclude_ids` and returns deleted ids.
+
+    Other notes:
+    - Use print() for output – stdout is captured and truncated to 2000 chars.
+    - State does not persist between calls.
     """
     code: str = Field(..., description="String containing valid python code to be executed in `exec()`")
 
@@ -235,10 +243,57 @@ class Python(OpenAIBaseModel):
         try:
             from api.models import Dataset, Table
 
-            locals = {}
-            globals = { 'Dataset': Dataset, 'Table': Table, 'pd': pd, 'np': np, 'uuid': uuid, 'datetime': datetime, 're': re, 'utm': utm }
-            combined_context = globals.copy()
-            combined_context.update(locals)
+            # Helper utilities for safe table replacement/deletion
+            def replace_table(old_table_id, new_df, new_title=None, description=None):
+                table = Table.objects.get(id=old_table_id)
+                table.df = new_df
+                if new_title is not None:
+                    table.title = new_title
+                if description is not None:
+                    table.description = description
+                table.save()
+                print(f"Replaced table {old_table_id} in-place")
+                return table.id
+
+            def create_or_replace(dataset_id, title, new_df, description=None):
+                existing = Table.objects.filter(dataset_id=dataset_id, title=title).order_by('-updated_at', '-id').first()
+                if existing is None:
+                    t = Table(dataset_id=dataset_id, title=title, df=new_df, description=description or '')
+                    t.save()
+                    print(f"Created table {t.id} with title '{title}'")
+                    return t.id
+                existing.df = new_df
+                if description is not None:
+                    existing.description = description
+                existing.save()
+                print(f"Updated existing table {existing.id} with title '{title}'")
+                return existing.id
+
+            def delete_tables(dataset_id, exclude_ids=None):
+                exclude_ids = exclude_ids or []
+                qs = Table.objects.filter(dataset_id=dataset_id).exclude(id__in=exclude_ids)
+                deleted_ids = list(qs.values_list('id', flat=True))
+                qs.delete()
+                if deleted_ids:
+                    print(f"Deleted tables {deleted_ids}")
+                return deleted_ids
+
+            context_locals = {}
+            context_globals = {
+                'Dataset': Dataset,
+                'Table': Table,
+                'pd': pd,
+                'np': np,
+                'uuid': uuid,
+                'datetime': datetime,
+                're': re,
+                'utm': utm,
+                'replace_table': replace_table,
+                'create_or_replace': create_or_replace,
+                'delete_tables': delete_tables,
+            }
+            combined_context = context_globals.copy()
+            combined_context.update(context_locals)
             exec(code, combined_context, combined_context)  # See https://github.com/python/cpython/issues/86084
             stdout_value = new_stdout.getvalue()
             
@@ -385,7 +440,7 @@ class UploadDwCA(OpenAIBaseModel):
     agent_id: PositiveInt = Field(...)
 
     def run(self):
-        from api.models import Agent
+        from api.models import Agent, Task
         try:
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
@@ -396,16 +451,32 @@ class UploadDwCA(OpenAIBaseModel):
             if not core_table:
                 core_table = next((t for t in tables if 'kingdom' in t.df.columns), tables.first())
             if not core_table:
-                return 'Validation error: Could not identify a suitable core table (requires at least a scientificName or kingdom column).'
+                error_msg = 'Validation error: Could not identify a suitable core table (requires at least a scientificName or kingdom column).'
+                # Notify developers of core table validation failure
+                discord_bot.send_discord_message(f"⚠️ Core Table Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
+                return error_msg
 
             # If we find additional tables, treat the first as a MeasurementOrFact extension for now
             extension_tables = [tbl for tbl in tables if tbl != core_table]
             mof_table = extension_tables[0] if extension_tables else None
 
             if mof_table:
-                dwca_url = upload_dwca(core_table.df, dataset.title, dataset.description, mof_table.df)
+                dwca_url = upload_dwca(
+                    core_table.df,
+                    dataset.title,
+                    dataset.description,
+                    mof_table.df,
+                    dataset.user,
+                    eml_extra=dataset.eml,
+                )
             else:
-                dwca_url = upload_dwca(core_table.df, dataset.title, dataset.description)
+                dwca_url = upload_dwca(
+                    core_table.df,
+                    dataset.title,
+                    dataset.description,
+                    user=dataset.user,
+                    eml_extra=dataset.eml,
+                )
 
             dataset.dwca_url = dwca_url
             dataset.save()
@@ -422,26 +493,32 @@ class PublishToGBIF(OpenAIBaseModel):
     agent_id: PositiveInt = Field(...)
 
     def run(self):
-        from api.models import Agent
+        from api.models import Agent, Task
         try:
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
             if not dataset.dwca_url:
-                return 'Error: Dataset has no DwCA URL. Please run UploadDwCA first.'
+                error_msg = 'Error: Dataset has no DwCA URL. Please run UploadDwCA first.'
+                # Notify developers of missing DwCA URL for publishing
+                discord_bot.send_discord_message(f"⚠️ Publishing Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
+                return error_msg
 
             gbif_url = register_dataset_and_endpoint(dataset.title, dataset.description, dataset.dwca_url)
             dataset.gbif_url = gbif_url
             dataset.published_at = datetime.datetime.now()
             dataset.save()
 
-            # Automatically mark the current agent as complete and trigger the next task (e.g., "Data maintenance")
-            agent.completed_at = datetime.datetime.now()
-            agent.save()
+            # If this is NOT the final task, automatically mark complete and advance.
+            # For the final task (e.g., Data maintenance), keep the conversation open.
+            last_task = Task.objects.last()
+            if agent.task_id != (last_task.id if last_task else None):
+                agent.completed_at = datetime.datetime.now()
+                agent.save()
 
-            # Create the next agent in the workflow and kick it off, if any
-            new_agent = dataset.next_agent()
-            if new_agent:
-                new_agent.next_message()
+                # Create the next agent in the workflow and kick it off, if any
+                new_agent = dataset.next_agent()
+                if new_agent:
+                    new_agent.next_message()
 
             return f'Successfully registered dataset with GBIF. URL: {gbif_url}'
         except Exception as e:
@@ -484,11 +561,17 @@ class ValidateDwCA(OpenAIBaseModel):
                 timeout=30,
             )
             if submit_resp.status_code not in (200, 201, 202):
-                return f'Validator submission failed. Status: {submit_resp.status_code}, Body: {submit_resp.text}'
+                error_msg = f'Validator submission failed. Status: {submit_resp.status_code}, Body: {submit_resp.text}'
+                # Notify developers of GBIF validator submission failure
+                discord_bot.send_discord_message(f"🚨 GBIF Validator Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
+                return error_msg
 
             key = submit_resp.json().get('key')
             if not key:
-                return f'Validator response did not contain a key: {submit_resp.text}'
+                error_msg = f'Validator response did not contain a key: {submit_resp.text}'
+                # Notify developers of missing validation key
+                discord_bot.send_discord_message(f"⚠️ GBIF Validator Key Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
+                return error_msg
 
             @retry(stop=stop_after_attempt(1000), wait=wait_fixed(self.poll_interval_seconds))
             def fetch_status():
@@ -506,8 +589,38 @@ class ValidateDwCA(OpenAIBaseModel):
                 result_json = fetch_status()
                 return result_json
             except Exception as e:
-                return f'Validation polling stopped after many attempts. Last error: {e}'
+                error_msg = f'Validation polling stopped after many attempts. Last error: {e}'
+                # Notify developers of validation polling timeout
+                discord_bot.send_discord_message(f"⏰ GBIF Validator Timeout: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
+                return error_msg
 
         except Exception as e:
-            return repr(e)[:2000]
+            error_msg = repr(e)[:2000]
+            # Notify developers of general validation error
+            discord_bot.send_discord_message(f"❌ GBIF Validator Exception: {error_msg}\nAgent ID: {self.agent_id}")
+            return error_msg
+
+
+class SendDiscordMessage(OpenAIBaseModel):
+    """
+    Send a message to developers via Discord webhook when errors or important events occur.
+    This tool should be used to notify developers of validation failures, critical errors, 
+    or other issues that require attention during dataset processing.
+    """
+    message: str = Field(..., description="The message to send to developers")
+    urgent: bool = Field(False, description="Whether this is an urgent message that needs immediate attention")
+
+    def run(self):
+        try:
+            # Format the message with context if urgent
+            formatted_message = self.message
+            if self.urgent:
+                formatted_message = f"🚨 **URGENT** 🚨\n{self.message}"
+            
+            # Use the existing Discord bot functionality
+            discord_bot.send_discord_message(formatted_message)
+            return "Message sent successfully to developers via Discord"
+        
+        except Exception as e:
+            return f"Failed to send Discord message: {repr(e)}"
 
