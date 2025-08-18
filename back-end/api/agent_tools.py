@@ -137,6 +137,115 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
 
         return df, failed_indices, future_date_indices
     
+    def validate_scientific_names(self, df):
+        """
+        Validate scientific names against GBIF API to detect potential typos.
+        
+        Args:
+            df: DataFrame with scientificName column
+            
+        Returns:
+            str: Validation message describing any issues found, or None if no issues
+        """
+        import urllib.parse
+        import time
+        
+        # Get unique scientific names and their counts
+        name_counts = df['scientificName'].value_counts()
+        unique_names = name_counts.index.tolist()
+        
+        # Remove empty/null names
+        unique_names = [name for name in unique_names if pd.notna(name) and str(name).strip()]
+        
+        if not unique_names:
+            return "No valid scientific names found in the scientificName column."
+        
+        # Determine which names to check based on quantity
+        if len(unique_names) <= 50:
+            # Check all names if reasonable amount
+            names_to_check = unique_names
+        else:
+            # Check the least common names (most likely to be typos) - bottom 30
+            names_to_check = name_counts.tail(30).index.tolist()
+        
+        fuzzy_matches = []
+        unmatched_names = []
+        corrected_names = {}
+        
+        print(f"Validating {len(names_to_check)} scientific names against GBIF API...")
+        
+        for i, name in enumerate(names_to_check):
+            try:
+                # Add small delay to be respectful to GBIF API
+                if i > 0 and i % 10 == 0:
+                    time.sleep(1)
+                
+                encoded_name = urllib.parse.quote(str(name))
+                response = requests.get(
+                    f"https://api.gbif.org/v1/species/match?scientificName={encoded_name}",
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    confidence = data.get('confidence', 0)
+                    match_type = data.get('matchType', '')
+                    suggested_name = data.get('canonicalName', data.get('scientificName', ''))
+                    
+                    if match_type == 'FUZZY' and confidence >= 80:
+                        # High confidence fuzzy match - likely a typo
+                        fuzzy_matches.append({
+                            'original': name,
+                            'suggested': suggested_name,
+                            'confidence': confidence
+                        })
+                        # Auto-correct high confidence matches
+                        if confidence >= 85:
+                            corrected_names[name] = suggested_name
+                    elif match_type == 'NONE' or confidence < 50:
+                        # No match or very low confidence
+                        unmatched_names.append(name)
+                        
+            except Exception as e:
+                print(f"Error checking name '{name}': {e}")
+                continue
+        
+        # Apply auto-corrections to the DataFrame
+        if corrected_names:
+            for original, corrected in corrected_names.items():
+                df.loc[df['scientificName'] == original, 'scientificName'] = corrected
+        
+        # Build validation message
+        issues = []
+        
+        if corrected_names:
+            corrections_list = [f"'{orig}' → '{corr}'" for orig, corr in corrected_names.items()]
+            issues.append(f"Auto-corrected {len(corrected_names)} scientific names with high confidence matches: {'; '.join(corrections_list[:5])}")
+            if len(corrections_list) > 5:
+                issues.append(f"... and {len(corrections_list) - 5} more corrections")
+        
+        if fuzzy_matches and not corrected_names:
+            # Only show fuzzy matches that weren't auto-corrected
+            remaining_fuzzy = [match for match in fuzzy_matches if match['original'] not in corrected_names]
+            if remaining_fuzzy:
+                fuzzy_list = [f"'{match['original']}' (suggested: '{match['suggested']}', confidence: {match['confidence']}%)" for match in remaining_fuzzy[:3]]
+                issues.append(f"Found {len(remaining_fuzzy)} potential typos with moderate confidence: {'; '.join(fuzzy_list)}")
+                if len(remaining_fuzzy) > 3:
+                    issues.append(f"... and {len(remaining_fuzzy) - 3} more potential typos")
+        
+        if unmatched_names:
+            unmatched_list = [f"'{name}'" for name in unmatched_names[:5]]
+            issues.append(f"Could not match {len(unmatched_names)} names against GBIF database: {', '.join(unmatched_list)}")
+            if len(unmatched_names) > 5:
+                issues.append(f"... and {len(unmatched_names) - 5} more unmatched names")
+            issues.append("These may be valid names not in GBIF, recent taxonomic changes, or require manual verification.")
+        
+        if issues:
+            return " ".join(issues)
+        else:
+            print(f"All {len(names_to_check)} scientific names validated successfully against GBIF.")
+            return None
+    
     def run(self):
         from api.models import Agent, Table
         agent = Agent.objects.get(id=self.agent_id)
@@ -208,6 +317,12 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
 
                 if 'scientificName' not in df.columns:
                     general_errors['scientificName'] = 'scientificName is missing from this Table (this is fine if this Table is a Measurement or Fact extension)'
+                else:
+                    # Scientific name validation using GBIF API
+                    scientific_name_issues = self.validate_scientific_names(df)
+                    if scientific_name_issues:
+                        general_errors['scientificName'] = scientific_name_issues
+
                 if ('organismQuantity' in df.columns and 'organismQuantityType' not in df.columns):
                     general_errors['organismQuantity'] = 'organismQuantity is a column in this Table, but the corresponding required column "organismQuantityType" is missing.'
                 elif ('organismQuantityType' in df.columns and 'organismQuantity' not in df.columns):
