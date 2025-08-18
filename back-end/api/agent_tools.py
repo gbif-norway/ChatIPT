@@ -88,39 +88,54 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
     agent_id: PositiveInt = Field(...)
 
     def validate_and_format_event_dates(self, df):
+        from datetime import datetime
+        
         failed_indices = []
+        future_date_indices = []
+        current_date = datetime.now()
 
         if "eventDate" in df.columns:
             for idx, date_value in df["eventDate"].items():
                 try:
+                    parsed_date = None
+                    formatted_date = None
+                    
                     if isinstance(date_value, pd.Timestamp):  # Already a datetime object
                         formatted_date = date_value.isoformat()
+                        parsed_date = date_value.to_pydatetime()
                     elif isinstance(date_value, str):
                         # First, try parsing the value directly – this covers most single-date strings
                         try:
-                            formatted_date = parse(date_value).isoformat()
+                            parsed_date = parse(date_value)
+                            formatted_date = parsed_date.isoformat()
                             df.at[idx, "eventDate"] = formatted_date
                         except (ParserError, ValueError):
                             # If direct parsing fails **and** the string contains '/', treat it as a date range
                             if "/" in date_value:
                                 try:
                                     start_date, end_date = date_value.split("/", 1)
-                                    start_date_parsed = parse(start_date).isoformat()
-                                    end_date_parsed = parse(end_date).isoformat()
-                                    formatted_date = f"{start_date_parsed}/{end_date_parsed}"
+                                    start_date_parsed = parse(start_date)
+                                    end_date_parsed = parse(end_date)
+                                    formatted_date = f"{start_date_parsed.isoformat()}/{end_date_parsed.isoformat()}"
                                     df.at[idx, "eventDate"] = formatted_date
+                                    # For date ranges, check if the end date is in the future
+                                    parsed_date = end_date_parsed
                                 except (ParserError, ValueError):
                                     failed_indices.append(idx)
                             else:
                                 failed_indices.append(idx)
                     else: 
                         failed_indices.append(idx)
+                    
+                    # Check if the date is in the future (only if parsing was successful)
+                    if parsed_date and parsed_date.date() > current_date.date():
+                        future_date_indices.append(idx)
                 
                 except (ParserError, ValueError, TypeError):
                     # If parsing fails, add the index to the failed_indices list
                     failed_indices.append(idx)
 
-        return df, failed_indices
+        return df, failed_indices, future_date_indices
     
     def run(self):
         from api.models import Agent, Table
@@ -181,8 +196,9 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
                     if not invalid_individual_count.empty:
                         validation_errors['individualCount'] = invalid_individual_count.index.tolist()
                 
-                corrected_dates_df, event_date_error_indices = self.validate_and_format_event_dates(df)
+                corrected_dates_df, event_date_error_indices, future_date_indices = self.validate_and_format_event_dates(df)
                 validation_errors['eventDate'] = event_date_error_indices
+                validation_errors['eventDateFuture'] = future_date_indices
                 table_results[table.id]['validation_errors'] = validation_errors
 
                 table.df = corrected_dates_df
@@ -190,14 +206,14 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
                 
                 general_errors = {}
 
+                if 'scientificName' not in df.columns:
+                    general_errors['scientificName'] = 'scientificName is missing from this Table (this is fine if this Table is a Measurement or Fact extension)'
                 if ('organismQuantity' in df.columns and 'organismQuantityType' not in df.columns):
                     general_errors['organismQuantity'] = 'organismQuantity is a column in this Table, but the corresponding required column "organismQuantityType" is missing.'
                 elif ('organismQuantityType' in df.columns and 'organismQuantity' not in df.columns):
                     general_errors['organismQuantity'] = 'organismQuantityType is a column in this Table, but the corresponding required column "organismQuantity" is missing.'
                 if 'basisOfRecord' not in df.columns:
                     general_errors['basisOfRecord'] = 'basisOfRecord is missing from this Table (this is fine if the core is Taxon or if this Table is a Measurement or Fact extension)'
-                if 'scientificName' not in df.columns:
-                    general_errors['scientificName'] = 'scientificName is missing from this Table (this is fine if this Table is a Measurement or Fact extension)'
                 if 'occurrenceID' not in df.columns:
                     general_errors['occurrenceID'] = 'occurrenceID is missing from this Table and is a required field. If this is a Measurement or Fact table, the occurrenceID column needs to link back to the core occurrence table.'
                 if 'id' not in df.columns and 'ID' not in df.columns and 'measurementID' not in df.columns:

@@ -12,6 +12,8 @@ Basic validation reports:
         - eventDate: Checked dates are in an acceptable ISO format.
         {% if validation.validation_errors.eventDate %}Found rows with incorrect values, first 30 (of {{ validation.validation_errors.eventDate|length }}) indices: {{ validation.validation_errors.eventDate|slice:":30"|join:", " }} 
         When correcting eventDate errors, remember to format as ISO. Do not automatically assume days or months if they are missing, it's better to default to just year-month or even just year. Some valid egs: 2009-02-20T08:40Z, 1809-02-12, 1906-06, 1971, 1900/1909, 2007-11-13/15{% else %}All rows were compliant{% endif %}
+        - eventDate (future dates): Checked that dates are not in the future.
+        {% if validation.validation_errors.eventDateFuture %}Found rows with future dates, first 30 (of {{ validation.validation_errors.eventDateFuture|length }}) indices: {{ validation.validation_errors.eventDateFuture|slice:":30"|join:", " }}. Future dates are typically incorrect for biological observations - please verify these dates are accurate.{% else %}All rows were compliant{% endif %}
         {% if validation.validation_errors.individualCount %}
         - individualCount: Checked this is not a decimal value.
         Found rows with incorrect values, first 30 (of {{ validation.validation_errors.individualCount|length }}) indices: {{ validation.validation_errors.individualCount|slice:":30"|join:", " }}{% else %}All rows were compliant{% endif %}
