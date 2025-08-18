@@ -304,6 +304,11 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
                     invalid_individual_count = df[ind_numeric.isna() | (ind_numeric <= 0) | (ind_numeric % 1 != 0)]
                     if not invalid_individual_count.empty:
                         validation_errors['individualCount'] = invalid_individual_count.index.tolist()
+                if 'catalogNumber' in df.columns:
+                    # Check for duplicate catalogNumbers
+                    duplicate_catalog_numbers = df[df['catalogNumber'].duplicated(keep=False)]
+                    if not duplicate_catalog_numbers.empty:
+                        validation_errors['catalogNumber'] = duplicate_catalog_numbers.index.tolist()
                 
                 corrected_dates_df, event_date_error_indices, future_date_indices = self.validate_and_format_event_dates(df)
                 validation_errors['eventDate'] = event_date_error_indices
