@@ -18,6 +18,8 @@ Basic validation reports:
         - individualCount: Checked this is not a decimal value.
         Found rows with incorrect values, first 30 (of {{ validation.validation_errors.individualCount|length }}) indices: {{ validation.validation_errors.individualCount|slice:":30"|join:", " }}{% else %}
         - individualCount: All rows were compliant{% endif %}
+        - catalogNumber: Checked that values are unique (required for specimen records).
+        {% if validation.validation_errors.catalogNumber %}Found duplicate values, first 30 (of {{ validation.validation_errors.catalogNumber|length }}) indices: {{ validation.validation_errors.catalogNumber|slice:":30"|join:", " }}{% else %}All rows were compliant{% endif %}
 
         {% if validation.general_errors %} 
         General errors: {% for column, error in validation.general_errors.items %}
