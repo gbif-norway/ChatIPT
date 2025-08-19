@@ -20,15 +20,41 @@ export const DatasetProvider = ({ children }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Helper function to fetch data
-  const fetchData = async (url) => {
-    const response = await fetch(url, {
-      credentials: 'include'
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+  // Helper function to fetch data with timeout and retry logic
+  const fetchData = async (url, options = {}) => {
+    const { timeout = 90000, retries = 3 } = options; // 90 second timeout, 3 retries
+    
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        
+        const response = await fetch(url, {
+          credentials: 'include',
+          signal: controller.signal,
+          ...options
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+      } catch (error) {
+        console.log(`Fetch attempt ${attempt + 1} failed:`, error.message);
+        
+        // If this is the last attempt, or if it's not a network error, throw
+        if (attempt === retries || (!error.name?.includes('Abort') && !error.message?.includes('fetch'))) {
+          throw error;
+        }
+        
+        // Wait with exponential backoff before retrying
+        const delay = Math.min(1000 * Math.pow(2, attempt), 10000); // Max 10 seconds
+        console.log(`Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
-    return response.json();
   };
 
   // Load a dataset and store it in the context
@@ -100,7 +126,8 @@ export const DatasetProvider = ({ children }) => {
               refreshedDataset.visible_agent_set.at(-1).message_set.at(-1).role !== 'assistant') {
             console.log('about to start looping');
             console.log(refreshedDataset.visible_agent_set.at(-1).message_set.at(-1).role);
-            await new Promise(resolve => setTimeout(resolve, 500));
+            // Increased delay to reduce server load and give processing more time
+            await new Promise(resolve => setTimeout(resolve, 2000));
             console.log('finished waiting, refreshing again');
             if (datasetId === currentDatasetId) {
               refreshDataset(datasetId);
@@ -110,9 +137,26 @@ export const DatasetProvider = ({ children }) => {
       }
     } catch (error) {
       console.error('Error refreshing dataset:', error);
-      setError(error.message);
+      // Only set error if it's not a temporary network issue
+      if (!error.message?.includes('fetch') && !error.message?.includes('network')) {
+        setError(error.message);
+      }
+      
+      // If it's a network error and we're still processing, retry after delay
+      const currentDataset = datasets.get(datasetId);
+      if (currentDataset?.visible_agent_set?.length > 0) {
+        const lastAgent = currentDataset.visible_agent_set.at(-1);
+        if (lastAgent?.completed_at === null) {
+          console.log('Network error during processing, will retry in 5 seconds...');
+          setTimeout(() => {
+            if (datasetId === currentDatasetId) {
+              refreshDataset(datasetId);
+            }
+          }, 5000);
+        }
+      }
     }
-  }, [currentDatasetId]);
+  }, [currentDatasetId, datasets]);
 
   // Get the current dataset
   const currentDataset = datasets.get(currentDatasetId) || null;
