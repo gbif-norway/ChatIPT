@@ -16,15 +16,41 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const [activeTableId, setActiveTableId] = useState(null);
   const [activeAgentKey, setActiveAgentKey] = useState(null);
 
-  // Helper function to fetch data
-  const fetchData = async (url) => {
-    const response = await fetch(url, {
-      credentials: 'include'
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+  // Helper function to fetch data with timeout
+  const fetchData = async (url, options = {}) => {
+    const { timeout = 30000, retries = 2 } = options; // 30 second timeout for table requests
+    
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        
+        const response = await fetch(url, {
+          credentials: 'include',
+          signal: controller.signal,
+          ...options
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+      } catch (error) {
+        console.log(`Fetch attempt ${attempt + 1} failed for ${url}:`, error.message);
+        
+        // If this is the last attempt, or if it's not a network error, throw
+        if (attempt === retries || (!error.name?.includes('Abort') && !error.message?.includes('fetch'))) {
+          throw error;
+        }
+        
+        // Wait before retrying
+        const delay = 1000 * (attempt + 1);
+        console.log(`Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
-    return response.json();
   };
 
   const loadTablesForDataset = useCallback(async (datasetId) => {
@@ -104,7 +130,15 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     return (
       <div className="container">
         <div className="col-lg-9 mx-auto">
-          <div className="message assistant-message assistant-message-error">{error}</div>
+          <div className="message assistant-message assistant-message-error">
+            <div className="inner-message">
+              <strong>Connection Error</strong><br />
+              {error.includes('fetch') || error.includes('network') ? 
+                'There was a temporary network issue. The processing is continuing in the background. Please refresh the page to see the latest updates.' : 
+                error
+              }
+            </div>
+          </div>
         </div>
       </div>
     );

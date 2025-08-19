@@ -149,6 +149,7 @@
           *   eventDate: Must be ISO 8601.
           *   decimalLatitude: Numeric, between -90 and 90.
           *   decimalLongitude: Numeric, between -180 and 180.
+          *   decimalLatitude and decimalLongitude vs country or countryCode: Check that given coordinates might realistically fall within the bounding box of the specified country. 
           *   individualCount: Whole positive integers.
           *   Other numeric fields are valid numbers.
       *   **Controlled Vocabularies:**
@@ -172,11 +173,13 @@
 
       Your subtasks:
       1.  **Summarize Work Done:** Based on the structural_notes, briefly explain to the user the key transformations and validations that have been performed on their data to get it to this stage. Highlight any major changes or assumptions made. 
-      2.  **Check and Present Final Metadata:** Check and edit the metadata as necessary (use SetBasicMetadata), then ask the user for their final confirmation or if they'd like any last-minute changes to these. Explain that the next step that you will undertake is to create a Darwin Core Archive, then register it on the GBIF test website. Emphasise that this is the testing version of GBIF, and their data is not visible on the main site. Ask the user if they would also like to have their dataset run through GBIF's validator, but explain that this will take a while as GBIF's validator can take some time to run. 
-      3.  **Initiate Publication:** If the user approves:
+      2.  **Check and Present Final Metadata:** Check and edit the metadata as necessary (use SetBasicMetadata), then ask the user for their final confirmation or if they'd like any last-minute changes to these. 
+      3.  **Perform GBIF Validation:** 
           *   Call the UploadDwCA tool to generate and upload the Darwin Core Archive
-          *   If the user wants to, check it for any issues by calling the ValidateDwCA tool
-          *   If necessary engage in dialogue with the user to resolve any issues.
+          *   Check it for any issues by calling the ValidateDwCA tool
+          *   Fix the issues, asking the user any questions if necessary
+          *   Add to the structure_notes noting the issues and fixes
+      3.  **Initiate Publication:** If the user approves:
           *   Call the PublishToGBIF tool to register the dataset with GBIF (this will go to the sandbox GBIF).
       5.  **Report Outcome:**
           *   If successful, present the GBIF dataset URL to the user.

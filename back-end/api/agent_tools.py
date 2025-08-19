@@ -88,39 +88,163 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
     agent_id: PositiveInt = Field(...)
 
     def validate_and_format_event_dates(self, df):
+        from datetime import datetime
+        
         failed_indices = []
+        future_date_indices = []
+        current_date = datetime.now()
 
         if "eventDate" in df.columns:
             for idx, date_value in df["eventDate"].items():
                 try:
+                    parsed_date = None
+                    formatted_date = None
+                    
                     if isinstance(date_value, pd.Timestamp):  # Already a datetime object
                         formatted_date = date_value.isoformat()
+                        parsed_date = date_value.to_pydatetime()
                     elif isinstance(date_value, str):
                         # First, try parsing the value directly – this covers most single-date strings
                         try:
-                            formatted_date = parse(date_value).isoformat()
+                            parsed_date = parse(date_value)
+                            formatted_date = parsed_date.isoformat()
                             df.at[idx, "eventDate"] = formatted_date
                         except (ParserError, ValueError):
                             # If direct parsing fails **and** the string contains '/', treat it as a date range
                             if "/" in date_value:
                                 try:
                                     start_date, end_date = date_value.split("/", 1)
-                                    start_date_parsed = parse(start_date).isoformat()
-                                    end_date_parsed = parse(end_date).isoformat()
-                                    formatted_date = f"{start_date_parsed}/{end_date_parsed}"
+                                    start_date_parsed = parse(start_date)
+                                    end_date_parsed = parse(end_date)
+                                    formatted_date = f"{start_date_parsed.isoformat()}/{end_date_parsed.isoformat()}"
                                     df.at[idx, "eventDate"] = formatted_date
+                                    # For date ranges, check if the end date is in the future
+                                    parsed_date = end_date_parsed
                                 except (ParserError, ValueError):
                                     failed_indices.append(idx)
                             else:
                                 failed_indices.append(idx)
                     else: 
                         failed_indices.append(idx)
+                    
+                    # Check if the date is in the future (only if parsing was successful)
+                    if parsed_date and parsed_date.date() > current_date.date():
+                        future_date_indices.append(idx)
                 
                 except (ParserError, ValueError, TypeError):
                     # If parsing fails, add the index to the failed_indices list
                     failed_indices.append(idx)
 
-        return df, failed_indices
+        return df, failed_indices, future_date_indices
+    
+    def validate_scientific_names(self, df):
+        """
+        Validate scientific names against GBIF API to detect potential typos.
+        
+        Args:
+            df: DataFrame with scientificName column
+            
+        Returns:
+            str: Validation message describing any issues found, or None if no issues
+        """
+        import urllib.parse
+        import time
+        
+        # Get unique scientific names and their counts
+        name_counts = df['scientificName'].value_counts()
+        unique_names = name_counts.index.tolist()
+        
+        # Remove empty/null names
+        unique_names = [name for name in unique_names if pd.notna(name) and str(name).strip()]
+        
+        if not unique_names:
+            return "No valid scientific names found in the scientificName column."
+        
+        # Determine which names to check based on quantity
+        if len(unique_names) <= 50:
+            # Check all names if reasonable amount
+            names_to_check = unique_names
+        else:
+            # Check the least common names (most likely to be typos) - bottom 30
+            names_to_check = name_counts.tail(30).index.tolist()
+        
+        fuzzy_matches = []
+        unmatched_names = []
+        corrected_names = {}
+        
+        print(f"Validating {len(names_to_check)} scientific names against GBIF API...")
+        
+        for i, name in enumerate(names_to_check):
+            try:
+                # Add small delay to be respectful to GBIF API
+                if i > 0 and i % 10 == 0:
+                    time.sleep(1)
+                
+                encoded_name = urllib.parse.quote(str(name))
+                response = requests.get(
+                    f"https://api.gbif.org/v1/species/match?scientificName={encoded_name}",
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    confidence = data.get('confidence', 0)
+                    match_type = data.get('matchType', '')
+                    suggested_name = data.get('canonicalName', data.get('scientificName', ''))
+                    
+                    if match_type == 'FUZZY' and confidence >= 80:
+                        # High confidence fuzzy match - likely a typo
+                        fuzzy_matches.append({
+                            'original': name,
+                            'suggested': suggested_name,
+                            'confidence': confidence
+                        })
+                        # Auto-correct high confidence matches
+                        if confidence >= 85:
+                            corrected_names[name] = suggested_name
+                    elif match_type == 'NONE' or confidence < 50:
+                        # No match or very low confidence
+                        unmatched_names.append(name)
+                        
+            except Exception as e:
+                print(f"Error checking name '{name}': {e}")
+                continue
+        
+        # Apply auto-corrections to the DataFrame
+        if corrected_names:
+            for original, corrected in corrected_names.items():
+                df.loc[df['scientificName'] == original, 'scientificName'] = corrected
+        
+        # Build validation message
+        issues = []
+        
+        if corrected_names:
+            corrections_list = [f"'{orig}' → '{corr}'" for orig, corr in corrected_names.items()]
+            issues.append(f"Auto-corrected {len(corrected_names)} scientific names with high confidence matches: {'; '.join(corrections_list[:5])}")
+            if len(corrections_list) > 5:
+                issues.append(f"... and {len(corrections_list) - 5} more corrections")
+        
+        if fuzzy_matches and not corrected_names:
+            # Only show fuzzy matches that weren't auto-corrected
+            remaining_fuzzy = [match for match in fuzzy_matches if match['original'] not in corrected_names]
+            if remaining_fuzzy:
+                fuzzy_list = [f"'{match['original']}' (suggested: '{match['suggested']}', confidence: {match['confidence']}%)" for match in remaining_fuzzy[:3]]
+                issues.append(f"Found {len(remaining_fuzzy)} potential typos with moderate confidence: {'; '.join(fuzzy_list)}")
+                if len(remaining_fuzzy) > 3:
+                    issues.append(f"... and {len(remaining_fuzzy) - 3} more potential typos")
+        
+        if unmatched_names:
+            unmatched_list = [f"'{name}'" for name in unmatched_names[:5]]
+            issues.append(f"Could not match {len(unmatched_names)} names against GBIF database: {', '.join(unmatched_list)}")
+            if len(unmatched_names) > 5:
+                issues.append(f"... and {len(unmatched_names) - 5} more unmatched names")
+            issues.append("These may be valid names not in GBIF, recent taxonomic changes, or require manual verification.")
+        
+        if issues:
+            return " ".join(issues)
+        else:
+            print(f"All {len(names_to_check)} scientific names validated successfully against GBIF.")
+            return None
     
     def run(self):
         from api.models import Agent, Table
@@ -180,9 +304,15 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
                     invalid_individual_count = df[ind_numeric.isna() | (ind_numeric <= 0) | (ind_numeric % 1 != 0)]
                     if not invalid_individual_count.empty:
                         validation_errors['individualCount'] = invalid_individual_count.index.tolist()
+                if 'catalogNumber' in df.columns:
+                    # Check for duplicate catalogNumbers
+                    duplicate_catalog_numbers = df[df['catalogNumber'].duplicated(keep=False)]
+                    if not duplicate_catalog_numbers.empty:
+                        validation_errors['catalogNumber'] = duplicate_catalog_numbers.index.tolist()
                 
-                corrected_dates_df, event_date_error_indices = self.validate_and_format_event_dates(df)
+                corrected_dates_df, event_date_error_indices, future_date_indices = self.validate_and_format_event_dates(df)
                 validation_errors['eventDate'] = event_date_error_indices
+                validation_errors['eventDateFuture'] = future_date_indices
                 table_results[table.id]['validation_errors'] = validation_errors
 
                 table.df = corrected_dates_df
@@ -190,14 +320,20 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
                 
                 general_errors = {}
 
+                if 'scientificName' not in df.columns:
+                    general_errors['scientificName'] = 'scientificName is missing from this Table (this is fine if this Table is a Measurement or Fact extension)'
+                else:
+                    # Scientific name validation using GBIF API
+                    scientific_name_issues = self.validate_scientific_names(df)
+                    if scientific_name_issues:
+                        general_errors['scientificName'] = scientific_name_issues
+
                 if ('organismQuantity' in df.columns and 'organismQuantityType' not in df.columns):
                     general_errors['organismQuantity'] = 'organismQuantity is a column in this Table, but the corresponding required column "organismQuantityType" is missing.'
                 elif ('organismQuantityType' in df.columns and 'organismQuantity' not in df.columns):
                     general_errors['organismQuantity'] = 'organismQuantityType is a column in this Table, but the corresponding required column "organismQuantity" is missing.'
                 if 'basisOfRecord' not in df.columns:
                     general_errors['basisOfRecord'] = 'basisOfRecord is missing from this Table (this is fine if the core is Taxon or if this Table is a Measurement or Fact extension)'
-                if 'scientificName' not in df.columns:
-                    general_errors['scientificName'] = 'scientificName is missing from this Table (this is fine if this Table is a Measurement or Fact extension)'
                 if 'occurrenceID' not in df.columns:
                     general_errors['occurrenceID'] = 'occurrenceID is missing from this Table and is a required field. If this is a Measurement or Fact table, the occurrenceID column needs to link back to the core occurrence table.'
                 if 'id' not in df.columns and 'ID' not in df.columns and 'measurementID' not in df.columns:
@@ -387,21 +523,55 @@ class SetEML(OpenAIBaseModel):
 
 
 class SetBasicMetadata(OpenAIBaseModel):
-    """Sets the title and description (Metadata) for a Dataset via an Agent, returns a success or error message."""
-    agent_id: PositiveInt = Field(...)
-    title: str = Field(..., description="A short but descriptive title for the dataset as a whole")
-    description: str = Field(..., description="A longer description of what the dataset contains, including any important information about why the data was gathered (e.g. for a study) as well as how it was gathered.")
-    user_language: str = Field('English', description="Note down if the user wants to speak in a particular language. Default is English.") 
-    structure_notes: Optional[str] = Field(None, description="Optional - Use to note any significant data structural problems or oddities.") 
-    suitable_for_publication_on_gbif: Optional[bool] = Field(default=True, description="An OPTIONAL boolean field, set to false if the data is deemed unsuitable for publication on GBIF.")
+    """
+    Sets the title and description (Metadata) for a Dataset via an Agent.
+    
+    REQUIRED FIELDS:
+    - agent_id: The ID of the agent
+    
+    CONDITIONAL FIELDS:
+    - title: Required ONLY if the dataset doesn't already have a title
+    - description: Required ONLY if the dataset doesn't already have a description
+    
+    EXAMPLE USAGE (new dataset):
+    {
+        "agent_id": 123,
+        "title": "Bird observations from Central Park 2020-2023",
+        "description": "This dataset contains bird species observations collected during weekly surveys in Central Park, New York City from 2020 to 2023. Data was collected by volunteer citizen scientists as part of the Urban Bird Study project."
+    }
+    
+    EXAMPLE USAGE (updating existing dataset):
+    {
+        "agent_id": 123,
+        "structure_notes": "Fixed coordinate formatting issues in rows 15-23."
+    }
+    
+    Returns a success or error message.
+    """
+    agent_id: PositiveInt = Field(..., description="REQUIRED: The ID of the agent making this request")
+    title: Optional[str] = Field(None, description="CONDITIONAL: A short but descriptive title for the dataset as a whole (e.g. 'Bird observations from Central Park 2020-2023'). Required only if dataset doesn't already have a title.")
+    description: Optional[str] = Field(None, description="CONDITIONAL: A longer description of what the dataset contains, including any important information about why the data was gathered (e.g. for a study) as well as how it was gathered. Required only if dataset doesn't already have a description.")
+    user_language: str = Field('English', description="OPTIONAL: Note down if the user wants to speak in a particular language. Default is English.") 
+    structure_notes: Optional[str] = Field(None, description="OPTIONAL: Use to note any significant data structural problems or oddities, and to record changes and corrections made to fix these. Ensure that any data already existing in this field does not get overwritten unless getting re-phrased and rewritten. This serves as the running history of corrections made to the dataset.") 
+    suitable_for_publication_on_gbif: Optional[bool] = Field(default=True, description="OPTIONAL: Set to false if the data is deemed unsuitable for publication on GBIF. Defaults to True.")
 
     def run(self):
         try:
             from api.models import Agent
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
-            dataset.title = self.title
-            dataset.description = self.description
+            
+            # Check if title and description are required
+            if not dataset.title and not self.title:
+                return 'Error: Dataset has no title and none was provided. Please provide a title.'
+            if not dataset.description and not self.description:
+                return 'Error: Dataset has no description and none was provided. Please provide a description.'
+            
+            # Update fields only if provided
+            if self.title:
+                dataset.title = self.title
+            if self.description:
+                dataset.description = self.description
             if self.structure_notes:
                 dataset.structure_notes = self.structure_notes
             if self.user_language != 'English':
