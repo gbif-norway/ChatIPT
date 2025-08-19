@@ -523,21 +523,55 @@ class SetEML(OpenAIBaseModel):
 
 
 class SetBasicMetadata(OpenAIBaseModel):
-    """Sets the title and description (Metadata) for a Dataset via an Agent, returns a success or error message."""
-    agent_id: PositiveInt = Field(...)
-    title: str = Field(..., description="A short but descriptive title for the dataset as a whole")
-    description: str = Field(..., description="A longer description of what the dataset contains, including any important information about why the data was gathered (e.g. for a study) as well as how it was gathered.")
-    user_language: str = Field('English', description="Note down if the user wants to speak in a particular language. Default is English.") 
-    structure_notes: Optional[str] = Field(None, description="Optional - Use to note any significant data structural problems or oddities.") 
-    suitable_for_publication_on_gbif: Optional[bool] = Field(default=True, description="An OPTIONAL boolean field, set to false if the data is deemed unsuitable for publication on GBIF.")
+    """
+    Sets the title and description (Metadata) for a Dataset via an Agent.
+    
+    REQUIRED FIELDS:
+    - agent_id: The ID of the agent
+    
+    CONDITIONAL FIELDS:
+    - title: Required ONLY if the dataset doesn't already have a title
+    - description: Required ONLY if the dataset doesn't already have a description
+    
+    EXAMPLE USAGE (new dataset):
+    {
+        "agent_id": 123,
+        "title": "Bird observations from Central Park 2020-2023",
+        "description": "This dataset contains bird species observations collected during weekly surveys in Central Park, New York City from 2020 to 2023. Data was collected by volunteer citizen scientists as part of the Urban Bird Study project."
+    }
+    
+    EXAMPLE USAGE (updating existing dataset):
+    {
+        "agent_id": 123,
+        "structure_notes": "Fixed coordinate formatting issues in rows 15-23."
+    }
+    
+    Returns a success or error message.
+    """
+    agent_id: PositiveInt = Field(..., description="REQUIRED: The ID of the agent making this request")
+    title: Optional[str] = Field(None, description="CONDITIONAL: A short but descriptive title for the dataset as a whole (e.g. 'Bird observations from Central Park 2020-2023'). Required only if dataset doesn't already have a title.")
+    description: Optional[str] = Field(None, description="CONDITIONAL: A longer description of what the dataset contains, including any important information about why the data was gathered (e.g. for a study) as well as how it was gathered. Required only if dataset doesn't already have a description.")
+    user_language: str = Field('English', description="OPTIONAL: Note down if the user wants to speak in a particular language. Default is English.") 
+    structure_notes: Optional[str] = Field(None, description="OPTIONAL: Use to note any significant data structural problems or oddities, and to record changes and corrections made to fix these. Ensure that any data already existing in this field does not get overwritten unless getting re-phrased and rewritten. This serves as the running history of corrections made to the dataset.") 
+    suitable_for_publication_on_gbif: Optional[bool] = Field(default=True, description="OPTIONAL: Set to false if the data is deemed unsuitable for publication on GBIF. Defaults to True.")
 
     def run(self):
         try:
             from api.models import Agent
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
-            dataset.title = self.title
-            dataset.description = self.description
+            
+            # Check if title and description are required
+            if not dataset.title and not self.title:
+                return 'Error: Dataset has no title and none was provided. Please provide a title.'
+            if not dataset.description and not self.description:
+                return 'Error: Dataset has no description and none was provided. Please provide a description.'
+            
+            # Update fields only if provided
+            if self.title:
+                dataset.title = self.title
+            if self.description:
+                dataset.description = self.description
             if self.structure_notes:
                 dataset.structure_notes = self.structure_notes
             if self.user_language != 'English':
