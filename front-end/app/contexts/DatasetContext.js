@@ -89,18 +89,31 @@ export const DatasetProvider = ({ children }) => {
 
   // Refresh a specific dataset (only if it's the current one)
   const refreshDataset = useCallback(async (datasetId) => {
-    console.log(`refreshDataset called for dataset ${datasetId}, currentDatasetId is ${currentDatasetId}`);
+    const timestamp = new Date().toISOString();
+    console.log(`[${timestamp}] 🔄 refreshDataset called for dataset ${datasetId}, currentDatasetId is ${currentDatasetId}`);
+    
     if (!datasetId || datasetId !== currentDatasetId) {
-      console.log(`Skipping refresh for dataset ${datasetId} - not the current dataset`);
+      console.log(`[${timestamp}] ⏭️ Skipping refresh for dataset ${datasetId} - not the current dataset`);
       return;
     }
 
     try {
-      console.log(`Refreshing dataset ${datasetId}`);
+      console.log(`[${timestamp}] 📡 Refreshing dataset ${datasetId} - making API call...`);
       const refreshedDataset = await fetchData(`${config.baseUrl}/api/datasets/${datasetId}/refresh`);
+      
+      console.log(`[${timestamp}] ✅ Got refreshed dataset:`, {
+        id: refreshedDataset.id,
+        published_at: refreshedDataset.published_at,
+        rejected_at: refreshedDataset.rejected_at,
+        agent_count: refreshedDataset.visible_agent_set?.length || 0,
+        last_agent_completed: refreshedDataset.visible_agent_set?.at(-1)?.completed_at,
+        last_message_role: refreshedDataset.visible_agent_set?.at(-1)?.message_set?.at(-1)?.role,
+        message_count: refreshedDataset.visible_agent_set?.at(-1)?.message_set?.length || 0
+      });
       
       // Only update if this is still the current dataset
       if (datasetId === currentDatasetId) {
+        console.log(`[${timestamp}] 💾 Updating dataset state in context`);
         setDatasets(prev => new Map(prev).set(datasetId, refreshedDataset));
         
         // Continue the refresh loop only if this is still the current dataset
@@ -110,36 +123,58 @@ export const DatasetProvider = ({ children }) => {
               refreshedDataset.visible_agent_set && 
               refreshedDataset.visible_agent_set.length > 0 && 
               refreshedDataset.visible_agent_set.at(-1).completed_at != null) {
+            console.log(`[${timestamp}] 🎉 Dataset is published and complete - stopping refresh loop`);
             return;
           }
           
           // If the dataset is not suitable for publication, don't do any more
           if (refreshedDataset.rejected_at != null) {
+            console.log(`[${timestamp}] ❌ Dataset was rejected - stopping refresh loop`);
             return;
           }
           
+          // Check if we need to continue refreshing
+          const hasAgents = refreshedDataset.visible_agent_set && refreshedDataset.visible_agent_set.length > 0;
+          const lastAgent = hasAgents ? refreshedDataset.visible_agent_set.at(-1) : null;
+          const hasMessages = lastAgent?.message_set && lastAgent.message_set.length > 0;
+          const lastMessage = hasMessages ? lastAgent.message_set.at(-1) : null;
+          
+          console.log(`[${timestamp}] 🔍 Checking refresh conditions:`, {
+            hasAgents,
+            lastAgentCompleted: lastAgent?.completed_at,
+            hasMessages,
+            lastMessageRole: lastMessage?.role,
+            shouldContinue: hasAgents && hasMessages && lastMessage?.role !== 'assistant'
+          });
+          
           // If the latest agent message is not an assistant message, we need to refresh again
-          if (refreshedDataset.visible_agent_set && 
-              refreshedDataset.visible_agent_set.length > 0 && 
-              refreshedDataset.visible_agent_set.at(-1).message_set && 
-              refreshedDataset.visible_agent_set.at(-1).message_set.length > 0 && 
-              refreshedDataset.visible_agent_set.at(-1).message_set.at(-1).role !== 'assistant') {
-            console.log('about to start looping');
-            console.log(refreshedDataset.visible_agent_set.at(-1).message_set.at(-1).role);
+          if (hasAgents && hasMessages && lastMessage.role !== 'assistant') {
+            console.log(`[${timestamp}] 🔄 Need to continue refreshing - last message role: ${lastMessage.role}`);
             // Increased delay to reduce server load and give processing more time
             await new Promise(resolve => setTimeout(resolve, 2000));
-            console.log('finished waiting, refreshing again');
+            console.log(`[${timestamp}] ⏰ Finished waiting, scheduling next refresh...`);
             if (datasetId === currentDatasetId) {
               refreshDataset(datasetId);
+            } else {
+              console.log(`[${timestamp}] 🛑 Dataset changed while waiting, aborting refresh`);
             }
+          } else {
+            console.log(`[${timestamp}] ✅ Refresh cycle complete - last message is assistant or no messages`);
           }
+        } else {
+          console.log(`[${timestamp}] 🛑 Dataset changed during refresh, not continuing loop`);
         }
+      } else {
+        console.log(`[${timestamp}] 🛑 Dataset changed during API call, discarding result`);
       }
     } catch (error) {
-      console.error('Error refreshing dataset:', error);
+      console.error(`[${timestamp}] ❌ Error refreshing dataset:`, error);
       // Only set error if it's not a temporary network issue
       if (!error.message?.includes('fetch') && !error.message?.includes('network')) {
+        console.log(`[${timestamp}] 🚨 Setting error state: ${error.message}`);
         setError(error.message);
+      } else {
+        console.log(`[${timestamp}] 🌐 Network error detected, will retry...`);
       }
       
       // If it's a network error and we're still processing, retry after delay
@@ -147,9 +182,10 @@ export const DatasetProvider = ({ children }) => {
       if (currentDataset?.visible_agent_set?.length > 0) {
         const lastAgent = currentDataset.visible_agent_set.at(-1);
         if (lastAgent?.completed_at === null) {
-          console.log('Network error during processing, will retry in 5 seconds...');
+          console.log(`[${timestamp}] 🔄 Network error during processing, will retry in 5 seconds...`);
           setTimeout(() => {
             if (datasetId === currentDatasetId) {
+              console.log(`[${timestamp}] 🔄 Retrying after network error...`);
               refreshDataset(datasetId);
             }
           }, 5000);
