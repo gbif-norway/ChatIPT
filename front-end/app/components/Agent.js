@@ -12,25 +12,67 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
 
   useEffect(() => {
       const runAsyncEffect = async () => {
-        console.log('running this for every agent I think?')
-        console.log(agent);
+        const timestamp = new Date().toISOString();
+        console.log(`[${timestamp}] 🤖 Agent ${agent.id} useEffect running`);
+        console.log(`[${timestamp}] 📊 Agent state:`, {
+          id: agent.id,
+          completed_at: agent.completed_at,
+          message_count: agent.message_set?.length || 0,
+          busy_thinking: agent.busy_thinking
+        });
+        
         var last_message_role = null;
-        if (agent.message_set && agent.message_set.length > 0) { last_message_role = agent.message_set.at(-1).role }
+        if (agent.message_set && agent.message_set.length > 0) { 
+          last_message_role = agent.message_set.at(-1).role;
+          console.log(`[${timestamp}] 💬 Last message role: ${last_message_role}`);
+        }
+        
         if (agent.completed_at === null && last_message_role != 'user') { 
+          console.log(`[${timestamp}] 🔄 Agent ${agent.id} needs processing - setting loading state`);
           setIsLoading(true);
-          console.log('running this only once when component is loaded if completed_at is null for agent ' + agent.id);
-          console.log(agent.completed_at);
-          await refreshDataset();
-          if (typeof refreshTables === 'function') {
-            await refreshTables();
+          
+          try {
+            console.log(`[${timestamp}] 📡 Calling refreshDataset for agent ${agent.id}...`);
+            await refreshDataset();
+            
+            if (typeof refreshTables === 'function') {
+              console.log(`[${timestamp}] 📋 Refreshing tables for agent ${agent.id}...`);
+              await refreshTables();
+            }
+          } catch (error) {
+            console.error(`[${timestamp}] ❌ Error in agent refresh:`, error);
           }
+          
+          console.log(`[${timestamp}] ✅ Agent ${agent.id} refresh complete - clearing loading state`);
           setIsLoading(false);
         } else {
+          console.log(`[${timestamp}] ✅ Agent ${agent.id} doesn't need processing - clearing loading state`);
           setIsLoading(false);
         }
     };
     runAsyncEffect();
   }, []); // Only run once when component mounts
+
+  // Log when agent data changes (this will help us see if updates are coming through)
+  useEffect(() => {
+    const timestamp = new Date().toISOString();
+    console.log(`[${timestamp}] 🔄 Agent ${agent.id} data updated:`, {
+      completed_at: agent.completed_at,
+      message_count: agent.message_set?.length || 0,
+      last_message_role: agent.message_set?.at(-1)?.role || 'none',
+      busy_thinking: agent.busy_thinking,
+      isLoading: isLoading
+    });
+    
+    // If agent is completed or has new assistant messages, clear loading
+    if (agent.completed_at !== null || 
+        (agent.message_set?.length > 0 && agent.message_set.at(-1).role === 'assistant' && !agent.busy_thinking)) {
+      if (isLoading) {
+        console.log(`[${timestamp}] ✅ Agent ${agent.id} appears complete - clearing loading state`);
+        setIsLoading(false);
+      }
+    }
+  }, [agent.completed_at, agent.message_set, agent.busy_thinking, isLoading]);
 
   const formatTableIDs = (ids) => {
     if (!ids || !ids.length) return "[Deleted table(s)]";
