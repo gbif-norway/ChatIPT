@@ -553,7 +553,7 @@ class SetBasicMetadata(OpenAIBaseModel):
     description: Optional[str] = Field(None, description="CONDITIONAL: A longer description of what the dataset contains, including any important information about why the data was gathered (e.g. for a study) as well as how it was gathered. Required only if dataset doesn't already have a description.")
     user_language: str = Field('English', description="OPTIONAL: Note down if the user wants to speak in a particular language. Default is English.") 
     structure_notes: Optional[str] = Field(None, description="OPTIONAL: Use to note any significant data structural problems or oddities, and to record changes and corrections made to fix these. Ensure that any data already existing in this field does not get overwritten unless getting re-phrased and rewritten. This serves as the running history of corrections made to the dataset.") 
-    suitable_for_publication_on_gbif: Optional[bool] = Field(default=True, description="OPTIONAL: Set to false if the data is deemed unsuitable for publication on GBIF. Defaults to True.")
+    suitable_for_publication_on_gbif: Optional[bool] = Field(default=True, description="OPTIONAL: Set to false if the data is deemed unsuitable for publication on GBIF. Defaults to True. Be cautious - only reject if you are certain this spreadsheet doesn't have any suitable data.")
 
     def run(self):
         try:
