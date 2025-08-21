@@ -166,7 +166,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     <div className="container">
       <div className="row mx-auto p-4 no-bottom-margin no-bottom-padding no-left-padding">
         <div className="col-12 alerts-div">
-          <div className="d-flex justify-content-between align-items-center mb-3">
+          <div className="mb-3">
             <div className="d-flex align-items-center gap-2">
               <h2>{currentDataset.title || currentDataset.file.split(/\//).pop().replace(/\([^)]*\)/g, '').trim()}</h2>
               <span className="badge text-bg-secondary">Started {new Date(currentDataset.created_at).toLocaleString()}</span>
@@ -179,26 +179,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                 >
                   <i className="bi bi-info-circle me-1"></i>
                   Structure Notes
-                </button>
-              )}
-            </div>
-            <div className="d-flex gap-2">
-              {onBackToDashboard && (
-                <button 
-                  className="btn btn-outline-secondary btn-sm"
-                  onClick={onBackToDashboard}
-                >
-                  <i className="bi bi-arrow-left me-1"></i>
-                  Dashboard
-                </button>
-              )}
-              {onNewDataset && (
-                <button 
-                  className="btn btn-outline-primary btn-sm"
-                  onClick={onNewDataset}
-                >
-                  <i className="bi bi-plus-circle me-1"></i>
-                  New Dataset
                 </button>
               )}
             </div>
