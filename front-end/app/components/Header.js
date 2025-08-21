@@ -7,7 +7,7 @@ import { IBM_Plex_Serif } from 'next/font/google'
 
 const ibmPlexSerif = IBM_Plex_Serif({ subsets: ['latin'], weight: '400' })
 
-const Header = () => {
+const Header = ({ onNewDataset, onBackToDashboard, showNavigation = false }) => {
   const { user, logout } = useAuth()
   const { isDark } = useTheme()
 
@@ -15,12 +15,53 @@ const Header = () => {
     return null
   }
 
+  const handleLogoClick = () => {
+    if (onBackToDashboard) {
+      onBackToDashboard()
+    }
+  }
+
   return (
     <nav className={`navbar navbar-expand-lg border-bottom ${isDark ? 'navbar-dark bg-dark' : 'navbar-light bg-light'}`}>
       <div className="container">
-        <h1 className={`navbar-brand mb-0 ${ibmPlexSerif.className}`} style={{color: isDark ? '#c5ffc0' : '#198754', fontSize: '3em', paddingLeft: '0.5rem'}}>ChatIPT</h1>
+        <h1 
+          className={`navbar-brand mb-0 ${ibmPlexSerif.className} ${onBackToDashboard ? 'cursor-pointer' : ''}`} 
+          style={{
+            color: isDark ? '#c5ffc0' : '#198754', 
+            fontSize: '3em', 
+            paddingLeft: '0.5rem',
+            cursor: onBackToDashboard ? 'pointer' : 'default'
+          }}
+          onClick={handleLogoClick}
+          title={onBackToDashboard ? 'Back to My Datasets' : ''}
+        >
+          ChatIPT
+        </h1>
         
         <div className="navbar-nav ms-auto">
+          {showNavigation && (
+            <div className="nav-item me-3 d-flex align-items-center gap-2">
+              {onBackToDashboard && (
+                <button 
+                  className="btn btn-primary btn-sm"
+                  onClick={onBackToDashboard}
+                >
+                  <i className="bi bi-arrow-left me-1"></i>
+                  <i className="bi bi-grid-3x3-gap me-1"></i>
+                  My Datasets
+                </button>
+              )}
+              {onNewDataset && (
+                <button 
+                  className="btn btn-outline-primary btn-sm"
+                  onClick={onNewDataset}
+                >
+                  <i className="bi bi-plus-circle me-1"></i>
+                  New Dataset
+                </button>
+              )}
+            </div>
+          )}
           <div className="nav-item me-3 d-flex align-items-center">
             <ThemeToggle />
           </div>

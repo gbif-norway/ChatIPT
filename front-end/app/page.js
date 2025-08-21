@@ -7,13 +7,31 @@ import FileDrop from './components/FileDrop'
 import ProtectedRoute from './components/ProtectedRoute'
 import { useAuth } from './contexts/AuthContext'
 import { DatasetProvider, useDataset } from './contexts/DatasetContext'
-import { useEffect, useState } from 'react'
+import { useNavigation } from './components/HeaderWrapper'
+import { useEffect, useState, useCallback } from 'react'
 
 const HomeContent = () => {
   const { authenticated } = useAuth()
   const { currentDatasetId, loadDataset, setCurrentDatasetId } = useDataset()
+  const { updateNavigation } = useNavigation()
   const [mode, setMode] = useState('dashboard') // 'dashboard', 'upload', 'dataset'
   const [uploadError, setUploadError] = useState(null)
+
+  const handleDatasetSelect = useCallback((datasetId) => {
+    loadDataset(datasetId)
+    setMode('dataset')
+  }, [loadDataset])
+
+  const handleNewDataset = useCallback(() => {
+    setMode('upload')
+    setUploadError(null)
+  }, [])
+
+  const handleBackToDashboard = useCallback(() => {
+    setMode('dashboard')
+    setCurrentDatasetId(null)
+    setUploadError(null)
+  }, [setCurrentDatasetId])
 
   useEffect(() => {
     // Only show welcome modal if user is authenticated
@@ -36,21 +54,46 @@ const HomeContent = () => {
     }
   }, [authenticated]);
 
-  const handleDatasetSelect = (datasetId) => {
-    loadDataset(datasetId)
-    setMode('dataset')
-  }
-
-  const handleNewDataset = () => {
-    setMode('upload')
-    setUploadError(null)
-  }
-
-  const handleBackToDashboard = () => {
-    setMode('dashboard')
-    setCurrentDatasetId(null)
-    setUploadError(null)
-  }
+  // Update navigation header based on current mode
+  useEffect(() => {
+    if (authenticated) {
+      switch (mode) {
+        case 'dashboard':
+          updateNavigation({
+            showNavigation: false,
+            onNewDataset: null,
+            onBackToDashboard: null
+          });
+          break;
+        case 'upload':
+          updateNavigation({
+            showNavigation: true,
+            onNewDataset: null,
+            onBackToDashboard: handleBackToDashboard
+          });
+          break;
+        case 'dataset':
+          updateNavigation({
+            showNavigation: true,
+            onNewDataset: null,
+            onBackToDashboard: handleBackToDashboard
+          });
+          break;
+        default:
+          updateNavigation({
+            showNavigation: false,
+            onNewDataset: null,
+            onBackToDashboard: null
+          });
+      }
+    } else {
+      updateNavigation({
+        showNavigation: false,
+        onNewDataset: null,
+        onBackToDashboard: null
+      });
+    }
+  }, [authenticated, mode, updateNavigation, handleNewDataset, handleBackToDashboard]);
 
   const handleFileAccepted = (datasetId) => {
     loadDataset(datasetId)
@@ -76,15 +119,8 @@ const HomeContent = () => {
         {mode === 'upload' && (
           <div className="container p-4">
             <div className="row">
-              <div className="d-flex justify-content-between align-items-center mb-4">
+              <div className="mb-4">
                 <h2>Upload New Dataset</h2>
-                <button 
-                  className="btn btn-outline-secondary btn-sm"
-                  onClick={handleBackToDashboard}
-                >
-                  <i className="bi bi-arrow-left me-1"></i>
-                  Dashboard
-                </button>
               </div>
               
               <div className="card">

@@ -62,7 +62,7 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset }) {
   return (
     <>
       <div className="d-flex justify-content-between align-items-center mb-3">
-        <h2>Your datasets</h2>
+        <h2><i className="bi bi-grid-3x3-gap me-2"></i>My datasets</h2>
         <div className="d-flex gap-2">
           <button 
             className="btn btn-outline-secondary" 

@@ -4,7 +4,7 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 import 'bootstrap-icons/font/bootstrap-icons.css';
 import { AuthProvider } from './contexts/AuthContext'
 import { ThemeProvider } from './contexts/ThemeContext'
-import Header from './components/Header'
+import HeaderWrapper, { NavigationProvider } from './components/HeaderWrapper'
 
 const inter = Inter({ subsets: ['latin'] })
 const ibmPlexSerif = IBM_Plex_Serif({ subsets: ['latin'], weight: '400' });
@@ -23,9 +23,10 @@ export default function RootLayout({ children }) {
       <body className={inter.className}>
         <ThemeProvider>
           <AuthProvider>
-
-            <Header />
-            {children}
+            <NavigationProvider>
+              <HeaderWrapper />
+              {children}
+            </NavigationProvider>
           </AuthProvider>
         </ThemeProvider>
       </body>
