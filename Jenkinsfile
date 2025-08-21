@@ -146,6 +146,7 @@ pipeline {
                                     --dockerfile Dockerfile \\
                                     --destination ${REGISTRY}/${FRONTEND_IMAGE}:${imageTag} \\
                                     --build-arg NEXT_PUBLIC_BASE_API_URL=${NEXT_PUBLIC_BASE_API_URL} \\
+                                    --build-arg CACHE_BUST=\$(date +%s) \\
                                     --cache=true
                             """
                         }
