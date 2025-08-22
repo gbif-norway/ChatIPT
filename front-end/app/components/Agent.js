@@ -66,6 +66,19 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
       isLoading: isLoading
     });
     
+    // Clear optimistic message if the server data now contains a user message with the same content
+    if (optimisticMessage && agent.message_set?.length > 0) {
+      const hasMatchingUserMessage = agent.message_set.some(message => 
+        message.role === 'user' && 
+        message.openai_obj.content === optimisticMessage.openai_obj.content
+      );
+      
+      if (hasMatchingUserMessage) {
+        console.log(`[${timestamp}] ✅ Found matching user message in server data - clearing optimistic message`);
+        setOptimisticMessage(null);
+      }
+    }
+    
     // If agent is completed or has new assistant messages, clear loading
     // BUT don't interfere if user is currently sending a message
     if (!isUserSending && (agent.completed_at !== null || 
@@ -75,7 +88,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
         setIsLoading(false);
       }
     }
-  }, [agent.completed_at, agent.message_set, agent.busy_thinking, isLoading, isUserSending]);
+  }, [agent.completed_at, agent.message_set, agent.busy_thinking, isLoading, isUserSending, optimisticMessage]);
 
   const formatTableIDs = (ids) => {
     if (!ids || !ids.length) return "[Deleted table(s)]";
@@ -121,13 +134,12 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
           await refreshTables();
         }
         
-        // Clear optimistic message once real data is loaded
-        setOptimisticMessage(null);
+        // Note: optimisticMessage will be cleared automatically by useEffect when server data arrives
         setIsLoading(false);
         setIsUserSending(false);
       } catch (error) {
         console.error("Error:", error);
-        // Clear optimistic message on error too
+        // On error, clear optimistic message since server call failed
         setOptimisticMessage(null);
         setIsLoading(false);
         setIsUserSending(false);
