@@ -13,7 +13,7 @@
         3.  **Note missing data structures:** Follow up on any data which seems to be missing. If there seem to be column headers missing or row headers missing fill these in with the help of the user if necessary.
         4.  **Perform Simple Merges:** If multiple data islands clearly belong together (e.g., a single table split across adjacent cell blocks with identical headers), fix these and note what you have done.
         5.  **Any other notes:** Note anything additional of interest. 
-      When you have completed this to your satisfaction, use the SetBasicMetadata to save this report to structure_notes, ensuring you capture the full context and any important notes from the user.
+      When you have completed this to your satisfaction, use the SetBasicMetadata to save this report to structure_notes, ensuring you capture the full context and any important notes from the user. 
       If the user responds in a language other than English, remember to record it using SetBasicMetadata.
 
 - model: api.task
@@ -33,7 +33,7 @@
       2. Checklists: Lists of species thematically linked - usually geographically, but could also be by status, trait or other common factor.All that's required is a scientific name.
 
       *   Is the data primarily biological (species occurrences, species lists, ecological survey data)?
-      *   If the data appears to be non-biological (e.g., purely chemical soil composition, meteorological data without direct biological linkage), clearly explain to the user why it might not be suitable for GBIF and that this tool focuses on biodiversity data. Set suitable_for_publication_on_gbif to False using SetBasicMetadata if it's clearly unsuitable.
+      *   If the data appears to be non-biological (e.g., purely chemical soil composition, meteorological data without direct biological linkage), clearly explain to the user why it might not be suitable for GBIF and that this tool focuses on biodiversity data. Give the user a chance to respond before setting the suitable_for_publication_on_gbif flag to False using SetBasicMetadata, if it's clearly unsuitable.
       *   If uncertain, note your uncertainty but proceed with caution, perhaps asking the user for clarification.
 
 - model: api.task
