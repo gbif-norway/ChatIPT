@@ -366,6 +366,19 @@ class Python(OpenAIBaseModel):
     Other notes:
     - Use print() for output – stdout is captured and truncated to 2000 chars.
     - State does not persist between calls.
+    - ALL YOUR CODE IS PREFIXED AUTOMATICALLY WITH: 
+        ```
+        import pandas as pd
+        import numpy as np
+        import uuid
+        import re
+        import utm
+        from utils import replace_table, create_or_replace, delete_tables
+        from Dataset import Dataset
+        from Table import Table
+        from datetime import datetime
+        ```
+        So this SHOULD NOT BE INCLUDED. Just begin using (without importing) pd, np, uuid, re, utm, replace_table, creat_or_replace, delete_tables, Table, Dataset and datetime as necessary.
     """
     code: str = Field(..., description="String containing valid python code to be executed in `exec()`")
 
