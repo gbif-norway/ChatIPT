@@ -9,6 +9,8 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
   const [userInput, setUserInput] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState("Working...");
+  const [isUserSending, setIsUserSending] = useState(false);
+  const [optimisticMessage, setOptimisticMessage] = useState(null);
 
   useEffect(() => {
       const runAsyncEffect = async () => {
@@ -65,14 +67,15 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
     });
     
     // If agent is completed or has new assistant messages, clear loading
-    if (agent.completed_at !== null || 
-        (agent.message_set?.length > 0 && agent.message_set.at(-1).role === 'assistant' && !agent.busy_thinking)) {
+    // BUT don't interfere if user is currently sending a message
+    if (!isUserSending && (agent.completed_at !== null || 
+        (agent.message_set?.length > 0 && agent.message_set.at(-1).role === 'assistant' && !agent.busy_thinking))) {
       if (isLoading) {
         console.log(`[${timestamp}] ✅ Agent ${agent.id} appears complete - clearing loading state`);
         setIsLoading(false);
       }
     }
-  }, [agent.completed_at, agent.message_set, agent.busy_thinking, isLoading]);
+  }, [agent.completed_at, agent.message_set, agent.busy_thinking, isLoading, isUserSending]);
 
   const formatTableIDs = (ids) => {
     if (!ids || !ids.length) return "[Deleted table(s)]";
@@ -84,8 +87,20 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
     if (event.key === 'Enter') {
       console.log(agent.busy_thinking);
       event.preventDefault();
+      
+      // Clear input immediately for instant feedback and prevent useEffect interference
+      const messageContent = userInput;
+      setUserInput("");
+      setIsUserSending(true);
       setIsLoading(true);
       setLoadingMessage("Working...");
+
+      // Add optimistic user message immediately
+      setOptimisticMessage({
+        id: `optimistic-${Date.now()}`,
+        role: 'user',
+        openai_obj: { content: messageContent }
+      });
 
       try {
         const csrfToken = await getCsrfToken();
@@ -98,18 +113,24 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
         await fetch(`${config.baseUrl}/api/messages/`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ openai_obj: { content: userInput, role: 'user' }, agent: agent.id }),
+          body: JSON.stringify({ openai_obj: { content: messageContent, role: 'user' }, agent: agent.id }),
           credentials: 'include' // Include credentials for authenticated requests
         });
-        setUserInput("");
         await refreshDataset();
         if (typeof refreshTables === 'function') {
           await refreshTables();
         }
+        
+        // Clear optimistic message once real data is loaded
+        setOptimisticMessage(null);
         setIsLoading(false);
+        setIsUserSending(false);
       } catch (error) {
         console.error("Error:", error);
+        // Clear optimistic message on error too
+        setOptimisticMessage(null);
         setIsLoading(false);
+        setIsUserSending(false);
       }
     }
   };
@@ -189,9 +210,14 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
         </Accordion.Header>
         <Accordion.Body>
           {renderGroupedMessages(agent.message_set)}
+          
+          {/* Show optimistic user message immediately */}
+          {optimisticMessage && (
+            <Message key={optimisticMessage.id} message={optimisticMessage} />
+          )}
 
           {/* Show spinner while loading, thinking, or when the assistant hasn't yet asked for a reply */}
-          {(isLoading || agent.busy_thinking || (!assistantWaitingForReply && !agent.completed_at)) && (
+          {(isLoading || isUserSending || agent.busy_thinking || (!assistantWaitingForReply && !agent.completed_at)) && (
             <div className="message user-input-loading">
               <div className="d-flex align-items-center">
                 <strong>{loadingMessage}</strong>
@@ -201,7 +227,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
           )}
 
           {/* Only show the chat input when the assistant is explicitly waiting for a user reply */}
-          {!agent.completed_at && !isLoading && !agent.busy_thinking && assistantWaitingForReply && (
+          {!agent.completed_at && !isLoading && !isUserSending && !agent.busy_thinking && assistantWaitingForReply && (
             <div className="input-group">
               <input type="text" className="form-control user-input" value={userInput} onKeyPress={handleUserInput} onChange={e => setUserInput(e.target.value)} placeholder="Message ChatIPT" />
               <div className="input-group-append"><span className="input-group-text"><i className="bi bi-arrow-up-circle"></i></span></div>
