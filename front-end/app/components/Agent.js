@@ -90,6 +90,36 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
     }
   }, [agent.completed_at, agent.message_set, agent.busy_thinking, isLoading, isUserSending, optimisticMessage]);
 
+  // Handle loading message timeout - change message after 4 seconds
+  useEffect(() => {
+    let timeoutId;
+    
+    // Determine if we're showing the loading spinner (same logic as in the render)
+    const lastMessage = (agent.message_set && agent.message_set.length > 0) ? agent.message_set[agent.message_set.length - 1] : null;
+    const assistantWaitingForReply = lastMessage && lastMessage.role === 'assistant' && (!lastMessage.openai_obj.tool_calls || lastMessage.openai_obj.tool_calls.length === 0);
+    const showingLoader = isLoading || isUserSending || agent.busy_thinking || (!assistantWaitingForReply && !agent.completed_at);
+    
+    if (showingLoader) {
+      // Reset to initial message when loading starts
+      setLoadingMessage("Working...");
+      
+      // Set timeout to change message after 4 seconds
+      timeoutId = setTimeout(() => {
+        setLoadingMessage("Still working... [waiting for the OpenAI API, may take up to 10 minutes]");
+      }, 4000);
+    } else {
+      // Reset to initial message when not loading
+      setLoadingMessage("Working...");
+    }
+    
+    // Cleanup timeout on dependency change or unmount
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [isLoading, isUserSending, agent.busy_thinking, agent.message_set, agent.completed_at]);
+
   const formatTableIDs = (ids) => {
     if (!ids || !ids.length) return "[Deleted table(s)]";
     const prefix = ids.length === 1 ? "(Table ID " : "(Table IDs ";
@@ -106,7 +136,6 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
       setUserInput("");
       setIsUserSending(true);
       setIsLoading(true);
-      setLoadingMessage("Working...");
 
       // Add optimistic user message immediately
       setOptimisticMessage({

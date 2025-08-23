@@ -17,4 +17,4 @@ RUN chmod +x /app/start.sh
 
 # Use the startup script as the entrypoint
 ENTRYPOINT ["/app/start.sh"]
-CMD ["gunicorn", "--workers", "3", "--bind", "0.0.0.0:8000", "--timeout", "180", "app.wsgi:application"]
+CMD ["gunicorn", "--workers", "3", "--bind", "0.0.0.0:8000", "--timeout", "3600", "app.wsgi:application"]
