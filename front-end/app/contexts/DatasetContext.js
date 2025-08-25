@@ -108,6 +108,7 @@ export const DatasetProvider = ({ children }) => {
         agent_count: refreshedDataset.visible_agent_set?.length || 0,
         last_agent_completed: refreshedDataset.visible_agent_set?.at(-1)?.completed_at,
         last_message_role: refreshedDataset.visible_agent_set?.at(-1)?.message_set?.at(-1)?.role,
+        last_message_has_tool_calls: !!(refreshedDataset.visible_agent_set?.at(-1)?.message_set?.at(-1)?.openai_obj?.tool_calls?.length),
         message_count: refreshedDataset.visible_agent_set?.at(-1)?.message_set?.length || 0
       });
       
@@ -138,17 +139,34 @@ export const DatasetProvider = ({ children }) => {
           const lastAgent = hasAgents ? refreshedDataset.visible_agent_set.at(-1) : null;
           const hasMessages = lastAgent?.message_set && lastAgent.message_set.length > 0;
           const lastMessage = hasMessages ? lastAgent.message_set.at(-1) : null;
+          const assistantHasToolCalls = lastMessage?.role === 'assistant' && Array.isArray(lastMessage?.openai_obj?.tool_calls) && lastMessage.openai_obj.tool_calls.length > 0;
           
           console.log(`[${timestamp}] 🔍 Checking refresh conditions:`, {
             hasAgents,
             lastAgentCompleted: lastAgent?.completed_at,
             hasMessages,
             lastMessageRole: lastMessage?.role,
-            shouldContinue: hasAgents && hasMessages && lastMessage?.role !== 'assistant'
+            assistantHasToolCalls,
+            agentBusyThinking: !!lastAgent?.busy_thinking,
+            shouldContinue: (
+              // Continue if agent still running/thinking
+              (!!lastAgent && lastAgent.completed_at == null && !!lastAgent.busy_thinking) ||
+              // Continue if last message is not assistant (e.g. 'user' or 'tool')
+              (hasAgents && hasMessages && lastMessage?.role !== 'assistant') ||
+              // Continue if assistant has outstanding tool calls (e.g. GBIF validator)
+              assistantHasToolCalls
+            )
           });
           
-          // If the latest agent message is not an assistant message, we need to refresh again
-          if (hasAgents && hasMessages && lastMessage.role !== 'assistant') {
+          // Continue refreshing while processing is ongoing
+          if (
+            // Agent marked busy on the server
+            (!!lastAgent && lastAgent.completed_at == null && !!lastAgent.busy_thinking) ||
+            // Last message is a tool result or a user message
+            (hasAgents && hasMessages && lastMessage.role !== 'assistant') ||
+            // Assistant message that contains tool_calls means work is still in progress
+            assistantHasToolCalls
+          ) {
             console.log(`[${timestamp}] 🔄 Need to continue refreshing - last message role: ${lastMessage.role}`);
             // Increased delay to reduce server load and give processing more time
             await new Promise(resolve => setTimeout(resolve, 2000));
