@@ -54,7 +54,7 @@
       *   decimalLatitude, decimalLongitude: REQUIRED if locality is null
       *   geodeticDatum: REQUIRED if decimalLatitude/decimalLongitude are populated (e.g., WGS84)
       *   **Quantity (At least ONE of these groups is REQUIRED):**
-          *   occurrenceStatus: For presence/absence data (valid values: present, absent)
+          *   occurrenceStatus: For presence/absence data (valid values: present, absent) - NB absence data can be published if the user is certain of absences (e.g. there was no elephant here), or can be excluded from publication if it's possible the species was actually present but not seen (e.g. a small and cryptic plant).
           *   individualCount: For whole number counts of individuals
           *   organismQuantity & organismQuantityType: For non-integer counts or other quantity measures (e.g., organismQuantity=5.5, organismQuantityType=%cover; organismQuantity=10, organismQuantityType='biomass g/m^2'). ALWAYS ask the user for organismQuantityType if organismQuantity is used and the type isn't obvious. DO NOT use these for simple counts if individualCount is appropriate.
       *   Other useful fields: 
