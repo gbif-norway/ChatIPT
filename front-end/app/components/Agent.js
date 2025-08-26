@@ -4,11 +4,12 @@ import Accordion from 'react-bootstrap/Accordion';
 import Badge from 'react-bootstrap/Badge';
 import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
+import { getLoadingText } from '../utils/loading.js';
 
 const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
   const [userInput, setUserInput] = useState("");
   const [isLoading, setIsLoading] = useState(true);
-  const [loadingMessage, setLoadingMessage] = useState("Working...");
+  const [loadingMessage, setLoadingMessage] = useState(getLoadingText({ phase: 'working' }));
   const [isUserSending, setIsUserSending] = useState(false);
   const [optimisticMessage, setOptimisticMessage] = useState(null);
 
@@ -87,19 +88,16 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
     
     if (showingLoader) {
       // Reset to initial message when loading starts
-      setLoadingMessage("Working...");
+      setLoadingMessage(getLoadingText({ phase: 'working' }));
       
       // Set timeout to change message after 4 seconds
       timeoutId = setTimeout(() => {
-        if (lastAssistantHasGbifValidation) {
-          setLoadingMessage("Still working... waiting for the GBIF validator (can take a long time)");
-        } else {
-          setLoadingMessage("Still working...");
-        }
+        const ctx = lastAssistantHasGbifValidation ? 'waiting for the GBIF validator' : null;
+        setLoadingMessage(getLoadingText({ phase: 'still', context: ctx, long: !!ctx }));
       }, 4000);
     } else {
       // Reset to initial message when not loading
-      setLoadingMessage("Working...");
+      setLoadingMessage(getLoadingText({ phase: 'working' }));
     }
     
     // Cleanup timeout on dependency change or unmount
