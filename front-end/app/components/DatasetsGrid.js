@@ -93,7 +93,7 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset }) {
                 <div className="mt-auto small text-muted">
                   <div>{d.record_count} records • {d.dwc_core || 'unknown'}</div>
                   <div>Updated {new Date(d.last_updated).toLocaleString()}</div>
-                  <div>Progress {d.progress.done}/{d.progress.total}</div>
+                  <div>Progress {d.progress.done}/{d.progress.total - 1}</div>
                   {d.last_message_preview && <div className="text-truncate">"{d.last_message_preview}"</div>}
                 </div>
                 <div className="d-flex gap-2 mt-3">
