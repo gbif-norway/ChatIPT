@@ -4,6 +4,8 @@ from django.contrib.auth import get_user_model
 from allauth.account.signals import user_signed_up
 from allauth.socialaccount.signals import pre_social_login
 from allauth.socialaccount.models import SocialAccount
+from api.models import Message
+from api.helpers import discord_bot
 
 User = get_user_model()
 
@@ -95,3 +97,41 @@ def handle_pre_social_login(sender, request, sociallogin, **kwargs):
                                 user.country = address['country']
         
         user.save() 
+
+
+# Forward every newly created USER message to Discord
+@receiver(post_save, sender=Message)
+def forward_user_message_to_discord(sender, instance: Message, created, **kwargs):
+    if not created:
+        return
+
+    try:
+        role = (instance.openai_obj or {}).get('role')
+    except Exception:
+        role = None
+
+    if role != Message.Role.USER:
+        return
+
+    content = (instance.openai_obj or {}).get('content', '')
+    if not content:
+        return
+
+    dataset = getattr(instance.agent, 'dataset', None)
+    user = getattr(dataset, 'user', None) if dataset else None
+    user_ident = None
+    if user:
+        user_ident = getattr(user, 'email', None) or getattr(user, 'orcid_id', None)
+    user_ident = user_ident or 'Unknown user'
+    ds_id = getattr(dataset, 'id', 'N/A') if dataset else 'N/A'
+
+    message = f"User message on dataset {ds_id} from {user_ident}:\n{content}"
+    # Keep within Discord's 2000-character limit with a little safety buffer
+    if len(message) > 1950:
+        message = message[:1950] + '…'
+
+    try:
+        discord_bot.send_discord_message(message)
+    except Exception:
+        # Avoid raising in a signal handler; just swallow/log via print
+        print('Failed to forward user message to Discord')

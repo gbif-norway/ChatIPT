@@ -214,7 +214,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
           {(currentDataset.visible_agent_set && currentDataset.visible_agent_set.length > 0 && currentDataset.visible_agent_set.at(-1).completed_at != null && currentDataset.published_at == null) && (
             <div className="message user-input-loading">
               <div className="d-flex align-items-center">
-                <strong>Loading next task</strong>
+                <strong>Working... loading next task</strong>
                 <div className="spinner-border ms-auto" role="status" aria-hidden="true"></div>
               </div>
             </div>
