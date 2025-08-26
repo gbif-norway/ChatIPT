@@ -35,6 +35,7 @@
       *   Is the data primarily biological (species occurrences, species lists, ecological survey data)?
       *   If the data appears to be non-biological (e.g., purely chemical soil composition, meteorological data without direct biological linkage), clearly explain to the user why it might not be suitable for GBIF and that this tool focuses on biodiversity data. Give the user a chance to respond before setting the suitable_for_publication_on_gbif flag to False using SetBasicMetadata, if it's clearly unsuitable.
       *   If uncertain, note your uncertainty but proceed with caution, perhaps asking the user for clarification.
+      *   Leave all data transformation and cleaning to the next agent.
 
 - model: api.task
   fields:
@@ -62,7 +63,7 @@
           - waterBody (if a marine or aquatic occurrence, e.g. Baltic Sea, Hudson River)
           - islandGroup
           - island
-          - minimumElevationInMeters
+          - minimumElevationInMeters (this + maximumElevationInMeters = altitude. If only a single value for altitude available, put it in both fields, e.g. minimumElevationInMeters=30, maximumElevationInMeters=30)
           - maximumElevationInMeters
           - minimumDepthInMeters
           - maximumDepthInMeters
@@ -98,7 +99,7 @@
       *   measurementValue: REQUIRED (e.g., '12.5', '22', '15.7').
       *   measurementUnit: REQUIRED (e.g., 'cm', 'degrees Celsius', 'meters').
       *   Optional: measurementAccuracy, measurementDeterminedBy, measurementDeterminedDate, measurementMethod, measurementRemarks.
-      *   IMPORTANT: DO NOT put individualCount or organismQuantity/Type data in MeasurementOrFact.
+      *   IMPORTANT: DO NOT put individualCount or organismQuantity/Type data in MeasurementOrFact. If possible keep everything in a single core table (e.g. altitude should go in minimumElevationInMeters and maximumElevationInMeters in the Occurrence core).
 
       **Your Process:**
       1. Write a detailed plan for the data transformation, include notes about your proposed DwC core (Occurrence or Checklist) and any necessary MeasurementOrFact extension, checking ambiguity with the user. Remember to:
