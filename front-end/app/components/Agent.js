@@ -13,47 +13,32 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
   const [optimisticMessage, setOptimisticMessage] = useState(null);
 
   useEffect(() => {
-      const runAsyncEffect = async () => {
-        const timestamp = new Date().toISOString();
-        console.log(`[${timestamp}] 🤖 Agent ${agent.id} useEffect running`);
-        console.log(`[${timestamp}] 📊 Agent state:`, {
-          id: agent.id,
-          completed_at: agent.completed_at,
-          message_count: agent.message_set?.length || 0,
-          busy_thinking: agent.busy_thinking
-        });
-        
-        var last_message_role = null;
-        if (agent.message_set && agent.message_set.length > 0) { 
-          last_message_role = agent.message_set.at(-1).role;
-          console.log(`[${timestamp}] 💬 Last message role: ${last_message_role}`);
-        }
-        
-        if (agent.completed_at === null && last_message_role != 'user') { 
-          console.log(`[${timestamp}] 🔄 Agent ${agent.id} needs processing - setting loading state`);
-          setIsLoading(true);
-          
-          try {
-            console.log(`[${timestamp}] 📡 Calling refreshDataset for agent ${agent.id}...`);
-            await refreshDataset();
-            
-            if (typeof refreshTables === 'function') {
-              console.log(`[${timestamp}] 📋 Refreshing tables for agent ${agent.id}...`);
-              await refreshTables();
-            }
-          } catch (error) {
-            console.error(`[${timestamp}] ❌ Error in agent refresh:`, error);
+    const runAsyncEffect = async () => {
+      const timestamp = new Date().toISOString();
+      console.log(`[${timestamp}] 🤖 Agent ${agent.id} mount refresh`);
+
+      const last_message_role = agent.message_set?.length > 0 ? agent.message_set.at(-1).role : null;
+      const hasToolCalls = agent.message_set?.length > 0 ? Array.isArray(agent.message_set.at(-1)?.openai_obj?.tool_calls) && agent.message_set.at(-1).openai_obj.tool_calls.length > 0 : false;
+
+      // Kick the dataset refresh loop when the agent is in progress or tool calls are pending
+      if (agent.completed_at === null && (agent.busy_thinking || hasToolCalls || last_message_role !== 'assistant')) {
+        setIsLoading(true);
+        try {
+          await refreshDataset();
+          if (typeof refreshTables === 'function') {
+            await refreshTables();
           }
-          
-          console.log(`[${timestamp}] ✅ Agent ${agent.id} refresh complete - clearing loading state`);
-          setIsLoading(false);
-        } else {
-          console.log(`[${timestamp}] ✅ Agent ${agent.id} doesn't need processing - clearing loading state`);
+        } catch (error) {
+          console.error(`[${timestamp}] ❌ Error in agent refresh:`, error);
+        } finally {
           setIsLoading(false);
         }
+      } else {
+        setIsLoading(false);
+      }
     };
     runAsyncEffect();
-  }, []); // Only run once when component mounts
+  }, []); // run once when component mounts
 
   // Log when agent data changes (this will help us see if updates are coming through)
   useEffect(() => {
@@ -97,6 +82,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
     // Determine if we're showing the loading spinner (same logic as in the render)
     const lastMessage = (agent.message_set && agent.message_set.length > 0) ? agent.message_set[agent.message_set.length - 1] : null;
     const assistantWaitingForReply = lastMessage && lastMessage.role === 'assistant' && (!lastMessage.openai_obj.tool_calls || lastMessage.openai_obj.tool_calls.length === 0);
+    const lastAssistantHasGbifValidation = lastMessage && lastMessage.role === 'assistant' && Array.isArray(lastMessage.openai_obj?.tool_calls) && lastMessage.openai_obj.tool_calls.some(tc => tc.function?.name === 'ValidateDwCA');
     const showingLoader = isLoading || isUserSending || agent.busy_thinking || (!assistantWaitingForReply && !agent.completed_at);
     
     if (showingLoader) {
@@ -105,7 +91,11 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
       
       // Set timeout to change message after 4 seconds
       timeoutId = setTimeout(() => {
-        setLoadingMessage("Still working... [waiting for the OpenAI API, may take up to 10 minutes]");
+        if (lastAssistantHasGbifValidation) {
+          setLoadingMessage("Still working... waiting for the GBIF validator (can take a long time)");
+        } else {
+          setLoadingMessage("Still working...");
+        }
       }, 4000);
     } else {
       // Reset to initial message when not loading
