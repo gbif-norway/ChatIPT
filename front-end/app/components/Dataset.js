@@ -233,12 +233,9 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
               <div className="alert alert-success" role="alert">
                 <strong>🎉 Your dataset has now been published! 🎉</strong>
                 <hr />
-                <a href={currentDataset.gbif_url} className="btn btn-outline-primary" role="button" aria-pressed="true" target="_blank" rel="noopener noreferrer">View on GBIF (sandbox)</a>
-                &nbsp;
-                <a href={productionPublishMailto} className="btn btn-primary" role="button" aria-pressed="true">Publish to GBIF (production)</a>
-                &nbsp;
-                <a href={currentDataset.dwca_url} className="btn btn-outline-secondary" role="button" aria-pressed="true">Download your Darwin Core Archive file</a>
-
+                <a href={currentDataset.gbif_url} className="btn btn-outline-primary" role="button" aria-pressed="true" target="_blank" rel="noopener noreferrer">🌐 View on GBIF (sandbox)</a>
+                <a href={productionPublishMailto} className="btn btn-success" role="button" aria-pressed="true">🚀 Request publication to GBIF (production) 🚀</a>
+                <a href={currentDataset.dwca_url} className="btn btn-outline-secondary" role="button" aria-pressed="true">⬇️ Download your Darwin Core Archive file</a>
               </div>
             </div>
           )}
