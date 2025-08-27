@@ -69,10 +69,28 @@ class DatasetSerializer(serializers.ModelSerializer):
 
         if "error" in dfs:
             raise serializers.ValidationError(dfs["error"])
-        
-        for sheet_name, df in dfs.items():
-            if len(df) < 2:
-                raise serializers.ValidationError(f"Your sheet {sheet_name} has only {len(df) + 1} row(s), are you sure you uploaded the right thing? I need a larger spreadsheet to be able to help you with publication. Please refresh and try again.")
+
+        # Discard sheets with fewer than 2 data rows when multiple sheets exist.
+        # If all sheets are discarded, reject the file; if only one sheet exists, validate it directly.
+        original_sheet_count = len(dfs)
+        if original_sheet_count > 1:
+            filtered_dfs = {name: df for name, df in dfs.items() if len(df) >= 2}
+            if not filtered_dfs:
+                # All sheets had < 2 data rows
+                raise serializers.ValidationError(
+                    "All sheets in your spreadsheet have only 1 (or 0) data row(s). "
+                    "I need a larger spreadsheet to be able to help you with publication. "
+                    "Please refresh and try again."
+                )
+            dfs = filtered_dfs
+        else:
+            # Single-sheet file: enforce the row-count check directly
+            for sheet_name, df in dfs.items():
+                if len(df) < 2:
+                    raise serializers.ValidationError(
+                        f"Your sheet {sheet_name} has only {len(df) + 1} row(s), are you sure you uploaded the right thing? "
+                        "I need a larger spreadsheet to be able to help you with publication. Please refresh and try again."
+                    )
 
         tables = []
         for sheet_name, df in dfs.items():
