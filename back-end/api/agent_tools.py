@@ -472,6 +472,13 @@ class RollBack(OpenAIBaseModel):
         agent = Agent.objects.get(id=self.agent_id)
         agent.dataset.table_set.all().delete()
         dfs = Dataset.get_dfs_from_user_file(agent.dataset.file, agent.dataset.file.name)
+        # Mirror initial upload behavior: discard sheets with <2 data rows when multiple sheets exist
+        try:
+            if isinstance(dfs, dict) and len(dfs) > 1:
+                dfs = {name: df for name, df in dfs.items() if getattr(df, '__len__', lambda: 0)() >= 2}
+        except Exception:
+            # If anything odd happens, fall back to original dfs without filtering
+            pass
         tables = []
         for sheet_name, df in dfs.items():
             if not df.empty:
@@ -804,4 +811,3 @@ class SendDiscordMessage(OpenAIBaseModel):
         
         except Exception as e:
             return f"Failed to send Discord message: {repr(e)}"
-
