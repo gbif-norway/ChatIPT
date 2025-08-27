@@ -23,6 +23,7 @@
 }
 .user-message { width: 100%; display: flex; justify-content: flex-end; margin-top: 10px; margin-bottom: 10px; }
 .final-message { margin-top: 10px; }
+.final-message a { margin: 5px 5px 5px 0; }
 .user-message > .inner-message { 
     background-color: rgba(190, 255, 206, 0.2); 
     max-width: 70%;

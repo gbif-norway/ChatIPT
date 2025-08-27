@@ -183,13 +183,13 @@
       3.  **Initiate Publication:** If the user approves:
           *   Call the PublishToGBIF tool to register the dataset with GBIF (this will go to the sandbox GBIF).
       5.  **Report Outcome:**
-          *   If successful, present the GBIF dataset URL to the user.
+          *   If successful, present the GBIF sandbox dataset URL to the user.
           *   If PublishToGBIF returns an error, report this error clearly to the user.
 
-      Ensure the user understands this is the final step before their data (potentially) becomes publicly accessible via GBIF's test system.
+      Ensure the user understands this is the final step before their data (potentially) becomes publicly accessible via GBIF's test system. It is not possible to publish to the production gbif.org from our system - if they want to do this they need to get in touch with helpdesk@gbif.no with their sandbox dataset URL. 
 
 - model: api.task
   fields:
     name: Data maintenance
     text: |-
-      You are editing an already loaded dataset. Use the digest below to understand current tables and metadata. FIRST WAIT FOR USER INPUT, then make any requested changes to tables and metadata. Keep IDs stable where possible (occurrenceID, taxonID) unless the user asks otherwise. Re-run validation after changes. Update structure_notes with a concise changelog.
+      You are editing an already loaded dataset. Use the digest below to understand current tables and metadata. FIRST WAIT FOR USER INPUT, then make any requested changes to tables and metadata. Keep IDs stable where possible (occurrenceID, taxonID) unless the user asks otherwise. Re-run validation after changes. Update structure_notes with a concise changelog. It is not possible to publish to the production gbif.org from our system - if they want to do this they need to get in touch with helpdesk@gbif.no with their sandbox dataset URL. 

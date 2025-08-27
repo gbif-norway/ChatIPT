@@ -162,6 +162,15 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
 
   const CustomTabTitle = ({ children }) => <span dangerouslySetInnerHTML={{ __html: children }} />;
 
+  // Prebuild mailto link for publishing to GBIF production (shown after sandbox publish)
+  const productionPublishMailto = (() => {
+    if (!currentDataset) return null;
+    const subject = '(ChatIPT) Request to publish dataset to GBIF production';
+    const title = currentDataset.title || (currentDataset.file ? currentDataset.file.split(/\//).pop().replace(/\([^)]*\)/g, '').trim() : '');
+    const body = `Hello GBIF Norway Helpdesk,\n\nI’m pleased to confirm that my dataset has been successfully published to the GBIF Sandbox for validation. I would like to request its publication to GBIF production.\n\n- Dataset title: ${title}\n- Darwin Core Archive (DwC-A): ${currentDataset.dwca_url}\n- GBIF Sandbox dataset page: ${currentDataset.gbif_url}\n\nPlease let me know if you need any further information or changes before proceeding.\n\nThank you for your assistance.\n\nBest regards,`;
+    return `mailto:helpdesk@gbif.no?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  })();
+
   return (
     <div className="container">
       <div className="row mx-auto p-4 no-bottom-margin no-bottom-padding no-left-padding">
@@ -224,10 +233,9 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
               <div className="alert alert-success" role="alert">
                 <strong>🎉 Your dataset has now been published! 🎉</strong>
                 <hr />
-                <a href={currentDataset.gbif_url} className="btn btn-outline-primary" role="button" aria-pressed="true" target="_blank" rel="noopener noreferrer">View on GBIF</a> 
-                &nbsp;
-                <a href={currentDataset.dwca_url} className="btn btn-outline-secondary" role="button" aria-pressed="true">Download your Darwin Core Archive file</a>
-
+                <a href={currentDataset.gbif_url} className="btn btn-outline-primary" role="button" aria-pressed="true" target="_blank" rel="noopener noreferrer">🌐 View on GBIF (sandbox)</a>
+                <a href={productionPublishMailto} className="btn btn-success" role="button" aria-pressed="true">🚀 Request publication to GBIF (production) 🚀</a>
+                <a href={currentDataset.dwca_url} className="btn btn-outline-secondary" role="button" aria-pressed="true">⬇️ Download your Darwin Core Archive file</a>
               </div>
             </div>
           )}
