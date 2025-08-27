@@ -9,9 +9,10 @@ const FileDrop = ({ onFileAccepted, onError }) => {
 
   const onDrop = async (acceptedFiles) => {
     console.log('file dropped');
+    const file = acceptedFiles[0];
     setLoading(true);
     const formData = new FormData();
-    formData.append('file', acceptedFiles[0]);
+    formData.append('file', file);
 
     try {
       const csrfToken = await getCsrfToken();
@@ -28,6 +29,12 @@ const FileDrop = ({ onFileAccepted, onError }) => {
         credentials: 'include', // Include credentials for authenticated requests
       });
       if (!response.ok) {
+        // Explicit handling for payload too large responses from proxy/server
+        if (response.status === 413) {
+          setLoading(false);
+          onError(`Your file is too large for the server to accept${config.maxUploadMB ? ` (limit ≈ ${config.maxUploadMB} MB)` : ''}. Please upload a smaller file or contact support.`);
+          return;
+        }
         let errorMessage = 'Upload failed';
     
         try {
@@ -60,8 +67,9 @@ const FileDrop = ({ onFileAccepted, onError }) => {
     } catch (err) {
       console.log(err);
       setLoading(false);
-      if(err.message == "Failed to fetch") { 
-        onError("The app is undergoing maintenance, please try again later. If you'd like to be informed when it's back up, send an email to rukayasj@uio.no.");
+      if(err.message === "Failed to fetch") { 
+        // Network/CORS-level failure (common when proxies return 413 without CORS headers)
+        onError(`Upload failed due to a network error. This may be due to a file size limit${config.maxUploadMB ? ` (≈ ${config.maxUploadMB} MB)` : ''}. If the problem persists, please try again later or contact support.`);
       } else { 
         onError(err.message);
       }
