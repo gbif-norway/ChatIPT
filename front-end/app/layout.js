@@ -12,13 +12,18 @@ const ibmPlexSerif = IBM_Plex_Serif({ subsets: ['latin'], weight: '400' });
 export const metadata = {
   title: 'ChatIPT',
   description: 'Publish your spreadsheets to GBIF through a chat interface',
+  icons: {
+    icon: [
+      { url: '/images/chatipt.webp', type: 'image/webp' },
+    ],
+  },
 }
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <title></title>
+        <link rel="icon" href="/images/chatipt.webp" type="image/webp" />
       </head>
       <body className={inter.className}>
         <ThemeProvider>
