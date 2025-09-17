@@ -44,8 +44,8 @@ class IsAuthenticatedOrSuperuser(BasePermission):
 class UserSerializer(ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'email', 'first_name', 'last_name', 'orcid_id', 'institution', 'department', 'country']
-        read_only_fields = ['id', 'email', 'orcid_id']
+        fields = ['id', 'email', 'first_name', 'last_name', 'orcid_id', 'institution', 'department', 'country', 'is_superuser']
+        read_only_fields = ['id', 'email', 'orcid_id', 'is_superuser']
 
 
 @api_view(['GET'])
@@ -356,7 +356,7 @@ def my_datasets(request):
     else:
         datasets = Dataset.objects.filter(user=request.user).order_by('-created_at')
     
-    serializer = DatasetListSerializer(datasets, many=True)
+    serializer = DatasetListSerializer(datasets, many=True, context={'request': request})
     return Response(serializer.data)
 
 
@@ -378,6 +378,12 @@ class DatasetViewSet(viewsets.ModelViewSet):
         
         # Regular users only see their own datasets
         return Dataset.objects.filter(user=self.request.user)
+
+    def get_serializer_context(self):
+        """Add request context to serializer"""
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
 
     def perform_create(self, serializer):
         """Automatically assign the current user to the dataset"""
