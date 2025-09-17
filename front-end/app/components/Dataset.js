@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import { useDataset } from '../contexts/DatasetContext';
+import { useAuth } from '../contexts/AuthContext';
 import Agent from './Agent';
 
 import Accordion from 'react-bootstrap/Accordion';
@@ -12,6 +13,7 @@ import config from '../config.js';
 
 const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const { currentDataset, currentDatasetId, loading, error, refreshDataset } = useDataset();
+  const { user } = useAuth();
   const [tables, setTables] = useState([]);
   const [activeTableId, setActiveTableId] = useState(null);
   const [activeAgentKey, setActiveAgentKey] = useState(null);
@@ -191,6 +193,33 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                 </button>
               )}
             </div>
+            {/* Show dataset user ORCID for superusers */}
+            {user && user.is_superuser && currentDataset.user_info && currentDataset.user_info.orcid_id && (
+              <div className="mt-2">
+                <small className="text-muted">
+                  <i className="bi bi-person-circle me-1"></i>
+                  Dataset owner: 
+                  <a 
+                    href={`https://orcid.org/${currentDataset.user_info.orcid_id}`} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-decoration-none ms-1"
+                  >
+                    {currentDataset.user_info.orcid_id}
+                  </a>
+                  {currentDataset.user_info.first_name && currentDataset.user_info.last_name && (
+                    <span className="ms-2">
+                      ({currentDataset.user_info.first_name} {currentDataset.user_info.last_name})
+                    </span>
+                  )}
+                  {currentDataset.user_info.institution && (
+                    <span className="ms-2 text-muted">
+                      - {currentDataset.user_info.institution}
+                    </span>
+                  )}
+                </small>
+              </div>
+            )}
           </div>
           {currentDataset.description && (
             <p className="mb-3">{currentDataset.description}</p>

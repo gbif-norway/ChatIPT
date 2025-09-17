@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import config from '../config'
 import { useDataset } from '../contexts/DatasetContext'
+import { useAuth } from '../contexts/AuthContext'
 
 export default function DatasetsGrid({ onOpenDataset, onNewDataset }) {
   const [items, setItems] = useState(null)
@@ -9,6 +10,7 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset }) {
   const [refreshing, setRefreshing] = useState(false)
   const [deleting, setDeleting] = useState(null) // Track which dataset is being deleted
   const { deleteDataset } = useDataset()
+  const { user } = useAuth()
 
   const fetchDatasets = async () => {
     try {
@@ -94,6 +96,26 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset }) {
                   <div>{d.record_count} records • {d.dwc_core || 'unknown'}</div>
                   <div>Updated {new Date(d.last_updated).toLocaleString()}</div>
                   <div>Progress {d.progress.done}/{d.progress.total - 1}</div>
+                  {/* Show dataset user ORCID for superusers */}
+                  {user && user.is_superuser && d.user_info && d.user_info.orcid_id && (
+                    <div className="mt-1">
+                      <i className="bi bi-person-circle me-1"></i>
+                      Owner: 
+                      <a 
+                        href={`https://orcid.org/${d.user_info.orcid_id}`} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-decoration-none ms-1"
+                      >
+                        {d.user_info.orcid_id}
+                      </a>
+                      {d.user_info.first_name && d.user_info.last_name && (
+                        <span className="ms-1">
+                          ({d.user_info.first_name} {d.user_info.last_name})
+                        </span>
+                      )}
+                    </div>
+                  )}
                   {d.last_message_preview && <div className="text-truncate">"{d.last_message_preview}"</div>}
                 </div>
                 <div className="d-flex gap-2 mt-3">

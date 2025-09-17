@@ -46,6 +46,7 @@ class AgentSerializer(serializers.ModelSerializer):
 
 class DatasetSerializer(serializers.ModelSerializer):
     visible_agent_set = serializers.SerializerMethodField()
+    user_info = serializers.SerializerMethodField()
 
     class Meta:
         model = Dataset
@@ -57,6 +58,22 @@ class DatasetSerializer(serializers.ModelSerializer):
         if next_active_agent:
             agents.append(next_active_agent)
         return AgentSerializer(agents, many=True).data
+
+    def get_user_info(self, dataset):
+        # Only include user info if the requesting user is a superuser
+        request = self.context.get('request')
+        if request and request.user and request.user.is_superuser and dataset.user:
+            return {
+                'id': dataset.user.id,
+                'email': dataset.user.email,
+                'first_name': dataset.user.first_name,
+                'last_name': dataset.user.last_name,
+                'orcid_id': dataset.user.orcid_id,
+                'institution': dataset.user.institution,
+                'department': dataset.user.department,
+                'country': dataset.user.country
+            }
+        return None
 
     def create(self, data):
         discord_bot.send_discord_message(f"V2 New dataset publication starting on ChatIPT. User file: {data['file'].name}.")
@@ -115,13 +132,14 @@ class DatasetListSerializer(serializers.ModelSerializer):
     status = serializers.SerializerMethodField()
     progress = serializers.SerializerMethodField()
     last_message_preview = serializers.SerializerMethodField()
+    user_info = serializers.SerializerMethodField()
 
     class Meta:
         model = Dataset
         fields = [
             'id', 'title', 'description', 'filename', 'dwc_core',
             'created_at', 'published_at', 'rejected_at',
-            'record_count', 'last_updated', 'status', 'progress', 'last_message_preview'
+            'record_count', 'last_updated', 'status', 'progress', 'last_message_preview', 'user_info'
         ]
 
     def get_record_count(self, obj):
@@ -154,3 +172,19 @@ class DatasetListSerializer(serializers.ModelSerializer):
             return ''
         c = str(m.openai_obj['content'])
         return (c[:140] + '…') if len(c) > 140 else c
+
+    def get_user_info(self, obj):
+        # Only include user info if the requesting user is a superuser
+        request = self.context.get('request')
+        if request and request.user and request.user.is_superuser and obj.user:
+            return {
+                'id': obj.user.id,
+                'email': obj.user.email,
+                'first_name': obj.user.first_name,
+                'last_name': obj.user.last_name,
+                'orcid_id': obj.user.orcid_id,
+                'institution': obj.user.institution,
+                'department': obj.user.department,
+                'country': obj.user.country
+            }
+        return None
