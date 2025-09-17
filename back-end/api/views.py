@@ -3,7 +3,7 @@ from api.serializers import DatasetSerializer, DatasetListSerializer, TableSeria
 from api.models import Dataset, Table, Message, Agent, Task
 from rest_framework.response import Response
 from rest_framework.decorators import action, api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated, AllowAny, BasePermission
 from django.shortcuts import get_object_or_404, redirect
 from django.contrib.auth import get_user_model
 from rest_framework.serializers import ModelSerializer
@@ -15,6 +15,30 @@ import logging
 logger = logging.getLogger(__name__)
 
 User = get_user_model()
+
+
+class IsAuthenticatedOrSuperuser(BasePermission):
+    """
+    Custom permission that allows authenticated users to access their own data,
+    but allows superusers to access all data.
+    """
+    def has_permission(self, request, view):
+        return request.user and request.user.is_authenticated
+    
+    def has_object_permission(self, request, view, obj):
+        # Superusers can access everything
+        if request.user.is_superuser:
+            return True
+        
+        # Regular users can only access their own data
+        if hasattr(obj, 'user'):
+            return obj.user == request.user
+        elif hasattr(obj, 'dataset') and hasattr(obj.dataset, 'user'):
+            return obj.dataset.user == request.user
+        elif hasattr(obj, 'agent') and hasattr(obj.agent, 'dataset') and hasattr(obj.agent.dataset, 'user'):
+            return obj.agent.dataset.user == request.user
+        
+        return False
 
 
 class UserSerializer(ModelSerializer):
@@ -326,21 +350,33 @@ def orcid_callback(request):
 @permission_classes([IsAuthenticated])
 def my_datasets(request):
     """Return list of datasets for dashboard with lightweight card data"""
-    datasets = Dataset.objects.filter(user=request.user).order_by('-created_at')
+    # Superusers can see all datasets, regular users only see their own
+    if request.user.is_superuser:
+        datasets = Dataset.objects.all().order_by('-created_at')
+    else:
+        datasets = Dataset.objects.filter(user=request.user).order_by('-created_at')
+    
     serializer = DatasetListSerializer(datasets, many=True)
     return Response(serializer.data)
 
 
 class DatasetViewSet(viewsets.ModelViewSet):
     serializer_class = DatasetSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticatedOrSuperuser]
     filterset_fields = ['created_at', 'orcid']
 
     def get_queryset(self):
-        """Filter datasets to only show those belonging to the authenticated user"""
+        """Filter datasets to only show those belonging to the authenticated user, unless user is superuser"""
         logger.info(f"DatasetViewSet.get_queryset - User authenticated: {self.request.user.is_authenticated}")
         logger.info(f"User ID: {self.request.user.id if self.request.user.is_authenticated else 'None'}")
+        logger.info(f"Is superuser: {self.request.user.is_superuser if self.request.user.is_authenticated else 'None'}")
         logger.info(f"Session ID: {self.request.session.session_key}")
+        
+        # Superusers can see all datasets
+        if self.request.user.is_superuser:
+            return Dataset.objects.all()
+        
+        # Regular users only see their own datasets
         return Dataset.objects.filter(user=self.request.user)
 
     def perform_create(self, serializer):
@@ -377,12 +413,17 @@ class DatasetViewSet(viewsets.ModelViewSet):
 
 class TableViewSet(viewsets.ModelViewSet):
     serializer_class = TableSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticatedOrSuperuser]
     filterset_fields = ['dataset', 'title']
     ordering = ['-updated_at']
 
     def get_queryset(self):
-        """Filter tables to only show those belonging to the authenticated user's datasets, newest first"""
+        """Filter tables to only show those belonging to the authenticated user's datasets, unless user is superuser"""
+        # Superusers can see all tables
+        if self.request.user.is_superuser:
+            return Table.objects.all().order_by('-updated_at', '-id')
+        
+        # Regular users only see their own tables
         return Table.objects.filter(dataset__user=self.request.user).order_by('-updated_at', '-id')
 
 
@@ -398,21 +439,31 @@ class TaskViewSet(viewsets.ModelViewSet):
 
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticatedOrSuperuser]
     filterset_fields = ['agent', 'created_at']
 
     def get_queryset(self):
-        """Filter messages to only show those belonging to the authenticated user's datasets"""
+        """Filter messages to only show those belonging to the authenticated user's datasets, unless user is superuser"""
+        # Superusers can see all messages
+        if self.request.user.is_superuser:
+            return Message.objects.all()
+        
+        # Regular users only see their own messages
         return Message.objects.filter(agent__dataset__user=self.request.user)
 
 
 class AgentViewSet(viewsets.ModelViewSet):
     serializer_class = AgentSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticatedOrSuperuser]
     filterset_fields = ['created_at', 'completed_at', 'dataset', 'task']
 
     def get_queryset(self):
-        """Filter agents to only show those belonging to the authenticated user's datasets"""
+        """Filter agents to only show those belonging to the authenticated user's datasets, unless user is superuser"""
+        # Superusers can see all agents
+        if self.request.user.is_superuser:
+            return Agent.objects.all()
+        
+        # Regular users only see their own agents
         return Agent.objects.filter(dataset__user=self.request.user)
     
     def create(self, request, *args, **kwargs):
@@ -427,7 +478,11 @@ class AgentViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            dataset = Dataset.objects.get(id=dataset_id, user=request.user)
+            # Superusers can access any dataset, regular users only their own
+            if request.user.is_superuser:
+                dataset = Dataset.objects.get(id=dataset_id)
+            else:
+                dataset = Dataset.objects.get(id=dataset_id, user=request.user)
             task = Task.objects.get(id=task_id)
         except (Dataset.DoesNotExist, Task.DoesNotExist):
             return Response(
