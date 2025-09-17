@@ -13,7 +13,12 @@ class DatasetListView(LoginRequiredMixin, generic.ListView):
     login_url = '/accounts/login/'
 
     def get_queryset(self):
-        """Filter datasets to only show those belonging to the authenticated user"""
+        """Filter datasets to only show those belonging to the authenticated user, unless user is superuser"""
+        # Superusers can see all datasets
+        if self.request.user.is_superuser:
+            return Dataset.objects.all()
+        
+        # Regular users only see their own datasets
         return Dataset.objects.filter(user=self.request.user)
 
 
@@ -23,7 +28,12 @@ class DatasetDetailView(LoginRequiredMixin, generic.DetailView):
     login_url = '/accounts/login/'
 
     def get_queryset(self):
-        """Filter datasets to only show those belonging to the authenticated user"""
+        """Filter datasets to only show those belonging to the authenticated user, unless user is superuser"""
+        # Superusers can see all datasets
+        if self.request.user.is_superuser:
+            return Dataset.objects.all()
+        
+        # Regular users only see their own datasets
         return Dataset.objects.filter(user=self.request.user)
 
 
