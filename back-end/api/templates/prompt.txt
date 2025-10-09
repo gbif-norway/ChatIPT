@@ -75,7 +75,7 @@ occurrence.csv:
 | HumanObservation | 2 | Rhoda Nankabirwa | Uganda     | Kituuza | 0.254    | 32.788          | 600              | POLYGON ((32.779 0.261, 32.779 0.250, 32.798 0.250, 32.798 0.261)) | Makerere University Herbarium | Antiaris toxicaria | Animalia       |
 | HumanObservation | 3 | Rhoda Nankabirwa | Uganda     | Kituuza | 0.254    | 32.788          | 600              | POLYGON ((32.779 0.261, 32.779 0.250, 32.798 0.250, 32.798 0.261)) | Makerere University Herbarium | Antiaris toxicaria | Animalia       |
 
-measurementorfact.csv, with the ids relating back to the main occurrence table:
+measurementorfact.csv, with the ids relating back to the main occurrence table (NOTE: only includes fields which DO NOT ALREADY FIT INTO THE MAIN FILE - do not include e.g. decimalLatitude and decimalLongitude):
 | id                                            | measurementType  | measurementValue | measurementUnit |
 | --------------------------------------------- | ---------------- | ---------------- | --------------- |
 | 1 | tree diameter | 25.1             | cm              |
