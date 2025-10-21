@@ -153,6 +153,7 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
                     agent_tools.SetAgentTaskToComplete.__name__,
                     agent_tools.Python.__name__,
                     agent_tools.BasicValidationForSomeDwCTerms.__name__,
+                    agent_tools.GetDarwinCoreInfo.__name__,
                     agent_tools.RollBack.__name__,
                     agent_tools.UploadDwCA.__name__,
                     agent_tools.PublishToGBIF.__name__,

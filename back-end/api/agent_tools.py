@@ -80,6 +80,163 @@ class EMLUser(BaseModel):
     orcid: Optional[str] = None
 
 
+class GetDarwinCoreInfo(OpenAIBaseModel):
+    return '''
+    These are the Darwin Core terms: 
+    DARWIN_CORE_TERMS = {
+        # Record-level
+        "type", "modified", "language", "references", "institutionID", "collectionID", "institutionCode",
+        "collectionCode", "ownerInstitutionCode", "basisOfRecord", "informationWithheld", "dynamicProperties",
+        # Occurrence
+        "occurrenceID", "catalogNumber", "recordNumber", "recordedBy", "recordedByID", "individualCount",
+        "organismQuantity", "organismQuantityType", "sex", "lifeStage", "reproductiveCondition", "caste",
+        "behavior", "vitality", "establishmentMeans", "degreeOfEstablishment", "pathway", "georeferenceVerificationStatus",
+        "occurrenceStatus", "associatedMedia", "associatedOccurrences", "associatedReferences", "associatedTaxa",
+        "otherCatalogNumbers", "occurrenceRemarks",
+        # Organism
+        "organismID", "organismName", "organismScope", "associatedOrganisms", "previousIdentifications",
+        "organismRemarks",
+        # MaterialEntity
+        "materialEntityID", "preparations", "disposition", "verbatimLabel", "associatedSequences", "materialEntityRemarks",
+        # MaterialSample
+        "materialSampleID",
+        # Event
+        "eventID", "parentEventID", "eventType", "fieldNumber", "eventDate", "eventTime", "startDayOfYear", "endDayOfYear",
+        "year", "month", "day", "verbatimEventDate", "habitat", "samplingProtocol", "sampleSizeValue", "sampleSizeUnit",
+        "samplingEffort", "fieldNotes", "eventRemarks",
+        # Location
+        "locationID", "higherGeographyID", "higherGeography", "continent", "waterBody", "islandGroup", "island", "country",
+        "countryCode", "stateProvince", "county", "municipality", "locality", "verbatimLocality", "minimumElevationInMeters",
+        "maximumElevationInMeters", "verbatimElevation", "verticalDatum", "minimumDepthInMeters", "maximumDepthInMeters",
+        "verbatimDepth", "minimumDistanceAboveSurfaceInMeters", "maximumDistanceAboveSurfaceInMeters", "locationAccordingTo",
+        "locationRemarks", "decimalLatitude", "decimalLongitude", "geodeticDatum", "coordinateUncertaintyInMeters",
+        "coordinatePrecision", "pointRadiusSpatialFit", "verbatimCoordinates", "verbatimLatitude", "verbatimLongitude",
+        "verbatimCoordinateSystem", "verbatimSRS", "footprintWKT", "footprintSRS", "footprintSpatialFit", "georeferencedBy",
+        "georeferencedDate", "georeferenceProtocol", "georeferenceSources", "georeferenceRemarks",
+        # GeologicalContext
+        "geologicalContextID", "earliestEonOrLowestEonothem", "latestEonOrHighestEonothem", "earliestEraOrLowestErathem",
+        "latestEraOrHighestErathem", "earliestPeriodOrLowestSystem", "latestPeriodOrHighestSystem", "earliestEpochOrLowestSeries",
+        "latestEpochOrHighestSeries", "earliestAgeOrLowestStage", "latestAgeOrHighestStage", "lowestBiostratigraphicZone",
+        "highestBiostratigraphicZone", "lithostratigraphicTerms", "group", "formation", "member", "bed",
+        # Identification
+        "identificationID", "verbatimIdentification", "identificationQualifier", "typeStatus", "identifiedBy", "identifiedByID",
+        "dateIdentified", "identificationReferences", "identificationVerificationStatus", "identificationRemarks",
+        # Taxon
+        "taxonID", "scientificNameID", "acceptedNameUsageID", "parentNameUsageID", "originalNameUsageID", "nameAccordingToID",
+        "namePublishedInID", "taxonConceptID", "scientificName", "acceptedNameUsage", "parentNameUsage", "originalNameUsage",
+        "nameAccordingTo", "namePublishedIn", "namePublishedInYear", "higherClassification", "kingdom", "phylum", "class", "order",
+        "superfamily", "family", "subfamily", "tribe", "subtribe", "genus", "genericName", "subgenus", "infragenericEpithet",
+        "specificEpithet", "infraspecificEpithet", "cultivarEpithet", "taxonRank", "verbatimTaxonRank", "scientificNameAuthorship",
+        "vernacularName", "nomenclaturalCode", "taxonomicStatus", "nomenclaturalStatus", "taxonRemarks",
+        # MeasurementOrFact
+        "measurementID", "parentMeasurementID", "measurementType", "measurementValue", "measurementAccuracy", "measurementUnit",
+        "measurementDeterminedBy", "measurementDeterminedDate", "measurementMethod", "measurementRemarks"
+    }
+
+    # Darwin Core Cores and Common Extensions
+
+    ## Core Types
+
+    | Core Type | Description | Typical Use |
+    |------------|--------------|--------------|
+    | **Occurrence Core** | Describes individual records of organisms — who, what, where, when. | Specimen or observation data (most GBIF datasets). |
+    | **Event Core** | Describes sampling events or occurrences grouped by event (e.g. a trap, transect, or survey). | Sampling-event datasets where many occurrences share context. |
+    | **Taxon Core** | Describes taxa and their classification (scientific name, rank, parent, synonymy). | Checklists, taxonomic backbones, species lists. |
+
+    Each dataset must have **one core type**.  
+    Extensions link to the core using identifiers (`occurrenceID`, `eventID`, or `taxonID`).
+
+    ---
+
+    ## Common Extensions
+
+    | Extension | Description | Applies To |
+    |------------|--------------|-------------|
+    | **MeasurementOrFact** | Records individual measurements or facts (e.g. body length, habitat type, sex). | Occurrence / Event |
+    | **ExtendedMeasurementOrFact (eMoF)** | A flexible structure for multiple environmental or sampling parameters per record. | Event / Occurrence |
+    | **Identification** | Details about the identification process — who, when, method, reference. | Occurrence |
+    | **ResourceRelationship** | Defines relationships between records (e.g. host-parasite, parent-offspring). | Occurrence / Taxon |
+    | **Multimedia** | Simple attachment of images, sound, or video. | Any |
+    | **Audubon Media Description** | Rich multimedia metadata (preferred over simple Multimedia extension). | Any |
+    | **ChronometricAge** | Provides age estimates for fossils or archaeological specimens. | Occurrence |
+    | **DNA-derived Data** | Links occurrence or taxon records with genetic or molecular data. | Occurrence / Taxon |
+    | **Occurrence Extension** | Adds additional fields for occurrence-level detail not in the core. | Occurrence |
+    | **Event Measurement** | Records event-level environmental measurements (temperature, pH, salinity, etc.). | Event |
+
+    ---
+
+    ## Summary
+
+    - **Core** = main table (one per dataset)  
+    - **Extensions** = optional linked tables that add richer metadata  
+
+    For details, see:  
+    - [Darwin Core quick reference guide](https://dwc.tdwg.org/terms/)  
+    - [GBIF extensions overview](https://tools.gbif.org/dwca-validator/extensions.do)
+
+
+    Ensure any extension table records link back to the core table using occurrenceID or taxonID, and discard all derived/summary data so only primary data is published.
+
+      **Key Darwin Core Fields to Consider (Refer to these definitions):**
+
+      **Occurrence Core:**
+      *   occurrenceID: REQUIRED (Record level unique identifier for the occurrence. Create UUIDs if not present)
+      *   basisOfRecord: REQUIRED (Nature of the record, valid values: HumanObservation, PreservedSpecimen, MaterialSample, LivingSpecimen, FossilSpecimen, MachineObservation. You will often need to infer or create this and fill it)
+      *   eventDate: REQUIRED (Date of occurrence, ISO 8601 format: YYYY-MM-DD, YYYY-MM, YYYY, YYYY-MM-DD/YYYY-MM-DD). Or, separate year, month, day columns
+      *   scientificName: REQUIRED (Lowest possible taxonomic rank, e.g., species, genus, family. Cannot be empty)
+      *   kingdom: REQUIRED (e.g., Animalia, Plantae. May need to be inferred or filled)
+      *   locality: REQUIRED if decimalLatitude/decimalLongitude are null (Description of the place)
+      *   decimalLatitude, decimalLongitude: REQUIRED if locality is null
+      *   geodeticDatum: REQUIRED if decimalLatitude/decimalLongitude are populated (e.g., WGS84)
+      *   **Quantity (At least ONE of these groups is REQUIRED):**
+          *   occurrenceStatus: For presence/absence data (valid values: present, absent) - NB absence data can be published if the user is certain of absences (e.g. there was no elephant here), or can be excluded from publication if it's possible the species was actually present but not seen (e.g. a small and cryptic plant).
+          *   individualCount: For whole number counts of individuals
+          *   organismQuantity & organismQuantityType: For non-integer counts or other quantity measures (e.g., organismQuantity=5.5, organismQuantityType=%cover; organismQuantity=10, organismQuantityType='biomass g/m^2'). ALWAYS ask the user for organismQuantityType if organismQuantity is used and the type isn't obvious. DO NOT use these for simple counts if individualCount is appropriate.
+      *   Other useful fields: 
+          - locationRemarks
+          - waterBody (if a marine or aquatic occurrence, e.g. Baltic Sea, Hudson River)
+          - islandGroup
+          - island
+          - minimumElevationInMeters (this + maximumElevationInMeters = altitude. If only a single value for altitude available, put it in both fields, e.g. minimumElevationInMeters=30, maximumElevationInMeters=30)
+          - maximumElevationInMeters
+          - minimumDepthInMeters
+          - maximumDepthInMeters
+          - minimumDistanceAboveSurfaceInMeters
+          - maximumDistanceAboveSurfaceInMeters
+          - country
+          - coordinateUncertaintyInMeters
+          - fieldNotes
+          - recordedBy (collector/observer's name)
+          - recordedByID (often ORCID, NOTE: ask the user for ORCIDs if recordedBy is populated with only a few names)
+          - occurrenceRemarks (can hold any miscellaneous information)
+          - sex
+          - lifeStage
+          - behavior (e.g. roosting, foraging, running)
+          - vitality (valid values: alive, dead, mixedLot, uncertain, notAssessed)
+          - establishmentMeans (valid values: native, nativeReintroduced, introduced, introducedAssistedColonisation, vagrant, uncertain)
+          - degreeOfEstablishment (valid values: native, captive, cultivated, released, failing, casual, reproducing, established, colonising, invasive, widespreadInvasive)
+          - preparations (preparation/preservation methods, e.g. fossil, cast, photograph, DNA extract)
+          - associatedSequences (list of associated genetic sequence information, e.g. http://www.ncbi.nlm.nih.gov/nuccore/U34853.1)
+          - habitat
+          - samplingProtocol (e.g. UV light trap, mist net, bottom trawl)
+          - samplingEffort (e.g. 40 trap-nights, 10 observer-hours, 10 km by foot)
+
+      **Checklist/Taxonomy Core (Common Fields):**
+      *   taxonID: REQUIRED (A unique identifier for the taxon name).
+      *   scientificName: REQUIRED.
+      *   kingdom: REQUIRED.
+      *   Other useful fields: family, genus, specificEpithet, taxonRank, nameAccordingTo, taxonRemarks.
+
+      **MeasurementOrFact Extension (ONLY these fields):**
+      *   occurrenceID or eventID or taxonID: REQUIRED (links back to the core record).
+      *   measurementType: REQUIRED (e.g., 'tail length', 'water temperature', 'tree height').
+      *   measurementValue: REQUIRED (e.g., '12.5', '22', '15.7').
+      *   measurementUnit: REQUIRED (e.g., 'cm', 'degrees Celsius', 'meters').
+      *   Optional: measurementAccuracy, measurementDeterminedBy, measurementDeterminedDate, measurementMethod, measurementRemarks.
+      *   IMPORTANT: DO NOT put individualCount or organismQuantity/Type data in MeasurementOrFact. If possible keep everything in a single core table (e.g. altitude should go in minimumElevationInMeters and maximumElevationInMeters in the Occurrence core).
+    '''
+
+
 class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
     """
     A few automatic basic checks for an Agent's tables against the Darwin Core standard.
