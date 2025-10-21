@@ -1,15 +1,24 @@
 FROM python:3.12-slim
-ENV PYTHONUNBUFFERED 1
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
 WORKDIR /app
 
 # Install system dependencies including netcat for database connectivity checks
 RUN apt-get update && apt-get install -y \
     netcat-traditional \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-COPY ./requirements.txt /srv/requirements.txt
-RUN pip install -r /srv/requirements.txt
+# Copy requirements first for better layer caching
+COPY requirements.txt /srv/requirements.txt
 
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r /srv/requirements.txt
+
+# Copy application code
 COPY . /app
 
 # Make the startup script executable
