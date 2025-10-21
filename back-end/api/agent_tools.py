@@ -81,7 +81,8 @@ class EMLUser(BaseModel):
 
 
 class GetDarwinCoreInfo(OpenAIBaseModel):
-    return '''
+    def get_darwin_core_info(self):
+        return '''
     These are the Darwin Core terms: 
     DARWIN_CORE_TERMS = {
         # Record-level
