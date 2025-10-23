@@ -1,0 +1,30 @@
+# Large data files
+api-endpoint-dataset-*.json
+*.json
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+README.md
+*.md
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+debug.log
+
+# Temporary files
+*.tmp
+*.temp
