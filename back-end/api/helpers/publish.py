@@ -22,37 +22,37 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     tree = ET.parse('api/templates/eml.xml')
     root = tree.getroot()
 
-    NS = 'eml://ecoinformatics.org/eml-2.1.1'
-    NSMAP = {'eml': NS}
+    # EML 2.2.0: the root is namespaced (eml:eml) but children are unqualified.
+    # Work with unqualified child elements throughout.
 
-    def q(tag: str) -> str:
-        return f'{{{NS}}}{tag}'
+    def find(elem: ET.Element, path: str):
+        return elem.find(path)
 
-    def find(elem, path: str):
-        return elem.find(path, namespaces=NSMAP)
+    def findall(elem: ET.Element, path: str):
+        return elem.findall(path)
 
-    def findall(elem, path: str):
-        return elem.findall(path, namespaces=NSMAP)
-
-    def get_or_create(parent, tag: str):
-        child = find(parent, f'eml:{tag}')
+    def get_or_create(parent: ET.Element, tag: str) -> ET.Element:
+        child = parent.find(tag)
         if child is None:
-            child = ET.SubElement(parent, q(tag))
+            child = ET.SubElement(parent, tag)
         return child
 
     def set_text(elem, text: str | None):
         if elem is not None and text not in (None, ''):
             elem.text = str(text)
 
-    dataset_node = find(root, 'eml:dataset')
+    dataset_node = find(root, 'dataset')
     if dataset_node is None:
-        dataset_node = ET.SubElement(root, q('dataset'))
+        dataset_node = ET.SubElement(root, 'dataset')
 
     # Title
     set_text(get_or_create(dataset_node, 'title'), title)
 
-    # Language
-    set_text(get_or_create(dataset_node, 'language'), 'en')
+    # Language (ISO 639-3 per IPT EML 2.2.0 examples)
+    set_text(get_or_create(dataset_node, 'language'), 'eng')
+
+    # Publication date
+    set_text(get_or_create(dataset_node, 'pubDate'), datetime.now().date().isoformat())
 
     # Abstract
     abstract = get_or_create(dataset_node, 'abstract')
@@ -64,7 +64,7 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         set_text(get_or_create(individual, 'givenName'), person.get('first_name') or person.get('givenName') or '')
         set_text(get_or_create(individual, 'surName'), person.get('last_name') or person.get('surName') or '')
         user_id = get_or_create(parent_node, 'userId')
-        user_id.set('directory', 'http://orcid.org/')
+        user_id.set('directory', 'https://orcid.org/')
         set_text(user_id, person.get('orcid') or person.get('userId') or '')
         if include_role:
             set_text(get_or_create(parent_node, 'role'), role_value or 'metadataProvider')
@@ -96,15 +96,15 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         )
         # Always include in project personnel; add as extra creator only for non-primary users
         if not is_primary_like:
-            extra_creator = ET.SubElement(dataset_node, q('creator'))
+            extra_creator = ET.SubElement(dataset_node, 'creator')
             set_person(extra_creator, person)
 
     # Project personnel
-    project_node = find(dataset_node, 'eml:project')
+    project_node = find(dataset_node, 'project')
     if project_node is None:
-        project_node = ET.SubElement(dataset_node, q('project'))
+        project_node = ET.SubElement(dataset_node, 'project')
     for person in users_list:
-        personnel = ET.SubElement(project_node, q('personnel'))
+        personnel = ET.SubElement(project_node, 'personnel')
         set_person(personnel, person, include_role=True, role_value='metadataProvider')
 
     # Coverage
@@ -153,7 +153,8 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         for child in list(element):
             prune(child)
             # Preserve intellectualRights if present, even if empty (it has license text in template anyway)
-            if is_empty(child) and child.tag not in {q('dataset'), q('eml'), q('intellectualRights')}:
+            # Preserve intellectualRights if present
+            if is_empty(child) and child.tag not in {'intellectualRights'}:
                 element.remove(child)
 
     prune(root)
