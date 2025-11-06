@@ -66,6 +66,10 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         user_id = get_or_create(parent_node, 'userId')
         user_id.set('directory', 'https://orcid.org/')
         set_text(user_id, person.get('orcid') or person.get('userId') or '')
+        # Email if available
+        email_value = person.get('email') or person.get('electronicMailAddress') or ''
+        if email_value:
+            set_text(get_or_create(parent_node, 'electronicMailAddress'), email_value)
         if include_role:
             set_text(get_or_create(parent_node, 'role'), role_value or 'metadataProvider')
 
@@ -74,6 +78,7 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         'first_name': getattr(user, 'first_name', 'Unknown') if user else 'Test',
         'last_name': getattr(user, 'last_name', 'Unknown') if user else 'User',
         'orcid': getattr(user, 'orcid_id', '0000-0000-0000-0000') if user else '0000-0002-1825-0097',
+        'email': getattr(user, 'email', '') if user else '',
     }
 
     creator_node = get_or_create(dataset_node, 'creator')
@@ -81,6 +86,10 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
 
     metadata_provider_node = get_or_create(dataset_node, 'metadataProvider')
     set_person(metadata_provider_node, primary_person)
+
+    # Contact (required by IPT): copy primary user
+    contact_node = get_or_create(dataset_node, 'contact')
+    set_person(contact_node, primary_person)
 
     # Optional additional metadata
     eml_extra = eml_extra or {}
