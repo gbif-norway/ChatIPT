@@ -25,6 +25,7 @@ Check `README.md` for high-level project context.
 - Tree files (nexus/newick/tre) are stored for metadata only today—parsing remains a follow-up task.
 - Dataset serializers return the entire `user_files` list so frontends can pick whichever naming scheme they prefer.
 - Legacy Django templates now list every uploaded file instead of relying on a single filename.
+- `UserFileSerializer` treats `dataset` as server-assigned so dataset creation can stream uploads without pre-existing IDs, while the `/api/user-files/` endpoint still injects the association.
 
 ## Open Questions / Next Steps
 - Decide where tree parsing or validation utilities should live once we start ingesting their contents.

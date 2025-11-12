@@ -5,26 +5,12 @@ import Badge from 'react-bootstrap/Badge';
 import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
 import { getLoadingText } from '../utils/loading.js';
-
-const ALLOWED_FILE_EXTENSIONS = [
-  '.csv',
-  '.tsv',
-  '.txt',
-  '.xlsx',
-  '.xls',
-  '.xlsm',
-  '.xlsb',
-  '.ods',
-  '.newick',
-  '.nex',
-  '.nexus',
-  '.tre',
-  '.tree',
-  '.nwk'
-];
-
-const ACCEPT_INPUT_EXTENSIONS = ALLOWED_FILE_EXTENSIONS.join(',');
-const ALLOWED_FILE_EXTENSION_SET = new Set(ALLOWED_FILE_EXTENSIONS);
+import {
+  ALLOWED_FILE_EXTENSIONS,
+  ACCEPT_INPUT_EXTENSIONS,
+  isExtensionAllowed
+} from '../utils/uploadConstraints.js';
+import { useTheme } from '../contexts/ThemeContext.js';
 
 const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
   const [userInput, setUserInput] = useState("");
@@ -35,6 +21,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploadError, setUploadError] = useState(null);
   const fileInputRef = useRef(null);
+  const { isDark } = useTheme();
 
   useEffect(() => {
     const runAsyncEffect = async () => {
@@ -153,8 +140,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
     const nextFiles = [...selectedFiles];
 
     files.forEach((file) => {
-      const extension = file.name.includes('.') ? `.${file.name.split('.').pop().toLowerCase()}` : '';
-      if (!ALLOWED_FILE_EXTENSION_SET.has(extension)) {
+      if (!isExtensionAllowed(file.name)) {
         rejectedNames.push(file.name);
         return;
       }
@@ -376,6 +362,10 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
   // Determine if the assistant is waiting for a reply from the user
   const lastMessage = (agent.message_set && agent.message_set.length > 0) ? agent.message_set[agent.message_set.length - 1] : null;
   const assistantWaitingForReply = lastMessage && lastMessage.role === 'assistant' && (!lastMessage.openai_obj.tool_calls || lastMessage.openai_obj.tool_calls.length === 0);
+  const composerClassName = [
+    'chat-composer border rounded p-3 mt-3',
+    isDark ? 'bg-dark border-secondary text-light' : 'bg-light'
+  ].join(' ');
 
   return (
     <>
@@ -408,7 +398,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
 
           {/* Only show the chat input when the assistant is explicitly waiting for a user reply */}
           {!agent.completed_at && !isLoading && !isUserSending && !agent.busy_thinking && assistantWaitingForReply && (
-            <form className="chat-composer border rounded p-3 bg-light mt-3" onSubmit={handleSubmit}>
+            <form className={composerClassName} onSubmit={handleSubmit}>
               <div className="d-flex flex-wrap align-items-center gap-2">
                 <button
                   type="button"

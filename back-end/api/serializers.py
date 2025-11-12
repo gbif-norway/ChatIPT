@@ -67,6 +67,9 @@ class UserFileSerializer(serializers.ModelSerializer):
             'file_url',
             'file_type',
         ]
+        extra_kwargs = {
+            'dataset': {'required': False}
+        }
 
     def get_file_url(self, obj):
         if not obj.file:
@@ -201,7 +204,7 @@ class DatasetSerializer(serializers.ModelSerializer):
             )
 
         discord_bot.send_discord_message(
-            f"V2 New dataset publication starting on ChatIPT. User files: {', '.join(uploaded_names) if uploaded_names else 'none'}."
+            f"V3 New dataset publication starting on ChatIPT. User files: {', '.join(uploaded_names) if uploaded_names else 'none'}."
         )
 
         first_task = Task.objects.first()
