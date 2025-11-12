@@ -164,20 +164,8 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
 
   const CustomTabTitle = ({ children }) => <span dangerouslySetInnerHTML={{ __html: children }} />;
 
-  const uploadedFiles = currentDataset?.user_files || [];
-  const fallbackFileNameRaw = uploadedFiles[0]?.filename || '';
+  const fallbackFileNameRaw = currentDataset?.user_files?.[0]?.filename || '';
   const fallbackFileName = fallbackFileNameRaw.replace(/\([^)]*\)/g, '').trim();
-
-  const getFileBadgeVariant = (fileType = '') => {
-    const normalized = fileType.toLowerCase();
-    if (normalized.includes('tabular')) {
-      return 'success';
-    }
-    if (normalized.includes('phylogenetic')) {
-      return 'info';
-    }
-    return 'secondary';
-  };
 
   // Prebuild mailto link for publishing to GBIF production (shown after sandbox publish)
   const productionPublishMailto = (() => {
@@ -295,40 +283,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
         </div>
         <div className="col-6">
           <div className="sticky-top">
-            <div className="card mb-3 shadow-sm">
-              <div className="card-header d-flex justify-content-between align-items-center">
-                <span>
-                  <i className="bi bi-paperclip me-2" aria-hidden="true"></i>
-                  Uploaded Files
-                </span>
-                <span className="badge text-bg-secondary">{uploadedFiles.length}</span>
-              </div>
-              {uploadedFiles.length > 0 ? (
-                <ul className="list-group list-group-flush">
-                  {uploadedFiles.map((file) => (
-                    <li className="list-group-item d-flex justify-content-between align-items-start" key={file.id}>
-                      <div className="me-3">
-                        <div className="fw-semibold text-break">{file.filename}</div>
-                        <div className="small text-muted">
-                          Uploaded {new Date(file.uploaded_at).toLocaleString()}
-                        </div>
-                      </div>
-                      <span className={`badge text-bg-${getFileBadgeVariant(file.file_type || '')}`}>
-                        {file.file_type || 'Unknown'}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="card-body">
-                  <p className="mb-1 text-muted">No files uploaded yet.</p>
-                  <p className="mb-0 small text-muted">
-                    Use the paperclip in the chat to add data files or phylogenetic tree files.
-                  </p>
-                </div>
-              )}
-            </div>
-
             {tables.length > 0 ? (
               <Tabs activeKey={activeTableId} onSelect={(k) => setActiveTableId(k)} className="mb-3">
                 {tables.map((table) => (

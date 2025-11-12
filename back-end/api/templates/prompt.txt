@@ -63,6 +63,28 @@ DwC Core: {{ agent.dataset.dwc_core|default:"unknown" }}
 {% if agent.dataset.published_at %}Published at: {{ agent.dataset.published_at }}{% endif %}
 {% if agent.dataset.rejected_at %}Rejected at: {{ agent.dataset.rejected_at }}{% endif %}
 {% endif %}
+{% with eml=agent.dataset.eml %}
+{% if eml %}
+EML metadata recorded so far:
+{% if eml.temporal_scope %}- Temporal scope: {{ eml.temporal_scope }}{% endif %}
+{% if eml.geographic_scope %}- Geographic scope: {{ eml.geographic_scope }}{% endif %}
+{% if eml.taxonomic_scope %}- Taxonomic scope: {{ eml.taxonomic_scope }}{% endif %}
+{% if eml.methodology %}- Methodology: {{ eml.methodology }}{% endif %}
+{% with users=eml.users %}
+{% if users %}
+- People involved:
+{% for user in users %}
+  - {% if user.first_name or user.last_name %}{% if user.first_name %}{{ user.first_name }}{% endif %}{% if user.first_name and user.last_name %} {% endif %}{% if user.last_name %}{{ user.last_name }}{% endif %}{% else %}Name not provided{% endif %}{% if user.email %} (email: {{ user.email }}){% endif %}{% if user.orcid %} (ORCID: {{ user.orcid }}){% endif %}
+{% endfor %}
+{% endif %}
+{% endwith %}
+{% for key, value in eml.items %}
+{% if key != 'temporal_scope' and key != 'geographic_scope' and key != 'taxonomic_scope' and key != 'methodology' and key != 'users' %}
+- {{ key|capfirst }}: {{ value }}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% endwith %}
 
 Your Task (#{{ agent.task.id }} of {{ all_tasks_count }}): 
 ///
