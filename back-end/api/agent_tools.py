@@ -238,6 +238,127 @@ class GetDarwinCoreInfo(OpenAIBaseModel):
     '''
 
 
+class GetDwCExtensionInfo(OpenAIBaseModel):
+    """
+    Provide concise guidance on common Darwin Core extensions and optionally return the full XML definition.
+
+    Extension overviews (useful when deciding whether to add an extension after exhausting core fields):
+    - Description (`description.xml`): Narrative text about a taxon or resource such as morphology, behaviour, ecology, or conservation context.
+    - Distribution (`distribution_2022-02-02.xml`): Geographic distribution statements including area types, occurrence status, seasonal or life-stage qualifiers.
+    - DNA Derived Data (`dna_derived_data_2024-07-11.xml`): Links occurrences or taxa to sequence-based evidence (e.g. metabarcoding runs, marker genes, accession numbers).
+    - Identifier (`identifier.xml`): Alternative identifiers for taxa or occurrences, tracking GUIDs, LSIDs, catalogue numbers, or database references.
+    - Images (`images.xml`): Minimal image metadata (creator, license, URL) for media illustrating an occurrence or taxon.
+    - Multimedia (`multimedia.xml`): Generic multimedia attachment schema (audio, video, images) with basic descriptive and licensing fields.
+    - References (`references.xml`): Bibliographic citations that support occurrence or taxon records.
+    - Relevé (`releve_2016-05-10.xml`): Vegetation plot (relevé) descriptions including cover, stratification, sampling method, and environmental context.
+    - Species Profile (`speciesprofile_2019-01-29.xml`): Taxon-level traits such as life history, abundance, habitat preferences, and threat status.
+    - Types and Specimen (`typesandspecimen.xml`): Details of type specimens and vouchers linked to taxa, including repository and typification remarks.
+    - Vernacular Name (`vernacularname.xml`): Common names with language, locality, life stage, and source attribution.
+
+    Call without parameters to receive the overview list and usage hints.
+    Supply `extension` (case-insensitive key or filename) to receive the full XML payload from `back-end/api/dwc_extensions`.
+    """
+
+    extension: Optional[str] = Field(
+        default=None,
+        description="Optional extension key or filename (e.g. 'distribution' or 'distribution_2022-02-02.xml') to fetch the full XML definition."
+    )
+
+    def run(self):
+        base_dir = os.path.join(os.path.dirname(__file__), 'dwc_extensions')
+        extensions = {
+            'description': {
+                'label': 'Description',
+                'file': 'description.xml',
+                'overview': 'Narrative text about a taxon or resource such as morphology, behaviour, ecology, or conservation context.'
+            },
+            'distribution': {
+                'label': 'Distribution',
+                'file': 'distribution_2022-02-02.xml',
+                'overview': 'Geographic distribution statements including area types, occurrence status, seasonal or life-stage qualifiers.'
+            },
+            'dna_derived_data': {
+                'label': 'DNA Derived Data',
+                'file': 'dna_derived_data_2024-07-11.xml',
+                'overview': 'Sequence-based evidence linking taxa or occurrences to laboratory outputs, marker genes, and accession numbers.'
+            },
+            'identifier': {
+                'label': 'Identifier',
+                'file': 'identifier.xml',
+                'overview': 'Alternative identifiers such as GUIDs, LSIDs, catalogue numbers, or cross-database references.'
+            },
+            'images': {
+                'label': 'Images',
+                'file': 'images.xml',
+                'overview': 'Minimal image metadata (creator, license, URL) for media illustrating an occurrence or taxon.'
+            },
+            'multimedia': {
+                'label': 'Multimedia',
+                'file': 'multimedia.xml',
+                'overview': 'Generic multimedia attachment schema covering audio, video, images with licensing and attribution.'
+            },
+            'references': {
+                'label': 'References',
+                'file': 'references.xml',
+                'overview': 'Bibliographic citations that support occurrence or taxon records.'
+            },
+            'releve': {
+                'label': 'Relevé',
+                'file': 'releve_2016-05-10.xml',
+                'overview': 'Vegetation relevé (plot) descriptions capturing cover, stratification, environmental and methodological details.'
+            },
+            'speciesprofile': {
+                'label': 'Species Profile',
+                'file': 'speciesprofile_2019-01-29.xml',
+                'overview': 'Taxon-level traits such as habitat preferences, abundance, and life history notes.'
+            },
+            'typesandspecimen': {
+                'label': 'Types and Specimen',
+                'file': 'typesandspecimen.xml',
+                'overview': 'Details of type specimens and vouchers including repository, type status, and remarks.'
+            },
+            'vernacularname': {
+                'label': 'Vernacular Name',
+                'file': 'vernacularname.xml',
+                'overview': 'Common names annotated with language, locality, sex or life stage relevance, and sources.'
+            }
+        }
+
+        if not self.extension:
+            lines = [
+                "Darwin Core extension quick reference:",
+                *(f"- {meta['label']} (`{meta['file']}`): {meta['overview']}" for meta in extensions.values()),
+                "",
+                "Call this tool with `extension` set to a key (e.g. 'distribution', 'dna_derived_data') or the exact filename to receive the full XML definition."
+            ]
+            return "\n".join(lines)
+
+        requested = self.extension.strip().lower()
+        match_key = None
+        for key, meta in extensions.items():
+            candidates = {key, meta['file'].lower()}
+            if requested in candidates:
+                match_key = key
+                break
+        if match_key is None:
+            return (
+                f"Extension '{self.extension}' not recognised. "
+                f"Available keys: {', '.join(sorted(extensions.keys()))}. "
+                "Use the exact filename or one of the listed keys."
+            )
+
+        filename = extensions[match_key]['file']
+        path = os.path.join(base_dir, filename)
+        if not os.path.exists(path):
+            return (
+                f"Extension file '{filename}' not found in '{base_dir}'. "
+                "Ensure the XML has been downloaded."
+            )
+
+        with open(path, 'r', encoding='utf-8') as handle:
+            return handle.read()
+
+
 class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
     """
     A few automatic basic checks for an Agent's tables against the Darwin Core standard.
@@ -626,21 +747,10 @@ class RollBack(OpenAIBaseModel):
     agent_id: PositiveInt = Field(...)
 
     def run(self):
-        from api.models import Agent, Dataset, Table, Message
+        from api.models import Agent, Message
         agent = Agent.objects.get(id=self.agent_id)
         agent.dataset.table_set.all().delete()
-        dfs = Dataset.get_dfs_from_user_file(agent.dataset.file, agent.dataset.file.name)
-        # Mirror initial upload behavior: discard sheets with <2 data rows when multiple sheets exist
-        try:
-            if isinstance(dfs, dict) and len(dfs) > 1:
-                dfs = {name: df for name, df in dfs.items() if getattr(df, '__len__', lambda: 0)() >= 2}
-        except Exception:
-            # If anything odd happens, fall back to original dfs without filtering
-            pass
-        tables = []
-        for sheet_name, df in dfs.items():
-            if not df.empty:
-                tables.append(Table.objects.create(dataset=agent.dataset, title=sheet_name, df=df))
+        tables = agent.dataset.rebuild_tables_from_user_files()
 
         # Get all code run 
         code_snippets = []

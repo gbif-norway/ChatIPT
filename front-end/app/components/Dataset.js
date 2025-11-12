@@ -164,14 +164,31 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
 
   const CustomTabTitle = ({ children }) => <span dangerouslySetInnerHTML={{ __html: children }} />;
 
+  const uploadedFiles = currentDataset?.user_files || [];
+  const fallbackFileNameRaw = uploadedFiles[0]?.filename || '';
+  const fallbackFileName = fallbackFileNameRaw.replace(/\([^)]*\)/g, '').trim();
+
+  const getFileBadgeVariant = (fileType = '') => {
+    const normalized = fileType.toLowerCase();
+    if (normalized.includes('tabular')) {
+      return 'success';
+    }
+    if (normalized.includes('phylogenetic')) {
+      return 'info';
+    }
+    return 'secondary';
+  };
+
   // Prebuild mailto link for publishing to GBIF production (shown after sandbox publish)
   const productionPublishMailto = (() => {
     if (!currentDataset) return null;
     const subject = '(ChatIPT) Request to publish dataset to GBIF production';
-    const title = currentDataset.title || (currentDataset.file ? currentDataset.file.split(/\//).pop().replace(/\([^)]*\)/g, '').trim() : '');
-    const body = `Hello GBIF Norway Helpdesk,\n\nI’m pleased to confirm that my dataset has been successfully published to the GBIF Sandbox for validation. I would like to request its publication to GBIF production.\n\n- Dataset title: ${title}\n- Darwin Core Archive (DwC-A): ${currentDataset.dwca_url}\n- GBIF Sandbox dataset page: ${currentDataset.gbif_url}\n\nPlease let me know if you need any further information or changes before proceeding.\n\nThank you for your assistance.\n\nBest regards,`;
+    const mailtoTitle = currentDataset.title || fallbackFileName;
+    const body = `Hello GBIF Norway Helpdesk,\n\nI’m pleased to confirm that my dataset has been successfully published to the GBIF Sandbox for validation. I would like to request its publication to GBIF production.\n\n- Dataset title: ${mailtoTitle}\n- Darwin Core Archive (DwC-A): ${currentDataset.dwca_url}\n- GBIF Sandbox dataset page: ${currentDataset.gbif_url}\n\nPlease let me know if you need any further information or changes before proceeding.\n\nThank you for your assistance.\n\nBest regards,`;
     return `mailto:helpdesk@gbif.no?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   })();
+
+  const title = currentDataset.title || fallbackFileName;
 
   return (
     <div className="container">
@@ -179,7 +196,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
         <div className="col-12 alerts-div">
           <div className="mb-3">
             <div className="d-flex align-items-center gap-2">
-              <h2>{currentDataset.title || currentDataset.file.split(/\//).pop().replace(/\([^)]*\)/g, '').trim()}</h2>
+              <h2>{title || 'Untitled Dataset'}</h2>
               <span className="badge text-bg-secondary">Started {new Date(currentDataset.created_at).toLocaleString()}</span>
               {currentDataset.structure_notes && (
                 <button 
@@ -278,12 +295,48 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
         </div>
         <div className="col-6">
           <div className="sticky-top">
-            {tables.length > 0 && (
+            <div className="card mb-3 shadow-sm">
+              <div className="card-header d-flex justify-content-between align-items-center">
+                <span>
+                  <i className="bi bi-paperclip me-2" aria-hidden="true"></i>
+                  Uploaded Files
+                </span>
+                <span className="badge text-bg-secondary">{uploadedFiles.length}</span>
+              </div>
+              {uploadedFiles.length > 0 ? (
+                <ul className="list-group list-group-flush">
+                  {uploadedFiles.map((file) => (
+                    <li className="list-group-item d-flex justify-content-between align-items-start" key={file.id}>
+                      <div className="me-3">
+                        <div className="fw-semibold text-break">{file.filename}</div>
+                        <div className="small text-muted">
+                          Uploaded {new Date(file.uploaded_at).toLocaleString()}
+                        </div>
+                      </div>
+                      <span className={`badge text-bg-${getFileBadgeVariant(file.file_type || '')}`}>
+                        {file.file_type || 'Unknown'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="card-body">
+                  <p className="mb-1 text-muted">No files uploaded yet.</p>
+                  <p className="mb-0 small text-muted">
+                    Use the paperclip in the chat to add data files or phylogenetic tree files.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {tables.length > 0 ? (
               <Tabs activeKey={activeTableId} onSelect={(k) => setActiveTableId(k)} className="mb-3">
                 {tables.map((table) => (
-                  <Tab eventKey={table.id}
+                  <Tab
+                    eventKey={table.id}
                     title={<CustomTabTitle>{`${table.title} <small>(ID ${table.id})</small>`}</CustomTabTitle>}
-                    key={table.id}>
+                    key={table.id}
+                  >
                     <DataTable
                       columns={table.df[0] ? Object.keys(table.df[0]).map(column => ({
                         name: column,
@@ -298,6 +351,13 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                   </Tab>
                 ))}
               </Tabs>
+            ) : (
+              <div className="alert alert-info">
+                <strong>No tables to display yet.</strong>
+                <div className="small">
+                  Tree files are stored for later use. Upload a spreadsheet to generate preview tables.
+                </div>
+              </div>
             )}
           </div>
         </div>

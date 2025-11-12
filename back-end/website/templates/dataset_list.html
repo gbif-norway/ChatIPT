@@ -5,7 +5,22 @@
  or continue chatting about a previous dataset:</p>
 <ul>
 {% for dataset in dataset_list %}
-    <li><a href="{% url 'chat_detail' dataset.id %}">File name: {{ dataset.filename }} - Created: {{ dataset.created_at }}</a></li>
+    <li>
+      <a href="{% url 'chat_detail' dataset.id %}">
+        {% with files=dataset.user_files.all %}
+          {% with files|first as first_file %}
+            {% if dataset.title %}
+              {{ dataset.title }}
+            {% elif first_file %}
+              {{ first_file.filename }}
+            {% else %}
+              Untitled dataset
+            {% endif %}
+          {% endwith %}
+        {% endwith %}
+        - Created: {{ dataset.created_at }}
+      </a>
+    </li>
 {% endfor %}
 </ul>
 {% else %}

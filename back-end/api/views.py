@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status
-from api.serializers import DatasetSerializer, DatasetListSerializer, TableSerializer, MessageSerializer, AgentSerializer, TaskSerializer
-from api.models import Dataset, Table, Message, Agent, Task
+from rest_framework.exceptions import ValidationError
+from api.serializers import DatasetSerializer, DatasetListSerializer, TableSerializer, MessageSerializer, AgentSerializer, TaskSerializer, UserFileSerializer
+from api.models import Dataset, Table, Message, Agent, Task, UserFile
 from rest_framework.response import Response
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny, BasePermission
@@ -433,6 +434,41 @@ class TableViewSet(viewsets.ModelViewSet):
         return Table.objects.filter(dataset__user=self.request.user).order_by('-updated_at', '-id')
 
 
+class UserFileViewSet(viewsets.ModelViewSet):
+    serializer_class = UserFileSerializer
+    permission_classes = [IsAuthenticatedOrSuperuser]
+    filterset_fields = ['dataset']
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        queryset = UserFile.objects.all().order_by('-uploaded_at', '-id')
+        dataset_id = self.request.query_params.get('dataset')
+        if dataset_id:
+            queryset = queryset.filter(dataset_id=dataset_id)
+
+        if self.request.user.is_superuser:
+            return queryset
+
+        return queryset.filter(dataset__user=self.request.user)
+
+    def perform_create(self, serializer):
+        dataset_id = self.request.data.get('dataset') or self.request.data.get('dataset_id')
+        if not dataset_id:
+            raise ValidationError({'dataset': 'Dataset is required.'})
+
+        try:
+            if self.request.user.is_superuser:
+                dataset = Dataset.objects.get(id=dataset_id)
+            else:
+                dataset = Dataset.objects.get(id=dataset_id, user=self.request.user)
+        except Dataset.DoesNotExist:
+            raise ValidationError({'dataset': 'Dataset not found or not accessible.'})
+
+        # Ensure user cannot override dataset assignment
+        if hasattr(serializer, 'validated_data'):
+            serializer.validated_data.pop('dataset', None)
+        serializer.save(dataset=dataset)
+
 class TaskViewSet(viewsets.ModelViewSet):
     serializer_class = TaskSerializer
     permission_classes = [IsAuthenticated]
@@ -456,6 +492,66 @@ class MessageViewSet(viewsets.ModelViewSet):
         
         # Regular users only see their own messages
         return Message.objects.filter(agent__dataset__user=self.request.user)
+
+    def perform_create(self, serializer):
+        agent = serializer.validated_data.get('agent')
+        openai_obj = serializer.validated_data.get('openai_obj') or {}
+
+        if agent and (openai_obj or {}).get('role') == Message.Role.USER:
+            dataset = agent.dataset
+            previous_message = agent.message_set.order_by('-created_at').first()
+            cutoff = previous_message.created_at if previous_message else None
+
+            new_files_qs = dataset.user_files.order_by('uploaded_at', 'id')
+            if cutoff:
+                new_files_qs = new_files_qs.filter(uploaded_at__gt=cutoff)
+            new_files = list(new_files_qs)
+
+            new_tables_qs = dataset.table_set.order_by('created_at', 'id')
+            if cutoff:
+                new_tables_qs = new_tables_qs.filter(created_at__gt=cutoff)
+            new_tables = list(new_tables_qs)
+
+            note_sections = []
+            if new_files:
+                file_descriptions = []
+                for user_file in new_files:
+                    description = user_file.filename
+                    if user_file.file_type == UserFile.FileType.TREE:
+                        preview = self._read_tree_preview(user_file)
+                        if preview:
+                            description = f"{description} (preview: {preview})"
+                    file_descriptions.append(description)
+                note_sections.append(f"User uploaded file(s): {', '.join(file_descriptions)}")
+
+            if new_tables:
+                note_sections.append("New table ids: [" + ", ".join(str(table.id) for table in new_tables) + "]")
+
+            if note_sections:
+                note = "[NOTE: " + "; ".join(note_sections) + "]"
+                content = (openai_obj.get('content') or '').strip()
+                openai_obj['content'] = f"{content}\n\n{note}" if content else note
+                openai_obj['role'] = Message.Role.USER
+                serializer.validated_data['openai_obj'] = openai_obj
+
+        serializer.save()
+
+    @staticmethod
+    def _read_tree_preview(user_file, max_chars=200):
+        try:
+            user_file.file.open('rb')
+            raw = user_file.file.read(max_chars * 4)
+        except Exception:
+            return ''
+        finally:
+            try:
+                user_file.file.close()
+            except Exception:
+                pass
+
+        text = raw.decode('utf-8', errors='replace')
+        compact = " ".join(text.split())
+        return compact[:max_chars]
 
 
 class AgentViewSet(viewsets.ModelViewSet):

@@ -17,6 +17,7 @@ import tempfile
 import re
 import numpy as np
 import io
+from pathlib import Path
 
 
 class CustomUser(AbstractUser):
@@ -40,7 +41,6 @@ class Dataset(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='datasets', null=True, blank=True)
     orcid = models.CharField(max_length=2000, blank=True)
-    file = models.FileField(upload_to='user_files')
     title = models.CharField(max_length=5000, blank=True, default='')
     structure_notes = models.TextField(default='', blank=True)
     description = models.CharField(max_length=5000, blank=True, default='')
@@ -57,9 +57,19 @@ class Dataset(models.Model):
         TAXONOMY = 'taxonomy'
     dwc_core = models.CharField(max_length=30, choices=DWCCore.choices, blank=True)
 
-    @property
-    def filename(self):
-        return os.path.basename(self.file.name)
+    def rebuild_tables_from_user_files(self):
+        """
+        Regenerate tables from all stored user files.
+        Existing tables should be cleared by the caller before invoking this.
+        """
+        created_tables = []
+        for user_file in self.user_files.order_by('uploaded_at', 'id'):
+            file_type, dfs = user_file.extract_data()
+            if file_type != user_file.FileType.TABULAR:
+                continue
+            filtered_dfs = user_file.filter_dataframes(dfs)
+            created_tables.extend(user_file.create_tables(filtered_dfs))
+        return created_tables
 
     def next_agent(self):
         self.refresh_from_db()
@@ -98,43 +108,166 @@ class Dataset(models.Model):
             first_task.create_agent_with_system_messages(dataset=self)
             return self.next_agent()
 
-    @staticmethod
-    def get_dfs_from_user_file(file, file_name):
-        try:
-            file_content = file.read()
-            file_io = io.StringIO(file_content.decode('utf-8', errors='surrogateescape'))
-            df = pd.read_csv(file_io, dtype='str', encoding='utf-8', encoding_errors='surrogateescape', sep=None, engine='python', header=0)
-            return {file_name: df}
-        except Exception as e:
-            try:
-                workbook = openpyxl.load_workbook(file)
-                for sheet in workbook.worksheets:
-                    for row in sheet.iter_rows():
-                        for cell in row:
-                            if cell.data_type == 'f':  # 'f' indicates a formula
-                                cell.value = '' # f'[FORMULA: {cell.value}]'
-                                cell.value = '' # f'[FORMULA: {cell.value}]'
-                    for merged_cell in list(sheet.merged_cells.ranges):
-                        min_col, min_row, max_col, max_row = merged_cell.min_col, merged_cell.min_row, merged_cell.max_col, merged_cell.max_row
-                        value = sheet.cell(row=min_row, column=min_col).value
-                        sheet.unmerge_cells(str(merged_cell))
-                        for row in range(min_row, max_row + 1):
-                            for col in range(min_col, max_col + 1):
-                                sheet.cell(row=row, column=col).value = f"{value} [UNMERGED CELL]"
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-                    temp_file_name = tmp.name
-                    workbook.save(temp_file_name)
-                dfs = pd.read_excel(temp_file_name, dtype='str', sheet_name=None)
-                os.remove(temp_file_name)
-                return dfs
-            except ValueError as ve:
-                return {"error": f"Unable to read workbook: {str(ve)}. The file may contain invalid XML or be corrupted."}
-            except Exception as e:
-                return {"error": f"An error occurred while processing the file: {str(e)}."}
-
     class Meta:
         get_latest_by = 'created_at'
         ordering = ['created_at']
+
+
+class UserFile(models.Model):
+    class FileType(models.TextChoices):
+        TABULAR = 'tabular', _('Tabular data')
+        TREE = 'tree', _('Phylogenetic tree')
+        UNKNOWN = 'unknown', _('Unknown')
+
+    TABULAR_TEXT_EXTENSIONS = {'.csv', '.tsv', '.txt'}
+    TABULAR_EXCEL_EXTENSIONS = {'.xlsx', '.xls', '.xlsm', '.xlsb', '.ods'}
+    TREE_EXTENSIONS = {'.newick', '.nwk', '.nex', '.nexus', '.tre', '.tree'}
+
+    dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, related_name='user_files')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    file = models.FileField(upload_to='user_files')
+
+    def __str__(self):
+        label = self.file_type_label or 'unknown'
+        return f"{self.filename} ({label})"
+
+    @property
+    def filename(self):
+        return os.path.basename(self.file.name)
+
+    @property
+    def file_type(self):
+        return self._infer_file_type()
+
+    @property
+    def file_type_label(self):
+        file_type = self.file_type
+        return file_type.label if hasattr(file_type, 'label') else str(file_type)
+
+    def extract_data(self):
+        """
+        Determine the file type and return any tabular dataframes.
+        """
+        file_type = self._infer_file_type()
+        dataframes = {}
+
+        if file_type == self.FileType.TABULAR:
+            dataframes = self._load_tabular_dataframes()
+
+        return file_type, dataframes
+
+    def _infer_file_type(self):
+        ext = Path(self.file.name).suffix.lower()
+        if ext in self.TREE_EXTENSIONS:
+            return self.FileType.TREE
+        if ext in self.TABULAR_TEXT_EXTENSIONS or ext in self.TABULAR_EXCEL_EXTENSIONS:
+            return self.FileType.TABULAR
+        return self.FileType.UNKNOWN
+
+    def _load_tabular_dataframes(self):
+        ext = Path(self.file.name).suffix.lower()
+
+        if ext in self.TABULAR_TEXT_EXTENSIONS:
+            return self._load_text_delimited()
+
+        if ext in self.TABULAR_EXCEL_EXTENSIONS:
+            return self._load_excel_workbook()
+
+        # Fallback: attempt delimited first, then Excel
+        try:
+            return self._load_text_delimited()
+        except Exception:
+            return self._load_excel_workbook()
+
+    def _load_text_delimited(self):
+        self.file.open('rb')
+        try:
+            file_content = self.file.read()
+        finally:
+            self.file.close()
+
+        file_io = io.StringIO(file_content.decode('utf-8', errors='surrogateescape'))
+        df = pd.read_csv(
+            file_io,
+            dtype='str',
+            encoding='utf-8',
+            encoding_errors='surrogateescape',
+            sep=None,
+            engine='python',
+            header=0,
+        )
+        return {self.filename: df}
+
+    def _load_excel_workbook(self):
+        self.file.open('rb')
+        try:
+            file_bytes = self.file.read()
+        finally:
+            self.file.close()
+
+        try:
+            workbook = openpyxl.load_workbook(io.BytesIO(file_bytes))
+            for sheet in workbook.worksheets:
+                for row in sheet.iter_rows():
+                    for cell in row:
+                        if cell.data_type == 'f':
+                            cell.value = ''
+                for merged_cell in list(sheet.merged_cells.ranges):
+                    min_col, min_row, max_col, max_row = merged_cell.min_col, merged_cell.min_row, merged_cell.max_col, merged_cell.max_row
+                    value = sheet.cell(row=min_row, column=min_col).value
+                    sheet.unmerge_cells(str(merged_cell))
+                    for row in range(min_row, max_row + 1):
+                        for col in range(min_col, max_col + 1):
+                            sheet.cell(row=row, column=col).value = f"{value} [UNMERGED CELL]"
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+                temp_file_name = tmp.name
+                workbook.save(temp_file_name)
+
+            try:
+                dfs = pd.read_excel(temp_file_name, dtype='str', sheet_name=None)
+            finally:
+                os.remove(temp_file_name)
+
+            return dfs
+        except ValueError as ve:
+            raise ValueError(f"Unable to read workbook: {ve}. The file may contain invalid XML or be corrupted.")
+        except Exception as e:
+            raise Exception(f"An error occurred while processing the file: {e}.")
+
+    @staticmethod
+    def filter_dataframes(dfs):
+        if not isinstance(dfs, dict):
+            return dfs
+
+        original_sheet_count = len(dfs)
+        if original_sheet_count > 1:
+            filtered_dfs = {name: df for name, df in dfs.items() if len(df) >= 2}
+            if not filtered_dfs:
+                raise ValueError(
+                    "All sheets in your spreadsheet have only 1 (or 0) data row(s). "
+                    "I need a larger spreadsheet to be able to help you with publication. "
+                    "Please refresh and try again."
+                )
+            return filtered_dfs
+
+        for sheet_name, df in dfs.items():
+            if len(df) < 2:
+                raise ValueError(
+                    f"Your sheet {sheet_name} has only {len(df) + 1} row(s), are you sure you uploaded the right thing? "
+                    "I need a larger spreadsheet to be able to help you with publication. Please refresh and try again."
+                )
+        return dfs
+
+    def create_tables(self, dfs):
+        tables = []
+        for sheet_name, df in dfs.items():
+            if hasattr(df, 'empty') and not df.empty:
+                tables.append(Table.objects.create(dataset=self.dataset, title=sheet_name, df=df))
+        return tables
+
+    class Meta:
+        ordering = ['uploaded_at', 'id']
 
 
 class Task(models.Model):  # See tasks.yaml for the only objects this model is populated with
@@ -154,6 +287,7 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
                     agent_tools.Python.__name__,
                     agent_tools.BasicValidationForSomeDwCTerms.__name__,
                     agent_tools.GetDarwinCoreInfo.__name__,
+                    agent_tools.GetDwCExtensionInfo.__name__,
                     agent_tools.RollBack.__name__,
                     agent_tools.UploadDwCA.__name__,
                     agent_tools.PublishToGBIF.__name__,
@@ -387,11 +521,30 @@ class Agent(models.Model):
         
         agent = cls.objects.create(dataset=dataset, task=task)
         agent.tables.set([t.id for t in tables])
-        system_message_text = render_to_string('prompt.txt', context={ 'agent': agent, 'all_tasks_count': Task.objects.all().count() })
+        system_message_text = agent.regenerate_system_message()
         logger = logging.getLogger(__name__)
         logger.info(system_message_text)
-        # import pdb; pdb.set_trace()
-        Message.objects.create(agent=agent, openai_obj={'content': system_message_text, 'role': Message.Role.SYSTEM})
+        return agent
+
+    def regenerate_system_message(self, new_table_cutoff=None):
+        tables = list(Table.objects.filter(dataset_id=self.dataset_id).order_by('created_at', 'id'))
+        self.tables.set([t.id for t in tables])
+        context = {
+            'agent': self,
+            'all_tasks_count': Task.objects.count(),
+            'new_table_cutoff': new_table_cutoff,
+        }
+        system_message_text = render_to_string('prompt.txt', context=context)
+        system_message = self.message_set.filter(openai_obj__role=Message.Role.SYSTEM).order_by('created_at').first()
+        if system_message:
+            openai_obj = system_message.openai_obj or {}
+            openai_obj['content'] = system_message_text
+            openai_obj['role'] = Message.Role.SYSTEM
+            system_message.openai_obj = openai_obj
+            system_message.save(update_fields=['openai_obj'])
+        else:
+            Message.objects.create(agent=self, openai_obj={'content': system_message_text, 'role': Message.Role.SYSTEM})
+        return system_message_text
 
     def next_message(self):
         last_message = self.message_set.last()
@@ -405,6 +558,13 @@ class Agent(models.Model):
         self.busy_thinking = True
         self.save()
         try:
+            recent_non_system_messages = list(
+                self.message_set.exclude(openai_obj__role=Message.Role.SYSTEM).order_by('-created_at')[:2]
+            )
+            previous_non_system_message = recent_non_system_messages[1] if len(recent_non_system_messages) > 1 else None
+            new_table_cutoff = previous_non_system_message.created_at if previous_non_system_message else None
+            self.regenerate_system_message(new_table_cutoff)
+
             # Main GPT interaction
             response_message = create_chat_completion(self.message_set.all(), self.task.functions)
 

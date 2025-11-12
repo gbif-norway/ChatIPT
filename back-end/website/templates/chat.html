@@ -1,7 +1,14 @@
 {% extends "base_template.html" %}
 {% block content %}
   Chat
-  {{ dataset.filename }}
+  {% with files=dataset.user_files.all %}
+    {% if files %}
+      Files:
+      {% for file in files %}
+        {{ file.filename }}{% if not forloop.last %}, {% endif %}
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
   <div id="js-framework-home"></div>
   {{ dataset.id|json_script:'dataset_id' }}
   <script src="http://chatipt-front.local/static/js/bundle.js"></script>
