@@ -12,7 +12,7 @@
             *   Note any other structural peculiarities.
         3.  **Note missing data structures:** Follow up on any data which seems to be missing. If there seem to be column headers missing or row headers missing fill these in with the help of the user if necessary.
         4.  **Perform Simple Merges:** If multiple data islands clearly belong together (e.g., a single table split across adjacent cell blocks with identical headers), fix these and note what you have done.
-        5.  **Any other notes:** Note anything additional of interest. 
+        5.  **Any other notes:** Note anything additional of interest. IMPORTANT - if it looks like there is missing data (e.g. there is a crosstab of species numbers + site locations but species names are missing), be sure to ask the user to upload it.
       When you have completed this to your satisfaction, use the SetBasicMetadata to save this report to structure_notes, ensuring you capture the full context and any important notes from the user (e.g. if there is missing data). DO NOT set suitable_for_publication_on_gbif to be False, this is a check we do later with more context.
       If the user responds in a language other than English, remember to record it using SetBasicMetadata.
 
