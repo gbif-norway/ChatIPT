@@ -20,6 +20,13 @@ Check `README.md` for high-level project context.
 - Update the roll-back tooling and prompt templates to operate on the full `UserFile` collection.
 - Broadcast uploaded filenames to Discord so support staff see all inputs.
 
+## Upload-to-Message Handling
+- Uploading files remains a separate step from posting a chat message, but the message endpoint now inspects recent activity on the dataset to see which files and tables appeared after the previous user message.
+- When a new user message is stored (including empty text), the backend appends an automated note that lists those filenames, includes any freshly created table IDs, and embeds a 200-character preview for tree files.
+- Agents refresh their table linkage before every GPT call and regenerate the system prompt so it always includes the latest tables.
+- The prompt template marks tables created after the latest non-system message as `(NEWLY CREATED)` and prints created/updated timestamps, making recent uploads obvious to GPT-5.
+- This keeps GPT-5 aware of new data without persisting long-lived `UserFile` ↔ `Table` relationships.
+
 ## Notes
 - All uploaded files are first-class; there is no “main file” concept anymore.
 - Tree files (nexus/newick/tre) are stored for metadata only today—parsing remains a follow-up task.

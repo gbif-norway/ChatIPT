@@ -521,11 +521,30 @@ class Agent(models.Model):
         
         agent = cls.objects.create(dataset=dataset, task=task)
         agent.tables.set([t.id for t in tables])
-        system_message_text = render_to_string('prompt.txt', context={ 'agent': agent, 'all_tasks_count': Task.objects.all().count() })
+        system_message_text = agent.regenerate_system_message()
         logger = logging.getLogger(__name__)
         logger.info(system_message_text)
-        # import pdb; pdb.set_trace()
-        Message.objects.create(agent=agent, openai_obj={'content': system_message_text, 'role': Message.Role.SYSTEM})
+        return agent
+
+    def regenerate_system_message(self, new_table_cutoff=None):
+        tables = list(Table.objects.filter(dataset_id=self.dataset_id).order_by('created_at', 'id'))
+        self.tables.set([t.id for t in tables])
+        context = {
+            'agent': self,
+            'all_tasks_count': Task.objects.count(),
+            'new_table_cutoff': new_table_cutoff,
+        }
+        system_message_text = render_to_string('prompt.txt', context=context)
+        system_message = self.message_set.filter(openai_obj__role=Message.Role.SYSTEM).order_by('created_at').first()
+        if system_message:
+            openai_obj = system_message.openai_obj or {}
+            openai_obj['content'] = system_message_text
+            openai_obj['role'] = Message.Role.SYSTEM
+            system_message.openai_obj = openai_obj
+            system_message.save(update_fields=['openai_obj'])
+        else:
+            Message.objects.create(agent=self, openai_obj={'content': system_message_text, 'role': Message.Role.SYSTEM})
+        return system_message_text
 
     def next_message(self):
         last_message = self.message_set.last()
@@ -539,6 +558,13 @@ class Agent(models.Model):
         self.busy_thinking = True
         self.save()
         try:
+            recent_non_system_messages = list(
+                self.message_set.exclude(openai_obj__role=Message.Role.SYSTEM).order_by('-created_at')[:2]
+            )
+            previous_non_system_message = recent_non_system_messages[1] if len(recent_non_system_messages) > 1 else None
+            new_table_cutoff = previous_non_system_message.created_at if previous_non_system_message else None
+            self.regenerate_system_message(new_table_cutoff)
+
             # Main GPT interaction
             response_message = create_chat_completion(self.message_set.all(), self.task.functions)
 
