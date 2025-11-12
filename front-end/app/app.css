@@ -26,6 +26,10 @@ body { overflow: auto !important }
 .messages h1 { font-size: 1.5em; font-weight: bold; }
 .complete h2 { color: #c0d6c5 } 
 .user-input, .input-group-append, .user-input-loading { margin-top: 20px; margin-bottom: 10px; }
+.chat-composer .user-input {
+    margin-top: 0;
+    margin-bottom: 0;
+}
 .input-group-append .input-group-text { border-top-left-radius: 0; border-bottom-left-radius: 0;}
 
 .text-bg-success { background-color: #90d28b}

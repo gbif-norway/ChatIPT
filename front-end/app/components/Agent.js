@@ -2,6 +2,8 @@ import Message from './Message';
 import { useState, useEffect, useRef } from 'react';
 import Accordion from 'react-bootstrap/Accordion';
 import Badge from 'react-bootstrap/Badge';
+import OverlayTrigger from 'react-bootstrap/OverlayTrigger';
+import Tooltip from 'react-bootstrap/Tooltip';
 import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
 import { getLoadingText } from '../utils/loading.js';
@@ -11,6 +13,45 @@ import {
   isExtensionAllowed
 } from '../utils/uploadConstraints.js';
 import { useTheme } from '../contexts/ThemeContext.js';
+
+const normalizeMessageContent = (content) => {
+  if (!content) {
+    return '';
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((entry) => {
+        if (typeof entry === 'string') {
+          return entry;
+        }
+        if (entry && typeof entry === 'object') {
+          if (typeof entry.text === 'string') {
+            return entry.text;
+          }
+          return JSON.stringify(entry);
+        }
+        return '';
+      })
+      .join('\n')
+      .trim();
+  }
+
+  if (typeof content === 'object') {
+    if (typeof content.text === 'string') {
+      return content.text.trim();
+    }
+    return JSON.stringify(content);
+  }
+
+  return String(content).trim();
+};
+
+const getComparableMessageText = (content) => {
+  const normalized = normalizeMessageContent(content);
+  const [main] = normalized.split('\n\n[NOTE:');
+  return main.trim();
+};
 
 const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
   const [userInput, setUserInput] = useState("");
@@ -64,10 +105,15 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
     
     // Clear optimistic message if the server data now contains a user message with the same content
     if (optimisticMessage && agent.message_set?.length > 0) {
-      const hasMatchingUserMessage = agent.message_set.some(message => 
-        message.role === 'user' && 
-        message.openai_obj.content === optimisticMessage.openai_obj.content
-      );
+      const optimisticComparable = getComparableMessageText(optimisticMessage.openai_obj?.content);
+
+      const hasMatchingUserMessage = agent.message_set.some((message) => {
+        if (message.role !== 'user') {
+          return false;
+        }
+        const comparable = getComparableMessageText(message.openai_obj?.content);
+        return comparable === optimisticComparable && comparable.length > 0;
+      });
       
       if (hasMatchingUserMessage) {
         console.log(`[${timestamp}] ✅ Found matching user message in server data - clearing optimistic message`);
@@ -366,6 +412,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
     'chat-composer border rounded p-3 mt-3',
     isDark ? 'bg-dark border-secondary text-light' : 'bg-light'
   ].join(' ');
+  const showSendTooltip = selectedFiles.length > 0 && !isUserSending;
 
   return (
     <>
@@ -427,10 +474,21 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
                     aria-label="Message ChatIPT"
                   />
                 </div>
-                <button type="submit" className="btn btn-primary d-flex align-items-center gap-1" disabled={isUserSending}>
-                  <i className="bi bi-send-fill" aria-hidden="true"></i>
-                  <span className="d-none d-md-inline">Send</span>
-                </button>
+                <OverlayTrigger
+                  placement="top"
+                  overlay={
+                    <Tooltip id={`send-tooltip-${agent.id}`}>
+                      Click send to upload your selected files.
+                    </Tooltip>
+                  }
+                  show={showSendTooltip}
+                  trigger={[]}
+                >
+                  <button type="submit" className="btn btn-primary d-flex align-items-center gap-1" disabled={isUserSending}>
+                    <i className="bi bi-send-fill" aria-hidden="true"></i>
+                    <span className="d-none d-md-inline">Send</span>
+                  </button>
+                </OverlayTrigger>
               </div>
 
               {selectedFiles.length > 0 && (

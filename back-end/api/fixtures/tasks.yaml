@@ -34,7 +34,7 @@
 
       *   Is the data primarily biological (species occurrences, species lists, ecological survey data)?
       *   If the data appears to be non-biological (e.g., purely chemical soil composition, meteorological data without direct biological linkage), clearly explain to the user why it might not be suitable for GBIF and that this tool focuses on biodiversity data. IMPORTANT! Give the user a chance to respond until you both agree the dataset is not suitable for publication GBIF, only then should you set the suitable_for_publication_on_gbif flag to False using SetBasicMetadata, if it's clearly unsuitable.
-      *   If the user wishes to upload a new file with additional data, ask them to create a new dataset to do this as we don't yet have a feature allowing them to update their file or add new files in this currenct conversation.
+      *   Prompt the user to upload a new file with additional data if necessary. They have access to a paper clip button in the chat interface to do this.
       *   Leave all data transformation and cleaning to the next agent.
 
 - model: api.task
