@@ -499,12 +499,8 @@ class MessageViewSet(viewsets.ModelViewSet):
 
         if agent and (openai_obj or {}).get('role') == Message.Role.USER:
             dataset = agent.dataset
-            last_user_message = None
-            for previous_message in agent.message_set.order_by('-created_at').only('created_at', 'openai_obj'):
-                if (previous_message.openai_obj or {}).get('role') == Message.Role.USER:
-                    last_user_message = previous_message
-                    break
-            cutoff = last_user_message.created_at if last_user_message else None
+            previous_message = agent.message_set.order_by('-created_at').first()
+            cutoff = previous_message.created_at if previous_message else None
 
             new_files_qs = dataset.user_files.order_by('uploaded_at', 'id')
             if cutoff:
