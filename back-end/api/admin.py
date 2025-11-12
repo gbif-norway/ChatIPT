@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from .models import CustomUser, Dataset, Task, Table, Agent, Message
+from .models import CustomUser, Dataset, Task, Table, Agent, Message, UserFile
 
 
 @admin.register(CustomUser)
@@ -51,6 +51,19 @@ class TableAdmin(admin.ModelAdmin):
     list_filter = ('created_at', 'updated_at')
     search_fields = ('title', 'description', 'dataset__title')
     readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(UserFile)
+class UserFileAdmin(admin.ModelAdmin):
+    list_display = ('filename', 'dataset', 'uploaded_at', 'get_file_type')
+    list_filter = ('uploaded_at',)
+    search_fields = ('file', 'dataset__title', 'dataset__user__email')
+    readonly_fields = ('uploaded_at',)
+
+    def get_file_type(self, obj):
+        return obj.file_type_label
+
+    get_file_type.short_description = 'File type'
 
 
 @admin.register(Agent)

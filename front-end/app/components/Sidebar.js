@@ -76,11 +76,14 @@ const Sidebar = ({ isOpen, onToggle, onDatasetSelect, currentDatasetId }) => {
   const getDatasetTitle = (dataset) => {
     if (dataset.title) {
       return dataset.title
-    } else if (dataset.file) {
-      return dataset.file.split('/').pop() || 'Untitled Dataset'
-    } else {
-      return 'Untitled Dataset'
     }
+    if (dataset.user_files && dataset.user_files.length > 0) {
+      const fallback = dataset.user_files[0].filename
+      if (fallback) {
+        return fallback
+      }
+    }
+    return 'Untitled Dataset'
   }
 
   // Theme-specific styles

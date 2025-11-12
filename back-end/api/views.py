@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status
-from api.serializers import DatasetSerializer, DatasetListSerializer, TableSerializer, MessageSerializer, AgentSerializer, TaskSerializer
-from api.models import Dataset, Table, Message, Agent, Task
+from rest_framework.exceptions import ValidationError
+from api.serializers import DatasetSerializer, DatasetListSerializer, TableSerializer, MessageSerializer, AgentSerializer, TaskSerializer, UserFileSerializer
+from api.models import Dataset, Table, Message, Agent, Task, UserFile
 from rest_framework.response import Response
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny, BasePermission
@@ -432,6 +433,41 @@ class TableViewSet(viewsets.ModelViewSet):
         # Regular users only see their own tables
         return Table.objects.filter(dataset__user=self.request.user).order_by('-updated_at', '-id')
 
+
+class UserFileViewSet(viewsets.ModelViewSet):
+    serializer_class = UserFileSerializer
+    permission_classes = [IsAuthenticatedOrSuperuser]
+    filterset_fields = ['dataset']
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        queryset = UserFile.objects.all().order_by('-uploaded_at', '-id')
+        dataset_id = self.request.query_params.get('dataset')
+        if dataset_id:
+            queryset = queryset.filter(dataset_id=dataset_id)
+
+        if self.request.user.is_superuser:
+            return queryset
+
+        return queryset.filter(dataset__user=self.request.user)
+
+    def perform_create(self, serializer):
+        dataset_id = self.request.data.get('dataset') or self.request.data.get('dataset_id')
+        if not dataset_id:
+            raise ValidationError({'dataset': 'Dataset is required.'})
+
+        try:
+            if self.request.user.is_superuser:
+                dataset = Dataset.objects.get(id=dataset_id)
+            else:
+                dataset = Dataset.objects.get(id=dataset_id, user=self.request.user)
+        except Dataset.DoesNotExist:
+            raise ValidationError({'dataset': 'Dataset not found or not accessible.'})
+
+        # Ensure user cannot override dataset assignment
+        if hasattr(serializer, 'validated_data'):
+            serializer.validated_data.pop('dataset', None)
+        serializer.save(dataset=dataset)
 
 class TaskViewSet(viewsets.ModelViewSet):
     serializer_class = TaskSerializer

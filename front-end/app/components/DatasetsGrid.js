@@ -30,8 +30,14 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset }) {
     fetchDatasets()
   }, [])
 
+  const getDisplayName = (dataset) => {
+    if (dataset.title) return dataset.title
+    if (dataset.user_files && dataset.user_files.length > 0) return dataset.user_files[0].filename
+    return 'Untitled Dataset'
+  }
+
   const handleDeleteDataset = async (dataset) => {
-    if (!window.confirm(`Are you sure you want to delete "${dataset.title || dataset.filename}"? This action cannot be undone.`)) {
+    if (!window.confirm(`Are you sure you want to delete "${getDisplayName(dataset)}"? This action cannot be undone.`)) {
       return
     }
 
@@ -86,7 +92,7 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset }) {
             <div className="card h-100">
               <div className="card-body d-flex flex-column">
                 <div className="d-flex justify-content-between align-items-start">
-                  <h5 className="card-title mb-0">{d.title || d.filename}</h5>
+                  <h5 className="card-title mb-0">{getDisplayName(d)}</h5>
                   <span className={`badge text-bg-${d.status === 'published' ? 'success' : d.status === 'rejected' ? 'warning' : d.status === 'processing' ? 'primary' : 'secondary'}`}>
                     {d.status}
                   </span>
