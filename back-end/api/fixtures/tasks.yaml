@@ -41,7 +41,9 @@
   fields:
     name: Data transformation
     text: |-
-      Transform the explored and structured data into the Darwin Core (DwC) standard. Aim for one core DwC table (either Occurrence or Checklist/Taxonomy) and, if necessary, one optional MeasurementOrFact extension table. Ensure any extension table records link back to the core table using occurrenceID or taxonID, and discard all derived/summary data so only primary data is published.
+      Transform the explored and structured data into the Darwin Core (DwC) standard. Aim for one core DwC table (either Occurrence or Checklist/Taxonomy) and, if necessary, one or two optional extension tables (e.g. measurementOrFact, dnaDerivedData, etc). Ensure any extension table records link back to the core table using occurrenceID or taxonID, and discard all derived/summary data so only primary data is published.
+
+      Use Table.title to name tables according to what they are (e.g. "occurrence", "measurement_or_fact", "dna_derived_data", etc).
 
       **Key Darwin Core Fields to Consider (Refer to these definitions):**
 
@@ -93,13 +95,16 @@
       *   kingdom: REQUIRED.
       *   Other useful fields: family, genus, specificEpithet, taxonRank, nameAccordingTo, taxonRemarks.
 
-      **MeasurementOrFact Extension (ONLY these fields):**
+      **EXAMPLE EXTENSION: MeasurementOrFact (ONLY these fields):**
       *   occurrenceID or eventID or taxonID: REQUIRED (links back to the core record).
       *   measurementType: REQUIRED (e.g., 'tail length', 'water temperature', 'tree height').
       *   measurementValue: REQUIRED (e.g., '12.5', '22', '15.7').
       *   measurementUnit: REQUIRED (e.g., 'cm', 'degrees Celsius', 'meters').
       *   Optional: measurementAccuracy, measurementDeterminedBy, measurementDeterminedDate, measurementMethod, measurementRemarks.
       *   IMPORTANT: DO NOT put individualCount or organismQuantity/Type data in MeasurementOrFact. If possible keep everything in a single core table (e.g. altitude should go in minimumElevationInMeters and maximumElevationInMeters in the Occurrence core).
+
+      **CALL GetDwCExtensionInfo TO GET FIELD LISTS FOR OTHER EXTENSIONS**
+      - It is absolutely vital you do not make up fields and use the correct field for the correct extensions.
 
       **Your Process:**
       1. Write a detailed plan for the data transformation, include notes about your proposed DwC core (Occurrence or Checklist) and any necessary MeasurementOrFact extension, checking ambiguity with the user. Remember to:
@@ -135,7 +140,7 @@
       1.  **Intelligent assessment**: Run your eye over the snapshots and do a manual assessment. Engage your brain - does everything make sense? What needs to be fixed for the data to be publishable? 
       3.  **Execute Code Checks:** Use BasicValidationForSomeDwCTerms for standard checks (it handles date parsing, lat/long bounds, individualCount, basisOfRecord vocabulary, etc.). For more specific or complex checks not covered by the tool, write your own code and run using the Python tool.
       3.  **Identify Issues:** Review the validation results from BasicValidationForSomeDwCTerms and your own manual assessment.
-      4.  **Plan Corrections:** Carefully write out what you need to do step by step in order to create a corrected and final DwC core file and extension file. 
+      4.  **Plan Corrections:** Carefully write out what you need to do step by step in order to create a corrected and final DwC core file and extension file(s). 
       5.  **Execute Corrections:**
           *  Implement your corrections in reasonably self contained small to medium size chunks
           *   If the code fails or introduces new problems, break the problem down further 
@@ -176,7 +181,8 @@
       1.  **Summarize Work Done:** Based on the structural_notes, briefly explain to the user the key transformations and validations that have been performed on their data to get it to this stage. Highlight any major changes or assumptions made. 
       2.  **Check and Present Final Metadata:** Check and edit the metadata as necessary (use SetBasicMetadata), then ask the user for their final confirmation or if they'd like any last-minute changes to these. 
       3.  **Perform GBIF Validation:** 
-          *   Call the UploadDwCA tool to generate and upload the Darwin Core Archive
+          *   Run BasicValidationForSomeDwCTerms to confirm each table's columns align with a known DwC schema; fix any discrepancies.
+          *   Call the UploadDwCA tool with arguments of the form `{"agent_id": <agent_id>, "core_table_id": <core_table_id>, "core_type": "<occurrence|event|taxon>", "extension_tables": {<table_id>: "<extension_key>", ...}}`. Omit `extension_tables` if there are no extensions.
           *   Check it for any issues by calling the ValidateDwCA tool
           *   Fix the issues, asking the user any questions if necessary
           *   Add to the structure_notes noting the issues and fixes
