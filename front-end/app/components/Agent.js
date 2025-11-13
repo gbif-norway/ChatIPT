@@ -273,6 +273,9 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
           });
 
           if (!response.ok) {
+            if (response.status === 413) {
+              throw new Error('The file is too large for the server to accept. Please reduce your data file size and try again.');
+            }
             let errorMessage = 'Failed to upload file.';
             try {
               const errorData = await response.json();
@@ -343,7 +346,22 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
       setOptimisticMessage(null);
       setIsLoading(false);
       setIsUserSending(false);
-      setUploadError(error.message || 'Something went wrong while sending your message. Please try again.');
+
+      const defaultMessage = 'Something went wrong while sending your message. Please try again.';
+      const message =
+        typeof error?.message === 'string' && error.message.length > 0
+          ? error.message
+          : defaultMessage;
+
+      const lowerMessage = message.toLowerCase();
+      if (
+        filesToUpload.length > 0 &&
+        (lowerMessage === 'failed to fetch' || lowerMessage.includes('networkerror'))
+      ) {
+        setUploadError('Upload failed. Please reduce your data file size and try again.');
+      } else {
+        setUploadError(message || defaultMessage);
+      }
     }
   };
 
