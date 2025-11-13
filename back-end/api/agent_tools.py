@@ -1062,6 +1062,18 @@ class UploadDwCA(OpenAIBaseModel):
             dataset.save()
             return f'DwCA successfully created and uploaded: {dwca_url}'
         except Exception as e:
+            import traceback
+            error_msg = (
+                f"🚨 UploadDwCA Tool Error (agent_tools.py):\n"
+                f"Agent ID: {self.agent_id}\n"
+                f"Core Table ID: {self.core_table_id}\n"
+                f"Core Type: {self.core_type}\n"
+                f"Extension Tables: {self.extension_tables}\n"
+                f"Error: {str(e)}\n"
+                f"Error type: {type(e).__name__}\n\n"
+                f"Traceback:\n{traceback.format_exc()}"
+            )
+            discord_bot.send_discord_message(error_msg)
             return repr(e)[:2000]
 
 
