@@ -40,5 +40,5 @@ Basic validation reports:
         {% endif %}
 {% endfor %}
 
-Remember: ensure exactly one table is designated as the core and explicitly mark all remaining tables with the appropriate Darwin Core extension before publishing.
+Before publishing, make sure every table's name clearly indicates its role: set the core table's name to "occurrence", "taxon", or "event" as appropriate, and rename each extension table to its specific Darwin Core extension key (e.g., "measurement_or_fact", "dna_derived_data", etc). Use the provided Python tool to perform these renamings programmatically.
 
