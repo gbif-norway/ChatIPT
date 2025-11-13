@@ -2,6 +2,12 @@ Basic validation reports:
 {% for id, validation in tables.items %}
     Report for Table id {{ id }} 
         - Column names not matching allowed set of darwin core terms: {% if validation.unmatched_columns %}{{ validation.unmatched_columns|join:", " }}{% else %}None{% endif %}
+        {% if validation.dwc_schema %}
+        - DwC schema assessment: {{ validation.dwc_schema.message }}
+        {% if validation.dwc_schema.invalid_columns %}
+          Columns needing attention: {{ validation.dwc_schema.invalid_columns|join:", " }}
+        {% endif %}
+        {% endif %}
 
         - basisOfRecord: Checked that the column only contains one of the allowed values. 
         {% if validation.validation_errors.basisOfRecord %}Found rows with incorrect values, first 30 indices: {{ validation.validation_errors.basisOfRecord|slice:":30"|join:", " }}{% else %}All rows were compliant{% endif %}
@@ -34,6 +40,5 @@ Basic validation reports:
         {% endif %}
 {% endfor %}
 
-{% if tables|length > 2 %}Error - there are more than 2 Tables, delete or if necessary the extra Table. {% endif %}
-Remember: there should either 1 or 2 Tables, an Occurrence core Table and one additional optional MeasurementOrFacts Table. 
+Before publishing, make sure every table's name clearly indicates its role: set the core table's name to "occurrence", "taxon", or "event" as appropriate, and rename each extension table to its specific Darwin Core extension key (e.g., "measurement_or_fact", "dna_derived_data", etc). Use the provided Python tool to perform these renamings programmatically.
 
