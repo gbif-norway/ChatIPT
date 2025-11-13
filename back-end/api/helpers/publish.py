@@ -3,6 +3,7 @@ from dwcawriter import Archive, Table
 import tempfile
 from datetime import datetime
 import os
+from pathlib import Path
 from minio import Minio
 from tenacity import retry, stop_after_attempt, wait_fixed
 import requests
@@ -16,6 +17,10 @@ from api.dwc_specs import (
     DarwinCoreExtensionType,
 )
 
+# Get the base directory for templates
+_BASE_DIR = Path(__file__).resolve().parent.parent
+_TEMPLATES_ROOT = _BASE_DIR / "templates"
+
 def make_eml(title, description, user=None, eml_extra: dict | None = None):
     """Render an EML document populated with available metadata and prune empty elements.
 
@@ -26,7 +31,10 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         eml_extra: Optional dict from `dataset.eml` with keys like
                    geographic_scope, temporal_scope, taxonomic_scope, methodology, users
     """
-    tree = ET.parse('api/templates/eml.xml')
+    eml_path = _TEMPLATES_ROOT / "eml.xml"
+    if not eml_path.exists():
+        raise FileNotFoundError(f"EML template not found at: {eml_path}")
+    tree = ET.parse(str(eml_path))
     root = tree.getroot()
 
     # EML 2.2.0: the root is namespaced (eml:eml) but children are unqualified.
