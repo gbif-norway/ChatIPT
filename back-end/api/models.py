@@ -1,4 +1,5 @@
 import traceback
+import csv
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.contrib.postgres.fields import ArrayField
@@ -186,17 +187,118 @@ class UserFile(models.Model):
         finally:
             self.file.close()
 
-        file_io = io.StringIO(file_content.decode('utf-8', errors='surrogateescape'))
-        df = pd.read_csv(
-            file_io,
-            dtype='str',
-            encoding='utf-8',
-            encoding_errors='surrogateescape',
-            sep=None,
-            engine='python',
-            header=0,
-        )
+        text = file_content.decode('utf-8', errors='surrogateescape')
+        df = self._parse_delimited_text(text)
         return {self.filename: df}
+
+    def _parse_delimited_text(self, text):
+        sample_lines = self._collect_sample_lines(text)
+        candidate_delimiters = self._build_delimiter_candidates(sample_lines, text)
+
+        detection_errors = []
+        fallback_single_column = None
+
+        for delimiter in candidate_delimiters:
+            file_io = io.StringIO(text)
+            try:
+                df = pd.read_csv(
+                    file_io,
+                    dtype='str',
+                    encoding='utf-8',
+                    encoding_errors='surrogateescape',
+                    sep=delimiter,
+                    engine='python',
+                    header=0,
+                )
+            except Exception as exc:
+                detection_errors.append((self._format_delimiter_label(delimiter), str(exc)))
+                continue
+
+            if delimiter is None or df.shape[1] > 1:
+                return df
+
+            if fallback_single_column is None:
+                fallback_single_column = (df, self._format_delimiter_label(delimiter))
+
+        if fallback_single_column is not None:
+            return fallback_single_column[0]
+
+        if detection_errors:
+            detail = "; ".join(f"{label}: {message}" for label, message in detection_errors)
+            raise ValueError(
+                f"Unable to determine the delimiter for {self.filename}. Tried {detail}."
+            )
+
+        raise ValueError(f"{self.filename} appears to be empty or could not be parsed as tabular data.")
+
+    @staticmethod
+    def _collect_sample_lines(text, limit=50):
+        lines = []
+        for line in text.splitlines():
+            if line.strip():
+                lines.append(line)
+            if len(lines) >= limit:
+                break
+        return lines
+
+    @classmethod
+    def _build_delimiter_candidates(cls, sample_lines, text):
+        heuristics = cls._rank_delimiters(sample_lines)
+        sniffed = cls._sniff_delimiter(sample_lines, text)
+
+        candidates = []
+        for delimiter in heuristics:
+            if delimiter not in candidates:
+                candidates.append(delimiter)
+
+        if sniffed and sniffed not in candidates:
+            candidates.append(sniffed)
+
+        for delimiter in ['\t', ',', ';', '|']:
+            if delimiter not in candidates:
+                candidates.append(delimiter)
+
+        candidates.append(None)
+        return candidates
+
+    @staticmethod
+    def _rank_delimiters(sample_lines):
+        stats = []
+        for delimiter in ['\t', ',', ';', '|']:
+            counts = [line.count(delimiter) for line in sample_lines if delimiter in line]
+            if len(counts) < 2:
+                continue
+            spread = max(counts) - min(counts)
+            non_zero = len(counts)
+            average = sum(counts) / non_zero if non_zero else 0
+            stats.append((spread, -non_zero, -average, delimiter))
+
+        stats.sort()
+        return [delimiter for _, _, _, delimiter in stats]
+
+    @staticmethod
+    def _sniff_delimiter(sample_lines, text):
+        snippet = '\n'.join(sample_lines[:10]) or text[:2048]
+        snippet = snippet.strip()
+        if not snippet:
+            return None
+        try:
+            sniffed = csv.Sniffer().sniff(snippet, delimiters=['\t', ',', ';', '|'])
+            return sniffed.delimiter
+        except Exception:
+            return None
+
+    @staticmethod
+    def _format_delimiter_label(delimiter):
+        if delimiter is None:
+            return 'auto-detect'
+        labels = {
+            '\t': 'tab',
+            ',': 'comma',
+            ';': 'semicolon',
+            '|': 'pipe',
+        }
+        return labels.get(delimiter, repr(delimiter))
 
     def _load_excel_workbook(self):
         self.file.open('rb')
