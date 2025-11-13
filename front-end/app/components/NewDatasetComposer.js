@@ -162,7 +162,7 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
 
       if (!response.ok) {
         if (response.status === 413) {
-          throw new Error('Your file is too large for the server to accept. Please upload a smaller file or contact support.');
+          throw new Error('The file is too large for the server to accept. Please reduce your data file size and try again.');
         }
 
         let errorMessage = 'Failed to create dataset.';
@@ -215,7 +215,18 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
       }
     } catch (err) {
       console.error('Error creating dataset:', err);
-      setError(err.message || 'Something went wrong while creating your dataset. Please try again.');
+      const defaultMessage = 'Something went wrong while creating your dataset. Please try again.';
+      const message =
+        typeof err?.message === 'string' && err.message.length > 0
+          ? err.message
+          : defaultMessage;
+
+      const lowerMessage = message.toLowerCase();
+      if (lowerMessage === 'failed to fetch' || lowerMessage.includes('networkerror')) {
+        setError('Upload failed. Please reduce your data file size and try again.');
+      } else {
+        setError(message || defaultMessage);
+      }
     } finally {
       setIsSubmitting(false);
     }
