@@ -1,13 +1,17 @@
 import xml.etree.ElementTree as ET
-from dwcawriter import Archive, Table
 import tempfile
 from datetime import datetime
 import os
+from pathlib import Path
+import traceback
 from minio import Minio
 from tenacity import retry, stop_after_attempt, wait_fixed
 import requests
 from requests.auth import HTTPBasicAuth
 import uuid
+import xmltodict
+from dwcawriter import Archive
+from dwcawriter.table import Table as DwcaWriterTable
 
 from api.dwc_specs import (
     CORE_SCHEMAS,
@@ -15,6 +19,61 @@ from api.dwc_specs import (
     DarwinCoreCoreType,
     DarwinCoreExtensionType,
 )
+from api.helpers import discord_bot
+
+# Get the base directory for templates
+_BASE_DIR = Path(__file__).resolve().parent.parent
+_TEMPLATES_ROOT = _BASE_DIR / "templates"
+
+
+class LocalSpecTable(DwcaWriterTable):
+    """Table implementation that supports both vendored local spec files and GBIF URLs."""
+
+    def update_spec(self):
+        spec = self.spec
+        if isinstance(spec, str) and spec.startswith(("http://", "https://")):
+            raise ValueError(
+                "Remote schema URLs are not supported. "
+                "Download the specification and reference the local file instead."
+            )
+
+        if not spec:
+            raise ValueError("Specification path is required for LocalSpecTable.")
+
+        spec_path = Path(spec)
+        if not spec_path.exists():
+            raise FileNotFoundError(f"Specification file not found at {spec_path}")
+
+        with spec_path.open("r", encoding="utf-8") as spec_file:
+            spec_json = xmltodict.parse(spec_file.read())
+
+        extension = spec_json.get("extension")
+        if not extension:
+            raise ValueError(f"Specification {spec_path} does not contain an 'extension' root element.")
+
+        row_type = extension.get("@rowType")
+        if not row_type:
+            raise ValueError(f"Specification {spec_path} is missing a '@rowType' attribute.")
+        self.row_type = row_type
+
+        properties = extension.get("property")
+        if properties is None:
+            self.dwc_fields = {}
+            return
+
+        if isinstance(properties, dict):
+            properties = [properties]
+
+        field_map = {}
+        for prop in properties:
+            name = prop.get("@name")
+            qual_name = prop.get("@qualName")
+            if not name or not qual_name:
+                # Skip malformed entries but keep processing others.
+                continue
+            field_map[name] = qual_name
+
+        self.dwc_fields = field_map
 
 def make_eml(title, description, user=None, eml_extra: dict | None = None):
     """Render an EML document populated with available metadata and prune empty elements.
@@ -26,7 +85,10 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         eml_extra: Optional dict from `dataset.eml` with keys like
                    geographic_scope, temporal_scope, taxonomic_scope, methodology, users
     """
-    tree = ET.parse('api/templates/eml.xml')
+    eml_path = _TEMPLATES_ROOT / "eml.xml"
+    if not eml_path.exists():
+        raise FileNotFoundError(f"EML template not found at: {eml_path}")
+    tree = ET.parse(str(eml_path))
     root = tree.getroot()
 
     # EML 2.2.0: the root is namespaced (eml:eml) but children are unqualified.
@@ -209,42 +271,145 @@ def upload_dwca(
     user=None,
     eml_extra: dict | None = None,
 ):
-    archive = Archive()
-    archive.eml_text = make_eml(title, description, user, eml_extra)
+    try:
+        archive = Archive()
+    except Exception as e:
+        error_msg = f"🚨 UploadDwCA Error - Failed to create Archive:\n{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+        discord_bot.send_discord_message(error_msg)
+        raise RuntimeError(f"Failed to create Archive: {e}") from e
+    
+    try:
+        archive.eml_text = make_eml(title, description, user, eml_extra)
+    except Exception as e:
+        error_msg = f"🚨 UploadDwCA Error - Failed to generate EML:\n{str(e)}\n\nTraceback:\n{traceback.format_exc()}\n\nTemplates root: {_TEMPLATES_ROOT}\nCurrent working directory: {os.getcwd()}"
+        discord_bot.send_discord_message(error_msg)
+        raise RuntimeError(f"Failed to generate EML: {e}") from e
 
     core_schema = CORE_SCHEMAS[core_type]
     core_id_index = None
     if core_schema.id_column:
         core_id_index = ensure_identifier_column(df_core, core_schema.id_column)
 
+    # Validate spec_path exists if it's a local file (not a URL)
+    core_spec_path = core_schema.spec_path
+    if not core_spec_path.startswith(('http://', 'https://')):
+        spec_file = Path(core_spec_path)
+        if not spec_file.exists():
+            error_msg = (
+                f"🚨 UploadDwCA Error - Core schema file not found:\n"
+                f"Path: {core_spec_path}\n"
+                f"Expected location: {spec_file}\n"
+                f"Templates root: {_TEMPLATES_ROOT}\n"
+                f"Current working directory: {os.getcwd()}\n"
+                f"Core type: {core_type}"
+            )
+            discord_bot.send_discord_message(error_msg)
+            raise FileNotFoundError(
+                f"Core schema file not found: {core_spec_path}\n"
+                f"Expected location: {spec_file}\n"
+                f"Templates root: {_TEMPLATES_ROOT}\n"
+                f"Current working directory: {os.getcwd()}"
+            )
+
     core_kwargs = {
-        "spec": core_schema.spec_path,
+        "spec": core_spec_path,
         "data": df_core,
         "only_mapped_columns": True,
     }
     if core_id_index is not None:
         core_kwargs["id_index"] = core_id_index
-    core_table = Table(**core_kwargs)
+    
+    try:
+        core_table = LocalSpecTable(**core_kwargs)
+    except FileNotFoundError as e:
+        error_msg = (
+            f"🚨 UploadDwCA Error - Failed to create core Table:\n"
+            f"Spec path: {core_spec_path}\n"
+            f"Error: {str(e)}\n"
+            f"Templates root: {_TEMPLATES_ROOT}\n"
+            f"Current working directory: {os.getcwd()}\n\n"
+            f"Traceback:\n{traceback.format_exc()}"
+        )
+        discord_bot.send_discord_message(error_msg)
+        raise FileNotFoundError(
+            f"Failed to create core Table with spec: {core_spec_path}\n"
+            f"Error: {e}\n"
+            f"Templates root: {_TEMPLATES_ROOT}\n"
+            f"Current working directory: {os.getcwd()}"
+        ) from e
+    except Exception as e:
+        error_msg = (
+            f"🚨 UploadDwCA Error - Failed to create core Table (non-FileNotFound):\n"
+            f"Spec path: {core_spec_path}\n"
+            f"Error: {str(e)}\n"
+            f"Error type: {type(e).__name__}\n\n"
+            f"Traceback:\n{traceback.format_exc()}"
+        )
+        discord_bot.send_discord_message(error_msg)
+        raise RuntimeError(f"Failed to create core Table: {e}") from e
+    
     archive.core = core_table
 
     for ext_df, ext_type in extensions or []:
         schema = EXTENSION_SCHEMAS[ext_type]
+        ext_spec_path = schema.spec_path
+        
+        # Validate spec_path exists if it's a local file (not a URL)
+        if not ext_spec_path.startswith(('http://', 'https://')):
+            spec_file = Path(ext_spec_path)
+            if not spec_file.exists():
+                error_msg = (
+                    f"🚨 UploadDwCA Error - Extension schema file not found:\n"
+                    f"Extension type: {ext_type}\n"
+                    f"Path: {ext_spec_path}\n"
+                    f"Expected location: {spec_file}\n"
+                    f"Templates root: {_TEMPLATES_ROOT}"
+                )
+                discord_bot.send_discord_message(error_msg)
+                raise FileNotFoundError(
+                    f"Extension schema file not found: {ext_spec_path}\n"
+                    f"Extension type: {ext_type}\n"
+                    f"Expected location: {spec_file}\n"
+                    f"Templates root: {_TEMPLATES_ROOT}"
+                )
+        
         ext_kwargs = {
-            "spec": schema.spec_path,
+            "spec": ext_spec_path,
             "data": ext_df,
             "only_mapped_columns": True,
         }
         if schema.id_column:
             ext_kwargs["id_index"] = ensure_identifier_column(ext_df, schema.id_column)
-        archive.extensions.append(Table(**ext_kwargs))
+        try:
+            archive.extensions.append(LocalSpecTable(**ext_kwargs))
+        except Exception as e:
+            error_msg = (
+                f"🚨 UploadDwCA Error - Failed to create extension Table:\n"
+                f"Extension type: {ext_type}\n"
+                f"Spec path: {ext_spec_path}\n"
+                f"Error: {str(e)}\n\n"
+                f"Traceback:\n{traceback.format_exc()}"
+            )
+            discord_bot.send_discord_message(error_msg)
+            raise
 
     file_name = datetime.now().strftime('output-%Y-%m-%d-%H%M%S') + '.zip'
-    with tempfile.TemporaryDirectory() as temp_dir:
-        local_path = os.path.join(temp_dir, file_name)
-        archive.export(local_path)
-        client = Minio(os.getenv('MINIO_URI'), access_key=os.getenv('MINIO_ACCESS_KEY'), secret_key=os.getenv('MINIO_SECRET_KEY'))
-        upload_file(client, os.getenv('MINIO_BUCKET'), f"{os.getenv('MINIO_BUCKET_FOLDER')}/{file_name}", local_path)
-        return f"https://{os.getenv('MINIO_URI')}/{os.getenv('MINIO_BUCKET')}/{os.getenv('MINIO_BUCKET_FOLDER')}/{file_name}"
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local_path = os.path.join(temp_dir, file_name)
+            archive.export(local_path)
+            client = Minio(os.getenv('MINIO_URI'), access_key=os.getenv('MINIO_ACCESS_KEY'), secret_key=os.getenv('MINIO_SECRET_KEY'))
+            upload_file(client, os.getenv('MINIO_BUCKET'), f"{os.getenv('MINIO_BUCKET_FOLDER')}/{file_name}", local_path)
+            return f"https://{os.getenv('MINIO_URI')}/{os.getenv('MINIO_BUCKET')}/{os.getenv('MINIO_BUCKET_FOLDER')}/{file_name}"
+    except Exception as e:
+        error_msg = (
+            f"🚨 UploadDwCA Error - Failed during archive export/upload:\n"
+            f"Error: {str(e)}\n"
+            f"Error type: {type(e).__name__}\n\n"
+            f"Traceback:\n{traceback.format_exc()}"
+        )
+        discord_bot.send_discord_message(error_msg)
+        raise
 
 def register_dataset_and_endpoint(title, description, url):
     print('registering dataset')
