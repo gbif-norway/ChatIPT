@@ -49,7 +49,7 @@
 
       **Occurrence Core:**
       *   occurrenceID: REQUIRED (Record level unique identifier for the occurrence. Create UUIDs if not present)
-      *   basisOfRecord: REQUIRED (Nature of the record, valid values: HumanObservation, PreservedSpecimen, MaterialSample, LivingSpecimen, FossilSpecimen, MachineObservation. You will often need to infer or create this and fill it)
+      *   basisOfRecord: REQUIRED (Nature of the record, valid values: HumanObservation, PreservedSpecimen, MaterialSample, LivingSpecimen, FossilSpecimen, MachineObservation. You will often need to infer or create this and fill it). If it's eDNA data or similar, use MaterialSample. IMPORTANT - USE THE DNA DERIVED DATA EXTENSION FOR eDNA DATA.
       *   eventDate: REQUIRED (Date of occurrence, ISO 8601 format: YYYY-MM-DD, YYYY-MM, YYYY, YYYY-MM-DD/YYYY-MM-DD). Or, separate year, month, day columns
       *   scientificName: REQUIRED (Lowest possible taxonomic rank, e.g., species, genus, family. Cannot be empty)
       *   kingdom: REQUIRED (e.g., Animalia, Plantae. May need to be inferred or filled)
