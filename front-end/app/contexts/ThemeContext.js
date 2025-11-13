@@ -14,7 +14,7 @@ export const useTheme = () => {
 }
 
 const ThemeContextProvider = ({ children }) => {
-  const { theme, setTheme, resolvedTheme, systemTheme } = useNextTheme()
+  const { theme, setTheme, resolvedTheme } = useNextTheme()
 
   // Update document attributes when theme changes
   useEffect(() => {
@@ -59,10 +59,11 @@ export const ThemeProvider = ({ children }) => {
       enableSystem
       disableTransitionOnChange
       storageKey="chatipt-theme"
+      enableColorScheme={false}
     >
       <ThemeContextProvider>
         {children}
       </ThemeContextProvider>
     </NextThemeProvider>
   )
-} 
+}

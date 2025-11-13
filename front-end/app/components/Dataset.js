@@ -164,14 +164,19 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
 
   const CustomTabTitle = ({ children }) => <span dangerouslySetInnerHTML={{ __html: children }} />;
 
+  const fallbackFileNameRaw = currentDataset?.user_files?.[0]?.filename || '';
+  const fallbackFileName = fallbackFileNameRaw.replace(/\([^)]*\)/g, '').trim();
+
   // Prebuild mailto link for publishing to GBIF production (shown after sandbox publish)
   const productionPublishMailto = (() => {
     if (!currentDataset) return null;
     const subject = '(ChatIPT) Request to publish dataset to GBIF production';
-    const title = currentDataset.title || (currentDataset.file ? currentDataset.file.split(/\//).pop().replace(/\([^)]*\)/g, '').trim() : '');
-    const body = `Hello GBIF Norway Helpdesk,\n\nI’m pleased to confirm that my dataset has been successfully published to the GBIF Sandbox for validation. I would like to request its publication to GBIF production.\n\n- Dataset title: ${title}\n- Darwin Core Archive (DwC-A): ${currentDataset.dwca_url}\n- GBIF Sandbox dataset page: ${currentDataset.gbif_url}\n\nPlease let me know if you need any further information or changes before proceeding.\n\nThank you for your assistance.\n\nBest regards,`;
+    const mailtoTitle = currentDataset.title || fallbackFileName;
+    const body = `Hello GBIF Norway Helpdesk,\n\nI’m pleased to confirm that my dataset has been successfully published to the GBIF Sandbox for validation. I would like to request its publication to GBIF production.\n\n- Dataset title: ${mailtoTitle}\n- Darwin Core Archive (DwC-A): ${currentDataset.dwca_url}\n- GBIF Sandbox dataset page: ${currentDataset.gbif_url}\n\nPlease let me know if you need any further information or changes before proceeding.\n\nThank you for your assistance.\n\nBest regards,`;
     return `mailto:helpdesk@gbif.no?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   })();
+
+  const title = currentDataset.title || fallbackFileName;
 
   return (
     <div className="container">
@@ -179,7 +184,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
         <div className="col-12 alerts-div">
           <div className="mb-3">
             <div className="d-flex align-items-center gap-2">
-              <h2>{currentDataset.title || currentDataset.file.split(/\//).pop().replace(/\([^)]*\)/g, '').trim()}</h2>
+              <h2>{title || 'Untitled Dataset'}</h2>
               <span className="badge text-bg-secondary">Started {new Date(currentDataset.created_at).toLocaleString()}</span>
               {currentDataset.structure_notes && (
                 <button 
@@ -278,12 +283,14 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
         </div>
         <div className="col-6">
           <div className="sticky-top">
-            {tables.length > 0 && (
+            {tables.length > 0 ? (
               <Tabs activeKey={activeTableId} onSelect={(k) => setActiveTableId(k)} className="mb-3">
                 {tables.map((table) => (
-                  <Tab eventKey={table.id}
+                  <Tab
+                    eventKey={table.id}
                     title={<CustomTabTitle>{`${table.title} <small>(ID ${table.id})</small>`}</CustomTabTitle>}
-                    key={table.id}>
+                    key={table.id}
+                  >
                     <DataTable
                       columns={table.df[0] ? Object.keys(table.df[0]).map(column => ({
                         name: column,
@@ -298,6 +305,13 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                   </Tab>
                 ))}
               </Tabs>
+            ) : (
+              <div className="alert alert-info">
+                <strong>No tables to display yet.</strong>
+                <div className="small">
+                  Tree files are stored for later use. Upload a spreadsheet to generate preview tables.
+                </div>
+              </div>
             )}
           </div>
         </div>

@@ -1,4 +1,4 @@
-from api.models import Dataset, Table, Agent, Message, Task
+from api.models import Dataset, Table, Agent, Message, Task, UserFile
 from rest_framework import serializers
 from api.helpers import discord_bot
 
@@ -44,13 +44,100 @@ class AgentSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+class UserFileSerializer(serializers.ModelSerializer):
+    filename = serializers.CharField(read_only=True)
+    file_url = serializers.SerializerMethodField()
+    file_type = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserFile
+        fields = [
+            'id',
+            'dataset',
+            'file',
+            'uploaded_at',
+            'filename',
+            'file_url',
+            'file_type',
+        ]
+        read_only_fields = [
+            'id',
+            'uploaded_at',
+            'filename',
+            'file_url',
+            'file_type',
+        ]
+        extra_kwargs = {
+            'dataset': {'required': False}
+        }
+
+    def get_file_url(self, obj):
+        if not obj.file:
+            return ''
+        request = self.context.get('request')
+        file_url = obj.file.url
+        if request is not None:
+            return request.build_absolute_uri(file_url)
+        return file_url
+
+    def get_file_type(self, obj):
+        return obj.file_type_label
+
+    def create(self, validated_data):
+        try:
+            user_file = UserFile.objects.create(**validated_data)
+            file_type, dfs = user_file.extract_data()
+        except Exception as exc:
+            if 'user_file' in locals():
+                user_file.delete()
+            raise serializers.ValidationError(f"An error was encountered when loading your data. Error details: {exc}.")
+
+        if file_type == UserFile.FileType.TABULAR:
+            try:
+                filtered_dfs = UserFile.filter_dataframes(dfs)
+            except ValueError as exc:
+                user_file.delete()
+                raise serializers.ValidationError(str(exc))
+            user_file.create_tables(filtered_dfs)
+
+        return user_file
+
+
 class DatasetSerializer(serializers.ModelSerializer):
+    user_files = UserFileSerializer(many=True, read_only=True)
     visible_agent_set = serializers.SerializerMethodField()
     user_info = serializers.SerializerMethodField()
 
     class Meta:
         model = Dataset
-        fields = '__all__'
+        fields = [
+            'id',
+            'created_at',
+            'user',
+            'orcid',
+            'title',
+            'structure_notes',
+            'description',
+            'eml',
+            'published_at',
+            'rejected_at',
+            'dwca_url',
+            'gbif_url',
+            'user_language',
+            'dwc_core',
+            'visible_agent_set',
+            'user_info',
+            'user_files',
+        ]
+        read_only_fields = [
+            'created_at',
+            'user',
+            'visible_agent_set',
+            'user_info',
+            'user_files',
+            'published_at',
+            'rejected_at',
+        ]
     
     def get_visible_agent_set(self, dataset):
         agents = list(dataset.agent_set.filter(completed_at__isnull=False))
@@ -75,58 +162,70 @@ class DatasetSerializer(serializers.ModelSerializer):
             }
         return None
 
-    def create(self, data):
-        discord_bot.send_discord_message(f"V2 New dataset publication starting on ChatIPT. User file: {data['file'].name}.")
-        dataset = Dataset.objects.create(**data)
+    def create(self, validated_data):
+        request = self.context.get('request')
+        uploaded_files = []
+        if request:
+            uploaded_files = request.FILES.getlist('files')
+            if not uploaded_files and request.FILES.get('file'):
+                uploaded_files = [request.FILES['file']]
+
+        if not uploaded_files:
+            raise serializers.ValidationError(
+                "Please upload at least one data file so I have something to work with."
+            )
+
+        dataset = Dataset.objects.create(**validated_data)
+        uploaded_names = []
 
         try:
-            dfs = Dataset.get_dfs_from_user_file(dataset.file, dataset.file.name.split('/')[1])
-        except Exception as e:
-            raise serializers.ValidationError(f"An error was encountered when loading your data. Error details: {e}.")
-
-        if "error" in dfs:
-            raise serializers.ValidationError(dfs["error"])
-
-        # Discard sheets with fewer than 2 data rows when multiple sheets exist.
-        # If all sheets are discarded, reject the file; if only one sheet exists, validate it directly.
-        original_sheet_count = len(dfs)
-        if original_sheet_count > 1:
-            filtered_dfs = {name: df for name, df in dfs.items() if len(df) >= 2}
-            if not filtered_dfs:
-                # All sheets had < 2 data rows
-                raise serializers.ValidationError(
-                    "All sheets in your spreadsheet have only 1 (or 0) data row(s). "
-                    "I need a larger spreadsheet to be able to help you with publication. "
-                    "Please refresh and try again."
+            for uploaded_file in uploaded_files:
+                file_serializer = UserFileSerializer(
+                    data={'file': uploaded_file},
+                    context=self.context,
                 )
-            dfs = filtered_dfs
-        else:
-            # Single-sheet file: enforce the row-count check directly
-            for sheet_name, df in dfs.items():
-                if len(df) < 2:
-                    raise serializers.ValidationError(
-                        f"Your sheet {sheet_name} has only {len(df) + 1} row(s), are you sure you uploaded the right thing? "
-                        "I need a larger spreadsheet to be able to help you with publication. Please refresh and try again."
-                    )
+                file_serializer.is_valid(raise_exception=True)
+                user_file = file_serializer.save(dataset=dataset)
+                uploaded_names.append(user_file.filename)
+        except serializers.ValidationError as exc:
+            dataset.delete()
+            raise exc
+        except Exception as exc:
+            dataset.delete()
+            raise serializers.ValidationError(
+                f"An error was encountered when loading your data. Error details: {exc}."
+            )
 
-        tables = []
-        for sheet_name, df in dfs.items():
-            if not df.empty:
-                tables.append(Table.objects.create(dataset=dataset, title=sheet_name, df=df))
-        
-        # Check if tasks exist
+        if not dataset.table_set.exists():
+            dataset.delete()
+            raise serializers.ValidationError(
+                "No tabular data could be loaded from your files. "
+                "Please upload at least one spreadsheet or delimited text file with two or more data rows."
+            )
+
+        discord_bot.send_discord_message(
+            f"V3 New dataset publication starting on ChatIPT. User files: {', '.join(uploaded_names) if uploaded_names else 'none'}."
+        )
+
         first_task = Task.objects.first()
         if not first_task:
+            dataset.delete()
             raise serializers.ValidationError(
                 "No tasks are configured in the system. Please contact the administrator to load the required tasks."
             )
-        
-        agent = Agent.create_with_system_message(dataset=dataset, task=first_task, tables=tables)
+
+        Agent.create_with_system_message(
+            dataset=dataset,
+            task=first_task,
+            tables=list(dataset.table_set.all()),
+        )
+
         discord_bot.send_discord_message(f"Dataset ID assigned: {dataset.id}.")
         return dataset
 
 
 class DatasetListSerializer(serializers.ModelSerializer):
+    user_files = UserFileSerializer(many=True, read_only=True)
     record_count = serializers.SerializerMethodField()
     last_updated = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
@@ -137,9 +236,9 @@ class DatasetListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Dataset
         fields = [
-            'id', 'title', 'description', 'filename', 'dwc_core',
+            'id', 'title', 'description', 'dwc_core',
             'created_at', 'published_at', 'rejected_at',
-            'record_count', 'last_updated', 'status', 'progress', 'last_message_preview', 'user_info'
+            'record_count', 'last_updated', 'status', 'progress', 'last_message_preview', 'user_info', 'user_files'
         ]
 
     def get_record_count(self, obj):

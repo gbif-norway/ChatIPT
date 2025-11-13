@@ -1,10 +1,57 @@
 import Message from './Message';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Accordion from 'react-bootstrap/Accordion';
 import Badge from 'react-bootstrap/Badge';
+import OverlayTrigger from 'react-bootstrap/OverlayTrigger';
+import Tooltip from 'react-bootstrap/Tooltip';
 import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
 import { getLoadingText } from '../utils/loading.js';
+import {
+  ALLOWED_FILE_EXTENSIONS,
+  ACCEPT_INPUT_EXTENSIONS,
+  isExtensionAllowed
+} from '../utils/uploadConstraints.js';
+import { useTheme } from '../contexts/ThemeContext.js';
+
+const normalizeMessageContent = (content) => {
+  if (!content) {
+    return '';
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((entry) => {
+        if (typeof entry === 'string') {
+          return entry;
+        }
+        if (entry && typeof entry === 'object') {
+          if (typeof entry.text === 'string') {
+            return entry.text;
+          }
+          return JSON.stringify(entry);
+        }
+        return '';
+      })
+      .join('\n')
+      .trim();
+  }
+
+  if (typeof content === 'object') {
+    if (typeof content.text === 'string') {
+      return content.text.trim();
+    }
+    return JSON.stringify(content);
+  }
+
+  return String(content).trim();
+};
+
+const getComparableMessageText = (content) => {
+  const normalized = normalizeMessageContent(content);
+  const [main] = normalized.split('\n\n[NOTE:');
+  return main.trim();
+};
 
 const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
   const [userInput, setUserInput] = useState("");
@@ -12,6 +59,10 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
   const [loadingMessage, setLoadingMessage] = useState(getLoadingText({ phase: 'working' }));
   const [isUserSending, setIsUserSending] = useState(false);
   const [optimisticMessage, setOptimisticMessage] = useState(null);
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [uploadError, setUploadError] = useState(null);
+  const fileInputRef = useRef(null);
+  const { isDark } = useTheme();
 
   useEffect(() => {
     const runAsyncEffect = async () => {
@@ -54,10 +105,15 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
     
     // Clear optimistic message if the server data now contains a user message with the same content
     if (optimisticMessage && agent.message_set?.length > 0) {
-      const hasMatchingUserMessage = agent.message_set.some(message => 
-        message.role === 'user' && 
-        message.openai_obj.content === optimisticMessage.openai_obj.content
-      );
+      const optimisticComparable = getComparableMessageText(optimisticMessage.openai_obj?.content);
+
+      const hasMatchingUserMessage = agent.message_set.some((message) => {
+        if (message.role !== 'user') {
+          return false;
+        }
+        const comparable = getComparableMessageText(message.openai_obj?.content);
+        return comparable === optimisticComparable && comparable.length > 0;
+      });
       
       if (hasMatchingUserMessage) {
         console.log(`[${timestamp}] ✅ Found matching user message in server data - clearing optimistic message`);
@@ -114,53 +170,180 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
     return prefix + ids.join(", ") + ")";
   }
 
-  const handleUserInput = async (event) => {
-    if (event.key === 'Enter') {
-      console.log(agent.busy_thinking);
+  const resetFileInput = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleFilesSelected = (event) => {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) {
+      return;
+    }
+
+    const rejectedNames = [];
+    const nextFiles = [...selectedFiles];
+
+    files.forEach((file) => {
+      if (!isExtensionAllowed(file.name)) {
+        rejectedNames.push(file.name);
+        return;
+      }
+
+      const alreadySelected = nextFiles.some(
+        (item) => item.file.name === file.name && item.file.size === file.size
+      );
+
+      if (!alreadySelected) {
+        nextFiles.push({
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          file
+        });
+      }
+    });
+
+    setSelectedFiles(nextFiles);
+    resetFileInput();
+
+    if (rejectedNames.length > 0) {
+      setUploadError(
+        `Unsupported file type: ${rejectedNames.join(', ')}. Allowed types: ${ALLOWED_FILE_EXTENSIONS.join(', ')}`
+      );
+    } else {
+      setUploadError(null);
+    }
+  };
+
+  const removeSelectedFile = (id) => {
+    setSelectedFiles((prev) => prev.filter((file) => file.id !== id));
+  };
+
+  const handleInputKeyDown = (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      
-      // Clear input immediately for instant feedback and prevent useEffect interference
-      const messageContent = userInput;
-      setUserInput("");
-      setIsUserSending(true);
-      setIsLoading(true);
+      event.currentTarget.form?.requestSubmit();
+    }
+  };
 
-      // Add optimistic user message immediately
-      setOptimisticMessage({
-        id: `optimistic-${Date.now()}`,
-        role: 'user',
-        openai_obj: { content: messageContent }
-      });
+  const triggerFileDialog = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
 
-      try {
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (isUserSending) {
+      return;
+    }
+
+    const trimmedInput = userInput.trim();
+    const filesToUpload = [...selectedFiles];
+
+    if (trimmedInput.length === 0 && filesToUpload.length === 0) {
+      setUploadError('Add a message or attach at least one file before sending.');
+      return;
+    }
+
+    setIsUserSending(true);
+    setIsLoading(true);
+    setUploadError(null);
+
+    const uploadedFileNames = [];
+
+    try {
+      if (filesToUpload.length > 0) {
         const csrfToken = await getCsrfToken();
-        const headers = { 'Content-Type': 'application/json' };
-        
+        const headers = {};
         if (csrfToken) {
           headers['X-CSRFToken'] = csrfToken;
         }
 
-        await fetch(`${config.baseUrl}/api/messages/`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ openai_obj: { content: messageContent, role: 'user' }, agent: agent.id }),
-          credentials: 'include' // Include credentials for authenticated requests
-        });
+        for (const { file } of filesToUpload) {
+          const formData = new FormData();
+          formData.append('dataset', currentDatasetId);
+          formData.append('file', file);
+
+          const response = await fetch(`${config.baseUrl}/api/user-files/`, {
+            method: 'POST',
+            body: formData,
+            headers,
+            credentials: 'include'
+          });
+
+          if (!response.ok) {
+            let errorMessage = 'Failed to upload file.';
+            try {
+              const errorData = await response.json();
+              const errorValues = Object.values(errorData).flat();
+              if (errorValues.length > 0) {
+                errorMessage = errorValues.join(' ');
+              }
+            } catch (_) {
+              // ignore JSON parse errors and use default message
+            }
+            throw new Error(errorMessage);
+          }
+
+          const uploaded = await response.json();
+          uploadedFileNames.push(uploaded.filename || file.name);
+        }
+
         await refreshDataset();
         if (typeof refreshTables === 'function') {
           await refreshTables();
         }
-        
-        // Note: optimisticMessage will be cleared automatically by useEffect when server data arrives
-        setIsLoading(false);
-        setIsUserSending(false);
-      } catch (error) {
-        console.error("Error:", error);
-        // On error, clear optimistic message since server call failed
-        setOptimisticMessage(null);
-        setIsLoading(false);
-        setIsUserSending(false);
       }
+
+      const messageContent =
+        trimmedInput.length > 0
+          ? trimmedInput
+          : (uploadedFileNames.length > 0 ? `Uploaded files: ${uploadedFileNames.join(', ')}` : '');
+
+      if (messageContent) {
+        setOptimisticMessage({
+          id: `optimistic-${Date.now()}`,
+          role: 'user',
+          openai_obj: { content: messageContent }
+        });
+
+        const csrfToken = await getCsrfToken();
+        const headers = { 'Content-Type': 'application/json' };
+
+        if (csrfToken) {
+          headers['X-CSRFToken'] = csrfToken;
+        }
+
+        const response = await fetch(`${config.baseUrl}/api/messages/`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ openai_obj: { content: messageContent, role: 'user' }, agent: agent.id }),
+          credentials: 'include'
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to send message.');
+        }
+
+        await refreshDataset();
+        if (typeof refreshTables === 'function') {
+          await refreshTables();
+        }
+      }
+
+      setUserInput('');
+      setSelectedFiles([]);
+      resetFileInput();
+
+      setIsLoading(false);
+      setIsUserSending(false);
+    } catch (error) {
+      console.error("Error submitting user input:", error);
+      setOptimisticMessage(null);
+      setIsLoading(false);
+      setIsUserSending(false);
+      setUploadError(error.message || 'Something went wrong while sending your message. Please try again.');
     }
   };
 
@@ -225,6 +408,11 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
   // Determine if the assistant is waiting for a reply from the user
   const lastMessage = (agent.message_set && agent.message_set.length > 0) ? agent.message_set[agent.message_set.length - 1] : null;
   const assistantWaitingForReply = lastMessage && lastMessage.role === 'assistant' && (!lastMessage.openai_obj.tool_calls || lastMessage.openai_obj.tool_calls.length === 0);
+  const composerClassName = [
+    'chat-composer border rounded p-3 mt-3',
+    isDark ? 'bg-dark border-secondary text-light' : 'bg-light'
+  ].join(' ');
+  const showSendTooltip = selectedFiles.length > 0 && !isUserSending;
 
   return (
     <>
@@ -257,10 +445,92 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
 
           {/* Only show the chat input when the assistant is explicitly waiting for a user reply */}
           {!agent.completed_at && !isLoading && !isUserSending && !agent.busy_thinking && assistantWaitingForReply && (
-            <div className="input-group">
-              <input type="text" className="form-control user-input" value={userInput} onKeyPress={handleUserInput} onChange={e => setUserInput(e.target.value)} placeholder="Message ChatIPT" />
-              <div className="input-group-append"><span className="input-group-text"><i className="bi bi-arrow-up-circle"></i></span></div>
-            </div>
+            <form className={composerClassName} onSubmit={handleSubmit}>
+              <div className="d-flex flex-wrap align-items-center gap-2">
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary"
+                  onClick={triggerFileDialog}
+                  title="Add data files or phylogenetic tree files"
+                  disabled={isUserSending}
+                >
+                  <i className="bi bi-paperclip" aria-hidden="true"></i>
+                  <span className="visually-hidden">Attach files</span>
+                </button>
+                <div className="flex-grow-1">
+                  <input
+                    type="text"
+                    className="form-control user-input"
+                    value={userInput}
+                    onKeyDown={handleInputKeyDown}
+                    onChange={(e) => {
+                      setUserInput(e.target.value);
+                      if (uploadError) {
+                        setUploadError(null);
+                      }
+                    }}
+                    placeholder="Message ChatIPT"
+                    disabled={isUserSending}
+                    aria-label="Message ChatIPT"
+                  />
+                </div>
+                <OverlayTrigger
+                  placement="top"
+                  overlay={
+                    <Tooltip id={`send-tooltip-${agent.id}`}>
+                      Click send to upload your selected files.
+                    </Tooltip>
+                  }
+                  show={showSendTooltip}
+                  trigger={[]}
+                >
+                  <button type="submit" className="btn btn-primary d-flex align-items-center gap-1" disabled={isUserSending}>
+                    <i className="bi bi-send-fill" aria-hidden="true"></i>
+                    <span className="d-none d-md-inline">Send</span>
+                  </button>
+                </OverlayTrigger>
+              </div>
+
+              {selectedFiles.length > 0 && (
+                <div className="d-flex flex-wrap gap-2 mt-3">
+                  {selectedFiles.map(({ id, file }) => (
+                    <span
+                      key={id}
+                      className="badge rounded-pill text-bg-secondary d-flex align-items-center gap-2 py-2 px-3"
+                    >
+                      <i className="bi bi-file-earmark-arrow-up" aria-hidden="true"></i>
+                      <span className="text-truncate" style={{ maxWidth: '200px' }}>{file.name}</span>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-light border-0 text-white px-2 py-0"
+                        onClick={() => removeSelectedFile(id)}
+                        aria-label={`Remove ${file.name}`}
+                      >
+                        <i className="bi bi-x-lg" aria-hidden="true"></i>
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {uploadError && (
+                <div className="text-danger small mt-3" role="alert">
+                  {uploadError}
+                </div>
+              )}
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={ACCEPT_INPUT_EXTENSIONS}
+                onChange={handleFilesSelected}
+                className="d-none"
+              />
+              <div className="text-muted small mt-3">
+                Tip: use the paperclip to add data files or phylogenetic tree files.
+              </div>
+            </form>
           )}
         </Accordion.Body>
       </Accordion.Item>

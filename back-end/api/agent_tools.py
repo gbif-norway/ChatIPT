@@ -5,7 +5,7 @@ import re
 import pandas as pd
 import numpy as np
 from api.helpers.openai_helpers import OpenAIBaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict
 from api.helpers.publish import upload_dwca, register_dataset_and_endpoint
 import datetime
 import uuid
@@ -19,6 +19,14 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 import os
 from requests.auth import HTTPBasicAuth
 import requests
+
+from api.dwc_specs import (
+    ALL_SCHEMAS,
+    CORE_SCHEMAS,
+    EXTENSION_SCHEMAS,
+    DarwinCoreCoreType,
+    DarwinCoreExtensionType,
+)
 
 
 # Allowed Darwin Core terms
@@ -238,12 +246,205 @@ class GetDarwinCoreInfo(OpenAIBaseModel):
     '''
 
 
+class GetDwCExtensionInfo(OpenAIBaseModel):
+    """
+    Provide concise guidance on common Darwin Core extensions and optionally return the full XML definition.
+
+    Extension overviews (useful when deciding whether to add an extension after exhausting core fields):
+    - Description (`description.xml`): Narrative text about a taxon or resource such as morphology, behaviour, ecology, or conservation context.
+    - Distribution (`distribution_2022-02-02.xml`): Geographic distribution statements including area types, occurrence status, seasonal or life-stage qualifiers.
+    - DNA Derived Data (`dna_derived_data_2024-07-11.xml`): Links occurrences or taxa to sequence-based evidence (e.g. metabarcoding runs, marker genes, accession numbers).
+    - Identifier (`identifier.xml`): Alternative identifiers for taxa or occurrences, tracking GUIDs, LSIDs, catalogue numbers, or database references.
+    - Multimedia (`multimedia.xml`): Generic multimedia attachment schema (audio, video, images) with basic descriptive and licensing fields.
+    - References (`references.xml`): Bibliographic citations that support occurrence or taxon records.
+    - Relevé (`releve_2016-05-10.xml`): Vegetation plot (relevé) descriptions including cover, stratification, sampling method, and environmental context.
+    - Species Profile (`speciesprofile_2019-01-29.xml`): Taxon-level traits such as life history, abundance, habitat preferences, and threat status.
+    - Types and Specimen (`typesandspecimen.xml`): Details of type specimens and vouchers linked to taxa, including repository and typification remarks.
+    - Vernacular Name (`vernacularname.xml`): Common names with language, locality, life stage, and source attribution.
+
+    Call without parameters to receive the overview list and usage hints.
+    Supply `extension` (case-insensitive key or filename) to receive the full XML payload from `back-end/api/templates/extensions`.
+    """
+
+    extension: Optional[str] = Field(
+        default=None,
+        description="Optional extension key or filename (e.g. 'distribution', 'Distribution', 'distribution.xml', or 'distribution_2022-02-02.xml'). Case-insensitive, .xml extension and date suffixes are optional."
+    )
+
+    def run(self):
+        base_dir = os.path.join(os.path.dirname(__file__), 'templates', 'extensions')
+        extensions = {
+            'description': {
+                'label': 'Description',
+                'file': 'description.xml',
+                'overview': 'Narrative text about a taxon or resource such as morphology, behaviour, ecology, or conservation context.'
+            },
+            'distribution': {
+                'label': 'Distribution',
+                'file': 'distribution_2022-02-02.xml',
+                'overview': 'Geographic distribution statements including area types, occurrence status, seasonal or life-stage qualifiers.'
+            },
+            'dna_derived_data': {
+                'label': 'DNA Derived Data',
+                'file': 'dna_derived_data_2024-07-11.xml',
+                'overview': 'Sequence-based evidence linking taxa or occurrences to laboratory outputs, marker genes, and accession numbers.'
+            },
+            'identifier': {
+                'label': 'Identifier',
+                'file': 'identifier.xml',
+                'overview': 'Alternative identifiers such as GUIDs, LSIDs, catalogue numbers, or cross-database references.'
+            },
+            'multimedia': {
+                'label': 'Multimedia',
+                'file': 'multimedia.xml',
+                'overview': 'Generic multimedia attachment schema covering audio, video, images with licensing and attribution.'
+            },
+            'references': {
+                'label': 'References',
+                'file': 'references.xml',
+                'overview': 'Bibliographic citations that support occurrence or taxon records.'
+            },
+            'releve': {
+                'label': 'Relevé',
+                'file': 'releve_2016-05-10.xml',
+                'overview': 'Vegetation relevé (plot) descriptions capturing cover, stratification, environmental and methodological details.'
+            },
+            'speciesprofile': {
+                'label': 'Species Profile',
+                'file': 'speciesprofile_2019-01-29.xml',
+                'overview': 'Taxon-level traits such as habitat preferences, abundance, and life history notes.'
+            },
+            'typesandspecimen': {
+                'label': 'Types and Specimen',
+                'file': 'typesandspecimen.xml',
+                'overview': 'Details of type specimens and vouchers including repository, type status, and remarks.'
+            },
+            'vernacularname': {
+                'label': 'Vernacular Name',
+                'file': 'vernacularname.xml',
+                'overview': 'Common names annotated with language, locality, sex or life stage relevance, and sources.'
+            }
+        }
+
+        if not self.extension:
+            lines = [
+                "Darwin Core extension quick reference:",
+                *(f"- {meta['label']} (`{meta['file']}`): {meta['overview']}" for meta in extensions.values()),
+                "",
+                "Call this tool with `extension` set to a key (e.g. 'distribution', 'dna_derived_data'). "
+                "You can use the key name, filename with or without .xml extension, or filename with or without date suffix. "
+                "Matching is case-insensitive."
+            ]
+            return "\n".join(lines)
+
+        # Normalize the requested extension: lowercase, strip .xml, strip date suffixes
+        requested = self.extension.strip().lower()
+        # Remove .xml extension if present
+        if requested.endswith('.xml'):
+            requested = requested[:-4]
+        # Remove date suffix pattern (e.g., _2022-02-02, _2024-07-11)
+        requested = re.sub(r'_\d{4}-\d{2}-\d{2}$', '', requested)
+        
+        match_key = None
+        for key, meta in extensions.items():
+            # Normalize the filename the same way for comparison
+            normalized_file = meta['file'].lower()
+            if normalized_file.endswith('.xml'):
+                normalized_file = normalized_file[:-4]
+            normalized_file = re.sub(r'_\d{4}-\d{2}-\d{2}$', '', normalized_file)
+            
+            # Match against key or normalized filename
+            if requested == key or requested == normalized_file:
+                match_key = key
+                break
+        if match_key is None:
+            return (
+                f"Extension '{self.extension}' not recognised. "
+                f"Available keys: {', '.join(sorted(extensions.keys()))}. "
+                "You can use the key name (e.g. 'distribution'), filename with or without .xml extension, or filename with or without date suffix."
+            )
+
+        filename = extensions[match_key]['file']
+        path = os.path.join(base_dir, filename)
+        if not os.path.exists(path):
+            return (
+                f"Extension file '{filename}' not found in '{base_dir}'. "
+                "Ensure the XML has been downloaded."
+            )
+
+        with open(path, 'r', encoding='utf-8') as handle:
+            return handle.read()
+
+
 class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
     """
     A few automatic basic checks for an Agent's tables against the Darwin Core standard.
     Returns a basic validation report.
     """
     agent_id: PositiveInt = Field(...)
+
+    @staticmethod
+    def _should_ignore_column(column_name: str) -> bool:
+        lowered = column_name.strip().lower()
+        return lowered == "id" or lowered.endswith("id")
+
+    def assess_columns_against_dwc(self, columns) -> dict:
+        normalized_map: Dict[str, str] = {}
+        for col in columns:
+            name = str(col).strip()
+            if not name or self._should_ignore_column(name):
+                continue
+            lower = name.lower()
+            normalized_map.setdefault(lower, name)
+
+        if not normalized_map:
+            return {
+                'status': 'skipped',
+                'message': 'Skipped DwC schema check because only identifier-style columns were present.',
+            }
+
+        normalized_cols = set(normalized_map.keys())
+
+        for schema in ALL_SCHEMAS:
+            if normalized_cols <= schema.normalized_terms:
+                return {
+                    'status': 'match',
+                    'schema': schema.key,
+                    'title': schema.title,
+                    'message': f"Columns align with the '{schema.title}' schema ({schema.key}).",
+                }
+
+        best_schema = None
+        best_invalid: set[str] | None = None
+        best_score = None
+        for schema in ALL_SCHEMAS:
+            allowed = schema.normalized_terms
+            invalid = normalized_cols - allowed
+            shared = normalized_cols & allowed
+            score = (len(invalid), -len(shared))
+            if best_score is None or score < best_score:
+                best_score = score
+                best_schema = schema
+                best_invalid = invalid
+
+        if best_schema and best_invalid is not None and len(best_invalid) < len(normalized_cols):
+            invalid_cols = sorted(normalized_map[name] for name in best_invalid)
+            return {
+                'status': 'partial',
+                'schema': best_schema.key,
+                'title': best_schema.title,
+                'invalid_columns': invalid_cols,
+                'message': (
+                    f"Closest match is '{best_schema.title}' ({best_schema.key}), "
+                    f"but the following columns are not allowed: {', '.join(invalid_cols)}."
+                ),
+            }
+
+        return {
+            'status': 'no_match',
+            'invalid_columns': sorted(normalized_map[name] for name in normalized_cols),
+            'message': 'No Darwin Core core or extension schema covers the non-identifier columns in this table.',
+        }
 
     def validate_and_format_event_dates(self, df):
         from datetime import datetime
@@ -416,6 +617,9 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
             if all(isinstance(col, int) for col in df.columns):            
                 table_results[table.id]['table_errors'] = f'Table {table.id} appears to only have ints as column headers - most probably the column headers are row 1 or you need to make column headers. Fix this and run the validation report again.'
             else:
+                column_assessment = self.assess_columns_against_dwc(df.columns)
+                table_results[table.id]['dwc_schema'] = column_assessment
+
                 # Cast every column header to string first so mixed-type headers (e.g. ints) do not raise
                 standardized_columns = {str(col).lower(): col for col in df.columns}
                 matched_columns = {}
@@ -626,21 +830,10 @@ class RollBack(OpenAIBaseModel):
     agent_id: PositiveInt = Field(...)
 
     def run(self):
-        from api.models import Agent, Dataset, Table, Message
+        from api.models import Agent, Message
         agent = Agent.objects.get(id=self.agent_id)
         agent.dataset.table_set.all().delete()
-        dfs = Dataset.get_dfs_from_user_file(agent.dataset.file, agent.dataset.file.name)
-        # Mirror initial upload behavior: discard sheets with <2 data rows when multiple sheets exist
-        try:
-            if isinstance(dfs, dict) and len(dfs) > 1:
-                dfs = {name: df for name, df in dfs.items() if getattr(df, '__len__', lambda: 0)() >= 2}
-        except Exception:
-            # If anything odd happens, fall back to original dfs without filtering
-            pass
-        tables = []
-        for sheet_name, df in dfs.items():
-            if not df.empty:
-                tables.append(Table.objects.create(dataset=agent.dataset, title=sheet_name, df=df))
+        tables = agent.dataset.rebuild_tables_from_user_files()
 
         # Get all code run 
         code_snippets = []
@@ -781,49 +974,90 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
 class UploadDwCA(OpenAIBaseModel):
     """
     Generates a Darwin Core Archive from the dataset and uploads it to object storage.
+    The caller must supply the core table ID and any extension table assignments.
     Returns the publicly accessible DwCA URL.
     """
+
     agent_id: PositiveInt = Field(...)
+    core_table_id: PositiveInt = Field(..., description="Table ID to use as the DwC core.")
+    core_type: DarwinCoreCoreType = Field(default=DarwinCoreCoreType.OCCURRENCE)
+    extension_tables: Optional[Dict[PositiveInt, DarwinCoreExtensionType]] = Field(
+        default=None,
+        description="Mapping of table ID to Darwin Core extension type (e.g. {42: 'measurement_or_fact'}).",
+    )
+
+    @staticmethod
+    def _format_available_tables(tables) -> str:
+        parts = []
+        for table in tables:
+            title = table.title or "Untitled table"
+            parts.append(f"- {table.id} ({title})\n{table.str_snapshot}")
+        return "\n\n".join(parts)
+
+    def _unknown_table_error(self, missing_ids, tables) -> str:
+        available = self._format_available_tables(tables)
+        missing = ", ".join(str(mid) for mid in missing_ids)
+        return (
+            f"Error: The following table ID(s) are not part of this dataset: {missing}.\n"
+            f"Available tables:\n{available}"
+        )
 
     def run(self):
-        from api.models import Agent, Task
+        from api.models import Agent, Dataset
+
         try:
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
-            tables = dataset.table_set.all()
+            tables = {table.id: table for table in dataset.table_set.all()}
 
-            # Choose a core table – prefer one containing scientificName, otherwise fall back to any table with kingdom, otherwise first table
-            core_table = next((t for t in tables if 'scientificName' in t.df.columns), None)
-            if not core_table:
-                core_table = next((t for t in tables if 'kingdom' in t.df.columns), tables.first())
-            if not core_table:
-                error_msg = 'Validation error: Could not identify a suitable core table (requires at least a scientificName or kingdom column).'
-                # Notify developers of core table validation failure
-                discord_bot.send_discord_message(f"⚠️ Core Table Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
-                return error_msg
+            if self.core_table_id not in tables:
+                return self._unknown_table_error([self.core_table_id], tables.values())
 
-            # If we find additional tables, treat the first as a MeasurementOrFact extension for now
-            extension_tables = [tbl for tbl in tables if tbl != core_table]
-            mof_table = extension_tables[0] if extension_tables else None
+            core_table = tables[self.core_table_id]
 
-            if mof_table:
-                dwca_url = upload_dwca(
-                    core_table.df,
-                    dataset.title,
-                    dataset.description,
-                    mof_table.df,
-                    dataset.user,
-                    eml_extra=dataset.eml,
-                )
-            else:
-                dwca_url = upload_dwca(
-                    core_table.df,
-                    dataset.title,
-                    dataset.description,
-                    user=dataset.user,
-                    eml_extra=dataset.eml,
+            extension_map = {}
+            if self.extension_tables:
+                for table_id_raw, ext_type in self.extension_tables.items():
+                    table_id = int(table_id_raw)
+                    extension_map[table_id] = ext_type
+
+            invalid_extension_ids = [
+                table_id for table_id in extension_map if table_id not in tables
+            ]
+            if invalid_extension_ids:
+                return self._unknown_table_error(invalid_extension_ids, tables.values())
+
+            if self.core_table_id in extension_map:
+                return (
+                    f"Error: Table {self.core_table_id} was provided as both the core and an extension. "
+                    "Please assign different tables to extensions."
                 )
 
+            extension_payload = []
+            for table_id, extension_type in extension_map.items():
+                if extension_type not in EXTENSION_SCHEMAS:
+                    return (
+                        f"Error: Unsupported extension type '{extension_type}'. "
+                        f"Supported types: {', '.join(sorted(e.value for e in DarwinCoreExtensionType))}."
+                    )
+                extension_payload.append((tables[table_id].df, extension_type))
+
+            dwca_url = upload_dwca(
+                core_table.df,
+                dataset.title or '',
+                dataset.description or '',
+                core_type=self.core_type,
+                extensions=extension_payload,
+                user=dataset.user,
+                eml_extra=dataset.eml,
+            )
+
+            core_choice_map = {
+                DarwinCoreCoreType.OCCURRENCE: Dataset.DWCCore.OCCURRENCE,
+                DarwinCoreCoreType.EVENT: Dataset.DWCCore.EVENT,
+                DarwinCoreCoreType.TAXON: Dataset.DWCCore.TAXONOMY,
+            }
+            dataset.dwc_core = core_choice_map.get(self.core_type, '')
             dataset.dwca_url = dwca_url
             dataset.save()
             return f'DwCA successfully created and uploaded: {dwca_url}'

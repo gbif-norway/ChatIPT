@@ -3,7 +3,7 @@
 import styles from './app.css'
 import Dataset from './components/Dataset'
 import DatasetsGrid from './components/DatasetsGrid'
-import FileDrop from './components/FileDrop'
+import NewDatasetComposer from './components/NewDatasetComposer'
 import ProtectedRoute from './components/ProtectedRoute'
 import { useAuth } from './contexts/AuthContext'
 import { DatasetProvider, useDataset } from './contexts/DatasetContext'
@@ -15,7 +15,6 @@ const HomeContent = () => {
   const { currentDatasetId, loadDataset, setCurrentDatasetId } = useDataset()
   const { updateNavigation } = useNavigation()
   const [mode, setMode] = useState('dashboard') // 'dashboard', 'upload', 'dataset'
-  const [uploadError, setUploadError] = useState(null)
 
   const handleDatasetSelect = useCallback((datasetId) => {
     loadDataset(datasetId)
@@ -24,13 +23,11 @@ const HomeContent = () => {
 
   const handleNewDataset = useCallback(() => {
     setMode('upload')
-    setUploadError(null)
   }, [])
 
   const handleBackToDashboard = useCallback(() => {
     setMode('dashboard')
     setCurrentDatasetId(null)
-    setUploadError(null)
   }, [setCurrentDatasetId])
 
   useEffect(() => {
@@ -93,16 +90,12 @@ const HomeContent = () => {
         onBackToDashboard: null
       });
     }
-  }, [authenticated, mode, updateNavigation, handleNewDataset, handleBackToDashboard]);
+  }, [authenticated, mode, updateNavigation, handleBackToDashboard]);
 
-  const handleFileAccepted = (datasetId) => {
+  const handleDatasetCreated = useCallback((datasetId) => {
     loadDataset(datasetId)
     setMode('dataset')
-  }
-
-  const handleFileError = (error) => {
-    setUploadError(error)
-  }
+  }, [loadDataset])
 
   return (
     <ProtectedRoute>
@@ -117,34 +110,7 @@ const HomeContent = () => {
         )}
         
         {mode === 'upload' && (
-          <div className="container p-4">
-            <div className="row">
-              <div className="mb-4">
-                <h2>Upload New Dataset</h2>
-              </div>
-              
-              <div className="card">
-                <div className="card-body">
-                  <h5 className="card-title">Choose your data file</h5>
-                  <p className="card-text">
-                    Upload a CSV or Excel file containing your biodiversity data. 
-                    ChatIPT will help you clean and standardize it for publication on GBIF.
-                  </p>
-                  
-                  <FileDrop
-                    onFileAccepted={handleFileAccepted}
-                    onError={handleFileError}
-                  />
-                  
-                  {uploadError && (
-                    <div className="alert alert-danger mt-3">
-                      {uploadError}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
+          <NewDatasetComposer onDatasetCreated={handleDatasetCreated} />
         )}
         
         {mode === 'dataset' && currentDatasetId && (

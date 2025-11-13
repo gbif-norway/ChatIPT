@@ -3,11 +3,23 @@ from dwcawriter import Archive, Table
 import tempfile
 from datetime import datetime
 import os
+from pathlib import Path
 from minio import Minio
 from tenacity import retry, stop_after_attempt, wait_fixed
 import requests
 from requests.auth import HTTPBasicAuth
 import uuid
+
+from api.dwc_specs import (
+    CORE_SCHEMAS,
+    EXTENSION_SCHEMAS,
+    DarwinCoreCoreType,
+    DarwinCoreExtensionType,
+)
+
+# Get the base directory for templates
+_BASE_DIR = Path(__file__).resolve().parent.parent
+_TEMPLATES_ROOT = _BASE_DIR / "templates"
 
 def make_eml(title, description, user=None, eml_extra: dict | None = None):
     """Render an EML document populated with available metadata and prune empty elements.
@@ -19,7 +31,10 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         eml_extra: Optional dict from `dataset.eml` with keys like
                    geographic_scope, temporal_scope, taxonomic_scope, methodology, users
     """
-    tree = ET.parse('api/templates/eml.xml')
+    eml_path = _TEMPLATES_ROOT / "eml.xml"
+    if not eml_path.exists():
+        raise FileNotFoundError(f"EML template not found at: {eml_path}")
+    tree = ET.parse(str(eml_path))
     root = tree.getroot()
 
     # EML 2.2.0: the root is namespaced (eml:eml) but children are unqualified.
@@ -66,6 +81,10 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         user_id = get_or_create(parent_node, 'userId')
         user_id.set('directory', 'https://orcid.org/')
         set_text(user_id, person.get('orcid') or person.get('userId') or '')
+        # Email if available
+        email_value = person.get('email') or person.get('electronicMailAddress') or ''
+        if email_value:
+            set_text(get_or_create(parent_node, 'electronicMailAddress'), email_value)
         if include_role:
             set_text(get_or_create(parent_node, 'role'), role_value or 'metadataProvider')
 
@@ -74,6 +93,7 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         'first_name': getattr(user, 'first_name', 'Unknown') if user else 'Test',
         'last_name': getattr(user, 'last_name', 'Unknown') if user else 'User',
         'orcid': getattr(user, 'orcid_id', '0000-0000-0000-0000') if user else '0000-0002-1825-0097',
+        'email': getattr(user, 'email', '') if user else '',
     }
 
     creator_node = get_or_create(dataset_node, 'creator')
@@ -81,6 +101,10 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
 
     metadata_provider_node = get_or_create(dataset_node, 'metadataProvider')
     set_person(metadata_provider_node, primary_person)
+
+    # Contact (required by IPT): copy primary user
+    contact_node = get_or_create(dataset_node, 'contact')
+    set_person(contact_node, primary_person)
 
     # Optional additional metadata
     eml_extra = eml_extra or {}
@@ -165,31 +189,62 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
 def upload_file(client, bucket_name, object_name, local_path):
     client.fput_object(bucket_name, object_name, local_path, content_type="application/zip")
 
-def get_id_col_index(df, col_name='occurrenceID'):
-    # Ensure all column names are treated as strings before lowercase comparison
+def ensure_identifier_column(df, target_name: str) -> int:
+    """
+    Ensure the given DataFrame has a column named ``target_name`` (case-insensitive) and
+    return its positional index. If the column is absent, reuse a generic ``id`` column
+    when available or mint fresh UUID4 values.
+    """
+    target_lower = target_name.lower()
     columns_lower = [str(col).lower() for col in df.columns]
 
-    if col_name.lower() in columns_lower:
-        ind = columns_lower.index(col_name.lower())
-        return ind
-    elif 'id' in columns_lower:
-        ind = columns_lower.index('id')
-        return ind
-    else:
-        # No ID col exists, create with random UUIDs
-        df[col_name] = [str(uuid.uuid4()) for _ in range(len(df))]
-        # Update columns_lower to include the new column
-        return df.columns.get_loc(col_name)
+    if target_lower in columns_lower:
+        return columns_lower.index(target_lower)
 
-def upload_dwca(df_core, title, description, df_extension=None, user=None, eml_extra: dict | None = None):
+    if "id" in columns_lower:
+        return columns_lower.index("id")
+
+    df[target_name] = [str(uuid.uuid4()) for _ in range(len(df))]
+    return df.columns.get_loc(target_name)
+
+
+def upload_dwca(
+    df_core,
+    title,
+    description,
+    core_type: DarwinCoreCoreType,
+    extensions: list[tuple[object, DarwinCoreExtensionType]] | None = None,
+    user=None,
+    eml_extra: dict | None = None,
+):
     archive = Archive()
     archive.eml_text = make_eml(title, description, user, eml_extra)
 
-    core_table = Table(spec='https://rs.gbif.org/core/dwc_occurrence_2022-02-02.xml', data=df_core, id_index=get_id_col_index(df_core, 'occurrenceID'), only_mapped_columns=True)
+    core_schema = CORE_SCHEMAS[core_type]
+    core_id_index = None
+    if core_schema.id_column:
+        core_id_index = ensure_identifier_column(df_core, core_schema.id_column)
+
+    core_kwargs = {
+        "spec": core_schema.spec_path,
+        "data": df_core,
+        "only_mapped_columns": True,
+    }
+    if core_id_index is not None:
+        core_kwargs["id_index"] = core_id_index
+    core_table = Table(**core_kwargs)
     archive.core = core_table
-    if df_extension is not None:
-        extension_table = Table(spec='https://rs.gbif.org/extension/dwc/measurements_or_facts_2022-02-02.xml', data=df_extension, id_index=get_id_col_index(df_extension, 'measurementID'))
-        archive.extensions.append(extension_table)
+
+    for ext_df, ext_type in extensions or []:
+        schema = EXTENSION_SCHEMAS[ext_type]
+        ext_kwargs = {
+            "spec": schema.spec_path,
+            "data": ext_df,
+            "only_mapped_columns": True,
+        }
+        if schema.id_column:
+            ext_kwargs["id_index"] = ensure_identifier_column(ext_df, schema.id_column)
+        archive.extensions.append(Table(**ext_kwargs))
 
     file_name = datetime.now().strftime('output-%Y-%m-%d-%H%M%S') + '.zip'
     with tempfile.TemporaryDirectory() as temp_dir:
