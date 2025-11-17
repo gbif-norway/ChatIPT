@@ -114,7 +114,7 @@ const treeStyles = `
     background: white;
   }
   .gb-tree-content-node {
-    margin: .25em 0;
+    margin: .5em 0;
     position: relative;
     cursor: pointer;
   }
@@ -715,8 +715,9 @@ const SimpleTreeView = ({ tree, nodeIdMap, highlighted, highlightedLeaf, onToggl
   const multiplier = 5;
 
   useEffect(() => {
-    const newHeight = Math.max(10, Math.floor(fontSize * 1.15) + 2);
-    setElementHeight(newHeight);
+    const baseHeight = Math.max(10, Math.floor(fontSize * 1.15) + 2);
+    const verticalGap = Math.max(2, Math.round(fontSize * 0.35));
+    setElementHeight(baseHeight + verticalGap);
   }, [fontSize]);
 
   useEffect(() => {

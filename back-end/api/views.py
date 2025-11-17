@@ -11,7 +11,9 @@ from rest_framework.serializers import ModelSerializer
 from django.conf import settings
 import requests
 from urllib.parse import urlencode
+from collections import defaultdict
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -465,13 +467,13 @@ class DatasetViewSet(viewsets.ModelViewSet):
             return Response({'error': 'No scientificName column found'}, status=status.HTTP_404_NOT_FOUND)
         
         # Get all unique scientific names and count occurrences
-        scientific_names_with_counts = {}
-        all_scientific_names = set()
-        for idx, row in df.iterrows():
-            sci_name = str(row.get(sci_name_col, '')).strip()
-            if sci_name and sci_name != 'nan':
-                all_scientific_names.add(sci_name)
-                scientific_names_with_counts[sci_name] = scientific_names_with_counts.get(sci_name, 0) + 1
+        scientific_name_series = df[sci_name_col].astype(str).str.strip()
+        valid_scientific_names = scientific_name_series[
+            (scientific_name_series != '') &
+            (scientific_name_series.str.lower() != 'nan')
+        ]
+        scientific_names_with_counts = valid_scientific_names.value_counts().to_dict()
+        all_scientific_names = set(scientific_names_with_counts.keys())
         
         # For now, use the first tree file
         user_file = tree_files[0]
@@ -503,14 +505,55 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 # Build mapping from tip labels to scientific names
                 tip_label_to_sci_name = {}
                 matched_scientific_names = set()
-                
+
+                def tokenize_label(value: str) -> list[str]:
+                    if not value:
+                        return []
+                    return [token for token in re.split(r'[^a-z0-9]+', value.lower()) if token]
+
+                # Fast lookup: map genus+species tokens from the tree tips
+                tip_lookup = defaultdict(list)
                 for tip_label in tip_labels:
-                    for sci_name in all_scientific_names:
+                    tokens = tokenize_label(tip_label)
+                    if len(tokens) >= 2:
+                        tip_lookup[tokens[0] + tokens[1]].append(tip_label)
+
+                sci_name_keys = {}
+                for sci_name in all_scientific_names:
+                    tokens = tokenize_label(sci_name)
+                    if len(tokens) >= 2:
+                        sci_name_keys[sci_name] = tokens[0] + tokens[1]
+                    else:
+                        sci_name_keys[sci_name] = None
+
+                # First pass: try to match using the precomputed keys
+                for sci_name, key in sci_name_keys.items():
+                    if not key:
+                        continue
+                    matching_tips = tip_lookup.get(key)
+                    if not matching_tips:
+                        continue
+
+                    matched_here = False
+                    for tip_label in matching_tips:
+                        if tip_label in tip_label_to_sci_name:
+                            continue
                         if match_tip_label_to_scientific_name(tip_label, sci_name):
-                            if tip_label not in tip_label_to_sci_name:
+                            tip_label_to_sci_name[tip_label] = sci_name
+                            matched_here = True
+                    if matched_here:
+                        matched_scientific_names.add(sci_name)
+
+                # Fallback: only iterate over the remaining unmatched items
+                remaining_tip_labels = [tip for tip in tip_labels if tip not in tip_label_to_sci_name]
+                if remaining_tip_labels:
+                    remaining_scientific_names = [sci for sci in all_scientific_names if sci not in matched_scientific_names]
+                    for tip_label in remaining_tip_labels:
+                        for sci_name in remaining_scientific_names:
+                            if match_tip_label_to_scientific_name(tip_label, sci_name):
                                 tip_label_to_sci_name[tip_label] = sci_name
                                 matched_scientific_names.add(sci_name)
-                            break
+                                break
                 
                 # Filter and replace tree: only keep nodes that match scientific names
                 # Replace tip labels with scientific names
