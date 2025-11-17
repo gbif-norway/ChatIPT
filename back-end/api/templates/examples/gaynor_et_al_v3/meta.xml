@@ -1,0 +1,33 @@
+<?xml version='1.0' encoding='utf-8'?>
+<archive xmlns="http://rs.tdwg.org/dwc/text/" metadata="eml.xml">
+  <core encoding="UTF-8" fieldsTerminatedBy="\t" linesTerminatedBy="\n" fieldsEnclosedBy="" ignoreHeaderLines="1" rowType="http://rs.tdwg.org/dwc/terms/Occurrence">
+    <files>
+      <location>occurrence.csv</location>
+    </files>
+    <id index="0" />
+    <field index="0" term="http://rs.tdwg.org/dwc/terms/occurrenceID"/>
+   <field index="1" term="http://rs.tdwg.org/dwc/terms/dynamicProperties"/>
+<field index="2" term="http://rs.tdwg.org/dwc/terms/collectionCode"/>
+<field index="3" term="http://rs.tdwg.org/dwc/terms/catalogNumber"/>
+    <field index="4" term="http://rs.tdwg.org/dwc/terms/country"/>
+
+       <field index="5" term="http://rs.tdwg.org/dwc/terms/eventDate"/>
+       <field index="6" term="http://rs.tdwg.org/dwc/terms/decimalLatitude"/>
+       <field index="7" term="http://rs.tdwg.org/dwc/terms/decimalLongitude"/>
+
+    <field index="8" term="http://rs.tdwg.org/dwc/terms/locality"/>
+
+    <field index="9" term="http://rs.tdwg.org/dwc/terms/scientificName"/>
+
+    <field index="10" term="http://rs.tdwg.org/dwc/terms/associatedSequences"/>
+
+
+    <field index="11" term="http://https://www.ebi.ac.uk/terms/study"/>
+        <field index="12" term="http://https://www.ebi.ac.uk/terms/bioproject_accession"/>
+
+
+    <field index="13" term="http://rs.tdwg.org/dwc/terms/materialSampleID"/>
+
+<field default="MaterialCitation" term="http://rs.tdwg.org/dwc/terms/basisOfRecord"/> 
+  </core>
+  </archive>

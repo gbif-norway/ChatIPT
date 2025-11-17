@@ -107,6 +107,7 @@ class DatasetSerializer(serializers.ModelSerializer):
     user_files = UserFileSerializer(many=True, read_only=True)
     visible_agent_set = serializers.SerializerMethodField()
     user_info = serializers.SerializerMethodField()
+    can_visualize_tree = serializers.SerializerMethodField()
 
     class Meta:
         model = Dataset
@@ -128,6 +129,7 @@ class DatasetSerializer(serializers.ModelSerializer):
             'visible_agent_set',
             'user_info',
             'user_files',
+            'can_visualize_tree',
         ]
         read_only_fields = [
             'created_at',
@@ -137,6 +139,7 @@ class DatasetSerializer(serializers.ModelSerializer):
             'user_files',
             'published_at',
             'rejected_at',
+            'can_visualize_tree',
         ]
     
     def get_visible_agent_set(self, dataset):
@@ -161,6 +164,10 @@ class DatasetSerializer(serializers.ModelSerializer):
                 'country': dataset.user.country
             }
         return None
+
+    def get_can_visualize_tree(self, dataset):
+        """Check if tree visualization is available for this dataset"""
+        return dataset.can_visualize_tree()
 
     def create(self, validated_data):
         request = self.context.get('request')
