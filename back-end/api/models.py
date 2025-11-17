@@ -109,6 +109,47 @@ class Dataset(models.Model):
             first_task.create_agent_with_system_messages(dataset=self)
             return self.next_agent()
 
+    def can_visualize_tree(self):
+        """
+        Check if tree visualization is available:
+        - Has tree files (Newick or Nexus)
+        - Has a table named 'occurrence' (case-insensitive) with decimalLatitude and decimalLongitude columns
+        """
+        # Check for tree files by checking file extensions
+        # file_type is a property, so we need to check extensions directly
+        has_tree_files = False
+        for user_file in self.user_files.all():
+            ext = Path(user_file.file.name).suffix.lower()
+            if ext in UserFile.TREE_EXTENSIONS:
+                has_tree_files = True
+                break
+        
+        if not has_tree_files:
+            return False
+        
+        # Check for occurrence table with lat/long columns
+        occurrence_table = None
+        for table in self.table_set.all():
+            # Case-insensitive title match
+            if table.title and table.title.lower() == 'occurrence':
+                occurrence_table = table
+                break
+        
+        if not occurrence_table:
+            return False
+        
+        # Check if table has the required columns
+        df = occurrence_table.df
+        if df is None or df.empty:
+            return False
+        
+        # Standardize column names to lowercase for comparison
+        standardized_columns = {str(col).lower(): col for col in df.columns}
+        has_lat = 'decimallatitude' in standardized_columns
+        has_long = 'decimallongitude' in standardized_columns
+        
+        return has_lat and has_long
+
     class Meta:
         get_latest_by = 'created_at'
         ordering = ['created_at']
@@ -383,19 +424,22 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
     @property
     def functions(self):
         functions = [
-                    agent_tools.SetBasicMetadata.__name__,
-                    agent_tools.SetEML.__name__,
-                    agent_tools.SetAgentTaskToComplete.__name__,
-                    agent_tools.Python.__name__,
-                    agent_tools.BasicValidationForSomeDwCTerms.__name__,
-                    agent_tools.GetDarwinCoreInfo.__name__,
-                    agent_tools.GetDwCExtensionInfo.__name__,
-                    agent_tools.RollBack.__name__,
-                    agent_tools.UploadDwCA.__name__,
-                    agent_tools.PublishToGBIF.__name__,
-                    agent_tools.ValidateDwCA.__name__,
-                    agent_tools.SendDiscordMessage.__name__
-                   ]
+            agent_tools.SetBasicMetadata.__name__,
+            agent_tools.SetStructureNotes.__name__,
+            agent_tools.SetEML.__name__,
+            agent_tools.SetUserEmail.__name__,
+            agent_tools.SetUserLanguage.__name__,
+            agent_tools.SetAgentTaskToComplete.__name__,
+            agent_tools.Python.__name__,
+            agent_tools.BasicValidationForSomeDwCTerms.__name__,
+            agent_tools.GetDarwinCoreInfo.__name__,
+            agent_tools.GetDwCExtensionInfo.__name__,
+            agent_tools.RollBack.__name__,
+            agent_tools.UploadDwCA.__name__,
+            agent_tools.PublishToGBIF.__name__,
+            agent_tools.ValidateDwCA.__name__,
+            agent_tools.SendDiscordMessage.__name__,
+        ]
 
         # Exclude the completion tool for the final task (Data maintenance),
         # so it remains indefinitely open to conversation with the user.

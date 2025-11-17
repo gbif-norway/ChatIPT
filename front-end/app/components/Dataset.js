@@ -4,6 +4,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { useDataset } from '../contexts/DatasetContext';
 import { useAuth } from '../contexts/AuthContext';
 import Agent from './Agent';
+import TreeVisualization from './TreeVisualization';
 
 import Accordion from 'react-bootstrap/Accordion';
 import DataTable from 'react-data-table-component';
@@ -17,7 +18,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const [tables, setTables] = useState([]);
   const [activeTableId, setActiveTableId] = useState(null);
   const [activeAgentKey, setActiveAgentKey] = useState(null);
-
   // Helper function to fetch data with timeout
   const fetchData = async (url, options = {}) => {
     const { timeout = 30000, retries = 2 } = options; // 30 second timeout for table requests
@@ -82,6 +82,11 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     const sortedTables = tables.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
     setActiveTableId(sortedTables[0]?.id);
   }, [currentDatasetId]);
+
+  const handleVisualizeTreeClick = () => {
+    // Bootstrap modal will be shown via data-bs-toggle
+    // Tree data will be loaded by TreeVisualization component
+  };
 
 
 
@@ -195,6 +200,18 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                 >
                   <i className="bi bi-info-circle me-1"></i>
                   Structure Notes
+                </button>
+              )}
+              {currentDataset.can_visualize_tree && (
+                <button 
+                  className="btn btn-primary btn-sm" 
+                  data-bs-toggle="modal" 
+                  data-bs-target="#treeVisualizationModal"
+                  onClick={handleVisualizeTreeClick}
+                  title="Visualize phylogenetic tree"
+                >
+                  <i className="bi bi-diagram-3 me-1"></i>
+                  Visualise Tree
                 </button>
               )}
             </div>
@@ -340,6 +357,26 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tree Visualization Modal */}
+      {currentDataset.can_visualize_tree && (
+        <div className="modal fade" id="treeVisualizationModal" tabIndex="-1" aria-labelledby="treeVisualizationModalLabel" aria-hidden="true">
+          <div className="modal-dialog modal-fullscreen-lg-down" style={{ maxWidth: '95vw', height: '90vh', margin: 'auto' }}>
+            <div className="modal-content" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+              <div className="modal-header">
+                <h5 className="modal-title" id="treeVisualizationModalLabel">
+                  <i className="bi bi-diagram-3 me-2"></i>
+                  Phylogenetic Tree Visualization
+                </h5>
+                <button type="button" className="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              </div>
+              <div className="modal-body" style={{ flex: 1, overflow: 'hidden', padding: 0, display: 'flex', flexDirection: 'column' }}>
+                <TreeVisualization datasetId={currentDatasetId} />
               </div>
             </div>
           </div>
