@@ -276,6 +276,35 @@ CORS_ALLOWED_ORIGINS = [
 # Allow credentials (cookies) for session authentication
 CORS_ALLOW_CREDENTIALS = True
 
+# Additional CORS settings to ensure headers are always added
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+# Allow all methods
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+# Expose headers that frontend might need
+CORS_EXPOSE_HEADERS = [
+    'content-type',
+    'content-length',
+]
+
 # CSRF settings for cross-domain requests
 CSRF_TRUSTED_ORIGINS = [
     "https://staging.chatipt.svc.gbif.no",
