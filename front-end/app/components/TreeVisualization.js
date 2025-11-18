@@ -239,63 +239,134 @@ const TreeVisualization = ({ datasetId, onClose }) => {
     document.body.appendChild(script);
   }, []);
 
-  // Fetch tree data
-  useEffect(() => {
+  // Fetch tree data function
+  const fetchTreeData = useCallback(async () => {
     if (!datasetId) return;
     
-    const fetchTreeData = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const response = await fetch(`${config.baseUrl}/api/datasets/${datasetId}/tree_files/`, {
-          credentials: 'include'
-        });
-        
-        let data;
-        try {
-          data = await response.json();
-        } catch (jsonError) {
-          // If response is not JSON, use status text
-          throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
-        }
-        
-        if (!response.ok) {
-          throw new Error(data.error || `HTTP error! status: ${response.status}`);
-        }
-        
-        if (data.error) {
-          throw new Error(data.error);
-        }
-        
-        const map = {};
-        if (data.tree_data) {
-          buildNodeIdMap(data.tree_data, map);
-        }
-        
-        setTreeData(data.tree_data);
-        setNodeIdMap(map);
-        setUnmatchedScientificNames(data.unmatched_scientific_names || []);
-        setTotalUniqueScientificNames(data.total_unique_scientific_names || 0);
-        setHasCoordinates(data.has_coordinates || false);
-        setHasScientificName(data.has_scientific_name || false);
-      } catch (err) {
-        console.error('Error loading tree data:', err);
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
+    const perfStart = performance.now();
+    console.log('[TreeViz] Starting tree data fetch...');
     
-    fetchTreeData();
+    setLoading(true);
+    setError(null);
+    
+    // Clear existing map layers when refetching
+    const clearStart = performance.now();
+    if (mapRef.current && layerByNode.current.size > 0) {
+      layerByNode.current.forEach((layer) => {
+        if (mapRef.current.hasLayer(layer)) {
+          mapRef.current.removeLayer(layer);
+        }
+      });
+      layerByNode.current.clear();
+    }
+    console.log(`[TreeViz] Cleared map layers in ${(performance.now() - clearStart).toFixed(2)}ms`);
+    
+    try {
+      const fetchStart = performance.now();
+      const response = await fetch(`${config.baseUrl}/api/datasets/${datasetId}/tree_files/`, {
+        credentials: 'include',
+        cache: 'no-cache' // Prevent caching
+      });
+      const fetchTime = performance.now() - fetchStart;
+      console.log(`[TreeViz] API fetch completed in ${fetchTime.toFixed(2)}ms (${(fetchTime / 1000).toFixed(2)}s)`);
+      
+      const jsonStart = performance.now();
+      let data;
+      try {
+        data = await response.json();
+        const jsonTime = performance.now() - jsonStart;
+        const dataSize = JSON.stringify(data).length;
+        console.log(`[TreeViz] JSON parsing completed in ${jsonTime.toFixed(2)}ms (${(jsonTime / 1000).toFixed(2)}s), data size: ${(dataSize / 1024).toFixed(2)}KB`);
+      } catch (jsonError) {
+        // If response is not JSON, use status text
+        throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
+      }
+      
+      if (!response.ok) {
+        throw new Error(data.error || `HTTP error! status: ${response.status}`);
+      }
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      const processStart = performance.now();
+      const map = {};
+      if (data.tree_data) {
+        const buildMapStart = performance.now();
+        buildNodeIdMap(data.tree_data, map);
+        console.log(`[TreeViz] buildNodeIdMap completed in ${(performance.now() - buildMapStart).toFixed(2)}ms`);
+      }
+      
+      const stateUpdateStart = performance.now();
+      setTreeData(data.tree_data);
+      setNodeIdMap(map);
+      setUnmatchedScientificNames(data.unmatched_scientific_names || []);
+      setTotalUniqueScientificNames(data.total_unique_scientific_names || 0);
+      console.log(`[TreeViz] State updates completed in ${(performance.now() - stateUpdateStart).toFixed(2)}ms`);
+      
+      const totalTime = performance.now() - perfStart;
+      console.log('[TreeViz] Tree data response:', {
+        has_coordinates: data.has_coordinates,
+        has_scientific_name: data.has_scientific_name,
+        tree_data: data.tree_data ? 'present' : 'missing',
+        all_keys: Object.keys(data),
+        total_time_ms: totalTime.toFixed(2),
+        total_time_s: (totalTime / 1000).toFixed(2)
+      });
+      setHasCoordinates(data.has_coordinates || false);
+      setHasScientificName(data.has_scientific_name || false);
+    } catch (err) {
+      console.error('[TreeViz] Error loading tree data:', err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+      const totalTime = performance.now() - perfStart;
+      console.log(`[TreeViz] Total fetchTreeData time: ${totalTime.toFixed(2)}ms (${(totalTime / 1000).toFixed(2)}s)`);
+    }
   }, [datasetId]);
+
+  // Fetch tree data on mount and when datasetId changes
+  useEffect(() => {
+    fetchTreeData();
+  }, [fetchTreeData]);
+
+  // Refetch when modal is shown (Bootstrap modal event)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
+    const modalElement = document.getElementById('treeVisualizationModal');
+    if (!modalElement) return;
+
+    const handleModalShown = () => {
+      console.log('Modal shown, refetching tree data...');
+      fetchTreeData();
+    };
+
+    modalElement.addEventListener('shown.bs.modal', handleModalShown);
+
+    return () => {
+      modalElement.removeEventListener('shown.bs.modal', handleModalShown);
+    };
+  }, [fetchTreeData]);
 
   // Decorate tree with positions and sizes - MUST be before early returns
   const decoratedTree = React.useMemo(() => {
     if (!treeData) return null;
+    const decorateStart = performance.now();
+    console.log('[TreeViz] Starting tree decoration...');
     // Shallow clone to avoid expensive deep clone, then mutate during decoration
+    const cloneStart = performance.now();
     const tree = cloneTree(treeData);
+    console.log(`[TreeViz] Tree cloned in ${(performance.now() - cloneStart).toFixed(2)}ms`);
+    
     nodeByKeyMap.current.clear();
+    const decorateTreeStart = performance.now();
     decorateTree(tree, null, nodeByKeyMap.current);
+    const decorateTime = performance.now() - decorateTreeStart;
+    const totalDecorateTime = performance.now() - decorateStart;
+    console.log(`[TreeViz] decorateTree completed in ${decorateTime.toFixed(2)}ms (${(decorateTime / 1000).toFixed(2)}s)`);
+    console.log(`[TreeViz] Total decoration time: ${totalDecorateTime.toFixed(2)}ms (${(totalDecorateTime / 1000).toFixed(2)}s)`);
     return tree;
   }, [treeData]);
 
