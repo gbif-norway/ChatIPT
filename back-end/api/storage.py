@@ -216,6 +216,9 @@ class DualStorage(Storage):
     
     def _save(self, name, content):
         """Save file to both MinIO and local filesystem."""
+        # Normalize the path for local storage (strip upload_to prefix if present)
+        normalized_name = self._normalize_path(name)
+        
         # Read content into memory first so we can write to both locations
         if hasattr(content, 'read'):
             # If content is a file-like object, read it
@@ -227,12 +230,12 @@ class DualStorage(Storage):
         else:
             file_content = content
         
-        # Save to local filesystem first (faster)
+        # Save to local filesystem first (faster) using normalized name
         from django.core.files.base import ContentFile
         local_content = ContentFile(file_content)
-        local_name = self.local_storage.save(name, local_content)
+        local_name = self.local_storage.save(normalized_name, local_content)
         
-        # Also save to MinIO if configured
+        # Also save to MinIO if configured (use original name to preserve path structure)
         if self.minio_storage and self.minio_storage.client:
             try:
                 # MinIOStorage._save expects content with .size attribute
@@ -246,49 +249,65 @@ class DualStorage(Storage):
                 logger = logging.getLogger(__name__)
                 logger.warning(f"Failed to save {name} to MinIO (local save succeeded): {e}")
         
-        return local_name
+        # Return the name with the upload_to prefix to match Django's expected format
+        # Django will store this in the database
+        return name
+    
+    def _normalize_path(self, name):
+        """Normalize file path by removing upload_to prefix if present."""
+        # If name starts with 'user_files/', strip it since local_base_path already includes it
+        if name.startswith('user_files/'):
+            return name[len('user_files/'):]
+        return name
     
     def _open(self, name, mode='rb'):
         """Open file from local filesystem first, fallback to MinIO."""
+        # Normalize the path for local storage (strip upload_to prefix if present)
+        normalized_name = self._normalize_path(name)
+        
         # Try local filesystem first (faster)
         try:
-            if self.local_storage.exists(name):
-                return self.local_storage._open(name, mode)
+            if self.local_storage.exists(normalized_name):
+                return self.local_storage._open(normalized_name, mode)
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
-            logger.warning(f"Failed to check/exist {name} in local storage: {e}")
+            logger.warning(f"Failed to check/exist {normalized_name} in local storage: {e}")
         
         # Fallback to MinIO if local file doesn't exist
+        # Try both original name and normalized name in MinIO (files might be stored either way)
         if self.minio_storage and self.minio_storage.client:
-            try:
-                minio_file = self.minio_storage._open(name, mode)
-                # Optionally sync from MinIO to local for future reads
+            minio_paths_to_try = [name, normalized_name] if name != normalized_name else [name]
+            for minio_path in minio_paths_to_try:
                 try:
-                    content = minio_file.read()
-                    if hasattr(minio_file, 'seek'):
-                        minio_file.seek(0)
-                    # Save to local for next time
-                    local_path = os.path.join(self.local_base_path, name)
-                    os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                    with open(local_path, 'wb') as f:
-                        f.write(content)
-                    if hasattr(minio_file, 'seek'):
-                        minio_file.seek(0)
-                except Exception as sync_error:
+                    minio_file = self.minio_storage._open(minio_path, mode)
+                    # Optionally sync from MinIO to local for future reads
+                    try:
+                        content = minio_file.read()
+                        if hasattr(minio_file, 'seek'):
+                            minio_file.seek(0)
+                        # Save to local for next time using normalized path
+                        local_path = os.path.join(self.local_base_path, normalized_name)
+                        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                        with open(local_path, 'wb') as f:
+                            f.write(content)
+                        if hasattr(minio_file, 'seek'):
+                            minio_file.seek(0)
+                    except Exception as sync_error:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.warning(f"Failed to sync {minio_path} from MinIO to local: {sync_error}")
+                    return minio_file
+                except (FileNotFoundError, IOError) as e:
                     import logging
                     logger = logging.getLogger(__name__)
-                    logger.warning(f"Failed to sync {name} from MinIO to local: {sync_error}")
-                return minio_file
-            except (FileNotFoundError, IOError) as e:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.warning(f"File {name} not found in MinIO: {e}")
+                    logger.debug(f"File {minio_path} not found in MinIO: {e}")
+                    continue
         
         # If local file doesn't exist, try to open it anyway to get a proper error
         # This handles the case where the file path exists in DB but file is missing
         try:
-            return self.local_storage._open(name, mode)
+            return self.local_storage._open(normalized_name, mode)
         except FileNotFoundError:
             # If both storages fail, provide a helpful error message
             error_msg = f"File {name} not found in local storage ({self.local_base_path})"
