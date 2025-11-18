@@ -1,0 +1,1362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>BalancedTree with Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <!-- React -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: #f0f2f5;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    #root {
+      height: 100%;
+    }
+
+    /* Tree Area Styles */
+    .treeArea {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      position: relative;
+    }
+
+    .tree-controls {
+      border-bottom: 1px solid #ddd;
+      flex: 0 0 auto;
+      padding: 12px;
+      background: white;
+    }
+
+    .tree-tree {
+      padding: 24px 0;
+      flex: 1 1 auto;
+      overflow: auto;
+      overscroll-behavior-x: none;
+      width: 100%;
+      max-width: 100%;
+    }
+
+    .gb-snack-bar {
+      position: absolute;
+      background: #333;
+      color: white;
+      padding: 8px 12px;
+      border-radius: 4px;
+      bottom: 0;
+      left: 0;
+      pointer-events: none;
+      z-index: 2000;
+      margin: 24px;
+    }
+
+    /* StyledTree styles (from styles2.js) */
+    .tree-tree .gb-tree-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      position: relative;
+      line-height: 1.15;
+      padding-left: .25em;
+    }
+
+    .tree-tree .gb-tree-list::before {
+      width: .25em;
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 50%;
+      border-top: 1px solid #333;
+    }
+
+    .gb-tree-node {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      white-space: nowrap;
+      position: relative;
+    }
+
+    .gb-tree-node .gb-tree-pipe {
+      position: absolute;
+      left: 0;
+      border-top: 1px solid #333;
+    }
+
+    .gb-tree-node::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      border-left: 1px solid #333;
+    }
+
+    .gb-tree-node:last-of-type::after {
+      height: 50%;
+      top: 0;
+    }
+
+    .gb-tree-node:first-of-type::after {
+      height: 50%;
+      bottom: 0;
+    }
+
+    .gb-tree-node:only-of-type::after {
+      display: none;
+    }
+
+    .gb-tree-node:not(:first-of-type):not(:last-of-type)::after {
+      height: 100%;
+    }
+
+    .gb-tree-color {
+      width: .8em;
+      height: .8em;
+      padding: 0;
+      border: 1px solid #333;
+      border-radius: 50%;
+      display: inline-block;
+      background: white;
+      cursor: pointer;
+      z-index: 10;
+    }
+
+    .gb-tree-color-click-area {
+      width: 10px;
+      height: 10px;
+      display: block;
+      left: -5px;
+      top: -5px;
+      position: relative;
+    }
+
+    .gb-tree-leaf-color {
+      margin-right: -4px;
+      background: white;
+    }
+
+    .gb-tree-content-node {
+      margin: .25em 0;
+      position: relative;
+      cursor: pointer;
+    }
+
+    .gb-tree-content-node.gb-tree-leaf {
+      background: #fafafa;
+      border: 1px solid #333;
+      padding: 0 .25em 0 .5em;
+    }
+
+    .gb-tree-content-node.gb-tree-leaf .gb-tree-color {
+      margin-left: .5em;
+    }
+
+    .gb-tree-node-name {
+      color: #333;
+    }
+
+    .gb-tree-color:hover + ol .gb-tree-leaf,
+    .gb-tree-color:hover + .gb-tree-leaf {
+      background: #cad2d3 !important;
+      color: white;
+    }
+
+    .gb-tree-hover-title:hover {
+      box-shadow: 0 0 2px 2px #0089ffab;
+      z-index: 1000;
+    }
+
+    .gb-tree-hover-title[gbtitle]:hover:after {
+      font-size: 15px;
+      pointer-events: none;
+      content: attr(gbtitle);
+      position: relative;
+      top: -30px;
+      background: #333;
+      color: white;
+      border-radius: 4px;
+      padding: 3px 5px;
+      z-index: 1000;
+    }
+
+    .gb-tree-subtree-placeholder {
+      border-top: 2px solid #333;
+    }
+
+    .gb-tree-highlighted .gb-tree-color {
+      background-color: currentColor;
+    }
+
+    /* Simple form controls */
+    .autocomplete-wrapper {
+      position: relative;
+      display: inline-block;
+      width: 400px;
+      max-width: 100%;
+    }
+
+    .autocomplete-input {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #d9d9d9;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    .autocomplete-input:focus {
+      outline: none;
+      border-color: #40a9ff;
+      box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+    }
+
+    .autocomplete-dropdown {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: white;
+      border: 1px solid #d9d9d9;
+      border-top: none;
+      border-radius: 0 0 4px 4px;
+      max-height: 200px;
+      overflow-y: auto;
+      z-index: 1000;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    }
+
+    .autocomplete-option {
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+
+    .autocomplete-option:hover {
+      background: #f5f5f5;
+    }
+
+    .radio-group {
+      display: inline-flex;
+      border: 1px solid #d9d9d9;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .radio-button {
+      padding: 6px 12px;
+      border: none;
+      background: white;
+      cursor: pointer;
+      border-right: 1px solid #d9d9d9;
+      font-size: 14px;
+    }
+
+    .radio-button:last-child {
+      border-right: none;
+    }
+
+    .radio-button:hover {
+      background: #f5f5f5;
+    }
+
+    .radio-button.active {
+      background: #1890ff;
+      color: white;
+    }
+
+    .tooltip {
+      position: relative;
+      display: inline-block;
+    }
+
+    .tooltip:hover::after {
+      content: attr(data-title);
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 4px 8px;
+      background: rgba(0, 0, 0, 0.75);
+      color: white;
+      border-radius: 4px;
+      font-size: 12px;
+      white-space: nowrap;
+      margin-bottom: 4px;
+    }
+
+    .range-input {
+      margin-left: 12px;
+    }
+
+    /* Split Pane Styles */
+    .split-pane-container {
+      display: flex;
+      height: 100%;
+      position: relative;
+    }
+
+    .split-pane-left {
+      flex: 0 0 50%;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      border-right: 1px solid #ddd;
+    }
+
+    .split-pane-right {
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .split-pane-resizer {
+      width: 11px;
+      margin: 0 -5px;
+      cursor: col-resize;
+      position: relative;
+      background: transparent;
+      z-index: 10;
+    }
+
+    .split-pane-resizer::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, #e2e8f0 0%, #cbd5e1 50%, #e2e8f0 100%);
+      border-radius: 6px;
+      opacity: 0.6;
+      transition: opacity 0.2s ease;
+    }
+
+    .split-pane-resizer:hover::after {
+      opacity: 1;
+    }
+
+    /* Map Styles */
+    .map-container {
+      flex: 1 1 auto;
+      position: relative;
+      min-height: 0;
+    }
+
+    .map-placeholder {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #666;
+      font-size: 14px;
+      background: #f8f9fa;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback, memo } = React;
+
+    const defaultFontSize = 12;
+    const visibleNamesThreshold = 10;
+
+    // Sample tree data with occurrences
+    const sampleTreeData = {
+      children: [
+        {
+          name: "Species_A",
+          branch_length: 10
+        },
+        {
+          children: [
+            {
+              name: "Species_B",
+              branch_length: 5
+            },
+            {
+              name: "Species_C",
+              branch_length: 5
+            }
+          ],
+          branch_length: 8
+        },
+        {
+          children: [
+            {
+              children: [
+                {
+                  name: "Species_D",
+                  branch_length: 3
+                },
+                {
+                  name: "Species_E",
+                  branch_length: 3
+                }
+              ],
+              branch_length: 4
+            },
+            {
+              name: "Species_F",
+              branch_length: 7
+            }
+          ],
+          branch_length: 6
+        }
+      ],
+      branch_length: 0
+    };
+
+    // Sample occurrence data - map of species name to occurrences
+    // In real usage, this would come from your data file
+    const sampleOccurrences = {
+      "Species_A": [
+        { decimalLatitude: 40.0, decimalLongitude: -95.0, scientificName: "Species A", catalogNumber: "A001" },
+        { decimalLatitude: 42.1, decimalLongitude: -101.5, scientificName: "Species A", catalogNumber: "A002" }
+      ],
+      "Species_B": [
+        { decimalLatitude: 35.0, decimalLongitude: -90.0, scientificName: "Species B", catalogNumber: "B001" },
+        { decimalLatitude: 36.2, decimalLongitude: -92.3, scientificName: "Species B", catalogNumber: "B002" }
+      ],
+      "Species_C": [
+        { decimalLatitude: 38.5, decimalLongitude: -88.0, scientificName: "Species C", catalogNumber: "C001" }
+      ],
+      "Species_D": [
+        { decimalLatitude: 45.0, decimalLongitude: -100.0, scientificName: "Species D", catalogNumber: "D001" },
+        { decimalLatitude: 46.1, decimalLongitude: -102.5, scientificName: "Species D", catalogNumber: "D002" }
+      ],
+      "Species_E": [
+        { decimalLatitude: 30.0, decimalLongitude: -85.0, scientificName: "Species E", catalogNumber: "E001" }
+      ],
+      "Species_F": [
+        { decimalLatitude: 50.0, decimalLongitude: -110.0, scientificName: "Species F", catalogNumber: "F001" },
+        { decimalLatitude: 51.2, decimalLongitude: -112.3, scientificName: "Species F", catalogNumber: "F002" },
+        { decimalLatitude: 49.5, decimalLongitude: -108.7, scientificName: "Species F", catalogNumber: "F003" }
+      ]
+    };
+
+    // Build nodeIdMap from tree and assign keys/nodeIndex to nodes (similar to buildTree in Explore.js)
+    function buildNodeIdMap(node, map = {}, parentKey = 'root', index = 0, leafIndex = { current: 0 }, nodeIndex = { current: 0 }) {
+      const key = `${parentKey}-${index}`;
+      const isLeaf = !node.children || node.children.length === 0;
+      
+      // Assign key and nodeIndex to the node
+      node.key = key;
+      node.nodeIndex = nodeIndex.current++;
+      node.title = node.name || null;
+      
+      if (isLeaf) {
+        node.leafIndex = leafIndex.current++;
+        map[key] = {
+          key: key,
+          title: node.name || 'Unknown',
+          leafIndex: node.leafIndex,
+          nodeIndex: node.nodeIndex
+        };
+      } else {
+        map[key] = {
+          key: key,
+          title: null,
+          leafIndex: null,
+          nodeIndex: node.nodeIndex
+        };
+      }
+
+      if (node.children) {
+        node.children.forEach((child, i) => {
+          buildNodeIdMap(child, map, key, i, leafIndex, nodeIndex);
+        });
+      }
+
+      return map;
+    }
+
+    // Generic hook for detecting scroll
+    const useScrollAware = (ref) => {
+      const [scrollTop, setScrollTop] = useState(0);
+      const throttleTimeoutRef = useRef(null);
+
+      useEffect(() => {
+        const scrollContainer = ref.current;
+        if (!scrollContainer) return;
+
+        const onScroll = (e) => {
+          if (throttleTimeoutRef.current === null) {
+            throttleTimeoutRef.current = setTimeout(() => {
+              requestAnimationFrame(() => {
+                setScrollTop(e.target.scrollTop);
+                throttleTimeoutRef.current = null;
+              });
+            }, 100);
+          }
+        };
+
+        setScrollTop(scrollContainer.scrollTop);
+        scrollContainer.addEventListener("scroll", onScroll);
+        return () => scrollContainer.removeEventListener("scroll", onScroll);
+      }, []);
+
+      return [scrollTop];
+    };
+
+    const useMousePosition = (ref) => {
+      const [position, setPosition] = useState({ x: 0, y: 0 });
+      const throttleTimeoutRef = useRef(null);
+
+      useEffect(() => {
+        const scrollContainer = ref.current;
+        if (!scrollContainer) return;
+
+        const onMove = (e) => {
+          if (throttleTimeoutRef.current === null) {
+            throttleTimeoutRef.current = setTimeout(() => {
+              requestAnimationFrame(() => {
+                const rect = scrollContainer.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                setPosition({ x, y });
+                throttleTimeoutRef.current = null;
+              });
+            }, 100);
+          }
+        };
+
+        scrollContainer.addEventListener("mousemove", onMove);
+        return () => scrollContainer.removeEventListener("mousemove", onMove);
+      }, []);
+
+      return position;
+    };
+
+    // Simple draggable scroll hook
+    const useDraggableScroll = (ref) => {
+      const [isDragging, setIsDragging] = useState(false);
+      const [startX, setStartX] = useState(0);
+      const [startY, setStartY] = useState(0);
+      const [scrollLeft, setScrollLeft] = useState(0);
+      const [scrollTop, setScrollTop] = useState(0);
+
+      const onMouseDown = useCallback((e) => {
+        if (ref.current) {
+          setIsDragging(true);
+          setStartX(e.pageX - ref.current.offsetLeft);
+          setStartY(e.pageY - ref.current.offsetTop);
+          setScrollLeft(ref.current.scrollLeft);
+          setScrollTop(ref.current.scrollTop);
+        }
+      }, [ref]);
+
+      useEffect(() => {
+        const handleMouseMove = (e) => {
+          if (!isDragging || !ref.current) return;
+          e.preventDefault();
+          const x = e.pageX - ref.current.offsetLeft;
+          const y = e.pageY - ref.current.offsetTop;
+          const walkX = (x - startX) * 2;
+          const walkY = (y - startY) * 2;
+          ref.current.scrollLeft = scrollLeft - walkX;
+          ref.current.scrollTop = scrollTop - walkY;
+        };
+
+        const handleMouseUp = () => {
+          setIsDragging(false);
+        };
+
+        if (isDragging) {
+          document.addEventListener('mousemove', handleMouseMove);
+          document.addEventListener('mouseup', handleMouseUp);
+        }
+
+        return () => {
+          document.removeEventListener('mousemove', handleMouseMove);
+          document.removeEventListener('mouseup', handleMouseUp);
+        };
+      }, [isDragging, startX, startY, scrollLeft, scrollTop, ref]);
+
+      return { onMouseDown };
+    };
+
+    // Simple hotkeys hook
+    const useHotkeys = (key, callback, deps) => {
+      useEffect(() => {
+        const handleKeyPress = (e) => {
+          if (e.key === key && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            callback();
+          }
+        };
+        window.addEventListener('keydown', handleKeyPress);
+        return () => window.removeEventListener('keydown', handleKeyPress);
+      }, deps);
+    };
+
+    function decorateTree(node, parent) {
+      let position = 0;
+      let index = 0;
+      let leafIndex = 0;
+
+      function recursive(node, parent) {
+        const children = node.children || [];
+        node.position = position;
+        node.parent = parent;
+        node.id = index;
+        index++;
+        
+        if (children.length === 0) {
+          // Leaf node
+          if (node.leafIndex === undefined) {
+            node.leafIndex = leafIndex++;
+          }
+          position++;
+          node.size = 1;
+          node.childrenLength = 0;
+          return {
+            size: node.size,
+            childrenLength: node.branch_length
+          };
+        }
+        const sizes = children.map(x => recursive(x, node));
+        const sum = sizes.reduce((partial_sum, a) => partial_sum + a.size, 0);
+        const childrenLength = sizes.reduce((maxLength, a) => Math.max(maxLength, a.childrenLength), 0);
+
+        node.size = sum;
+        node.childrenLength = childrenLength;
+        return {
+          size: node.size,
+          childrenLength: node.childrenLength + node.branch_length
+        };
+      }
+      return recursive(node, parent);
+    }
+
+    function getVisibleNodes(node, scrollTop, elementHeight, hasVisibleParent) {
+      if (!node) return null;
+      const offsetY = node.position * elementHeight;
+      let showNode = offsetY < scrollTop + 1300;
+      showNode = showNode && (offsetY + node.size * elementHeight > scrollTop - 50);
+
+      if (!hasVisibleParent && !showNode) return null;
+
+      node.children = node.children || [];
+      const childrenLength = node.children.length;
+
+      let visibleNode = { ...node };
+      if (childrenLength > 0) {
+        visibleNode.children = node.children
+          .map(x => getVisibleNodes(x, scrollTop, elementHeight, showNode))
+          .filter(x => x);
+      }
+      return visibleNode;
+    }
+
+    function SampleTree({
+      onNodeEnter,
+      onNodeLeave,
+      highlighted,
+      highlightedLeaf,
+      onToggle,
+      hasVisibleParent,
+      node,
+      parentPosition = 0,
+      first = true,
+      scrollTop,
+      multiplier,
+      elementHeight = 20,
+      ...props
+    }) {
+      if (!node) return null;
+      if (!node.size) return null;
+      const isHighlighted = highlighted && highlighted[node.key];
+      const isHighlightedLeaf = typeof highlightedLeaf !== 'undefined' && highlightedLeaf === node.leafIndex;
+      const visibleNames = elementHeight >= visibleNamesThreshold;
+      node.children = node.children || [];
+      const childrenLength = node.children.length;
+      const depth = node.branch_length * multiplier || 0;
+      const treeProps = {
+        onNodeEnter,
+        onNodeLeave,
+        highlighted,
+        highlightedLeaf,
+        onToggle,
+        elementHeight,
+        multiplier
+      };
+
+      if (node.size * elementHeight < 10 && childrenLength > 0) {
+        const totalDepth = node.childrenLength * multiplier;
+        return React.createElement('li', {
+          style: {
+            height: node.size * elementHeight,
+            paddingLeft: depth,
+            background: !visibleNames && isHighlighted ? isHighlighted.color + 'cc' : null
+          },
+          className: "gb-tree-node"
+        },
+          React.createElement('span', {
+            className: "gb-tree-pipe",
+            style: { width: depth }
+          }),
+          React.createElement('span', {
+            onClick: e => onToggle && onToggle({ selected: node.key }),
+            className: `gb-tree-hover-title gb-tree-color ${childrenLength === 0 ? 'gb-tree-leaf-color' : ''}`,
+            style: {
+              backgroundColor: isHighlighted ? isHighlighted.color : null,
+              boxShadow: isHighlightedLeaf ? '0 0 0 2px #ff6868' : null
+            },
+            onMouseEnter: e => onNodeEnter && onNodeEnter({ e, node: node }),
+            onMouseLeave: e => onNodeLeave && onNodeLeave({ e, node: node }),
+            id: childrenLength === 0 ? `gb-tree-node-${node.leafIndex}` : null
+          },
+            !visibleNames && React.createElement('span', { className: "gb-tree-color-click-area" })
+          ),
+          React.createElement('div', { className: "gb-tree-content-node" },
+            node.name && React.createElement('span', { className: "gb-tree-hover-title" })
+          ),
+          React.createElement('div', {
+            className: "gb-tree-subtree-placeholder",
+            style: { width: totalDepth }
+          })
+        );
+      }
+
+      return React.createElement('li', {
+        style: {
+          height: node.size * elementHeight,
+          paddingLeft: depth,
+          borderRight: visibleNames && isHighlighted ? `8px solid ${isHighlighted.color}` : null,
+          background: !visibleNames && isHighlighted ? isHighlighted.color + 'cc' : null
+        },
+        className: `gb-tree-node ${isHighlighted ? 'gb-tree-highlighted' : ''}`
+      },
+        React.createElement('span', {
+          className: "gb-tree-pipe",
+          style: { width: depth }
+        }),
+        React.createElement('span', {
+          onClick: e => onToggle && onToggle({ selected: node.key }),
+          className: `gb-tree-hover-title gb-tree-color ${childrenLength === 0 ? 'gb-tree-leaf-color' : ''}`,
+          style: {
+            backgroundColor: isHighlighted ? isHighlighted.color : null,
+            boxShadow: isHighlightedLeaf ? '0 0 0 2px #ff6868' : null
+          },
+          onMouseEnter: e => onNodeEnter && onNodeEnter({ e, node }),
+          onMouseLeave: e => onNodeLeave && onNodeLeave({ e, node }),
+          id: childrenLength === 0 ? `gb-tree-node-${node.leafIndex}` : null
+        },
+          !visibleNames && React.createElement('span', { className: "gb-tree-color-click-area" })
+        ),
+        visibleNames && childrenLength === 0 && React.createElement('div', {
+          className: `gb-tree-content-node ${childrenLength === 0 ? 'gb-tree-leaf' : 'gb-tree-branch'}`,
+          onClick: e => onToggle && onToggle({ selected: node.key }),
+          style: {
+            boxShadow: isHighlightedLeaf ? '0 0 0 2px #ff6868' : null
+          }
+        },
+          node.name && childrenLength === 0 && React.createElement('span', {},
+            React.createElement('span', {},
+              React.createElement('span', {
+                className: "gb-tree-node-name",
+                dangerouslySetInnerHTML: { __html: node.title || '<em>Unknown name</em>' }
+              })
+            )
+          )
+        ),
+        childrenLength > 0 && React.createElement('ol', {
+          className: "gb-tree-list",
+          style: {
+            color: isHighlighted ? isHighlighted.color : null
+          }
+        },
+          node.children.map((x, i) => React.createElement(SampleTree, {
+            ...treeProps,
+            parentPosition: node.position,
+            key: x.nodeIndex,
+            node: x,
+            first: i === 0
+          }))
+        )
+      );
+    }
+
+    const Tree = memo((props) => {
+      return React.createElement(SampleTree, props);
+    });
+
+    // Simple AutoComplete component
+    function AutoComplete({ value, onChange, onSelect, placeholder, children, style, allowClear }) {
+      const [isOpen, setIsOpen] = useState(false);
+      const [filteredOptions, setFilteredOptions] = useState([]);
+      const inputRef = useRef(null);
+
+      useEffect(() => {
+        if (value) {
+          const filtered = children.filter(child => 
+            child.props.label && child.props.label.toLowerCase().indexOf(value.toLowerCase()) > -1
+          );
+          setFilteredOptions(filtered);
+          setIsOpen(filtered.length > 0);
+        } else {
+          setFilteredOptions([]);
+          setIsOpen(false);
+        }
+      }, [value, children]);
+
+      const handleSelect = (option) => {
+        onSelect && onSelect(option.props.value);
+        setIsOpen(false);
+      };
+
+      return React.createElement('div', { className: "autocomplete-wrapper", style },
+        React.createElement('input', {
+          ref: inputRef,
+          className: "autocomplete-input",
+          type: "text",
+          value: value || '',
+          onChange: e => onChange && onChange(e.target.value),
+          placeholder: placeholder,
+          onFocus: () => value && setIsOpen(true),
+          onBlur: () => setTimeout(() => setIsOpen(false), 200)
+        }),
+        isOpen && filteredOptions.length > 0 && React.createElement('div', { className: "autocomplete-dropdown" },
+          filteredOptions.map(option => React.createElement('div', {
+            key: option.key,
+            className: "autocomplete-option",
+            onClick: () => handleSelect(option),
+            dangerouslySetInnerHTML: { __html: option.props.label }
+          }))
+        )
+      );
+    }
+
+    function Option({ children, value, label }) {
+      return React.createElement('div', { value, label }, children);
+    }
+
+    // Simple Radio Group
+    function RadioGroup({ value, onChange, children, style }) {
+      return React.createElement('div', { className: "radio-group", style },
+        React.Children.map(children, child => {
+          if (child && child.type === RadioButton) {
+            return React.cloneElement(child, {
+              active: child.props.value == value,
+              onClick: () => onChange && onChange({ target: { value: child.props.value } })
+            });
+          }
+          return child;
+        })
+      );
+    }
+
+    function RadioButton({ value, children, active, onClick, title }) {
+      return React.createElement('div', {
+        className: `radio-button ${active ? 'active' : ''}`,
+        onClick: onClick,
+        'data-title': title,
+        title: title
+      }, children);
+    }
+
+    function Tooltip({ children, title, mouseLeaveDelay }) {
+      return React.createElement('div', { className: "tooltip", 'data-title': title }, children);
+    }
+
+    // Map Component
+    function MapComponent({ mapRef, layerByNode }) {
+      const mapContainerRef = useRef(null);
+      const mapInstanceRef = useRef(null);
+
+      useEffect(() => {
+        if (!mapContainerRef.current || mapInstanceRef.current) return;
+
+        // Initialize map
+        const map = L.map(mapContainerRef.current, {
+          center: [40, -95],
+          zoom: 3,
+          zoomControl: true
+        });
+
+        // Add tile layer
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap contributors',
+          maxZoom: 19
+        }).addTo(map);
+
+        mapInstanceRef.current = map;
+        if (mapRef) mapRef.current = map;
+
+        return () => {
+          if (mapInstanceRef.current) {
+            mapInstanceRef.current.remove();
+            mapInstanceRef.current = null;
+          }
+        };
+      }, []);
+
+      return React.createElement('div', {
+        ref: mapContainerRef,
+        className: "map-container",
+        style: { height: '100%', width: '100%' }
+      });
+    }
+
+    // Split Pane Component
+    function SplitPane({ left, right, defaultSize = 50 }) {
+      const [leftSize, setLeftSize] = useState(defaultSize);
+      const [isDragging, setIsDragging] = useState(false);
+      const containerRef = useRef(null);
+
+      const handleMouseDown = (e) => {
+        setIsDragging(true);
+        e.preventDefault();
+      };
+
+      useEffect(() => {
+        if (!isDragging) return;
+
+        const handleMouseMove = (e) => {
+          if (!containerRef.current) return;
+          const rect = containerRef.current.getBoundingClientRect();
+          const newLeftSize = ((e.clientX - rect.left) / rect.width) * 100;
+          setLeftSize(Math.max(20, Math.min(80, newLeftSize)));
+        };
+
+        const handleMouseUp = () => {
+          setIsDragging(false);
+        };
+
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+
+        return () => {
+          document.removeEventListener('mousemove', handleMouseMove);
+          document.removeEventListener('mouseup', handleMouseUp);
+        };
+      }, [isDragging]);
+
+      return React.createElement('div', {
+        ref: containerRef,
+        className: "split-pane-container"
+      },
+        React.createElement('div', {
+          className: "split-pane-left",
+          style: { flex: `0 0 ${leftSize}%` }
+        }, left),
+        React.createElement('div', {
+          className: "split-pane-resizer",
+          onMouseDown: handleMouseDown,
+          style: { cursor: isDragging ? 'col-resize' : 'col-resize' }
+        }),
+        React.createElement('div', {
+          className: "split-pane-right",
+          style: { flex: `0 0 ${100 - leftSize}%` }
+        }, right)
+      );
+    }
+
+    // Collect all descendant tip names from a node
+    function collectDescendantTips(node, tips = []) {
+      if (!node) return tips;
+      if (!node.children || node.children.length === 0) {
+        // Leaf node
+        if (node.name) tips.push(node.name);
+        return tips;
+      }
+      node.children.forEach(child => {
+        collectDescendantTips(child, tips);
+      });
+      return tips;
+    }
+
+    function BalancedTree({
+      className,
+      onToggle,
+      highlighted,
+      focusedNode,
+      tree: treeData = sampleTreeData,
+      nodeIdMap,
+      ...props
+    }) {
+      const ref = useRef(null);
+      const [scrollTop] = useScrollAware(ref);
+      const mousePosition = useMousePosition(ref);
+      const [fontSize, setFontSize] = useState(defaultFontSize);
+      const [q, setQ] = useState('');
+      const [highlightedLeaf, setHighlightedLeaf] = useState();
+      const [elementHeight, setElementHeight] = useState(28);
+      const [leafSuggestions, setLeafSuggestions] = useState([]);
+      const [visibleNode, setVisibleNodes] = useState({});
+      const [tree, setTree] = useState();
+      const [hoveredNode, setHoveredNode] = useState();
+      const { onMouseDown } = useDraggableScroll(ref);
+
+      // Fixed small multiplier for narrow branches (approx 5px max)
+      const multiplier = 5;
+
+      const changeFontSize = useCallback((fs) => {
+        const hoverLeaf = hoveredNode ? hoveredNode.firstLeafIndex : undefined;
+        const offset = mousePosition.y;
+        const leafToFocusOn = hoverLeaf ? hoverLeaf : Math.floor((offset + scrollTop) / elementHeight);
+        setFontSize(fs);
+        const newElementHeight = getElementHeight(fs);
+        setTimeout(() => {
+          if (ref.current) {
+            ref.current.scrollTo({
+              top: newElementHeight * leafToFocusOn - offset + 50
+            });
+          }
+        }, 200);
+      }, [hoveredNode, scrollTop, mousePosition, elementHeight]);
+
+      useHotkeys('1', () => changeFontSize(3), [scrollTop, hoveredNode, mousePosition]);
+      useHotkeys('2', () => changeFontSize(8), [scrollTop, hoveredNode, mousePosition]);
+      useHotkeys('3', () => changeFontSize(12), [scrollTop, hoveredNode, mousePosition]);
+      useHotkeys('4', () => changeFontSize(15), [scrollTop, hoveredNode, mousePosition]);
+
+      const getElementHeight = (fontSize) => {
+        const border = 2;
+        const spacing = 2;
+        const contentHeight = fontSize * 1.15;
+        const elementHeight = Math.floor(contentHeight) + border + spacing;
+        if (elementHeight < visibleNamesThreshold + border + spacing) {
+          return contentHeight;
+        } else {
+          return elementHeight;
+        }
+      };
+
+      useEffect(() => {
+        const elementHeight = getElementHeight(fontSize);
+        setElementHeight(elementHeight);
+      }, [fontSize]);
+
+      useEffect(() => {
+        if (!tree) return;
+        const node = getVisibleNodes(tree, scrollTop, elementHeight);
+        setVisibleNodes(node);
+      }, [scrollTop, elementHeight, tree]);
+
+      useEffect(() => {
+        if (!nodeIdMap) return;
+        const suggestions = Object.keys(nodeIdMap)
+          .filter(key => nodeIdMap[key].title && nodeIdMap[key].leafIndex)
+          .map(key => ({
+            key,
+            label: nodeIdMap[key].title.toLowerCase()
+          }));
+        setLeafSuggestions(suggestions);
+      }, [treeData, nodeIdMap]);
+
+      useEffect(() => {
+        if (!treeData) return;
+        const t = JSON.parse(JSON.stringify(treeData));
+        // Rebuild keys and nodeIndex after deep copy (keys must match nodeIdMap)
+        const tempMap = {};
+        buildNodeIdMap(t, tempMap);
+        decorateTree(t);
+        setTree(t);
+      }, [treeData]);
+
+      const onNodeEnter = useCallback(({ node }) => {
+        setHoveredNode(node);
+      }, []);
+
+      const onNodeLeave = useCallback(({ node }) => {
+        setHoveredNode(null);
+      }, []);
+
+      useEffect(() => {
+        if (focusedNode) {
+          scrollToItem({ leafIndex: focusedNode.leafIndex });
+        }
+      }, [focusedNode]);
+
+      const scrollToItem = useCallback(({ leafIndex = 0 }) => {
+        if (!ref.current) return;
+        let attempts = 0;
+        ref.current.scrollTo({
+          top: elementHeight * leafIndex - 300,
+          behavior: 'smooth'
+        });
+        const scrollToElementInterval = setInterval(() => {
+          let el = document.getElementById(`gb-tree-node-${leafIndex}`);
+          attempts++;
+          if (el) {
+            setTimeout(() => {
+              el.scrollIntoView({
+                inline: 'center',
+                behavior: 'smooth',
+                block: 'center'
+              });
+            }, 800);
+            clearInterval(scrollToElementInterval);
+          }
+          if (attempts > 50) {
+            clearInterval(scrollToElementInterval);
+          }
+        }, 200);
+      }, [elementHeight]);
+
+      // Calculate container width to fit available space with narrow branches
+      let containerWidth = 1000;
+      if (ref && ref.current) {
+        const availableWidth = ref.current.clientWidth || ref.current.offsetWidth;
+        if (availableWidth > 0) {
+          // Use available width minus padding, or calculated width (whichever is smaller)
+          const calculatedWidth = (treeData.childrenLength * multiplier * 1.8 + 400) || 1000;
+          containerWidth = Math.min(calculatedWidth, availableWidth - 40);
+        }
+      }
+
+      const treeProps = {
+        onNodeEnter,
+        onNodeLeave,
+        highlighted,
+        highlightedLeaf,
+        onToggle,
+        elementHeight,
+        multiplier
+      };
+
+      let containerHeight = 300;
+      if (ref && ref.current) {
+        containerHeight = ref.current.clientHeight - 40;
+      }
+      const fittedFontSize = visibleNode && visibleNode.size ? containerHeight / (visibleNode.size * 1.15) : 0.1;
+
+      return React.createElement('div', {
+        className: "treeArea",
+        style: {
+          display: 'flex',
+          flexDirection: 'column'
+        }
+      },
+        React.createElement('div', { className: "tree-controls" },
+          React.createElement(AutoComplete, {
+            style: { width: 400, maxWidth: '100%' },
+            value: q,
+            onChange: (val) => {
+              if (!val) {
+                setQ('');
+                setHighlightedLeaf(null);
+              } else {
+                setQ(val);
+              }
+            },
+            onSelect: (leafIndex) => {
+              const selectedNode = nodeIdMap && nodeIdMap[leafIndex];
+              if (selectedNode) {
+                const selectedLeafIndex = selectedNode.leafIndex;
+                setHighlightedLeaf(selectedLeafIndex);
+                scrollToItem({ leafIndex: selectedLeafIndex });
+                setQ('');
+              }
+            },
+            placeholder: "Search tree",
+            allowClear: true
+          },
+            leafSuggestions.map(o => React.createElement(Option, {
+              key: o.key,
+              value: o.key,
+              label: o.label
+            }))
+          )
+        ),
+        hoveredNode && React.createElement('div', {
+          className: "gb-snack-bar",
+          dangerouslySetInnerHTML: {
+            __html: hoveredNode.title || `${hoveredNode.firstLeaf || ''} - ${hoveredNode.lastLeaf || ''}`
+          }
+        }),
+        React.createElement('div', { className: "tree-controls" },
+          React.createElement(RadioGroup, {
+            value: fontSize,
+            onChange: e => changeFontSize(e.target.value),
+            style: { marginRight: 12 }
+          },
+            fittedFontSize < 3 && React.createElement(RadioButton, { value: fittedFontSize }, "Fit"),
+            React.createElement(Tooltip, { title: "Hotkey 1", mouseLeaveDelay: 0 },
+              React.createElement(RadioButton, { value: "3" }, "S")
+            ),
+            React.createElement(Tooltip, { title: "Hotkey 2", mouseLeaveDelay: 0 },
+              React.createElement(RadioButton, { value: "8" }, "M")
+            ),
+            React.createElement(Tooltip, { title: "Hotkey 3", mouseLeaveDelay: 0 },
+              React.createElement(RadioButton, { value: "12" }, "L")
+            ),
+            React.createElement(Tooltip, { title: "Hotkey 4", mouseLeaveDelay: 0 },
+              React.createElement(RadioButton, { value: "15" }, "XL")
+            )
+          )
+        ),
+        React.createElement('div', {
+          ref: ref,
+          onMouseDown: onMouseDown,
+          className: "tree-tree",
+          ...props
+        },
+          tree && React.createElement('ol', {
+            className: "gb-tree-list",
+            style: {
+              fontSize: `${fontSize}px`,
+              willChange: "transform",
+              position: "relative",
+              height: tree.size * elementHeight,
+              width: containerWidth
+            }
+          },
+            React.createElement(Tree, {
+              ...treeProps,
+              scrollTop: scrollTop,
+              node: visibleNode
+            })
+          )
+        )
+      );
+    }
+
+    // Main App Component
+    function App() {
+      const [treeData] = useState(() => {
+        const data = JSON.parse(JSON.stringify(sampleTreeData));
+        const map = {};
+        buildNodeIdMap(data, map);
+        return data;
+      });
+      const [nodeIdMap] = useState(() => {
+        const data = JSON.parse(JSON.stringify(sampleTreeData));
+        const map = {};
+        buildNodeIdMap(data, map);
+        return map;
+      });
+      const [highlighted, setHighlighted] = useState({});
+      const mapRef = useRef(null);
+      const layerByNode = useRef(new Map());
+      const occurrences = sampleOccurrences;
+
+      // Find node by key in tree
+      function findNodeByKey(node, key) {
+        if (!node) return null;
+        if (node.key === key) return node;
+        if (node.children) {
+          for (const child of node.children) {
+            const found = findNodeByKey(child, key);
+            if (found) return found;
+          }
+        }
+        return null;
+      }
+
+      // Gather occurrences for a node
+      function gatherOccurrencesForNode(node) {
+        const tips = collectDescendantTips(node);
+        const occs = [];
+        for (const tip of tips) {
+          if (occurrences[tip]) {
+            occs.push(...occurrences[tip]);
+          }
+        }
+        return occs;
+      }
+
+      const handleNodeSelect = (nodeKey, color) => {
+        if (!nodeKey || !mapRef.current) return;
+
+        // Find the node in the current tree
+        const node = findNodeByKey(treeData, nodeKey);
+        if (!node) return;
+
+        // Gather occurrences
+        const occs = gatherOccurrencesForNode(node);
+        
+        // Remove existing layer if any
+        const existingLayer = layerByNode.current.get(nodeKey);
+        if (existingLayer && mapRef.current.hasLayer(existingLayer)) {
+          mapRef.current.removeLayer(existingLayer);
+        }
+
+        // Create new layer
+        const layer = L.layerGroup();
+        let hasCoords = false;
+        
+        for (const o of occs) {
+          const lat = o.decimalLatitude || o.lat;
+          const lon = o.decimalLongitude || o.lon;
+          if (lat != null && lon != null && isFinite(lat) && isFinite(lon)) {
+            hasCoords = true;
+            L.circleMarker([lat, lon], {
+              radius: 4,
+              color: color,
+              weight: 1,
+              fillOpacity: 0.6
+            })
+              .bindTooltip(`${o.scientificName || ""}`.trim() || o.catalogNumber || o.occurrenceID || "")
+              .addTo(layer);
+          }
+        }
+
+        if (hasCoords) {
+          layer.addTo(mapRef.current);
+          layerByNode.current.set(nodeKey, layer);
+          
+          // Fit bounds if this is the first selection
+          if (layerByNode.current.size === 1) {
+            try {
+              mapRef.current.fitBounds(layer.getBounds(), { maxZoom: 6, padding: [20, 20] });
+            } catch (e) {
+              // Ignore fitBounds errors
+            }
+          }
+        } else {
+          layerByNode.current.set(nodeKey, layer);
+        }
+      };
+
+      const handleNodeDeselect = (nodeKey) => {
+        if (!nodeKey || !mapRef.current) return;
+        const layer = layerByNode.current.get(nodeKey);
+        if (layer && mapRef.current.hasLayer(layer)) {
+          mapRef.current.removeLayer(layer);
+          layerByNode.current.delete(nodeKey);
+        }
+      };
+
+      const handleToggle = ({ selected }) => {
+        setHighlighted(prev => {
+          const next = { ...prev };
+          if (next[selected]) {
+            delete next[selected];
+            handleNodeDeselect(selected);
+          } else {
+            const colors = ['#ff4d4f', '#1890ff', '#52c41a', '#faad14', '#722ed1', '#eb2f96'];
+            const color = colors[Object.keys(next).length % colors.length];
+            next[selected] = { color };
+            handleNodeSelect(selected, color);
+          }
+          return next;
+        });
+      };
+
+      return React.createElement(SplitPane, {
+        defaultSize: 50,
+        left: React.createElement(BalancedTree, {
+          tree: treeData,
+          nodeIdMap: nodeIdMap,
+          highlighted: highlighted,
+          onToggle: handleToggle
+        }),
+        right: React.createElement(MapComponent, {
+          mapRef: mapRef,
+          layerByNode: layerByNode
+        })
+      });
+    }
+
+    ReactDOM.render(React.createElement(App), document.getElementById('root'));
+  </script>
+</body>
+</html>
+

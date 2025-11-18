@@ -22,9 +22,20 @@ class DarwinCoreSchema:
 
     @property
     def spec_path(self) -> str:
-        if self.spec_uri:
-            return self.spec_uri
-        return str((_TEMPLATES_ROOT / self.local_filename).resolve())
+        local_path = (_TEMPLATES_ROOT / self.local_filename).resolve()
+        if not local_path.exists():
+            message = (
+                f"Local Darwin Core schema not found at {local_path}. "
+                "Each schema should be vendored into the repository under api/templates."
+            )
+            if self.spec_uri:
+                message += f" Remote reference: {self.spec_uri}"
+            raise FileNotFoundError(message)
+        return str(local_path)
+
+    @property
+    def remote_spec_uri(self) -> str | None:
+        return self.spec_uri
 
     @property
     def normalized_terms(self) -> set[str]:

@@ -1,4 +1,5 @@
 import traceback
+import csv
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.contrib.postgres.fields import ArrayField
@@ -108,6 +109,47 @@ class Dataset(models.Model):
             first_task.create_agent_with_system_messages(dataset=self)
             return self.next_agent()
 
+    def can_visualize_tree(self):
+        """
+        Check if tree visualization is available:
+        - Has tree files (Newick or Nexus)
+        - Has a table named 'occurrence' (case-insensitive) with decimalLatitude and decimalLongitude columns
+        """
+        # Check for tree files by checking file extensions
+        # file_type is a property, so we need to check extensions directly
+        has_tree_files = False
+        for user_file in self.user_files.all():
+            ext = Path(user_file.file.name).suffix.lower()
+            if ext in UserFile.TREE_EXTENSIONS:
+                has_tree_files = True
+                break
+        
+        if not has_tree_files:
+            return False
+        
+        # Check for occurrence table with lat/long columns
+        occurrence_table = None
+        for table in self.table_set.all():
+            # Case-insensitive title match
+            if table.title and table.title.lower() == 'occurrence':
+                occurrence_table = table
+                break
+        
+        if not occurrence_table:
+            return False
+        
+        # Check if table has the required columns
+        df = occurrence_table.df
+        if df is None or df.empty:
+            return False
+        
+        # Standardize column names to lowercase for comparison
+        standardized_columns = {str(col).lower(): col for col in df.columns}
+        has_lat = 'decimallatitude' in standardized_columns
+        has_long = 'decimallongitude' in standardized_columns
+        
+        return has_lat and has_long
+
     class Meta:
         get_latest_by = 'created_at'
         ordering = ['created_at']
@@ -186,17 +228,118 @@ class UserFile(models.Model):
         finally:
             self.file.close()
 
-        file_io = io.StringIO(file_content.decode('utf-8', errors='surrogateescape'))
-        df = pd.read_csv(
-            file_io,
-            dtype='str',
-            encoding='utf-8',
-            encoding_errors='surrogateescape',
-            sep=None,
-            engine='python',
-            header=0,
-        )
+        text = file_content.decode('utf-8', errors='surrogateescape')
+        df = self._parse_delimited_text(text)
         return {self.filename: df}
+
+    def _parse_delimited_text(self, text):
+        sample_lines = self._collect_sample_lines(text)
+        candidate_delimiters = self._build_delimiter_candidates(sample_lines, text)
+
+        detection_errors = []
+        fallback_single_column = None
+
+        for delimiter in candidate_delimiters:
+            file_io = io.StringIO(text)
+            try:
+                df = pd.read_csv(
+                    file_io,
+                    dtype='str',
+                    encoding='utf-8',
+                    encoding_errors='surrogateescape',
+                    sep=delimiter,
+                    engine='python',
+                    header=0,
+                )
+            except Exception as exc:
+                detection_errors.append((self._format_delimiter_label(delimiter), str(exc)))
+                continue
+
+            if delimiter is None or df.shape[1] > 1:
+                return df
+
+            if fallback_single_column is None:
+                fallback_single_column = (df, self._format_delimiter_label(delimiter))
+
+        if fallback_single_column is not None:
+            return fallback_single_column[0]
+
+        if detection_errors:
+            detail = "; ".join(f"{label}: {message}" for label, message in detection_errors)
+            raise ValueError(
+                f"Unable to determine the delimiter for {self.filename}. Tried {detail}."
+            )
+
+        raise ValueError(f"{self.filename} appears to be empty or could not be parsed as tabular data.")
+
+    @staticmethod
+    def _collect_sample_lines(text, limit=50):
+        lines = []
+        for line in text.splitlines():
+            if line.strip():
+                lines.append(line)
+            if len(lines) >= limit:
+                break
+        return lines
+
+    @classmethod
+    def _build_delimiter_candidates(cls, sample_lines, text):
+        heuristics = cls._rank_delimiters(sample_lines)
+        sniffed = cls._sniff_delimiter(sample_lines, text)
+
+        candidates = []
+        for delimiter in heuristics:
+            if delimiter not in candidates:
+                candidates.append(delimiter)
+
+        if sniffed and sniffed not in candidates:
+            candidates.append(sniffed)
+
+        for delimiter in ['\t', ',', ';', '|']:
+            if delimiter not in candidates:
+                candidates.append(delimiter)
+
+        candidates.append(None)
+        return candidates
+
+    @staticmethod
+    def _rank_delimiters(sample_lines):
+        stats = []
+        for delimiter in ['\t', ',', ';', '|']:
+            counts = [line.count(delimiter) for line in sample_lines if delimiter in line]
+            if len(counts) < 2:
+                continue
+            spread = max(counts) - min(counts)
+            non_zero = len(counts)
+            average = sum(counts) / non_zero if non_zero else 0
+            stats.append((spread, -non_zero, -average, delimiter))
+
+        stats.sort()
+        return [delimiter for _, _, _, delimiter in stats]
+
+    @staticmethod
+    def _sniff_delimiter(sample_lines, text):
+        snippet = '\n'.join(sample_lines[:10]) or text[:2048]
+        snippet = snippet.strip()
+        if not snippet:
+            return None
+        try:
+            sniffed = csv.Sniffer().sniff(snippet, delimiters=['\t', ',', ';', '|'])
+            return sniffed.delimiter
+        except Exception:
+            return None
+
+    @staticmethod
+    def _format_delimiter_label(delimiter):
+        if delimiter is None:
+            return 'auto-detect'
+        labels = {
+            '\t': 'tab',
+            ',': 'comma',
+            ';': 'semicolon',
+            '|': 'pipe',
+        }
+        return labels.get(delimiter, repr(delimiter))
 
     def _load_excel_workbook(self):
         self.file.open('rb')
@@ -281,19 +424,22 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
     @property
     def functions(self):
         functions = [
-                    agent_tools.SetBasicMetadata.__name__,
-                    agent_tools.SetEML.__name__,
-                    agent_tools.SetAgentTaskToComplete.__name__,
-                    agent_tools.Python.__name__,
-                    agent_tools.BasicValidationForSomeDwCTerms.__name__,
-                    agent_tools.GetDarwinCoreInfo.__name__,
-                    agent_tools.GetDwCExtensionInfo.__name__,
-                    agent_tools.RollBack.__name__,
-                    agent_tools.UploadDwCA.__name__,
-                    agent_tools.PublishToGBIF.__name__,
-                    agent_tools.ValidateDwCA.__name__,
-                    agent_tools.SendDiscordMessage.__name__
-                   ]
+            agent_tools.SetBasicMetadata.__name__,
+            agent_tools.SetStructureNotes.__name__,
+            agent_tools.SetEML.__name__,
+            agent_tools.SetUserEmail.__name__,
+            agent_tools.SetUserLanguage.__name__,
+            agent_tools.SetAgentTaskToComplete.__name__,
+            agent_tools.Python.__name__,
+            agent_tools.BasicValidationForSomeDwCTerms.__name__,
+            agent_tools.GetDarwinCoreInfo.__name__,
+            agent_tools.GetDwCExtensionInfo.__name__,
+            agent_tools.RollBack.__name__,
+            agent_tools.UploadDwCA.__name__,
+            agent_tools.PublishToGBIF.__name__,
+            agent_tools.ValidateDwCA.__name__,
+            agent_tools.SendDiscordMessage.__name__,
+        ]
 
         # Exclude the completion tool for the final task (Data maintenance),
         # so it remains indefinitely open to conversation with the user.

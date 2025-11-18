@@ -6,7 +6,13 @@ import pandas as pd
 import numpy as np
 from api.helpers.openai_helpers import OpenAIBaseModel
 from typing import Optional, List, Dict
-from api.helpers.publish import upload_dwca, register_dataset_and_endpoint
+from api.helpers.publish import (
+    upload_dwca, 
+    register_dataset_and_endpoint,
+    parse_newick_tip_labels,
+    parse_nexus_tip_labels,
+    update_occurrence_dynamic_properties,
+)
 import datetime
 import uuid
 import utm
@@ -17,6 +23,7 @@ from api.helpers import discord_bot
 import json
 from tenacity import retry, stop_after_attempt, wait_fixed
 import os
+from pathlib import Path
 from requests.auth import HTTPBasicAuth
 import requests
 
@@ -893,9 +900,141 @@ class SetEML(OpenAIBaseModel):
             return repr(e)[:2000]
 
 
+class SetStructureNotes(OpenAIBaseModel):
+    """
+    Sets or updates the `structure_notes` field for a Dataset via an Agent.
+
+    Use this tool to record:
+    - structural issues in the uploaded spreadsheets,
+    - important decisions or assumptions about data layout,
+    - a running changelog of transformations applied to the dataset.
+
+    By default, new notes are **appended** to any existing notes so the history is preserved.
+    Set `overwrite_existing` to true only if you intentionally want to fully replace the existing notes.
+    """
+    agent_id: PositiveInt = Field(..., description="REQUIRED: The ID of the agent making this request")
+    structure_notes: str = Field(
+        ...,
+        description=(
+            "The notes to record about the dataset structure and changes. "
+            "Include enough context so future agents and the user understand what was done and why."
+        ),
+    )
+    overwrite_existing: bool = Field(
+        default=False,
+        description=(
+            "If true, completely replaces any existing structure_notes. "
+            "If false (default), appends the new notes to the existing notes with a separating blank line."
+        ),
+    )
+
+    def run(self):
+        try:
+            from api.models import Agent
+            agent = Agent.objects.get(id=self.agent_id)
+            dataset = agent.dataset
+
+            existing = (dataset.structure_notes or "").strip()
+            incoming = (self.structure_notes or "").strip()
+
+            if not incoming:
+                return "No structure_notes content provided; nothing was changed."
+
+            if self.overwrite_existing or not existing:
+                dataset.structure_notes = incoming
+            else:
+                dataset.structure_notes = f"{existing}\n\n{incoming}"
+
+            dataset.save()
+            return "Structure notes have been successfully updated."
+        except Exception as e:
+            print("There has been an error with SetStructureNotes")
+            return repr(e)[:2000]
+
+
+class SetUserEmail(OpenAIBaseModel):
+    """
+    Set the contact email address for the user who owns a given Dataset.
+
+    Use this when the dataset owner only has an ORCID-style placeholder email
+    (e.g. '0000-0002-6138-9916@orcid.org') or when they provide an updated address.
+    """
+    dataset_id: PositiveInt = Field(
+        ...,
+        description="The ID of the dataset whose owner's email should be updated.",
+    )
+    email: EmailStr = Field(
+        ...,
+        description="The user's email address.",
+    )
+
+    def run(self):
+        try:
+            from api.models import Dataset
+
+            dataset = Dataset.objects.get(id=self.dataset_id)
+            user = dataset.user
+            if user is None:
+                return f"Error: Dataset {self.dataset_id} has no associated user."
+
+            old_email = user.email
+            user.email = self.email
+            # Keep username in sync only if it was previously identical to the email
+            if user.username == old_email:
+                user.username = self.email
+            user.save()
+
+            return (
+                f"User email updated from '{old_email}' to '{self.email}' "
+                f"for dataset {self.dataset_id}."
+            )
+        except Dataset.DoesNotExist:
+            return f"Error: Dataset with id {self.dataset_id} does not exist."
+        except Exception as e:
+            return repr(e)[:2000]
+
+
+class SetUserLanguage(OpenAIBaseModel):
+    """
+    Set the preferred language for conversation with the user who owns a given Dataset.
+
+    Use this when the user responds in a language other than English, or when they
+    explicitly indicate their language preference. The metadata and data should always
+    remain in English, but the conversation can be conducted in the user's preferred language.
+    """
+    agent_id: PositiveInt = Field(
+        ...,
+        description="The ID of the agent making this request.",
+    )
+    user_language: str = Field(
+        ...,
+        description="The user's preferred language for conversation (e.g. 'Spanish', 'French', 'Norwegian'). Default is 'English'.",
+    )
+
+    def run(self):
+        try:
+            from api.models import Agent
+            agent = Agent.objects.get(id=self.agent_id)
+            dataset = agent.dataset
+
+            old_language = dataset.user_language or 'English'
+            dataset.user_language = self.user_language
+            dataset.save()
+
+            return (
+                f"User language preference updated from '{old_language}' to '{self.user_language}' "
+                f"for dataset {dataset.id}."
+            )
+        except Agent.DoesNotExist:
+            return f"Error: Agent with id {self.agent_id} does not exist."
+        except Exception as e:
+            print("There has been an error with SetUserLanguage")
+            return repr(e)[:2000]
+
+
 class SetBasicMetadata(OpenAIBaseModel):
     """
-    Sets the title, description and additional information for a Dataset via an Agent.
+    Sets the title, description and additional high-level metadata for a Dataset via an Agent.
     
     REQUIRED FIELDS:
     - agent_id: The ID of the agent
@@ -909,19 +1048,11 @@ class SetBasicMetadata(OpenAIBaseModel):
         "description": "This dataset contains bird species observations collected during weekly surveys in Central Park, New York City from 2020 to 2023. Data was collected by volunteer citizen scientists as part of the Urban Bird Study project."
     }
     
-    EXAMPLE USAGE (updating existing dataset):
-    {
-        "agent_id": 123,
-        "structure_notes": "Fixed coordinate formatting issues in rows 15-23."
-    }
-    
     Returns a success or error message.
     """
     agent_id: PositiveInt = Field(..., description="REQUIRED: The ID of the agent making this request")
     title: Optional[str] = Field(None, description="CONDITIONAL: A short but descriptive title for the dataset as a whole (e.g. 'Bird observations from Central Park 2020-2023'). Required only if dataset doesn't already have a title.")
     description: Optional[str] = Field(None, description="CONDITIONAL: A longer description of what the dataset contains, including any important information about why the data was gathered (e.g. for a study) as well as how it was gathered. Required only if dataset doesn't already have a description.")
-    user_language: str = Field('English', description="OPTIONAL: Note down if the user wants to speak in a particular language. Default is English.") 
-    structure_notes: Optional[str] = Field(None, description="OPTIONAL: Use to note any significant data structural problems or important information the user has provided (e.g. missing data for reason x), and to record changes and corrections made to fix these. Ensure that any data already existing in this field does not get overwritten unless getting re-phrased and rewritten. This serves as the running history of corrections made to the dataset.") 
     suitable_for_publication_on_gbif: Optional[bool] = Field(default=True, description="OPTIONAL: USE WITH CAUTION! Set to false if the data is deemed unsuitable for publication on GBIF. Defaults to True. Be cautious - only reject if you are certain this spreadsheet doesn't have any suitable data!")
 
     def run(self):
@@ -941,10 +1072,6 @@ class SetBasicMetadata(OpenAIBaseModel):
                 dataset.title = self.title
             if self.description:
                 dataset.description = self.description
-            if self.structure_notes:
-                dataset.structure_notes = self.structure_notes
-            if self.user_language != 'English':
-                dataset.user_language = self.user_language
             if self.suitable_for_publication_on_gbif == False:
                 print('Rejecting dataset')
                 dataset.rejected_at = datetime.datetime.now()
@@ -1042,14 +1169,73 @@ class UploadDwCA(OpenAIBaseModel):
                     )
                 extension_payload.append((tables[table_id].df, extension_type))
 
+            # Process tree files if core type is OCCURRENCE
+            core_df = core_table.df.copy()
+            additional_files = []
+            
+            if self.core_type == DarwinCoreCoreType.OCCURRENCE:
+                # Find tree files in user_files
+                from api.models import UserFile
+                # Get all user files and filter by extension since file_type is a property
+                all_user_files = dataset.user_files.all()
+                tree_user_files = [
+                    uf for uf in all_user_files 
+                    if Path(uf.filename).suffix.lower() in UserFile.TREE_EXTENSIONS
+                ]
+                
+                tree_files_info = []  # List of (filename, tip_labels) tuples
+                
+                for user_file in tree_user_files:
+                    try:
+                        # Read the file content
+                        user_file.file.open('rb')
+                        file_content = user_file.file.read()
+                        user_file.file.close()
+                        
+                        # Decode content
+                        try:
+                            content = file_content.decode('utf-8')
+                        except UnicodeDecodeError:
+                            # Try with different encoding
+                            content = file_content.decode('latin-1', errors='ignore')
+                        
+                        # Determine file type and parse
+                        filename = user_file.filename
+                        ext = Path(filename).suffix.lower()
+                        
+                        if ext in {'.nex', '.nexus'}:
+                            tip_labels = parse_nexus_tip_labels(content)
+                        elif ext in {'.newick', '.nwk', '.phy', '.tre', '.tree'}:
+                            tip_labels = parse_newick_tip_labels(content)
+                        else:
+                            # Try both parsers
+                            tip_labels = parse_nexus_tip_labels(content)
+                            if not tip_labels:
+                                tip_labels = parse_newick_tip_labels(content)
+                        
+                        if tip_labels:
+                            tree_files_info.append((filename, tip_labels))
+                            # Store file content for adding to archive
+                            additional_files.append((filename, file_content))
+                    
+                    except Exception as e:
+                        # Log error but continue processing other files
+                        print(f"Warning: Failed to process tree file {user_file.filename}: {e}")
+                        continue
+                
+                # Update occurrence DataFrame with dynamicProperties if we have tree files
+                if tree_files_info:
+                    core_df = update_occurrence_dynamic_properties(core_df, tree_files_info)
+
             dwca_url = upload_dwca(
-                core_table.df,
+                core_df,
                 dataset.title or '',
                 dataset.description or '',
                 core_type=self.core_type,
                 extensions=extension_payload,
                 user=dataset.user,
                 eml_extra=dataset.eml,
+                additional_files=additional_files if additional_files else None,
             )
 
             core_choice_map = {
@@ -1062,6 +1248,18 @@ class UploadDwCA(OpenAIBaseModel):
             dataset.save()
             return f'DwCA successfully created and uploaded: {dwca_url}'
         except Exception as e:
+            import traceback
+            error_msg = (
+                f"🚨 UploadDwCA Tool Error (agent_tools.py):\n"
+                f"Agent ID: {self.agent_id}\n"
+                f"Core Table ID: {self.core_table_id}\n"
+                f"Core Type: {self.core_type}\n"
+                f"Extension Tables: {self.extension_tables}\n"
+                f"Error: {str(e)}\n"
+                f"Error type: {type(e).__name__}\n\n"
+                f"Traceback:\n{traceback.format_exc()}"
+            )
+            discord_bot.send_discord_message(error_msg)
             return repr(e)[:2000]
 
 

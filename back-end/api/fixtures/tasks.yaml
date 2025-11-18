@@ -13,16 +13,16 @@
         3.  **Note missing data structures:** Follow up on any data which seems to be missing. If there seem to be column headers missing or row headers missing fill these in with the help of the user if necessary.
         4.  **Perform Simple Merges:** If multiple data islands clearly belong together (e.g., a single table split across adjacent cell blocks with identical headers), fix these and note what you have done.
         5.  **Any other notes:** Note anything additional of interest. IMPORTANT - if it looks like there is missing data (e.g. there is a crosstab of species numbers + site locations but species names are missing), be sure to ask the user to upload it.
-      When you have completed this to your satisfaction, use the SetBasicMetadata to save this report to structure_notes, ensuring you capture the full context and any important notes from the user (e.g. if there is missing data). DO NOT set suitable_for_publication_on_gbif to be False, this is a check we do later with more context.
-      If the user responds in a language other than English, remember to record it using SetBasicMetadata.
+      When you have completed this to your satisfaction, use the SetStructureNotes tool to save this report to structure_notes, ensuring you capture the full context and any important notes from the user (e.g. if there is missing data). 
+      If the user responds in a language other than English, remember to record it using SetUserLanguage.
 
 - model: api.task
   fields:
     name: Data content exploration
     text: |-
-      1. Briefly describe the type of data each data island (see structure_notes) appears to contain (e.g., "list of species names and counts," "site descriptions," "environmental measurements"), and add this information to the structure_notes (being careful not to overwrite what is there already, use SetBasicMetadata). Ask the user about anything which is completely cryptic. Edit column headings as necessary to make the data content clear, and add any necessary info to the structure_notes. 
-      2. Generate a concise draft Title (3-5 words) and a short Description (1-5 sentences) for the entire dataset, describing the data itself in general, save it and the structure_notes using SetBasicMetadata. 
-      3. Once you have this this generate additional required metadata described in the SetEML function, as far as it's possible to generate it - ask the user about any metadata you aren't sure of, but allow the user to skip this step if they wish. And if there's anything which isn't relevant for this type of dataset or is not particularly useful, just skip it. This is the metadata that will get shown when the dataset is published. DO NOT set suitable_for_publication_on_gbif to be False, this is a check we do later with more context.
+      1. Briefly describe the type of data each data island (see structure_notes) appears to contain (e.g., "list of species names and counts," "site descriptions," "environmental measurements"), and add this information to the structure_notes (being careful not to overwrite what is there already, use SetStructureNotes). Ask the user about anything which is completely cryptic. Edit column headings as necessary to make the data content clear, and add any necessary info to the structure_notes. 
+      2. Generate a concise draft Title (3-5 words) and a short Description (1-5 sentences) for the entire dataset, describing the data itself in general, save the Title and Description using SetBasicMetadata.
+      3. Once you have this this generate additional required metadata described in the SetEML function, as far as it's possible to generate it - ask the user about any metadata you aren't sure of, but allow the user to skip this step if they wish. Use the user's name and email address as the contact as per their profile. If their email is unknown first set it using SetUserEmail. This is the metadata that will get shown when the dataset is published, but it will be edited and refined as the publication process progresses. DO NOT set suitable_for_publication_on_gbif to be False, this is a check we do later with more context.
 
 - model: api.task
   fields:
@@ -36,6 +36,7 @@
       *   If the data appears to be non-biological (e.g., purely chemical soil composition, meteorological data without direct biological linkage), clearly explain to the user why it might not be suitable for GBIF and that this tool focuses on biodiversity data. IMPORTANT! Give the user a chance to respond until you both agree the dataset is not suitable for publication GBIF, only then should you set the suitable_for_publication_on_gbif flag to False using SetBasicMetadata, if it's clearly unsuitable.
       *   Prompt the user to upload a new file with additional data if necessary. They have access to a paper clip button in the chat interface to do this.
       *   Leave all data transformation and cleaning to the next agent.
+      *   If the dataset is clearly suitable, do not ask the user anything, just call SetAgentTaskToComplete.
 
 - model: api.task
   fields:
@@ -49,7 +50,7 @@
 
       **Occurrence Core:**
       *   occurrenceID: REQUIRED (Record level unique identifier for the occurrence. Create UUIDs if not present)
-      *   basisOfRecord: REQUIRED (Nature of the record, valid values: HumanObservation, PreservedSpecimen, MaterialSample, LivingSpecimen, FossilSpecimen, MachineObservation. You will often need to infer or create this and fill it)
+      *   basisOfRecord: REQUIRED (Nature of the record, valid values: HumanObservation, PreservedSpecimen, MaterialSample, LivingSpecimen, FossilSpecimen, MachineObservation. You will often need to infer or create this and fill it). If it's eDNA data or similar, use MaterialSample. IMPORTANT - USE THE DNA DERIVED DATA EXTENSION FOR eDNA DATA.
       *   eventDate: REQUIRED (Date of occurrence, ISO 8601 format: YYYY-MM-DD, YYYY-MM, YYYY, YYYY-MM-DD/YYYY-MM-DD). Or, separate year, month, day columns
       *   scientificName: REQUIRED (Lowest possible taxonomic rank, e.g., species, genus, family. Cannot be empty)
       *   kingdom: REQUIRED (e.g., Animalia, Plantae. May need to be inferred or filled)
@@ -114,7 +115,7 @@
           *   Join tables if necessary (e.g., merging a locality lookup table into the main data). Double-check join correctness.
           *   Delete redundant or intermediate tables once their data is incorporated.
       2. Execute the plan using the Python tool, step by step.
-      3.  If your understanding of the dataset changes significantly, use SetBasicMetadata to update the Title, Description, or structure_notes.
+      3.  If your understanding of the dataset changes significantly, use SetBasicMetadata to update the Title/Description and SetStructureNotes to update the structure_notes.
 
       Example occurrence core:
       occurrenceID	recordedBy	individualCount	eventDate	country	locality	decimalLatitude	decimalLongitude	scientificName	kingdom
@@ -147,7 +148,7 @@
       6.  **Re-Validate:** After attempting fixes, re-run relevant validation checks to ensure the issue is resolved and no new errors were introduced.
       7.  **Loop:** Repeat the cycle: Validate → Identify Issues → Plan Fixes → Execute Fixes → Re-Validate, until no further issues remain or you've reached the best possible state using your tools and judgment. Any encountered issues that are genuinely ambiguous or require conceptual clarification (which should be rare) may be escalated to the user only if you cannot make a reasonable judgment. You do not need to ask the user before continuing the loop. Only stop or escalate if you hit an issue that cannot reasonably be resolved without domain expertise.
 
-      If your understanding of the dataset changes significantly, use SetBasicMetadata to update the Title, Description, or structure_notes.
+      If your understanding of the dataset changes significantly, use SetBasicMetadata to update the Title/Description and SetStructureNotes to update the structure_notes.
 
       **Key Areas for Validation and Refinement:**
       *   **Required Fields:** Ensure all REQUIRED DwC fields (based on the chosen core) are present and populated.
@@ -179,7 +180,7 @@
 
       Your subtasks:
       1.  **Summarize Work Done:** Based on the structural_notes, briefly explain to the user the key transformations and validations that have been performed on their data to get it to this stage. Highlight any major changes or assumptions made. 
-      2.  **Check and Present Final Metadata:** Check and edit the metadata as necessary (use SetBasicMetadata), then ask the user for their final confirmation or if they'd like any last-minute changes to these. 
+      2.  **Check and Present Final Metadata:** Check and edit the metadata as necessary (use SetBasicMetadata for title/description), then ask the user for their final confirmation. 
       3.  **Perform GBIF Validation:** 
           *   Run BasicValidationForSomeDwCTerms to confirm each table's columns align with a known DwC schema; fix any discrepancies.
           *   Call the UploadDwCA tool with arguments of the form `{"agent_id": <agent_id>, "core_table_id": <core_table_id>, "core_type": "<occurrence|event|taxon>", "extension_tables": {<table_id>: "<extension_key>", ...}}`. Omit `extension_tables` if there are no extensions.

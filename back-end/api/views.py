@@ -11,7 +11,9 @@ from rest_framework.serializers import ModelSerializer
 from django.conf import settings
 import requests
 from urllib.parse import urlencode
+from collections import defaultdict
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -416,6 +418,294 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 {'error': f'Failed to refresh dataset: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @action(detail=True, methods=['get'])
+    def tree_files(self, request, *args, **kwargs):
+        """Fetch tree file contents for visualization, filtered by scientific names"""
+        dataset = self.get_object()
+        
+        # Get all tree files for this dataset by checking file extensions
+        from pathlib import Path
+        from api.helpers.publish import (
+            parse_newick_to_tree, parse_nexus_to_tree, 
+            parse_newick_tip_labels, parse_nexus_tip_labels,
+            match_tip_label_to_scientific_name
+        )
+        import pandas as pd
+        
+        all_files = dataset.user_files.all()
+        tree_files = [f for f in all_files if Path(f.file.name).suffix.lower() in UserFile.TREE_EXTENSIONS]
+        
+        if not tree_files:
+            return Response(
+                {'error': 'No tree files found for this dataset'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Find occurrence table
+        occurrence_table = None
+        for table in dataset.table_set.all():
+            if table.title and table.title.lower() == 'occurrence':
+                occurrence_table = table
+                break
+        
+        if not occurrence_table:
+            return Response(
+                {'error': 'No occurrence table found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get occurrence data
+        df = occurrence_table.df
+        if df is None or df.empty:
+            return Response({'error': 'Occurrence table is empty'}, status=status.HTTP_404_NOT_FOUND)
+        
+        standardized_columns = {str(col).lower(): col for col in df.columns}
+        sci_name_col = standardized_columns.get('scientificname', standardized_columns.get('scientific_name'))
+        
+        if sci_name_col is None:
+            return Response({'error': 'No scientificName column found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get all unique scientific names and count occurrences
+        scientific_name_series = df[sci_name_col].astype(str).str.strip()
+        valid_scientific_names = scientific_name_series[
+            (scientific_name_series != '') &
+            (scientific_name_series.str.lower() != 'nan')
+        ]
+        scientific_names_with_counts = valid_scientific_names.value_counts().to_dict()
+        all_scientific_names = set(scientific_names_with_counts.keys())
+        
+        # For now, use the first tree file
+        user_file = tree_files[0]
+        try:
+            user_file.file.open('rb')
+            try:
+                content = user_file.file.read()
+                try:
+                    text_content = content.decode('utf-8')
+                except UnicodeDecodeError:
+                    text_content = content.decode('latin-1', errors='replace')
+                
+                # Parse tree structure
+                ext = Path(user_file.filename).suffix.lower()
+                try:
+                    if ext in {'.nex', '.nexus'}:
+                        tree_data = parse_nexus_to_tree(text_content)
+                        tip_labels = parse_nexus_tip_labels(text_content)
+                    else:
+                        tree_data = parse_newick_to_tree(text_content)
+                        tip_labels = parse_newick_tip_labels(text_content)
+                except Exception as parse_error:
+                    logger.error(f"Error parsing tree file {user_file.id}: {parse_error}")
+                    return Response(
+                        {'error': f'Error parsing tree file: {str(parse_error)}'}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Build mapping from tip labels to scientific names
+                tip_label_to_sci_name = {}
+                matched_scientific_names = set()
+
+                def tokenize_label(value: str) -> list[str]:
+                    if not value:
+                        return []
+                    return [token for token in re.split(r'[^a-z0-9]+', value.lower()) if token]
+
+                # Fast lookup: map genus+species tokens from the tree tips
+                tip_lookup = defaultdict(list)
+                for tip_label in tip_labels:
+                    tokens = tokenize_label(tip_label)
+                    if len(tokens) >= 2:
+                        tip_lookup[tokens[0] + tokens[1]].append(tip_label)
+
+                sci_name_keys = {}
+                for sci_name in all_scientific_names:
+                    tokens = tokenize_label(sci_name)
+                    if len(tokens) >= 2:
+                        sci_name_keys[sci_name] = tokens[0] + tokens[1]
+                    else:
+                        sci_name_keys[sci_name] = None
+
+                # First pass: try to match using the precomputed keys
+                for sci_name, key in sci_name_keys.items():
+                    if not key:
+                        continue
+                    matching_tips = tip_lookup.get(key)
+                    if not matching_tips:
+                        continue
+
+                    matched_here = False
+                    for tip_label in matching_tips:
+                        if tip_label in tip_label_to_sci_name:
+                            continue
+                        if match_tip_label_to_scientific_name(tip_label, sci_name):
+                            tip_label_to_sci_name[tip_label] = sci_name
+                            matched_here = True
+                    if matched_here:
+                        matched_scientific_names.add(sci_name)
+
+                # Fallback: only iterate over the remaining unmatched items
+                remaining_tip_labels = [tip for tip in tip_labels if tip not in tip_label_to_sci_name]
+                if remaining_tip_labels:
+                    remaining_scientific_names = [sci for sci in all_scientific_names if sci not in matched_scientific_names]
+                    for tip_label in remaining_tip_labels:
+                        for sci_name in remaining_scientific_names:
+                            if match_tip_label_to_scientific_name(tip_label, sci_name):
+                                tip_label_to_sci_name[tip_label] = sci_name
+                                matched_scientific_names.add(sci_name)
+                                break
+                
+                # Filter and replace tree: only keep nodes that match scientific names
+                # Replace tip labels with scientific names
+                def filter_and_replace_tree(node):
+                    """Recursively filter tree and replace tip labels with scientific names"""
+                    if not node:
+                        return None
+                    
+                    # If it's a leaf node
+                    if not node.get('children') or len(node['children']) == 0:
+                        original_name = node.get('name', '')
+                        # Check if this tip label matches any scientific name
+                        matched_sci_name = tip_label_to_sci_name.get(original_name)
+                        if matched_sci_name:
+                            # Replace with scientific name
+                            node_copy = node.copy()
+                            node_copy['name'] = matched_sci_name
+                            node_copy['original_tip_label'] = original_name  # Keep original for reference
+                            node_copy['occurrence_count'] = scientific_names_with_counts.get(matched_sci_name, 0)
+                            return node_copy
+                        else:
+                            # Remove unmatched leaf nodes
+                            return None
+                    else:
+                        # Internal node: process children first
+                        node_copy = node.copy()
+                        filtered_children = []
+                        for child in node.get('children', []):
+                            filtered_child = filter_and_replace_tree(child)
+                            if filtered_child is not None:
+                                filtered_children.append(filtered_child)
+                        
+                        # Only keep internal node if it has children after filtering
+                        if filtered_children:
+                            node_copy['children'] = filtered_children
+                            # Aggregate occurrence counts
+                            node_copy['occurrence_count'] = sum(
+                                child.get('occurrence_count', 0) for child in filtered_children
+                            )
+                            return node_copy
+                        else:
+                            return None
+                
+                filtered_tree = filter_and_replace_tree(tree_data)
+                
+                # Get unmatched scientific names
+                unmatched_scientific_names = sorted(list(all_scientific_names - matched_scientific_names))
+                total_unique_scientific_names = len(all_scientific_names)
+                
+                return Response({
+                    'tree_data': filtered_tree,
+                    'filename': user_file.filename,
+                    'file_type': user_file.file_type_label,
+                    'unmatched_scientific_names': unmatched_scientific_names,
+                    'total_unique_scientific_names': total_unique_scientific_names,
+                })
+            finally:
+                user_file.file.close()
+        except Exception as e:
+            logger.error(f"Error reading tree file {user_file.id}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return Response(
+                {'error': f'Error reading file: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['post'])
+    def tree_node_occurrences(self, request, *args, **kwargs):
+        """Get occurrences for tree node based on tip labels"""
+        dataset = self.get_object()
+        
+        tip_labels = request.data.get('tip_labels', [])
+        if not tip_labels or not isinstance(tip_labels, list):
+            return Response(
+                {'error': 'tip_labels array is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Find occurrence table
+        occurrence_table = None
+        for table in dataset.table_set.all():
+            if table.title and table.title.lower() == 'occurrence':
+                occurrence_table = table
+                break
+        
+        if not occurrence_table:
+            return Response(
+                {'error': 'No occurrence table found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get DataFrame
+        df = occurrence_table.df
+        if df is None or df.empty:
+            return Response({'occurrences': []})
+        
+        # Match tip labels to scientific names
+        from api.helpers.publish import match_tip_label_to_scientific_name
+        
+        # Get scientific names that match any of the tip labels
+        matching_rows = []
+        standardized_columns = {str(col).lower(): col for col in df.columns}
+        sci_name_col = standardized_columns.get('scientificname', standardized_columns.get('scientific_name'))
+        
+        if sci_name_col is None:
+            return Response({'occurrences': []})
+        
+        for idx, row in df.iterrows():
+            scientific_name = str(row.get(sci_name_col, '')).strip()
+            if not scientific_name or scientific_name == 'nan':
+                continue
+            
+            # Check if this scientific name matches any tip label
+            for tip_label in tip_labels:
+                if match_tip_label_to_scientific_name(tip_label, scientific_name):
+                    # Get coordinates if available
+                    lat_col = standardized_columns.get('decimallatitude', standardized_columns.get('decimal_latitude', standardized_columns.get('lat')))
+                    lon_col = standardized_columns.get('decimallongitude', standardized_columns.get('decimal_longitude', standardized_columns.get('lon')))
+                    
+                    lat = None
+                    lon = None
+                    if lat_col and lon_col:
+                        try:
+                            lat_val = row.get(lat_col)
+                            lon_val = row.get(lon_col)
+                            if lat_val is not None and lon_val is not None:
+                                lat = float(lat_val) if lat_val != '' else None
+                                lon = float(lon_val) if lon_val != '' else None
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    # Get other relevant fields
+                    occ = {
+                        'scientificName': scientific_name,
+                        'decimalLatitude': lat,
+                        'decimalLongitude': lon,
+                        'tipLabel': tip_label,
+                    }
+                    
+                    # Add other common fields if available
+                    for field in ['occurrenceID', 'catalogNumber', 'recordNumber']:
+                        col = standardized_columns.get(field.lower().replace('_', ''))
+                        if col and col in row:
+                            val = row.get(col)
+                            if val is not None and str(val).strip():
+                                occ[field] = str(val).strip()
+                    
+                    matching_rows.append(occ)
+                    break  # Found a match, move to next row
+        
+        return Response({'occurrences': matching_rows})
 
 
 class TableViewSet(viewsets.ModelViewSet):
