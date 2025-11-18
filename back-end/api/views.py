@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 from collections import defaultdict
 import logging
 import re
+from math import isfinite
 
 logger = logging.getLogger(__name__)
 
@@ -421,7 +422,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def tree_files(self, request, *args, **kwargs):
-        """Fetch tree file contents for visualization, filtered by scientific names"""
+        """Fetch tree file contents for visualization, showing all nodes without filtering"""
         import time
         start_time = time.time()
         logger.info(f"tree_files endpoint called for dataset {kwargs.get('pk')}")
@@ -436,6 +437,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
             match_tip_label_to_scientific_name
         )
         import pandas as pd
+        from collections import defaultdict
         
         all_files = dataset.user_files.all()
         tree_files = [f for f in all_files if Path(f.file.name).suffix.lower() in UserFile.TREE_EXTENSIONS]
@@ -446,38 +448,72 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Find occurrence table
+        # Find occurrence table (optional)
         occurrence_table = None
         for table in dataset.table_set.all():
             if table.title and table.title.lower() == 'occurrence':
                 occurrence_table = table
                 break
         
-        if not occurrence_table:
-            return Response(
-                {'error': 'No occurrence table found'}, 
-                status=status.HTTP_404_NOT_FOUND
-            )
+        # Check if we have occurrence data with scientificName and coordinates
+        has_occurrence_data = False
+        has_scientific_name = False
+        has_coordinates = False
+        tip_label_to_sci_name = {}
+        matched_scientific_names = set()
+        scientific_names_with_counts = {}
+        all_scientific_names = set()
+        standardized_columns = {}
+        scientific_names_with_coordinates = set()  # Initialize to empty set
         
-        # Get occurrence data
-        df = occurrence_table.df
-        if df is None or df.empty:
-            return Response({'error': 'Occurrence table is empty'}, status=status.HTTP_404_NOT_FOUND)
-        
-        standardized_columns = {str(col).lower(): col for col in df.columns}
-        sci_name_col = standardized_columns.get('scientificname', standardized_columns.get('scientific_name'))
-        
-        if sci_name_col is None:
-            return Response({'error': 'No scientificName column found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        # Get all unique scientific names and count occurrences
-        scientific_name_series = df[sci_name_col].astype(str).str.strip()
-        valid_scientific_names = scientific_name_series[
-            (scientific_name_series != '') &
-            (scientific_name_series.str.lower() != 'nan')
-        ]
-        scientific_names_with_counts = valid_scientific_names.value_counts().to_dict()
-        all_scientific_names = set(scientific_names_with_counts.keys())
+        if occurrence_table:
+            df = occurrence_table.df
+            if df is not None and not df.empty:
+                has_occurrence_data = True
+                standardized_columns = {str(col).lower(): col for col in df.columns}
+                sci_name_col = standardized_columns.get('scientificname', standardized_columns.get('scientific_name'))
+                has_lat = 'decimallatitude' in standardized_columns
+                has_long = 'decimallongitude' in standardized_columns
+                has_coordinates = has_lat and has_long
+                
+                if sci_name_col is not None:
+                    has_scientific_name = True
+                    # Get all unique scientific names and count occurrences
+                    scientific_name_series = df[sci_name_col].astype(str).str.strip()
+                    valid_scientific_names = scientific_name_series[
+                        (scientific_name_series != '') &
+                        (scientific_name_series.str.lower() != 'nan')
+                    ]
+                    scientific_names_with_counts = valid_scientific_names.value_counts().to_dict()
+                    all_scientific_names = set(scientific_names_with_counts.keys())
+                else:
+                    # No scientific names available
+                    scientific_names_with_coordinates = set()
+                
+                # If coordinates are available, build a set of scientific names that have coordinates
+                if has_coordinates and has_scientific_name and sci_name_col:
+                    scientific_names_with_coordinates = set()
+                    lat_col = standardized_columns.get('decimallatitude')
+                    lon_col = standardized_columns.get('decimallongitude')
+                    if lat_col and lon_col:
+                        # Build set of scientific names that have at least one occurrence with valid coordinates
+                        for idx, row in df.iterrows():
+                            sci_name = str(row.get(sci_name_col, '')).strip()
+                            if not sci_name or sci_name.lower() == 'nan':
+                                continue
+                            try:
+                                lat_val = row.get(lat_col)
+                                lon_val = row.get(lon_col)
+                                if lat_val is not None and lon_val is not None:
+                                    lat = float(lat_val) if lat_val != '' else None
+                                    lon = float(lon_val) if lon_val != '' else None
+                                    if lat is not None and lon is not None and isfinite(lat) and isfinite(lon):
+                                        scientific_names_with_coordinates.add(sci_name)
+                            except (ValueError, TypeError):
+                                pass
+                elif not has_scientific_name:
+                    # Initialize empty set if no scientific names
+                    scientific_names_with_coordinates = set()
         
         # For now, use the first tree file
         user_file = tree_files[0]
@@ -521,116 +557,132 @@ class DatasetViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
                 
-                # Build mapping from tip labels to scientific names
-                tip_label_to_sci_name = {}
-                matched_scientific_names = set()
+                # If we have scientific names, try to match them (but don't filter the tree)
+                if has_scientific_name and all_scientific_names:
+                    def tokenize_label(value: str) -> list[str]:
+                        if not value:
+                            return []
+                        return [token for token in re.split(r'[^a-z0-9]+', value.lower()) if token]
 
-                def tokenize_label(value: str) -> list[str]:
-                    if not value:
-                        return []
-                    return [token for token in re.split(r'[^a-z0-9]+', value.lower()) if token]
+                    # Fast lookup: map genus+species tokens from the tree tips
+                    tip_lookup = defaultdict(list)
+                    for tip_label in tip_labels:
+                        tokens = tokenize_label(tip_label)
+                        if len(tokens) >= 2:
+                            tip_lookup[tokens[0] + tokens[1]].append(tip_label)
 
-                # Fast lookup: map genus+species tokens from the tree tips
-                tip_lookup = defaultdict(list)
-                for tip_label in tip_labels:
-                    tokens = tokenize_label(tip_label)
-                    if len(tokens) >= 2:
-                        tip_lookup[tokens[0] + tokens[1]].append(tip_label)
+                    sci_name_keys = {}
+                    for sci_name in all_scientific_names:
+                        tokens = tokenize_label(sci_name)
+                        if len(tokens) >= 2:
+                            sci_name_keys[sci_name] = tokens[0] + tokens[1]
+                        else:
+                            sci_name_keys[sci_name] = None
 
-                sci_name_keys = {}
-                for sci_name in all_scientific_names:
-                    tokens = tokenize_label(sci_name)
-                    if len(tokens) >= 2:
-                        sci_name_keys[sci_name] = tokens[0] + tokens[1]
-                    else:
-                        sci_name_keys[sci_name] = None
-
-                # First pass: try to match using the precomputed keys
-                for sci_name, key in sci_name_keys.items():
-                    if not key:
-                        continue
-                    matching_tips = tip_lookup.get(key)
-                    if not matching_tips:
-                        continue
-
-                    matched_here = False
-                    for tip_label in matching_tips:
-                        if tip_label in tip_label_to_sci_name:
+                    # First pass: try to match using the precomputed keys
+                    for sci_name, key in sci_name_keys.items():
+                        if not key:
                             continue
-                        if match_tip_label_to_scientific_name(tip_label, sci_name):
-                            tip_label_to_sci_name[tip_label] = sci_name
-                            matched_here = True
-                    if matched_here:
-                        matched_scientific_names.add(sci_name)
+                        matching_tips = tip_lookup.get(key)
+                        if not matching_tips:
+                            continue
 
-                # Fallback: only iterate over the remaining unmatched items
-                remaining_tip_labels = [tip for tip in tip_labels if tip not in tip_label_to_sci_name]
-                if remaining_tip_labels:
-                    remaining_scientific_names = [sci for sci in all_scientific_names if sci not in matched_scientific_names]
-                    for tip_label in remaining_tip_labels:
-                        for sci_name in remaining_scientific_names:
+                        matched_here = False
+                        for tip_label in matching_tips:
+                            if tip_label in tip_label_to_sci_name:
+                                continue
                             if match_tip_label_to_scientific_name(tip_label, sci_name):
                                 tip_label_to_sci_name[tip_label] = sci_name
-                                matched_scientific_names.add(sci_name)
-                                break
+                                matched_here = True
+                        if matched_here:
+                            matched_scientific_names.add(sci_name)
+
+                    # Fallback: only iterate over the remaining unmatched items
+                    remaining_tip_labels = [tip for tip in tip_labels if tip not in tip_label_to_sci_name]
+                    if remaining_tip_labels:
+                        remaining_scientific_names = [sci for sci in all_scientific_names if sci not in matched_scientific_names]
+                        for tip_label in remaining_tip_labels:
+                            for sci_name in remaining_scientific_names:
+                                if match_tip_label_to_scientific_name(tip_label, sci_name):
+                                    tip_label_to_sci_name[tip_label] = sci_name
+                                    matched_scientific_names.add(sci_name)
+                                    break
                 
-                # Filter and replace tree: only keep nodes that match scientific names
-                # Replace tip labels with scientific names
-                def filter_and_replace_tree(node):
-                    """Recursively filter tree and replace tip labels with scientific names"""
+                # Decorate tree with scientific names and occurrence counts
+                # When coordinates are available, filter to only show nodes with coordinate data
+                # When coordinates are not available, show all nodes
+                def decorate_tree_with_occurrences(node):
+                    """Recursively decorate tree with scientific names and occurrence counts.
+                    If coordinates are available, only keep nodes that match scientific names with coordinates.
+                    If coordinates are not available, keep all nodes."""
                     if not node:
                         return None
+                    
+                    node_copy = node.copy()
                     
                     # If it's a leaf node
                     if not node.get('children') or len(node['children']) == 0:
                         original_name = node.get('name', '')
                         # Check if this tip label matches any scientific name
                         matched_sci_name = tip_label_to_sci_name.get(original_name)
+                        
+                        # If coordinates are available, only keep nodes that match scientific names with coordinates
+                        if has_coordinates and has_scientific_name:
+                            if not matched_sci_name or matched_sci_name not in scientific_names_with_coordinates:
+                                return None  # Filter out nodes without coordinates
+                        
                         if matched_sci_name:
-                            # Replace with scientific name
-                            node_copy = node.copy()
-                            node_copy['name'] = matched_sci_name
+                            # Add scientific name but keep original name too
+                            node_copy['name'] = original_name  # Keep original tip label
+                            node_copy['scientific_name'] = matched_sci_name  # Add matched scientific name
                             node_copy['original_tip_label'] = original_name  # Keep original for reference
                             node_copy['occurrence_count'] = scientific_names_with_counts.get(matched_sci_name, 0)
-                            return node_copy
                         else:
-                            # Remove unmatched leaf nodes
-                            return None
+                            # If coordinates are available, we've already filtered these out above
+                            # So if we reach here, coordinates are not available - keep the node
+                            node_copy['name'] = original_name
+                            node_copy['original_tip_label'] = original_name
+                            node_copy['occurrence_count'] = 0
+                        return node_copy
                     else:
                         # Internal node: process children first
-                        node_copy = node.copy()
-                        filtered_children = []
+                        decorated_children = []
                         for child in node.get('children', []):
-                            filtered_child = filter_and_replace_tree(child)
-                            if filtered_child is not None:
-                                filtered_children.append(filtered_child)
+                            decorated_child = decorate_tree_with_occurrences(child)
+                            if decorated_child is not None:
+                                decorated_children.append(decorated_child)
                         
                         # Only keep internal node if it has children after filtering
-                        if filtered_children:
-                            node_copy['children'] = filtered_children
-                            # Aggregate occurrence counts
-                            node_copy['occurrence_count'] = sum(
-                                child.get('occurrence_count', 0) for child in filtered_children
-                            )
-                            return node_copy
-                        else:
+                        if not decorated_children:
                             return None
+                        
+                        node_copy['children'] = decorated_children
+                        # Aggregate occurrence counts
+                        node_copy['occurrence_count'] = sum(
+                            child.get('occurrence_count', 0) for child in decorated_children
+                        )
+                        return node_copy
                 
-                filtered_tree = filter_and_replace_tree(tree_data)
+                decorated_tree = decorate_tree_with_occurrences(tree_data)
                 
-                # Get unmatched scientific names
-                unmatched_scientific_names = sorted(list(all_scientific_names - matched_scientific_names))
-                total_unique_scientific_names = len(all_scientific_names)
+                # Get unmatched scientific names (if we had scientific names to match)
+                unmatched_scientific_names = []
+                total_unique_scientific_names = 0
+                if has_scientific_name:
+                    unmatched_scientific_names = sorted(list(all_scientific_names - matched_scientific_names))
+                    total_unique_scientific_names = len(all_scientific_names)
                 
                 total_time = time.time() - start_time
                 logger.info(f"tree_files endpoint completed in {total_time:.2f}s")
                 
                 return Response({
-                    'tree_data': filtered_tree,
+                    'tree_data': decorated_tree,
                     'filename': user_file.filename,
                     'file_type': user_file.file_type_label,
                     'unmatched_scientific_names': unmatched_scientific_names,
                     'total_unique_scientific_names': total_unique_scientific_names,
+                    'has_coordinates': has_coordinates,
+                    'has_scientific_name': has_scientific_name,
                 })
             finally:
                 if 'file_handle' in locals():

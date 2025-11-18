@@ -113,7 +113,6 @@ class Dataset(models.Model):
         """
         Check if tree visualization is available:
         - Has tree files (Newick or Nexus)
-        - Has a table named 'occurrence' (case-insensitive) with decimalLatitude and decimalLongitude columns
         """
         # Check for tree files by checking file extensions
         # file_type is a property, so we need to check extensions directly
@@ -124,31 +123,7 @@ class Dataset(models.Model):
                 has_tree_files = True
                 break
         
-        if not has_tree_files:
-            return False
-        
-        # Check for occurrence table with lat/long columns
-        occurrence_table = None
-        for table in self.table_set.all():
-            # Case-insensitive title match
-            if table.title and table.title.lower() == 'occurrence':
-                occurrence_table = table
-                break
-        
-        if not occurrence_table:
-            return False
-        
-        # Check if table has the required columns
-        df = occurrence_table.df
-        if df is None or df.empty:
-            return False
-        
-        # Standardize column names to lowercase for comparison
-        standardized_columns = {str(col).lower(): col for col in df.columns}
-        has_lat = 'decimallatitude' in standardized_columns
-        has_long = 'decimallongitude' in standardized_columns
-        
-        return has_lat and has_long
+        return has_tree_files
 
     class Meta:
         get_latest_by = 'created_at'
