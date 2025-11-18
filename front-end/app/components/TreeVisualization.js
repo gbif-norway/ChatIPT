@@ -161,6 +161,8 @@ const TreeVisualization = ({ datasetId, onClose }) => {
   const [highlightedLeaf, setHighlightedLeaf] = useState(null);
   const [unmatchedScientificNames, setUnmatchedScientificNames] = useState([]);
   const [totalUniqueScientificNames, setTotalUniqueScientificNames] = useState(0);
+  const [hasCoordinates, setHasCoordinates] = useState(false);
+  const [hasScientificName, setHasScientificName] = useState(false);
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const mapContainerRef = useRef(null);
@@ -256,6 +258,8 @@ const TreeVisualization = ({ datasetId, onClose }) => {
         setNodeIdMap(map);
         setUnmatchedScientificNames(data.unmatched_scientific_names || []);
         setTotalUniqueScientificNames(data.total_unique_scientific_names || 0);
+        setHasCoordinates(data.has_coordinates || false);
+        setHasScientificName(data.has_scientific_name || false);
       } catch (err) {
         console.error('Error loading tree data:', err);
         setError(err.message);
@@ -275,8 +279,9 @@ const TreeVisualization = ({ datasetId, onClose }) => {
     return tree;
   }, [treeData]);
 
-  // Initialize map - exactly like ui.html
+  // Initialize map - only when coordinates are available
   useEffect(() => {
+    if (!hasCoordinates) return;
     if (!mapContainerRef.current || mapInstanceRef.current) return;
     if (!window.L) return;
 
@@ -301,7 +306,7 @@ const TreeVisualization = ({ datasetId, onClose }) => {
         mapRef.current = null;
       }
     };
-  }, [leafletLoaded, decoratedTree]);
+  }, [leafletLoaded, decoratedTree, hasCoordinates]);
 
   // Build nodeIdMap helper
   const buildNodeIdMap = (node, map = {}, parentKey = 'root', index = 0, leafIndex = { current: 0 }, nodeIndex = { current: 0 }) => {
@@ -387,7 +392,7 @@ const TreeVisualization = ({ datasetId, onClose }) => {
 
   // Handle node selection
   const handleNodeSelect = async (nodeKey, color) => {
-    if (!nodeKey || !mapRef.current || !treeData) return;
+    if (!nodeKey || !hasCoordinates || !mapRef.current || !treeData) return;
 
     const findNodeByKey = (node, key) => {
       if (!node) return null;
@@ -515,14 +520,54 @@ const TreeVisualization = ({ datasetId, onClose }) => {
           )}
         </div>
         <div style={{ width: '50%', position: 'relative', minHeight: 0, overflow: 'hidden' }}>
-          <div 
-            ref={mapContainerRef} 
-            className="leaflet-container"
-            style={{ 
-              height: '100%', 
-              width: '100%'
-            }} 
-          />
+          {hasCoordinates ? (
+            <div 
+              ref={mapContainerRef} 
+              className="leaflet-container"
+              style={{ 
+                height: '100%', 
+                width: '100%'
+              }} 
+            />
+          ) : (
+            <div style={{
+              height: '100%',
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '40px',
+              backgroundColor: '#f8f9fa',
+              textAlign: 'center'
+            }}>
+              <div style={{
+                maxWidth: '500px',
+                color: '#6c757d'
+              }}>
+                <div style={{
+                  fontSize: '48px',
+                  marginBottom: '20px',
+                  opacity: 0.5
+                }}>
+                  🗺️
+                </div>
+                <div style={{
+                  fontSize: '18px',
+                  fontWeight: '500',
+                  marginBottom: '12px',
+                  color: '#495057'
+                }}>
+                  Waiting for data
+                </div>
+                <div style={{
+                  fontSize: '14px',
+                  lineHeight: '1.6'
+                }}>
+                  Waiting for scientificName and decimalLatitude/decimalLongitude values in your dataset - ChatIPT may need to format these.
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
       {unmatchedScientificNames.length > 0 && (
