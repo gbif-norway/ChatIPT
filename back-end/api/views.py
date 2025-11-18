@@ -569,17 +569,22 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 
                 # If we have scientific names, try to match them (but don't filter the tree)
                 if has_scientific_name and all_scientific_names:
+                    match_start = time.time()
+                    logger.info(f"Starting scientific name matching: {len(tip_labels)} tips, {len(all_scientific_names)} scientific names")
+                    
                     def tokenize_label(value: str) -> list[str]:
                         if not value:
                             return []
                         return [token for token in re.split(r'[^a-z0-9]+', value.lower()) if token]
 
                     # Fast lookup: map genus+species tokens from the tree tips
+                    tokenize_start = time.time()
                     tip_lookup = defaultdict(list)
                     for tip_label in tip_labels:
                         tokens = tokenize_label(tip_label)
                         if len(tokens) >= 2:
                             tip_lookup[tokens[0] + tokens[1]].append(tip_label)
+                    logger.info(f"Tokenized {len(tip_labels)} tip labels in {time.time() - tokenize_start:.2f}s")
 
                     sci_name_keys = {}
                     for sci_name in all_scientific_names:
@@ -590,6 +595,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
                             sci_name_keys[sci_name] = None
 
                     # First pass: try to match using the precomputed keys
+                    first_pass_start = time.time()
                     for sci_name, key in sci_name_keys.items():
                         if not key:
                             continue
@@ -606,17 +612,106 @@ class DatasetViewSet(viewsets.ModelViewSet):
                                 matched_here = True
                         if matched_here:
                             matched_scientific_names.add(sci_name)
+                    logger.info(f"First pass matching completed in {time.time() - first_pass_start:.2f}s, matched {len(matched_scientific_names)} names")
 
-                    # Fallback: only iterate over the remaining unmatched items
+                    # Fallback: optimized matching using pre-normalized lookups
+                    fallback_start = time.time()
                     remaining_tip_labels = [tip for tip in tip_labels if tip not in tip_label_to_sci_name]
                     if remaining_tip_labels:
                         remaining_scientific_names = [sci for sci in all_scientific_names if sci not in matched_scientific_names]
-                        for tip_label in remaining_tip_labels:
-                            for sci_name in remaining_scientific_names:
-                                if match_tip_label_to_scientific_name(tip_label, sci_name):
-                                    tip_label_to_sci_name[tip_label] = sci_name
-                                    matched_scientific_names.add(sci_name)
-                                    break
+                        logger.info(f"Fallback matching: {len(remaining_tip_labels)} tips, {len(remaining_scientific_names)} names")
+                        
+                        # Pre-normalize all scientific names for fast lookup
+                        normalize_start = time.time()
+                        sci_name_normalized_map = {}  # normalized -> list of original names
+                        sci_name_genus_species_map = {}  # (genus, species) -> list of original names
+                        
+                        for sci_name in remaining_scientific_names:
+                            sci_normalized = sci_name.lower().replace(' ', '_')
+                            sci_clean = sci_normalized.replace('_', '')
+                            if sci_clean not in sci_name_normalized_map:
+                                sci_name_normalized_map[sci_clean] = []
+                            sci_name_normalized_map[sci_clean].append(sci_name)
+                            
+                            # Also index by genus+species
+                            sci_words = sci_normalized.split('_')
+                            if len(sci_words) >= 2:
+                                genus_species_key = (sci_words[0], sci_words[1])
+                                if genus_species_key not in sci_name_genus_species_map:
+                                    sci_name_genus_species_map[genus_species_key] = []
+                                sci_name_genus_species_map[genus_species_key].append(sci_name)
+                        
+                        logger.info(f"Pre-normalized {len(remaining_scientific_names)} names in {time.time() - normalize_start:.2f}s")
+                        
+                        # Now match tips using the pre-built lookup structures
+                        # Strategy: For each tip, check against normalized scientific names
+                        # Use fast substring checks before expensive matching function
+                        match_loop_start = time.time()
+                        remaining_tips_set = set(remaining_tip_labels)
+                        
+                        # Filter out already matched scientific names from the normalized map
+                        filtered_sci_name_normalized_map = {}
+                        for sci_clean, sci_names in sci_name_normalized_map.items():
+                            filtered_names = [name for name in sci_names if name not in matched_scientific_names]
+                            if filtered_names:
+                                filtered_sci_name_normalized_map[sci_clean] = filtered_names
+                        
+                        # Now iterate through tips and check against all normalized scientific names
+                        for tip_label in list(remaining_tips_set):  # Iterate over copy to allow modification
+                            if tip_label in tip_label_to_sci_name:
+                                continue
+                            
+                            tip_normalized = tip_label.lower().replace(' ', '_')
+                            tip_clean = tip_normalized.replace('_', '')
+                            
+                            matched = False
+                            # Check if any normalized scientific name appears in this tip
+                            for sci_clean, sci_names in filtered_sci_name_normalized_map.items():
+                                if sci_clean in tip_clean:  # Fast substring check
+                                    # Found potential match, verify with full matching function
+                                    for sci_name in sci_names:
+                                        if sci_name in matched_scientific_names:
+                                            continue
+                                        if match_tip_label_to_scientific_name(tip_label, sci_name):
+                                            tip_label_to_sci_name[tip_label] = sci_name
+                                            matched_scientific_names.add(sci_name)
+                                            remaining_tips_set.discard(tip_label)
+                                            # Remove from filtered map to avoid checking again
+                                            filtered_sci_name_normalized_map[sci_clean] = [n for n in filtered_sci_name_normalized_map[sci_clean] if n != sci_name]
+                                            if not filtered_sci_name_normalized_map[sci_clean]:
+                                                del filtered_sci_name_normalized_map[sci_clean]
+                                            matched = True
+                                            break
+                                    if matched:
+                                        break
+                            
+                            # If no match with full name, try genus+species lookup
+                            if not matched:
+                                tip_words = tip_normalized.split('_')
+                                for i in range(len(tip_words) - 1):
+                                    genus = tip_words[i]
+                                    species = tip_words[i + 1]
+                                    genus_species_key = (genus, species)
+                                    if genus_species_key in sci_name_genus_species_map:
+                                        for sci_name in sci_name_genus_species_map[genus_species_key]:
+                                            if sci_name in matched_scientific_names:
+                                                continue
+                                            if match_tip_label_to_scientific_name(tip_label, sci_name):
+                                                tip_label_to_sci_name[tip_label] = sci_name
+                                                matched_scientific_names.add(sci_name)
+                                                remaining_tips_set.discard(tip_label)
+                                                matched = True
+                                                break
+                                        if matched:
+                                            break
+                            
+                            # Early exit if we've matched all tips
+                            if not remaining_tips_set:
+                                break
+                        
+                        logger.info(f"Matching loop completed in {time.time() - match_loop_start:.2f}s")
+                    logger.info(f"Fallback matching completed in {time.time() - fallback_start:.2f}s")
+                    logger.info(f"Total matching time: {time.time() - match_start:.2f}s, final matches: {len(tip_label_to_sci_name)}")
                 
                 # Decorate tree with scientific names and occurrence counts
                 # When coordinates are available, filter to only show nodes with coordinate data
@@ -673,7 +768,10 @@ class DatasetViewSet(viewsets.ModelViewSet):
                         )
                         return node_copy
                 
+                decorate_start = time.time()
+                logger.info(f"Starting tree decoration with {len(tip_labels)} tips")
                 decorated_tree = decorate_tree_with_occurrences(tree_data)
+                logger.info(f"Tree decoration completed in {time.time() - decorate_start:.2f}s")
                 
                 # Get unmatched scientific names (if we had scientific names to match)
                 unmatched_scientific_names = []
@@ -684,6 +782,10 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 
                 total_time = time.time() - start_time
                 logger.info(f"tree_files endpoint completed in {total_time:.2f}s")
+                
+                # Note: DRF will serialize this to JSON, which may take time for large trees
+                # The serialization happens after this function returns, so timing is in network transfer
+                logger.info(f"Preparing response with tree_data (tips: {len(tip_labels)})")
                 
                 response = Response({
                     'tree_data': decorated_tree,
