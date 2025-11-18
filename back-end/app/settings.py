@@ -192,15 +192,30 @@ MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY")
 MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY")
 MINIO_BUCKET = os.environ.get("MINIO_BUCKET")
 MINIO_STATIC_BUCKET = os.environ.get("MINIO_STATIC_BUCKET", MINIO_BUCKET)
+# Use a separate bucket for user files, or same bucket with different location
+MINIO_USER_FILES_BUCKET = os.environ.get("MINIO_USER_FILES_BUCKET", MINIO_BUCKET)
 
-if MINIO_URI and MINIO_ACCESS_KEY and MINIO_SECRET_KEY and MINIO_STATIC_BUCKET:
+if MINIO_URI and MINIO_ACCESS_KEY and MINIO_SECRET_KEY and (MINIO_STATIC_BUCKET or MINIO_BUCKET):
     # Use custom MinIO storage backend
     STATICFILES_STORAGE = "api.storage.MinIOStorage"
+
+    # Local storage path for user files (PVC mount point or local directory)
+    USER_FILES_LOCAL_PATH = os.environ.get("USER_FILES_LOCAL_PATH", os.path.join(BASE_DIR, "user_files"))
 
     # Modern STORAGES configuration (Django 4.2+)
     STORAGES = {
         "default": {
-            "BACKEND": "django.core.files.storage.FileSystemStorage",
+            "BACKEND": "api.storage.DualStorage",
+            "OPTIONS": {
+                "minio_storage": {
+                    "access_key": MINIO_ACCESS_KEY,
+                    "secret_key": MINIO_SECRET_KEY,
+                    "bucket_name": MINIO_USER_FILES_BUCKET,
+                    "endpoint_url": MINIO_URI,
+                    "location": "",  # No prefix for user files
+                },
+                "local_base_path": USER_FILES_LOCAL_PATH,
+            },
         },
         "staticfiles": {
             "BACKEND": "api.storage.MinIOStorage",
@@ -217,7 +232,10 @@ if MINIO_URI and MINIO_ACCESS_KEY and MINIO_SECRET_KEY and MINIO_STATIC_BUCKET:
     # Static files URL
     STATIC_URL = f"https://{MINIO_URI}/{MINIO_STATIC_BUCKET}/static/"
 
-    print(f"Using S3/MinIO storage: https://{MINIO_URI}/{MINIO_STATIC_BUCKET}")
+    print(f"Using S3/MinIO storage for static files: https://{MINIO_URI}/{MINIO_STATIC_BUCKET}")
+    print(f"Using dual storage (MinIO + local) for user files:")
+    print(f"  - MinIO: https://{MINIO_URI}/{MINIO_USER_FILES_BUCKET}")
+    print(f"  - Local: {USER_FILES_LOCAL_PATH}")
 else:
     # Fallback to local filesystem if MinIO env vars are missing
     print(

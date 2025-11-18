@@ -478,7 +478,15 @@ class DatasetViewSet(viewsets.ModelViewSet):
         # For now, use the first tree file
         user_file = tree_files[0]
         try:
-            user_file.file.open('rb')
+            # Try to open the file - this will work with both FileSystemStorage and MinIOStorage
+            try:
+                user_file.file.open('rb')
+            except Exception as open_error:
+                logger.error(f"Error opening tree file {user_file.id} ({user_file.filename}): {open_error}")
+                logger.error(f"File storage backend: {type(user_file.file.storage).__name__}")
+                logger.error(f"File path: {user_file.file.name}")
+                raise
+            
             try:
                 content = user_file.file.read()
                 try:
