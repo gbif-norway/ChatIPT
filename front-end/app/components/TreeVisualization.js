@@ -239,55 +239,93 @@ const TreeVisualization = ({ datasetId, onClose }) => {
     document.body.appendChild(script);
   }, []);
 
-  // Fetch tree data
-  useEffect(() => {
+  // Fetch tree data function
+  const fetchTreeData = useCallback(async () => {
     if (!datasetId) return;
     
-    const fetchTreeData = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const response = await fetch(`${config.baseUrl}/api/datasets/${datasetId}/tree_files/`, {
-          credentials: 'include'
-        });
-        
-        let data;
-        try {
-          data = await response.json();
-        } catch (jsonError) {
-          // If response is not JSON, use status text
-          throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
-        }
-        
-        if (!response.ok) {
-          throw new Error(data.error || `HTTP error! status: ${response.status}`);
-        }
-        
-        if (data.error) {
-          throw new Error(data.error);
-        }
-        
-        const map = {};
-        if (data.tree_data) {
-          buildNodeIdMap(data.tree_data, map);
-        }
-        
-        setTreeData(data.tree_data);
-        setNodeIdMap(map);
-        setUnmatchedScientificNames(data.unmatched_scientific_names || []);
-        setTotalUniqueScientificNames(data.total_unique_scientific_names || 0);
-        setHasCoordinates(data.has_coordinates || false);
-        setHasScientificName(data.has_scientific_name || false);
-      } catch (err) {
-        console.error('Error loading tree data:', err);
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
+    setLoading(true);
+    setError(null);
     
-    fetchTreeData();
+    // Clear existing map layers when refetching
+    if (mapRef.current && layerByNode.current.size > 0) {
+      layerByNode.current.forEach((layer) => {
+        if (mapRef.current.hasLayer(layer)) {
+          mapRef.current.removeLayer(layer);
+        }
+      });
+      layerByNode.current.clear();
+    }
+    
+    try {
+      const response = await fetch(`${config.baseUrl}/api/datasets/${datasetId}/tree_files/`, {
+        credentials: 'include',
+        cache: 'no-cache' // Prevent caching
+      });
+      
+      let data;
+      try {
+        data = await response.json();
+      } catch (jsonError) {
+        // If response is not JSON, use status text
+        throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
+      }
+      
+      if (!response.ok) {
+        throw new Error(data.error || `HTTP error! status: ${response.status}`);
+      }
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      const map = {};
+      if (data.tree_data) {
+        buildNodeIdMap(data.tree_data, map);
+      }
+      
+      setTreeData(data.tree_data);
+      setNodeIdMap(map);
+      setUnmatchedScientificNames(data.unmatched_scientific_names || []);
+      setTotalUniqueScientificNames(data.total_unique_scientific_names || 0);
+      console.log('Tree data response:', {
+        has_coordinates: data.has_coordinates,
+        has_scientific_name: data.has_scientific_name,
+        tree_data: data.tree_data ? 'present' : 'missing',
+        all_keys: Object.keys(data)
+      });
+      setHasCoordinates(data.has_coordinates || false);
+      setHasScientificName(data.has_scientific_name || false);
+    } catch (err) {
+      console.error('Error loading tree data:', err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   }, [datasetId]);
+
+  // Fetch tree data on mount and when datasetId changes
+  useEffect(() => {
+    fetchTreeData();
+  }, [fetchTreeData]);
+
+  // Refetch when modal is shown (Bootstrap modal event)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
+    const modalElement = document.getElementById('treeVisualizationModal');
+    if (!modalElement) return;
+
+    const handleModalShown = () => {
+      console.log('Modal shown, refetching tree data...');
+      fetchTreeData();
+    };
+
+    modalElement.addEventListener('shown.bs.modal', handleModalShown);
+
+    return () => {
+      modalElement.removeEventListener('shown.bs.modal', handleModalShown);
+    };
+  }, [fetchTreeData]);
 
   // Decorate tree with positions and sizes - MUST be before early returns
   const decoratedTree = React.useMemo(() => {

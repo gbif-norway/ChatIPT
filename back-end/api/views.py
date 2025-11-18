@@ -450,9 +450,13 @@ class DatasetViewSet(viewsets.ModelViewSet):
         
         # Find occurrence table (optional)
         occurrence_table = None
-        for table in dataset.table_set.all():
-            if table.title and table.title.lower() == 'occurrence':
+        all_tables = list(dataset.table_set.all())
+        logger.info(f"Found {len(all_tables)} tables for dataset {dataset.id}")
+        for table in all_tables:
+            logger.info(f"Table: id={table.id}, title='{table.title}'")
+            if table.title and table.title.lower().strip() == 'occurrence':
                 occurrence_table = table
+                logger.info(f"Found occurrence table: id={table.id}")
                 break
         
         # Check if we have occurrence data with scientificName and coordinates
@@ -471,10 +475,12 @@ class DatasetViewSet(viewsets.ModelViewSet):
             if df is not None and not df.empty:
                 has_occurrence_data = True
                 standardized_columns = {str(col).lower(): col for col in df.columns}
+                logger.info(f"Occurrence table columns (lowercase): {list(standardized_columns.keys())}")
                 sci_name_col = standardized_columns.get('scientificname', standardized_columns.get('scientific_name'))
                 has_lat = 'decimallatitude' in standardized_columns
                 has_long = 'decimallongitude' in standardized_columns
                 has_coordinates = has_lat and has_long
+                logger.info(f"Coordinate check: has_lat={has_lat}, has_long={has_long}, has_coordinates={has_coordinates}")
                 
                 if sci_name_col is not None:
                     has_scientific_name = True
@@ -514,6 +520,10 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 elif not has_scientific_name:
                     # Initialize empty set if no scientific names
                     scientific_names_with_coordinates = set()
+            else:
+                logger.warning(f"Occurrence table {occurrence_table.id} has empty or None dataframe")
+        else:
+            logger.warning(f"No occurrence table found for dataset {dataset.id}. Available tables: {[t.title for t in all_tables]}")
         
         # For now, use the first tree file
         user_file = tree_files[0]
@@ -675,7 +685,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 total_time = time.time() - start_time
                 logger.info(f"tree_files endpoint completed in {total_time:.2f}s")
                 
-                return Response({
+                response = Response({
                     'tree_data': decorated_tree,
                     'filename': user_file.filename,
                     'file_type': user_file.file_type_label,
@@ -684,6 +694,11 @@ class DatasetViewSet(viewsets.ModelViewSet):
                     'has_coordinates': has_coordinates,
                     'has_scientific_name': has_scientific_name,
                 })
+                # Prevent caching to ensure fresh data on each request
+                response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+                response['Pragma'] = 'no-cache'
+                response['Expires'] = '0'
+                return response
             finally:
                 if 'file_handle' in locals():
                     file_handle.close()
