@@ -250,10 +250,18 @@ const TreeVisualization = ({ datasetId, onClose }) => {
         const response = await fetch(`${config.baseUrl}/api/datasets/${datasetId}/tree_files/`, {
           credentials: 'include'
         });
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+        
+        let data;
+        try {
+          data = await response.json();
+        } catch (jsonError) {
+          // If response is not JSON, use status text
+          throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
         }
-        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.error || `HTTP error! status: ${response.status}`);
+        }
         
         if (data.error) {
           throw new Error(data.error);
