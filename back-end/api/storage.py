@@ -204,6 +204,15 @@ class DualStorage(Storage):
         # Ensure local directory exists
         if self.local_base_path:
             Path(self.local_base_path).mkdir(parents=True, exist_ok=True)
+        
+        # Log storage configuration for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"DualStorage initialized:")
+        logger.info(f"  - Local path: {self.local_base_path}")
+        logger.info(f"  - MinIO configured: {self.minio_storage is not None and self.minio_storage.client is not None}")
+        if self.minio_storage and self.minio_storage.client:
+            logger.info(f"  - MinIO bucket: {self.minio_storage.bucket_name}")
     
     def _save(self, name, content):
         """Save file to both MinIO and local filesystem."""
@@ -248,7 +257,7 @@ class DualStorage(Storage):
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
-            logger.warning(f"Failed to open {name} from local storage: {e}")
+            logger.warning(f"Failed to check/exist {name} in local storage: {e}")
         
         # Fallback to MinIO if local file doesn't exist
         if self.minio_storage and self.minio_storage.client:
@@ -271,11 +280,21 @@ class DualStorage(Storage):
                     logger = logging.getLogger(__name__)
                     logger.warning(f"Failed to sync {name} from MinIO to local: {sync_error}")
                 return minio_file
-            except FileNotFoundError:
-                pass
+            except (FileNotFoundError, IOError) as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"File {name} not found in MinIO: {e}")
         
-        # If both fail, raise the original local storage error
-        return self.local_storage._open(name, mode)
+        # If local file doesn't exist, try to open it anyway to get a proper error
+        # This handles the case where the file path exists in DB but file is missing
+        try:
+            return self.local_storage._open(name, mode)
+        except FileNotFoundError:
+            # If both storages fail, provide a helpful error message
+            error_msg = f"File {name} not found in local storage ({self.local_base_path})"
+            if self.minio_storage and self.minio_storage.client:
+                error_msg += f" or MinIO bucket ({self.minio_storage.bucket_name})"
+            raise FileNotFoundError(error_msg)
     
     def delete(self, name):
         """Delete file from both storages."""
