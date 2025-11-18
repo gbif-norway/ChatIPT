@@ -469,8 +469,15 @@ def parse_nexus_to_tree(nexus_content: str) -> dict:
                 # Numbers in Newick trees are separated by parentheses, commas, colons, or whitespace
                 # Pattern ensures "1" doesn't match "10", "101", etc.
                 # Match number at start of string or after Newick delimiters, and before delimiters or end
-                pattern = r'(?<=[\(\,:\s]|^)' + re.escape(key) + r'(?=[\)\,:\s]|$)'
-                tree_string = re.sub(pattern, translate_map[key], tree_string)
+                # Use word boundaries and explicit delimiters to avoid variable-length lookbehind
+                # Pattern: match key that's either at start, or after a delimiter, and before delimiter or end
+                escaped_key = re.escape(key)
+                # Use a pattern that matches the key with delimiters, then reconstruct
+                # This avoids variable-length lookbehind by using capturing groups
+                pattern = r'(^|[\(\,:\s])' + escaped_key + r'([\)\,:\s]|$)'
+                def replacer(match):
+                    return match.group(1) + translate_map[key] + match.group(2)
+                tree_string = re.sub(pattern, replacer, tree_string)
         
         return parse_newick_to_tree(tree_string)
     
