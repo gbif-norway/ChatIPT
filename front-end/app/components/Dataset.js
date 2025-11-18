@@ -16,6 +16,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const { currentDataset, currentDatasetId, loading, error, refreshDataset } = useDataset();
   const { user } = useAuth();
   const [tables, setTables] = useState([]);
+  const [tablesLoading, setTablesLoading] = useState(true);
   const [activeTableId, setActiveTableId] = useState(null);
   const [activeAgentKey, setActiveAgentKey] = useState(null);
   // Helper function to fetch data with timeout
@@ -57,30 +58,44 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
 
   const loadTablesForDataset = useCallback(async (datasetId) => {
     console.log('loading tables for dataset', datasetId);
-    const tables = await fetchData(`${config.baseUrl}/api/tables?dataset=${datasetId}`);
-    const updatedTables = tables.map(item => {
-      const df = JSON.parse(item.df_json);
-      delete item.df_json;
-      return { ...item, df };
-    });
-    console.log(updatedTables);
-    setTables(updatedTables);
-    const sortedTables = tables.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
-    setActiveTableId(sortedTables[0]?.id);
+    setTablesLoading(true);
+    try {
+      const tables = await fetchData(`${config.baseUrl}/api/tables?dataset=${datasetId}`);
+      const updatedTables = tables.map(item => {
+        const df = JSON.parse(item.df_json);
+        delete item.df_json;
+        return { ...item, df };
+      });
+      console.log(updatedTables);
+      setTables(updatedTables);
+      const sortedTables = tables.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+      setActiveTableId(sortedTables[0]?.id);
+    } catch (error) {
+      console.error('Error loading tables:', error);
+    } finally {
+      setTablesLoading(false);
+    }
   }, []);
 
   const refreshTables = useCallback(async () => {
     console.log('refreshing tables');
-    const tables = await fetchData(`${config.baseUrl}/api/tables?dataset=${currentDatasetId}`);
-    const updatedTables = tables.map(item => {
-      const df = JSON.parse(item.df_json);
-      delete item.df_json;
-      return { ...item, df };
-    });
-    console.log(updatedTables);
-    setTables(updatedTables);
-    const sortedTables = tables.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
-    setActiveTableId(sortedTables[0]?.id);
+    setTablesLoading(true);
+    try {
+      const tables = await fetchData(`${config.baseUrl}/api/tables?dataset=${currentDatasetId}`);
+      const updatedTables = tables.map(item => {
+        const df = JSON.parse(item.df_json);
+        delete item.df_json;
+        return { ...item, df };
+      });
+      console.log(updatedTables);
+      setTables(updatedTables);
+      const sortedTables = tables.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+      setActiveTableId(sortedTables[0]?.id);
+    } catch (error) {
+      console.error('Error refreshing tables:', error);
+    } finally {
+      setTablesLoading(false);
+    }
   }, [currentDatasetId]);
 
   const handleVisualizeTreeClick = () => {
@@ -94,6 +109,11 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   useEffect(() => {
     if (currentDatasetId) {
       loadTablesForDataset(currentDatasetId);
+    } else {
+      // Reset tables state when dataset is cleared
+      setTables([]);
+      setTablesLoading(false);
+      setActiveTableId(null);
     }
   }, [currentDatasetId, loadTablesForDataset]);
 
@@ -300,7 +320,13 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
         </div>
         <div className="col-6">
           <div className="sticky-top">
-            {tables.length > 0 ? (
+            {tablesLoading ? (
+              <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '200px' }}>
+                <div className="spinner-border" role="status">
+                  <span className="visually-hidden">Loading tables...</span>
+                </div>
+              </div>
+            ) : tables.length > 0 ? (
               <Tabs activeKey={activeTableId} onSelect={(k) => setActiveTableId(k)} className="mb-3">
                 {tables.map((table) => (
                   <Tab
