@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
 
@@ -152,6 +152,15 @@ const treeStyles = `
   }
 `;
 
+// Clone tree structure (more efficient than JSON.parse/stringify)
+const cloneTree = (node) => {
+  const cloned = { ...node };
+  if (node.children && node.children.length > 0) {
+    cloned.children = node.children.map(child => cloneTree(child));
+  }
+  return cloned;
+};
+
 const TreeVisualization = ({ datasetId, onClose }) => {
   const [treeData, setTreeData] = useState(null);
   const [nodeIdMap, setNodeIdMap] = useState(null);
@@ -167,6 +176,7 @@ const TreeVisualization = ({ datasetId, onClose }) => {
   const mapInstanceRef = useRef(null);
   const mapContainerRef = useRef(null);
   const layerByNode = useRef(new Map());
+  const nodeByKeyMap = useRef(new Map());
   const [leafletLoaded, setLeafletLoaded] = useState(false);
 
   // Inject CSS styles
@@ -274,8 +284,10 @@ const TreeVisualization = ({ datasetId, onClose }) => {
   // Decorate tree with positions and sizes - MUST be before early returns
   const decoratedTree = React.useMemo(() => {
     if (!treeData) return null;
-    const tree = JSON.parse(JSON.stringify(treeData));
-    decorateTree(tree, null);
+    // Shallow clone to avoid expensive deep clone, then mutate during decoration
+    const tree = cloneTree(treeData);
+    nodeByKeyMap.current.clear();
+    decorateTree(tree, null, nodeByKeyMap.current);
     return tree;
   }, [treeData]);
 
@@ -344,8 +356,15 @@ const TreeVisualization = ({ datasetId, onClose }) => {
   };
 
   // Collect descendant tip labels (using original_tip_label if available, else name)
+  // This is now only used as a fallback - descendant tips are precomputed during decoration
   const collectDescendantTips = (node, tips = []) => {
     if (!node) return tips;
+    // Use precomputed descendant tips if available
+    if (node.descendantTips) {
+      tips.push(...node.descendantTips);
+      return tips;
+    }
+    // Fallback to recursive collection
     if (!node.children || node.children.length === 0) {
       const tipLabel = node.original_tip_label || node.name;
       if (tipLabel) tips.push(tipLabel);
@@ -392,24 +411,14 @@ const TreeVisualization = ({ datasetId, onClose }) => {
 
   // Handle node selection
   const handleNodeSelect = async (nodeKey, color) => {
-    if (!nodeKey || !hasCoordinates || !mapRef.current || !treeData) return;
+    if (!nodeKey || !hasCoordinates || !mapRef.current || !decoratedTree) return;
 
-    const findNodeByKey = (node, key) => {
-      if (!node) return null;
-      if (node.key === key) return node;
-      if (node.children) {
-        for (const child of node.children) {
-          const found = findNodeByKey(child, key);
-          if (found) return found;
-        }
-      }
-      return null;
-    };
-
-    const node = findNodeByKey(treeData, nodeKey);
+    // Use lookup map instead of tree traversal
+    const node = nodeByKeyMap.current.get(nodeKey);
     if (!node) return;
 
-    const tipLabels = collectDescendantTips(node);
+    // Use precomputed descendant tips
+    const tipLabels = node.descendantTips || collectDescendantTips(node);
     const occurrences = await fetchOccurrencesForNode(tipLabels);
     
     const existingLayer = layerByNode.current.get(nodeKey);
@@ -580,8 +589,8 @@ const TreeVisualization = ({ datasetId, onClose }) => {
   );
 };
 
-// Decorate tree with positions and sizes
-const decorateTree = (node, parent) => {
+// Decorate tree with positions and sizes, build lookup map, and precompute descendant tips
+const decorateTree = (node, parent, nodeByKeyMap) => {
   let position = 0;
   let index = 0;
   let leafIndex = 0;
@@ -593,24 +602,44 @@ const decorateTree = (node, parent) => {
     node.id = index;
     index++;
     
+    // Add to lookup map
+    if (node.key && nodeByKeyMap) {
+      nodeByKeyMap.set(node.key, node);
+    }
+    
     if (children.length === 0) {
+      // Leaf node - precompute descendant tips (just this node's tip label)
       if (node.leafIndex === undefined) {
         node.leafIndex = leafIndex++;
       }
       position++;
       node.size = 1;
       node.childrenLength = 0;
+      const tipLabel = node.original_tip_label || node.name;
+      node.descendantTips = tipLabel ? [tipLabel] : [];
       return {
         size: node.size,
         childrenLength: node.branch_length || 0
       };
     }
+    
+    // Internal node - recursively process children and collect their descendant tips
     const sizes = children.map(x => recursive(x, node));
     const sum = sizes.reduce((partial_sum, a) => partial_sum + a.size, 0);
     const childrenLength = sizes.reduce((maxLength, a) => Math.max(maxLength, a.childrenLength), 0);
 
     node.size = sum;
     node.childrenLength = childrenLength;
+    
+    // Precompute descendant tips by collecting from all children
+    const descendantTips = [];
+    children.forEach(child => {
+      if (child.descendantTips) {
+        descendantTips.push(...child.descendantTips);
+      }
+    });
+    node.descendantTips = descendantTips;
+    
     return {
       size: node.size,
       childrenLength: (node.childrenLength || 0) + (node.branch_length || 0)
@@ -620,7 +649,7 @@ const decorateTree = (node, parent) => {
 };
 
 // Tree Node Component matching ui.html structure
-const TreeNode = ({ 
+const TreeNodeComponent = ({ 
   node, 
   highlighted, 
   highlightedLeaf, 
@@ -730,7 +759,7 @@ const TreeNode = ({
           }}
         >
           {children.map((child) => (
-            <TreeNode
+            <TreeNodeComponent
               key={child.nodeIndex}
               node={child}
               highlighted={highlighted}
@@ -748,6 +777,26 @@ const TreeNode = ({
   );
 };
 
+// Memoized TreeNode with custom comparison
+const TreeNode = React.memo(TreeNodeComponent, (prevProps, nextProps) => {
+  // Return true if props are equal (skip re-render), false if different (re-render)
+  const nodeKey = prevProps.node?.key;
+  const isHighlightedEqual = prevProps.highlighted?.[nodeKey]?.color === nextProps.highlighted?.[nodeKey]?.color;
+  const hasHighlighted = !!(prevProps.highlighted?.[nodeKey]) === !!(nextProps.highlighted?.[nodeKey]);
+  
+  return (
+    nodeKey === nextProps.node?.key &&
+    hasHighlighted &&
+    isHighlightedEqual &&
+    prevProps.highlightedLeaf === nextProps.highlightedLeaf &&
+    prevProps.elementHeight === nextProps.elementHeight &&
+    prevProps.multiplier === nextProps.multiplier &&
+    prevProps.onToggle === nextProps.onToggle &&
+    prevProps.onNodeEnter === nextProps.onNodeEnter &&
+    prevProps.onNodeLeave === nextProps.onNodeLeave
+  );
+});
+
 // Simplified Tree View Component
 const SimpleTreeView = ({ tree, nodeIdMap, highlighted, highlightedLeaf, onToggle }) => {
   const treeRef = useRef(null);
@@ -755,7 +804,6 @@ const SimpleTreeView = ({ tree, nodeIdMap, highlighted, highlightedLeaf, onToggl
   const [fontSize, setFontSize] = useState(12);
   const [q, setQ] = useState('');
   const [hoveredNode, setHoveredNode] = useState(null);
-  const [leafSuggestions, setLeafSuggestions] = useState([]);
   const [elementHeight, setElementHeight] = useState(20);
   const multiplier = 5;
 
@@ -765,15 +813,15 @@ const SimpleTreeView = ({ tree, nodeIdMap, highlighted, highlightedLeaf, onToggl
     setElementHeight(baseHeight + verticalGap);
   }, [fontSize]);
 
-  useEffect(() => {
-    if (!nodeIdMap) return;
-    const suggestions = Object.keys(nodeIdMap)
+  // Memoize leaf suggestions
+  const leafSuggestions = useMemo(() => {
+    if (!nodeIdMap) return [];
+    return Object.keys(nodeIdMap)
       .filter(key => nodeIdMap[key].title && nodeIdMap[key].leafIndex !== null)
       .map(key => ({
         key,
         label: nodeIdMap[key].title
       }));
-    setLeafSuggestions(suggestions);
   }, [nodeIdMap]);
 
   const handleNodeEnter = useCallback(({ node }) => {
@@ -784,9 +832,14 @@ const SimpleTreeView = ({ tree, nodeIdMap, highlighted, highlightedLeaf, onToggl
     setHoveredNode(null);
   }, []);
 
-  const filteredSuggestions = leafSuggestions.filter(s => 
-    s.label.toLowerCase().includes(q.toLowerCase())
-  );
+  // Memoize filtered suggestions
+  const filteredSuggestions = useMemo(() => {
+    if (!q) return [];
+    const lowerQ = q.toLowerCase();
+    return leafSuggestions.filter(s => 
+      s.label.toLowerCase().includes(lowerQ)
+    );
+  }, [q, leafSuggestions]);
 
   const containerHeight = tree ? tree.size * elementHeight : 0;
 

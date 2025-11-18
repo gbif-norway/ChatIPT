@@ -433,6 +433,7 @@ def parse_nexus_to_tree(nexus_content: str) -> dict:
     """
     Parse a NEXUS format tree file into a hierarchical JSON structure.
     Extracts the first tree from the file.
+    Applies TRANSLATE block mappings if present.
     
     Args:
         nexus_content: Content of a NEXUS file
@@ -440,6 +441,17 @@ def parse_nexus_to_tree(nexus_content: str) -> dict:
     Returns:
         Dictionary representing the tree (same structure as parse_newick_to_tree)
     """
+    # First, check for a TRANSLATE block and build a mapping
+    translate_map = {}
+    translate_match = re.search(r'TRANSLATE\s+(.*?);', nexus_content, re.DOTALL | re.IGNORECASE)
+    if translate_match:
+        translate_block = translate_match.group(1)
+        # Parse translate entries: key value, or key value,
+        # Format: "1 Ephedrales_Ephedraceae_Ephedra_sinica_VDAO," or "1 Ephedrales_Ephedraceae_Ephedra_sinica_VDAO;"
+        translate_entries = re.findall(r'(\d+)\s+([A-Za-z0-9_\-\.]+)[,\s]*', translate_block)
+        for key, value in translate_entries:
+            translate_map[key] = value.strip()
+    
     # Extract tree string from NEXUS file
     tree_match = re.search(r'TREE\s+[^=]+=\s*(.*?);', nexus_content, re.DOTALL | re.IGNORECASE)
     if tree_match:
@@ -447,6 +459,19 @@ def parse_nexus_to_tree(nexus_content: str) -> dict:
         # Remove any comments or metadata
         # NEXUS files might have comments like [&R] before the tree
         tree_string = re.sub(r'\[[^\]]*\]', '', tree_string)
+        
+        # If we have a translate map, replace numeric IDs with their translated names
+        if translate_map:
+            # Sort keys in descending order to replace longer numbers first (e.g., "10" before "1")
+            sorted_keys = sorted(translate_map.keys(), key=lambda x: int(x), reverse=True)
+            for key in sorted_keys:
+                # Replace the numeric ID as a whole token in Newick format
+                # Numbers in Newick trees are separated by parentheses, commas, colons, or whitespace
+                # Pattern ensures "1" doesn't match "10", "101", etc.
+                # Match number at start of string or after Newick delimiters, and before delimiters or end
+                pattern = r'(?<=[\(\,:\s]|^)' + re.escape(key) + r'(?=[\)\,:\s]|$)'
+                tree_string = re.sub(pattern, translate_map[key], tree_string)
+        
         return parse_newick_to_tree(tree_string)
     
     return {"name": None, "branch_length": 0, "children": []}
