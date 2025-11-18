@@ -178,6 +178,12 @@ const TreeVisualization = ({ datasetId, onClose }) => {
   const layerByNode = useRef(new Map());
   const nodeByKeyMap = useRef(new Map());
   const [leafletLoaded, setLeafletLoaded] = useState(false);
+  // Cache tracking: store the occurrence table timestamp we last fetched
+  const lastFetchCacheRef = useRef({
+    occurrenceTableId: null,
+    occurrenceTableUpdatedAt: null,
+    datasetId: null
+  });
 
   // Inject CSS styles
   useEffect(() => {
@@ -239,9 +245,68 @@ const TreeVisualization = ({ datasetId, onClose }) => {
     document.body.appendChild(script);
   }, []);
 
+  // Check if we need to refetch by comparing occurrence table timestamp
+  const checkIfNeedRefetch = useCallback(async () => {
+    const cache = lastFetchCacheRef.current;
+    
+    // If dataset changed, we need to refetch
+    if (cache.datasetId !== datasetId) {
+      return true;
+    }
+    
+    // If we don't have cached data, we need to fetch
+    if (!treeData || !cache.occurrenceTableId) {
+      return true;
+    }
+    
+    // Make a lightweight request to check current timestamp
+    try {
+      const checkResponse = await fetch(`${config.baseUrl}/api/datasets/${datasetId}/tree_files/?check_only=true`, {
+        credentials: 'include',
+        cache: 'no-cache'
+      });
+      
+      if (checkResponse.ok) {
+        const checkData = await checkResponse.json();
+        const currentTableId = checkData.occurrence_table_id;
+        const currentUpdatedAt = checkData.occurrence_table_updated_at;
+        
+        // If table ID changed or timestamp is different, we need to refetch
+        if (currentTableId !== cache.occurrenceTableId || 
+            currentUpdatedAt !== cache.occurrenceTableUpdatedAt) {
+          console.log('[TreeViz] Occurrence table updated, refetch needed', {
+            old_id: cache.occurrenceTableId,
+            new_id: currentTableId,
+            old_timestamp: cache.occurrenceTableUpdatedAt,
+            new_timestamp: currentUpdatedAt
+          });
+          return true;
+        }
+        
+        console.log('[TreeViz] Using cached tree data - occurrence table unchanged');
+        return false;
+      }
+    } catch (err) {
+      console.warn('[TreeViz] Error checking if refetch needed, will refetch:', err);
+      return true; // On error, refetch to be safe
+    }
+    
+    return true;
+  }, [datasetId, treeData]);
+
   // Fetch tree data function
-  const fetchTreeData = useCallback(async () => {
+  const fetchTreeData = useCallback(async (forceRefresh = false) => {
     if (!datasetId) return;
+    
+    // Check if we need to refetch (unless forced)
+    if (!forceRefresh) {
+      const needRefetch = await checkIfNeedRefetch();
+      if (!needRefetch) {
+        console.log('[TreeViz] Skipping fetch - using cached data');
+        setLoading(false);
+        return;
+      }
+    }
     
     const perfStart = performance.now();
     console.log('[TreeViz] Starting tree data fetch...');
@@ -316,6 +381,13 @@ const TreeVisualization = ({ datasetId, onClose }) => {
       });
       setHasCoordinates(data.has_coordinates || false);
       setHasScientificName(data.has_scientific_name || false);
+      
+      // Update cache with current occurrence table info
+      lastFetchCacheRef.current = {
+        occurrenceTableId: data.occurrence_table_id || null,
+        occurrenceTableUpdatedAt: data.occurrence_table_updated_at || null,
+        datasetId: datasetId
+      };
     } catch (err) {
       console.error('[TreeViz] Error loading tree data:', err);
       setError(err.message);
@@ -324,12 +396,19 @@ const TreeVisualization = ({ datasetId, onClose }) => {
       const totalTime = performance.now() - perfStart;
       console.log(`[TreeViz] Total fetchTreeData time: ${totalTime.toFixed(2)}ms (${(totalTime / 1000).toFixed(2)}s)`);
     }
-  }, [datasetId]);
+  }, [datasetId, checkIfNeedRefetch]);
 
-  // Fetch tree data on mount and when datasetId changes
+  // Fetch tree data on mount and when datasetId changes (force refresh on dataset change)
   useEffect(() => {
-    fetchTreeData();
-  }, [fetchTreeData]);
+    // Reset cache when dataset changes
+    lastFetchCacheRef.current = {
+      occurrenceTableId: null,
+      occurrenceTableUpdatedAt: null,
+      datasetId: datasetId
+    };
+    fetchTreeData(true); // Force refresh when dataset changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasetId]); // Only depend on datasetId
 
   // Refetch when modal is shown (Bootstrap modal event)
   useEffect(() => {
@@ -339,8 +418,8 @@ const TreeVisualization = ({ datasetId, onClose }) => {
     if (!modalElement) return;
 
     const handleModalShown = () => {
-      console.log('Modal shown, refetching tree data...');
-      fetchTreeData();
+      console.log('Modal shown, checking if tree data needs refresh...');
+      fetchTreeData(false); // Will check cache first
     };
 
     modalElement.addEventListener('shown.bs.modal', handleModalShown);
