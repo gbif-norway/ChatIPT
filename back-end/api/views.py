@@ -422,6 +422,10 @@ class DatasetViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def tree_files(self, request, *args, **kwargs):
         """Fetch tree file contents for visualization, filtered by scientific names"""
+        import time
+        start_time = time.time()
+        logger.info(f"tree_files endpoint called for dataset {kwargs.get('pk')}")
+        
         dataset = self.get_object()
         
         # Get all tree files for this dataset by checking file extensions
@@ -477,10 +481,13 @@ class DatasetViewSet(viewsets.ModelViewSet):
         
         # For now, use the first tree file
         user_file = tree_files[0]
+        logger.info(f"Processing tree file {user_file.id} ({user_file.filename})")
         try:
             # Try to open the file - this will work with both FileSystemStorage and MinIOStorage
+            open_start = time.time()
             try:
-                user_file.file.open('rb')
+                file_handle = user_file.file.open('rb')
+                logger.info(f"File opened in {time.time() - open_start:.2f}s")
             except Exception as open_error:
                 logger.error(f"Error opening tree file {user_file.id} ({user_file.filename}): {open_error}")
                 logger.error(f"File storage backend: {type(user_file.file.storage).__name__}")
@@ -488,13 +495,16 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 raise
             
             try:
-                content = user_file.file.read()
+                read_start = time.time()
+                content = file_handle.read()
+                logger.info(f"File read ({len(content)} bytes) in {time.time() - read_start:.2f}s")
                 try:
                     text_content = content.decode('utf-8')
                 except UnicodeDecodeError:
                     text_content = content.decode('latin-1', errors='replace')
                 
                 # Parse tree structure
+                parse_start = time.time()
                 ext = Path(user_file.filename).suffix.lower()
                 try:
                     if ext in {'.nex', '.nexus'}:
@@ -503,6 +513,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
                     else:
                         tree_data = parse_newick_to_tree(text_content)
                         tip_labels = parse_newick_tip_labels(text_content)
+                    logger.info(f"Tree parsed ({len(tip_labels)} tips) in {time.time() - parse_start:.2f}s")
                 except Exception as parse_error:
                     logger.error(f"Error parsing tree file {user_file.id}: {parse_error}")
                     return Response(
@@ -611,6 +622,9 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 unmatched_scientific_names = sorted(list(all_scientific_names - matched_scientific_names))
                 total_unique_scientific_names = len(all_scientific_names)
                 
+                total_time = time.time() - start_time
+                logger.info(f"tree_files endpoint completed in {total_time:.2f}s")
+                
                 return Response({
                     'tree_data': filtered_tree,
                     'filename': user_file.filename,
@@ -619,7 +633,10 @@ class DatasetViewSet(viewsets.ModelViewSet):
                     'total_unique_scientific_names': total_unique_scientific_names,
                 })
             finally:
-                user_file.file.close()
+                if 'file_handle' in locals():
+                    file_handle.close()
+                elif hasattr(user_file, 'file') and hasattr(user_file.file, 'close'):
+                    user_file.file.close()
         except Exception as e:
             logger.error(f"Error reading tree file {user_file.id}: {e}")
             import traceback
