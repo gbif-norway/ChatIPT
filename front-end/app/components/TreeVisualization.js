@@ -178,6 +178,7 @@ const TreeVisualization = ({ datasetId, onClose }) => {
   const layerByNode = useRef(new Map());
   const nodeByKeyMap = useRef(new Map());
   const [leafletLoaded, setLeafletLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Inject CSS styles
   useEffect(() => {
@@ -239,28 +240,37 @@ const TreeVisualization = ({ datasetId, onClose }) => {
     document.body.appendChild(script);
   }, []);
 
+  const clearMapLayers = useCallback(() => {
+    if (!mapRef.current || layerByNode.current.size === 0) return;
+    
+    const clearStart = performance.now();
+    layerByNode.current.forEach((layer) => {
+      if (mapRef.current && mapRef.current.hasLayer(layer)) {
+        mapRef.current.removeLayer(layer);
+      }
+    });
+    layerByNode.current.clear();
+    console.log(`[TreeViz] Cleared map layers in ${(performance.now() - clearStart).toFixed(2)}ms`);
+  }, []);
+
   // Fetch tree data function
-  const fetchTreeData = useCallback(async () => {
+  const fetchTreeData = useCallback(async ({ keepExistingData = false } = {}) => {
     if (!datasetId) return;
     
     const perfStart = performance.now();
-    console.log('[TreeViz] Starting tree data fetch...');
+    console.log('[TreeViz] Starting tree data fetch...', { keepExistingData });
     
-    setLoading(true);
+    if (keepExistingData) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     setError(null);
     
-    // Clear existing map layers when refetching
-    const clearStart = performance.now();
-    if (mapRef.current && layerByNode.current.size > 0) {
-      layerByNode.current.forEach((layer) => {
-        if (mapRef.current.hasLayer(layer)) {
-          mapRef.current.removeLayer(layer);
-        }
-      });
-      layerByNode.current.clear();
+    if (!keepExistingData) {
+      clearMapLayers();
     }
-    console.log(`[TreeViz] Cleared map layers in ${(performance.now() - clearStart).toFixed(2)}ms`);
-    
+
     try {
       const fetchStart = performance.now();
       const response = await fetch(`${config.baseUrl}/api/datasets/${datasetId}/tree_files/`, {
@@ -298,11 +308,17 @@ const TreeVisualization = ({ datasetId, onClose }) => {
         console.log(`[TreeViz] buildNodeIdMap completed in ${(performance.now() - buildMapStart).toFixed(2)}ms`);
       }
       
+      if (keepExistingData) {
+        clearMapLayers();
+      }
+
       const stateUpdateStart = performance.now();
       setTreeData(data.tree_data);
       setNodeIdMap(map);
       setUnmatchedScientificNames(data.unmatched_scientific_names || []);
       setTotalUniqueScientificNames(data.total_unique_scientific_names || 0);
+      setHighlighted({});
+      setHighlightedLeaf(null);
       console.log(`[TreeViz] State updates completed in ${(performance.now() - stateUpdateStart).toFixed(2)}ms`);
       
       const totalTime = performance.now() - perfStart;
@@ -320,35 +336,25 @@ const TreeVisualization = ({ datasetId, onClose }) => {
       console.error('[TreeViz] Error loading tree data:', err);
       setError(err.message);
     } finally {
-      setLoading(false);
+      if (keepExistingData) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
+      }
       const totalTime = performance.now() - perfStart;
       console.log(`[TreeViz] Total fetchTreeData time: ${totalTime.toFixed(2)}ms (${(totalTime / 1000).toFixed(2)}s)`);
     }
-  }, [datasetId]);
+  }, [datasetId, clearMapLayers]);
 
   // Fetch tree data on mount and when datasetId changes
   useEffect(() => {
     fetchTreeData();
   }, [fetchTreeData]);
 
-  // Refetch when modal is shown (Bootstrap modal event)
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    
-    const modalElement = document.getElementById('treeVisualizationModal');
-    if (!modalElement) return;
-
-    const handleModalShown = () => {
-      console.log('Modal shown, refetching tree data...');
-      fetchTreeData();
-    };
-
-    modalElement.addEventListener('shown.bs.modal', handleModalShown);
-
-    return () => {
-      modalElement.removeEventListener('shown.bs.modal', handleModalShown);
-    };
-  }, [fetchTreeData]);
+  const handleRefreshClick = useCallback(() => {
+    if (refreshing) return;
+    fetchTreeData({ keepExistingData: true });
+  }, [fetchTreeData, refreshing]);
 
   // Decorate tree with positions and sizes - MUST be before early returns
   const decoratedTree = React.useMemo(() => {
@@ -595,6 +601,40 @@ const TreeVisualization = ({ datasetId, onClose }) => {
 
   return (
     <div className="tree-visualization" style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%' }}>
+      <div
+        className="tree-refresh-banner"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+          padding: '8px 16px',
+          background: '#fff7e6',
+          border: '1px solid #ffe58f',
+          borderRadius: '6px',
+          marginBottom: '12px'
+        }}
+      >
+        <div style={{ fontWeight: 500, color: '#ad6800', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span>Showing cached tree.</span>
+          {refreshing && (
+            <span className="text-muted small" aria-live="polite">
+              Refreshing...
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          className="btn btn-outline-primary btn-sm d-flex align-items-center gap-2"
+          onClick={handleRefreshClick}
+          disabled={refreshing}
+        >
+          {refreshing && (
+            <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+          )}
+          Refresh
+        </button>
+      </div>
       <div style={{ display: 'flex', flex: 1, minHeight: 0, width: '100%' }}>
         <div style={{ width: '50%', display: 'flex', flexDirection: 'column', borderRight: '1px solid #ddd', overflow: 'hidden' }}>
           {decoratedTree && (
