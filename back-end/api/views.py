@@ -427,23 +427,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
         start_time = time.time()
         logger.info(f"tree_files endpoint called for dataset {kwargs.get('pk')}")
         
-        # Check if this is just a cache check request
-        check_only = request.query_params.get('check_only', 'false').lower() == 'true'
-        
         dataset = self.get_object()
-        
-        # If check_only, return just the occurrence table metadata
-        if check_only:
-            occurrence_table = None
-            for table in dataset.table_set.all():
-                if table.title and table.title.lower().strip() == 'occurrence':
-                    occurrence_table = table
-                    break
-            
-            return Response({
-                'occurrence_table_id': occurrence_table.id if occurrence_table else None,
-                'occurrence_table_updated_at': occurrence_table.updated_at.isoformat() if occurrence_table and occurrence_table.updated_at else None,
-            })
         
         # Get all tree files for this dataset by checking file extensions
         from pathlib import Path
@@ -857,7 +841,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
                     logger.error(traceback.format_exc())
                 
                 response_start = time.time()
-                response_data = {
+                response = Response({
                     'tree_data': decorated_tree,
                     'filename': user_file.filename,
                     'file_type': user_file.file_type_label,
@@ -865,17 +849,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
                     'total_unique_scientific_names': total_unique_scientific_names,
                     'has_coordinates': has_coordinates,
                     'has_scientific_name': has_scientific_name,
-                }
-                
-                # Include occurrence table timestamp for cache invalidation
-                if occurrence_table:
-                    response_data['occurrence_table_updated_at'] = occurrence_table.updated_at.isoformat() if occurrence_table.updated_at else None
-                    response_data['occurrence_table_id'] = occurrence_table.id
-                else:
-                    response_data['occurrence_table_updated_at'] = None
-                    response_data['occurrence_table_id'] = None
-                
-                response = Response(response_data)
+                })
                 # Prevent caching to ensure fresh data on each request
                 response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
                 response['Pragma'] = 'no-cache'
