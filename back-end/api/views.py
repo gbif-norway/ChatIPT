@@ -770,7 +770,37 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 
                 decorate_start = time.time()
                 logger.info(f"Starting tree decoration with {len(tip_labels)} tips")
-                decorated_tree = decorate_tree_with_occurrences(tree_data)
+                
+                # If no scientific names, skip expensive decoration and just add minimal metadata
+                # We can modify in-place since we don't need to preserve the original
+                if not has_scientific_name:
+                    logger.info("No scientific names - using lightweight in-place tree decoration")
+                    def add_minimal_metadata_inplace(node):
+                        """Lightweight decoration - modify in place to avoid copying overhead"""
+                        if not node:
+                            return None
+                        if not node.get('children') or len(node['children']) == 0:
+                            # Leaf node - just add metadata
+                            node['original_tip_label'] = node.get('name', '')
+                            node['occurrence_count'] = 0
+                        else:
+                            # Internal node - recursively process children
+                            decorated_children = []
+                            for child in node.get('children', []):
+                                decorated_child = add_minimal_metadata_inplace(child)
+                                if decorated_child is not None:
+                                    decorated_children.append(decorated_child)
+                            if not decorated_children:
+                                return None
+                            node['children'] = decorated_children
+                            node['occurrence_count'] = sum(
+                                child.get('occurrence_count', 0) for child in decorated_children
+                            )
+                        return node
+                    decorated_tree = add_minimal_metadata_inplace(tree_data)
+                else:
+                    decorated_tree = decorate_tree_with_occurrences(tree_data)
+                
                 logger.info(f"Tree decoration completed in {time.time() - decorate_start:.2f}s")
                 
                 # Get unmatched scientific names (if we had scientific names to match)
@@ -781,12 +811,36 @@ class DatasetViewSet(viewsets.ModelViewSet):
                     total_unique_scientific_names = len(all_scientific_names)
                 
                 total_time = time.time() - start_time
-                logger.info(f"tree_files endpoint completed in {total_time:.2f}s")
+                logger.info(f"tree_files endpoint processing completed in {total_time:.2f}s")
                 
                 # Note: DRF will serialize this to JSON, which may take time for large trees
-                # The serialization happens after this function returns, so timing is in network transfer
+                # Pre-serialize to measure time and catch any serialization issues
                 logger.info(f"Preparing response with tree_data (tips: {len(tip_labels)})")
+                serialize_start = time.time()
                 
+                try:
+                    import json
+                    # Test serialization to measure time (DRF will do this again, but gives us timing)
+                    test_data = {
+                        'tree_data': decorated_tree,
+                        'filename': user_file.filename,
+                        'file_type': user_file.file_type_label,
+                        'unmatched_scientific_names': unmatched_scientific_names,
+                        'total_unique_scientific_names': total_unique_scientific_names,
+                        'has_coordinates': has_coordinates,
+                        'has_scientific_name': has_scientific_name,
+                    }
+                    # Use default=str to handle any non-serializable objects
+                    test_json = json.dumps(test_data, default=str)
+                    serialize_time = time.time() - serialize_start
+                    response_size_kb = len(test_json) / 1024
+                    logger.info(f"JSON serialization test completed in {serialize_time:.2f}s, size: {response_size_kb:.2f}KB ({response_size_kb/1024:.2f}MB)")
+                except Exception as e:
+                    logger.error(f"JSON serialization test failed: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                
+                response_start = time.time()
                 response = Response({
                     'tree_data': decorated_tree,
                     'filename': user_file.filename,
@@ -800,6 +854,8 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
                 response['Pragma'] = 'no-cache'
                 response['Expires'] = '0'
+                logger.info(f"Response object created in {time.time() - response_start:.4f}s")
+                logger.info(f"Total endpoint time before DRF serialization: {time.time() - start_time:.2f}s")
                 return response
             finally:
                 if 'file_handle' in locals():

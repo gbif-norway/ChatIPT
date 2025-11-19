@@ -461,22 +461,41 @@ def parse_nexus_to_tree(nexus_content: str) -> dict:
         tree_string = re.sub(r'\[[^\]]*\]', '', tree_string)
         
         # If we have a translate map, replace numeric IDs with their translated names
+        # OPTIMIZED: Use a single regex pass with a callback function
         if translate_map:
-            # Sort keys in descending order to replace longer numbers first (e.g., "10" before "1")
-            sorted_keys = sorted(translate_map.keys(), key=lambda x: int(x), reverse=True)
-            for key in sorted_keys:
-                # Replace the numeric ID as a whole token in Newick format
-                # Numbers in Newick trees are separated by parentheses, commas, colons, or whitespace
-                # Pattern ensures "1" doesn't match "10", "101", etc.
-                # Match number at start of string or after Newick delimiters, and before delimiters or end
-                # Use word boundaries and explicit delimiters to avoid variable-length lookbehind
-                # Pattern: match key that's either at start, or after a delimiter, and before delimiter or end
-                escaped_key = re.escape(key)
-                # Use a pattern that matches the key with delimiters, then reconstruct
-                # This avoids variable-length lookbehind by using capturing groups
-                pattern = r'(^|[\(\,:\s])' + escaped_key + r'([\)\,:\s]|$)'
+            # Sort keys in descending order by length first, then numerically
+            # This ensures "10" is checked before "1" to avoid partial matches
+            sorted_keys = sorted(translate_map.keys(), key=lambda x: (-len(x), int(x)))
+            
+            # For very large translate maps, use a more efficient approach
+            # Build a pattern that matches numbers at word boundaries
+            if len(translate_map) > 1000:
+                # For large maps, use a simpler pattern and check against the map
+                # Pattern matches numbers surrounded by delimiters
                 def replacer(match):
-                    return match.group(1) + translate_map[key] + match.group(2)
+                    prefix = match.group(1)
+                    number = match.group(2)
+                    suffix = match.group(3)
+                    # Look up the translation
+                    translated = translate_map.get(number, number)
+                    return prefix + translated + suffix
+                
+                # Use a pattern that matches any sequence of digits
+                # The replacer will check if it's in our translate map
+                pattern = r'(^|[\(\,:\s])(\d+)([\)\,:\s]|$)'
+                tree_string = re.sub(pattern, replacer, tree_string)
+            else:
+                # For smaller maps, build an optimized alternation pattern
+                escaped_keys = [re.escape(key) for key in sorted_keys]
+                pattern = r'(^|[\(\,:\s])(' + '|'.join(escaped_keys) + r')([\)\,:\s]|$)'
+                
+                def replacer(match):
+                    prefix = match.group(1)
+                    number = match.group(2)
+                    suffix = match.group(3)
+                    translated = translate_map.get(number, number)
+                    return prefix + translated + suffix
+                
                 tree_string = re.sub(pattern, replacer, tree_string)
         
         return parse_newick_to_tree(tree_string)
