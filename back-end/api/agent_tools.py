@@ -952,48 +952,6 @@ class SetStructureNotes(OpenAIBaseModel):
             return repr(e)[:2000]
 
 
-class SetUserEmail(OpenAIBaseModel):
-    """
-    Set the contact email address for the user who owns a given Dataset.
-
-    Use this when the dataset owner only has an ORCID-style placeholder email
-    (e.g. '0000-0002-6138-9916@orcid.org') or when they provide an updated address.
-    """
-    dataset_id: PositiveInt = Field(
-        ...,
-        description="The ID of the dataset whose owner's email should be updated.",
-    )
-    email: EmailStr = Field(
-        ...,
-        description="The user's email address.",
-    )
-
-    def run(self):
-        try:
-            from api.models import Dataset
-
-            dataset = Dataset.objects.get(id=self.dataset_id)
-            user = dataset.user
-            if user is None:
-                return f"Error: Dataset {self.dataset_id} has no associated user."
-
-            old_email = user.email
-            user.email = self.email
-            # Keep username in sync only if it was previously identical to the email
-            if user.username == old_email:
-                user.username = self.email
-            user.save()
-
-            return (
-                f"User email updated from '{old_email}' to '{self.email}' "
-                f"for dataset {self.dataset_id}."
-            )
-        except Dataset.DoesNotExist:
-            return f"Error: Dataset with id {self.dataset_id} does not exist."
-        except Exception as e:
-            return repr(e)[:2000]
-
-
 class SetUserLanguage(OpenAIBaseModel):
     """
     Set the preferred language for conversation with the user who owns a given Dataset.
