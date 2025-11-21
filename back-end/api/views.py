@@ -112,6 +112,15 @@ def get_orcid_url(endpoint: str) -> str:
     return production[endpoint]
 
 
+def get_orcid_scope_string() -> str:
+    """Return a space-delimited scope string configured for ORCID."""
+    provider_settings = settings.SOCIALACCOUNT_PROVIDERS.get('orcid', {})
+    scopes = provider_settings.get('SCOPE', [])
+    if isinstance(scopes, (list, tuple, set)):
+        return ' '.join(scopes)
+    return scopes or 'openid /authenticate'
+
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def orcid_login(request):
@@ -127,12 +136,13 @@ def orcid_login(request):
     
     # ORCID OAuth2 authorization URL
     auth_url = get_orcid_url('authorize')
+    scope = get_orcid_scope_string()
     
     # OAuth2 parameters - using public API scopes only
     params = {
         'client_id': client_id,
         'response_type': 'code',
-        'scope': 'openid /authenticate',
+        'scope': scope,
         'redirect_uri': redirect_uri,
     }
     
@@ -180,9 +190,9 @@ def orcid_callback(request):
         response.raise_for_status()
         token_info = response.json()
         
-        logger.info(f"Token response status: {response.status_code}")
-        logger.info(f"Token info keys: {list(token_info.keys())}")
-        logger.info(f"Access token present: {'access_token' in token_info}")
+        logger.debug(f"Token response status: {response.status_code}")
+        logger.debug(f"Token info keys: {list(token_info.keys())}")
+        logger.debug(f"Access token present: {'access_token' in token_info}")
         
         # Get user info from ORCID
         access_token = token_info['access_token']
@@ -202,25 +212,28 @@ def orcid_callback(request):
             return redirect(f"{settings.FRONTEND_URL}?error=no_orcid_id")
         
         # Get public profile info from ORCID public API
-        public_url = f"{get_orcid_url('public_api')}/{orcid_id}"
-        public_headers = {
-            'Accept': 'application/json'
-        }
-        
-        logger.info(f"Fetching public profile data from: {public_url}")
-        public_response = requests.get(public_url, headers=public_headers)
-        logger.info(f"Public API response status: {public_response.status_code}")
-        
-        if public_response.status_code != 200:
-            logger.error(f"Public API error: {public_response.text}")
-            # Try alternative endpoint
-            public_url = f"{get_orcid_url('public_api_record')}/{orcid_id}/record"
-            logger.info(f"Trying alternative endpoint: {public_url}")
+        public_data = {}
+        public_headers = {'Accept': 'application/json'}
+        try:
+            public_url = f"{get_orcid_url('public_api')}/{orcid_id}"
+            logger.debug(f"Fetching public profile data from: {public_url}")
             public_response = requests.get(public_url, headers=public_headers)
-            logger.info(f"Alternative endpoint response status: {public_response.status_code}")
-        
-        public_response.raise_for_status()
-        public_data = public_response.json()
+            logger.debug(f"Public API response status: {public_response.status_code}")
+            
+            if public_response.status_code != 200:
+                logger.warning(f"Public API returned {public_response.status_code}, trying record endpoint")
+                public_url = f"{get_orcid_url('public_api_record')}/{orcid_id}/record"
+                logger.debug(f"Trying alternative endpoint: {public_url}")
+                public_response = requests.get(public_url, headers=public_headers)
+                logger.debug(f"Alternative endpoint response status: {public_response.status_code}")
+            
+            public_response.raise_for_status()
+            public_data = public_response.json()
+        except requests.RequestException as public_error:
+            logger.warning(
+                f"Unable to fetch ORCID public profile for {orcid_id}: {public_error}. "
+                "Continuing with userinfo response only."
+            )
         
         # Extract user information from public data
         email = None
@@ -287,12 +300,12 @@ def orcid_callback(request):
         logger.info(f"Institution: {institution}")
         logger.info(f"Department: {department}")
         logger.info(f"Country: {country}")
-        logger.info(f"User info: {user_info}")
-        logger.info(f"Public data keys: {list(public_data.keys()) if public_data else 'No public data'}")
+        logger.debug(f"User info: {user_info}")
+        logger.debug(f"Public data keys: {list(public_data.keys()) if public_data else 'No public data'}")
         
         # Debug employment data structure
         if 'person' in public_data and 'employments' in public_data['person']:
-            logger.info(f"Employment data structure: {public_data['person']['employments']}")
+            logger.debug(f"Employment data structure: {public_data['person']['employments']}")
         
         user, created = User.objects.get_or_create(
             email=email,

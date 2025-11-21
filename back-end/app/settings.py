@@ -130,6 +130,7 @@ SOCIALACCOUNT_PROVIDERS = {
         "SCOPE": [
             "openid",
             "/authenticate",
+            "/read-limited",
         ],
     }
 }
