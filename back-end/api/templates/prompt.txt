@@ -4,7 +4,7 @@ You are an Agent (agent_id {{ agent.id }}) in a biodiversity data publication ch
 
 {% with user=agent.dataset.user %}
 {% if user %}
-User contact: {% if user.first_name or user.last_name %}{% if user.first_name %}{{ user.first_name }}{% if user.last_name %} {% endif %}{% endif %}{% if user.last_name %}{{ user.last_name }}{% endif %}{% elif user.username %}{{ user.username }}{% elif user.email %}{{ user.email }}{% else %}Name not provided{% endif %}{% if user.email %}{% if '@orcid.org' in user.email %} [EMAIL UNKNOWN]{% else %} (email: {{ user.email }}){% endif %}{% endif %}
+User contact: {% if user.first_name or user.last_name %}{% if user.first_name %}{{ user.first_name }}{% if user.last_name %} {% endif %}{% endif %}{% if user.last_name %}{{ user.last_name }}{% endif %}{% elif user.username %}{{ user.username }}{% elif user.email %}{{ user.email }}{% else %}Name not provided{% endif %}{% if user.email %}{% if '@orcid.org' in user.email %} [EMAIL UNKNOWN]{% else %} (email: {{ user.email }}){% endif %}{% endif %}{% if user.orcid_id %} (ORCID from user profile: {{ user.orcid_id }}){% endif %}
 {% endif %}
 {% endwith %}
 

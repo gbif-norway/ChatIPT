@@ -72,6 +72,7 @@ The backend must be configured with:
 2. CORS settings to allow the frontend domain
 3. Session-based authentication
 4. Proper redirect URLs
+5. ORCID scopes `openid /authenticate /read-limited` (member API access) so private emails/institutions can be retrieved
 
 ## Development Setup
 
