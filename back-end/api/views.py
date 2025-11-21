@@ -17,6 +17,7 @@ import re
 from math import isfinite
 
 logger = logging.getLogger(__name__)
+PRIVATE_PROFILE_STATUS_CODES = {401, 403, 404}
 
 User = get_user_model()
 
@@ -220,16 +221,34 @@ def orcid_callback(request):
             public_response = requests.get(public_url, headers=public_headers)
             logger.debug(f"Public API response status: {public_response.status_code}")
             
+            if public_response.status_code in PRIVATE_PROFILE_STATUS_CODES:
+                logger.warning(
+                    f"ORCID record {orcid_id} does not expose public data (status {public_response.status_code})."
+                )
+                return redirect(f"{settings.FRONTEND_URL}?error=public_profile_required")
+            
             if public_response.status_code != 200:
                 logger.warning(f"Public API returned {public_response.status_code}, trying record endpoint")
                 public_url = f"{get_orcid_url('public_api_record')}/{orcid_id}/record"
                 logger.debug(f"Trying alternative endpoint: {public_url}")
                 public_response = requests.get(public_url, headers=public_headers)
                 logger.debug(f"Alternative endpoint response status: {public_response.status_code}")
+                if public_response.status_code in PRIVATE_PROFILE_STATUS_CODES:
+                    logger.warning(
+                        f"ORCID record {orcid_id} record endpoint still private (status {public_response.status_code})."
+                    )
+                    return redirect(f"{settings.FRONTEND_URL}?error=public_profile_required")
             
             public_response.raise_for_status()
             public_data = public_response.json()
         except requests.RequestException as public_error:
+            status_code = getattr(getattr(public_error, 'response', None), 'status_code', None)
+            if status_code in PRIVATE_PROFILE_STATUS_CODES:
+                logger.warning(
+                    f"Unable to fetch ORCID public profile for {orcid_id} due to status {status_code}. "
+                    "Account appears to be private."
+                )
+                return redirect(f"{settings.FRONTEND_URL}?error=public_profile_required")
             logger.warning(
                 f"Unable to fetch ORCID public profile for {orcid_id}: {public_error}. "
                 "Continuing with userinfo response only."
