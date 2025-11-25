@@ -174,6 +174,53 @@
 
 - model: api.task
   fields:
+    name: Phylogenetic tree linking
+    text: |-
+      TREE_LINKING_TASK: This task links phylogenetic tree tips to Darwin Core records.
+      
+      You have been provided with tree file information above, including:
+      - A preview of the tree file content (first 500 characters)
+      - A list of parsed tip labels from the tree
+      
+      Your job is to carefully inspect the format of the tree tip labels and figure out how to match them to records in your occurrence or taxon table. Tree tip labels come in many different formats - some examples:
+      - Direct species names: "Berneuxia_thibetica_01" → matches "Berneuxia thibetica"
+      - Abbreviated codes: "MENALB912C" → "MEN" (genus), "ALB" (species), "912" (voucher number)
+      - Sample IDs: "SRR7451102" → matches a sample/accession ID in the data
+      - Various other custom formats depending on the researcher
+      
+      STEPS:
+      1. **Analyze the tree tip format**: Look at the tip labels and compare them to the data in your core table. What columns might they match to? (scientificName, catalogNumber, occurrenceID, a custom ID column, etc.)
+      
+      2. **Write Python code to do the matching**: Create code that:
+         - Parses/decodes the tip labels as needed
+         - Matches them to records in the core DataFrame
+         - Adds a `dynamicProperties` column (or updates existing) with phylogeny info in this format:
+           ```json
+           {
+             "phylogenies": [
+               {
+                 "phyloTreeTipLabel": "MENALB912C",
+                 "phyloTreeFileName": "108_ASTRAL.tre"
+               }
+             ]
+           }
+           ```
+      
+      3. **Report matching statistics**:
+         - How many records in the DataFrame have been matched to tree tips?
+         - How many records have NOT been matched?
+         - How many tree tips do NOT have a matching record?
+      
+      4. **Handle edge cases**:
+         - If you cannot figure out how to programmatically match the tree tips, explain this to the user and ask for their help understanding the encoding scheme
+         - If some tips can't be matched, let the user know which ones
+      
+      5. **Iterate with the user**: Continue the dialogue until the user is satisfied with the tree-to-record linkage. They may provide additional context about how the tip labels were constructed.
+      
+      IMPORTANT: The tree file itself will be included in the final Darwin Core Archive automatically - your job is just to set up the dynamicProperties linkage so that occurrence/taxon records can be associated with their corresponding tree tips.
+
+- model: api.task
+  fields:
     name: Final Review & Publication
     text: |-
       FINAL_TASK: This is the last step before attempting to publish the user's data to GBIF.

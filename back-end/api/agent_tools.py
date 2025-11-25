@@ -9,9 +9,6 @@ from typing import Optional, List, Dict
 from api.helpers.publish import (
     upload_dwca, 
     register_dataset_and_endpoint,
-    parse_newick_tip_labels,
-    parse_nexus_tip_labels,
-    update_occurrence_dynamic_properties,
 )
 import datetime
 import uuid
@@ -1127,11 +1124,11 @@ class UploadDwCA(OpenAIBaseModel):
                     )
                 extension_payload.append((tables[table_id].df, extension_type))
 
-            # Process tree files if core type is OCCURRENCE
+            # Process tree files if core type is OCCURRENCE or TAXON
             core_df = core_table.df.copy()
             additional_files = []
             
-            if self.core_type == DarwinCoreCoreType.OCCURRENCE:
+            if self.core_type in (DarwinCoreCoreType.OCCURRENCE, DarwinCoreCoreType.TAXON):
                 # Find tree files in user_files
                 from api.models import UserFile
                 # Get all user files and filter by extension since file_type is a property
@@ -1141,49 +1138,24 @@ class UploadDwCA(OpenAIBaseModel):
                     if Path(uf.filename).suffix.lower() in UserFile.TREE_EXTENSIONS
                 ]
                 
-                tree_files_info = []  # List of (filename, tip_labels) tuples
-                
                 for user_file in tree_user_files:
                     try:
-                        # Read the file content
+                        # Read the file content to include in archive
                         user_file.file.open('rb')
                         file_content = user_file.file.read()
                         user_file.file.close()
                         
-                        # Decode content
-                        try:
-                            content = file_content.decode('utf-8')
-                        except UnicodeDecodeError:
-                            # Try with different encoding
-                            content = file_content.decode('latin-1', errors='ignore')
-                        
-                        # Determine file type and parse
-                        filename = user_file.filename
-                        ext = Path(filename).suffix.lower()
-                        
-                        if ext in {'.nex', '.nexus'}:
-                            tip_labels = parse_nexus_tip_labels(content)
-                        elif ext in {'.newick', '.nwk', '.phy', '.tre', '.tree'}:
-                            tip_labels = parse_newick_tip_labels(content)
-                        else:
-                            # Try both parsers
-                            tip_labels = parse_nexus_tip_labels(content)
-                            if not tip_labels:
-                                tip_labels = parse_newick_tip_labels(content)
-                        
-                        if tip_labels:
-                            tree_files_info.append((filename, tip_labels))
-                            # Store file content for adding to archive
-                            additional_files.append((filename, file_content))
+                        # Store file content for adding to archive
+                        additional_files.append((user_file.filename, file_content))
                     
                     except Exception as e:
                         # Log error but continue processing other files
-                        print(f"Warning: Failed to process tree file {user_file.filename}: {e}")
+                        print(f"Warning: Failed to read tree file {user_file.filename}: {e}")
                         continue
                 
-                # Update occurrence DataFrame with dynamicProperties if we have tree files
-                if tree_files_info:
-                    core_df = update_occurrence_dynamic_properties(core_df, tree_files_info)
+                # NOTE: Tree-to-record matching is now handled by the "Phylogenetic tree linking" task.
+                # The agent writes dynamicProperties during that task, so we don't auto-match here.
+                # We only include tree files in the archive.
 
             dwca_url = upload_dwca(
                 core_df,

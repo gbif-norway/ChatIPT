@@ -168,10 +168,10 @@ const TreeVisualization = ({ datasetId, onClose }) => {
   const [error, setError] = useState(null);
   const [highlighted, setHighlighted] = useState({});
   const [highlightedLeaf, setHighlightedLeaf] = useState(null);
-  const [unmatchedScientificNames, setUnmatchedScientificNames] = useState([]);
-  const [totalUniqueScientificNames, setTotalUniqueScientificNames] = useState(0);
   const [hasCoordinates, setHasCoordinates] = useState(false);
-  const [hasScientificName, setHasScientificName] = useState(false);
+  const [hasPhylogenyLinks, setHasPhylogenyLinks] = useState(false);
+  const [linkedTips, setLinkedTips] = useState(0);
+  const [totalTips, setTotalTips] = useState(0);
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const mapContainerRef = useRef(null);
@@ -315,23 +315,23 @@ const TreeVisualization = ({ datasetId, onClose }) => {
       const stateUpdateStart = performance.now();
       setTreeData(data.tree_data);
       setNodeIdMap(map);
-      setUnmatchedScientificNames(data.unmatched_scientific_names || []);
-      setTotalUniqueScientificNames(data.total_unique_scientific_names || 0);
       setHighlighted({});
       setHighlightedLeaf(null);
+      setHasCoordinates(data.has_coordinates || false);
+      setHasPhylogenyLinks(data.has_phylogeny_links || false);
+      setLinkedTips(data.linked_tips || 0);
+      setTotalTips(data.total_tips || 0);
       console.log(`[TreeViz] State updates completed in ${(performance.now() - stateUpdateStart).toFixed(2)}ms`);
       
       const totalTime = performance.now() - perfStart;
       console.log('[TreeViz] Tree data response:', {
         has_coordinates: data.has_coordinates,
-        has_scientific_name: data.has_scientific_name,
+        has_phylogeny_links: data.has_phylogeny_links,
+        linked_tips: data.linked_tips,
+        total_tips: data.total_tips,
         tree_data: data.tree_data ? 'present' : 'missing',
-        all_keys: Object.keys(data),
         total_time_ms: totalTime.toFixed(2),
-        total_time_s: (totalTime / 1000).toFixed(2)
       });
-      setHasCoordinates(data.has_coordinates || false);
-      setHasScientificName(data.has_scientific_name || false);
     } catch (err) {
       console.error('[TreeViz] Error loading tree data:', err);
       setError(err.message);
@@ -609,14 +609,14 @@ const TreeVisualization = ({ datasetId, onClose }) => {
           justifyContent: 'space-between',
           gap: '12px',
           padding: '8px 16px',
-          background: '#fff7e6',
-          border: '1px solid #ffe58f',
+          background: hasPhylogenyLinks ? '#e8f5e9' : '#fff7e6',
+          border: `1px solid ${hasPhylogenyLinks ? '#a5d6a7' : '#ffe58f'}`,
           borderRadius: '6px',
           marginBottom: '12px'
         }}
       >
-        <div style={{ fontWeight: 500, color: '#ad6800', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span>Showing cached tree.</span>
+        <div style={{ fontWeight: 500, color: hasPhylogenyLinks ? '#2e7d32' : '#ad6800', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span>{hasPhylogenyLinks ? 'Tree linked to occurrences' : 'Waiting for tree linking...'}</span>
           {refreshing && (
             <span className="text-muted small" aria-live="polite">
               Refreshing...
@@ -685,23 +685,27 @@ const TreeVisualization = ({ datasetId, onClose }) => {
                   marginBottom: '12px',
                   color: '#495057'
                 }}>
-                  Waiting for data
+                  {hasPhylogenyLinks ? 'No coordinates available' : 'Waiting for tree linking'}
                 </div>
                 <div style={{
                   fontSize: '14px',
                   lineHeight: '1.6'
                 }}>
-                  Waiting for scientificName and decimalLatitude/decimalLongitude values in your dataset - ChatIPT may need to format these.
+                  {hasPhylogenyLinks 
+                    ? 'Tree tips are linked to occurrences, but no decimalLatitude/decimalLongitude values are available to show on the map.'
+                    : 'Waiting for ChatIPT to link tree tips to occurrence records. The map will appear once linking is complete and coordinates are available.'
+                  }
                 </div>
               </div>
             </div>
           )}
         </div>
       </div>
-      {unmatchedScientificNames.length > 0 && (
-        <UnmatchedNamesPanel 
-          names={unmatchedScientificNames} 
-          total={totalUniqueScientificNames}
+      {totalTips > 0 && (
+        <TipLinkingStatus 
+          linkedTips={linkedTips} 
+          totalTips={totalTips}
+          hasPhylogenyLinks={hasPhylogenyLinks}
         />
       )}
     </div>
@@ -1063,62 +1067,36 @@ const SimpleTreeView = ({ tree, nodeIdMap, highlighted, highlightedLeaf, onToggl
   );
 };
 
-// Unmatched Names Panel Component
-const UnmatchedNamesPanel = ({ names, total }) => {
-  const [isExpanded, setIsExpanded] = useState(false);
-
+// Tip Linking Status Component
+const TipLinkingStatus = ({ linkedTips, totalTips, hasPhylogenyLinks }) => {
+  const percentLinked = totalTips > 0 ? Math.round((linkedTips / totalTips) * 100) : 0;
+  const isFullyLinked = linkedTips === totalTips && totalTips > 0;
+  
   return (
     <div style={{ 
       borderTop: '1px solid #ddd', 
-      backgroundColor: '#f8f9fa',
-      maxHeight: isExpanded ? '200px' : '40px',
-      overflow: 'auto',
-      transition: 'max-height 0.3s ease'
+      backgroundColor: hasPhylogenyLinks ? (isFullyLinked ? '#d4edda' : '#fff3cd') : '#f8f9fa',
+      padding: '8px 12px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '12px'
     }}>
-      <div
-        style={{
-          padding: '8px 12px',
-          cursor: 'pointer',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          backgroundColor: '#e9ecef',
-          fontWeight: '500',
-          userSelect: 'none'
-        }}
-        onClick={() => setIsExpanded(!isExpanded)}
-      >
-        <span>
-          Scientific names not found in tree {names.length}/{total}
+      <span style={{ 
+        fontWeight: '500',
+        color: hasPhylogenyLinks ? (isFullyLinked ? '#155724' : '#856404') : '#6c757d'
+      }}>
+        {hasPhylogenyLinks ? (
+          isFullyLinked 
+            ? `✓ All ${totalTips} tree tips linked to occurrences`
+            : `${linkedTips}/${totalTips} tree tips linked (${percentLinked}%)`
+        ) : (
+          `${totalTips} tree tips — waiting for ChatIPT to link to occurrences`
+        )}
+      </span>
+      {hasPhylogenyLinks && !isFullyLinked && (
+        <span style={{ fontSize: '13px', color: '#6c757d' }}>
+          ({totalTips - linkedTips} unlinked)
         </span>
-        <span style={{ fontSize: '12px' }}>
-          {isExpanded ? '▼' : '▶'}
-        </span>
-      </div>
-      {isExpanded && (
-        <div style={{ padding: '8px 12px' }}>
-          <div style={{ 
-            display: 'flex', 
-            flexWrap: 'wrap', 
-            gap: '4px',
-            fontSize: '13px'
-          }}>
-            {names.map((name, index) => (
-              <span
-                key={index}
-                style={{
-                  padding: '2px 6px',
-                  backgroundColor: 'white',
-                  border: '1px solid #ddd',
-                  borderRadius: '3px',
-                  display: 'inline-block'
-                }}
-              >
-                {name}
-              </span>
-            ))}
-          </div>
-        </div>
       )}
     </div>
   );
