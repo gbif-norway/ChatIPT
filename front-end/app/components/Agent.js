@@ -92,6 +92,9 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
     runAsyncEffect();
   }, []); // run once when component mounts
 
+  // Track the count of Python tool result messages to detect new ones
+  const lastPythonToolResultCountRef = useRef(0);
+
   // Log when agent data changes (this will help us see if updates are coming through)
   useEffect(() => {
     const timestamp = new Date().toISOString();
@@ -131,6 +134,43 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
       }
     }
   }, [agent.completed_at, agent.message_set, agent.busy_thinking, isLoading, isUserSending, optimisticMessage]);
+
+  // Watch for new Python tool results and refresh tables when they arrive
+  useEffect(() => {
+    if (!agent.message_set || typeof refreshTables !== 'function') {
+      return;
+    }
+
+    // Count tool messages that are results of Python calls
+    // We identify Python tool results by checking if there's a preceding assistant message 
+    // with a tool_call that matches this tool result's tool_call_id
+    const pythonToolCallIds = new Set();
+    agent.message_set.forEach((message) => {
+      if (message.role === 'assistant' && Array.isArray(message.openai_obj?.tool_calls)) {
+        message.openai_obj.tool_calls.forEach((tc) => {
+          if (tc.function?.name === 'Python') {
+            pythonToolCallIds.add(tc.id);
+          }
+        });
+      }
+    });
+
+    const pythonToolResultCount = agent.message_set.filter((message) => {
+      return message.role === 'tool' && pythonToolCallIds.has(message.openai_obj?.tool_call_id);
+    }).length;
+
+    const timestamp = new Date().toISOString();
+    
+    // If we have more Python tool results than before, refresh the tables
+    if (pythonToolResultCount > lastPythonToolResultCountRef.current) {
+      console.log(`[${timestamp}] 🐍 New Python tool result detected (${lastPythonToolResultCountRef.current} -> ${pythonToolResultCount}) - refreshing tables`);
+      lastPythonToolResultCountRef.current = pythonToolResultCount;
+      refreshTables();
+    } else if (pythonToolResultCount !== lastPythonToolResultCountRef.current) {
+      // Update ref if count changed (e.g., reset)
+      lastPythonToolResultCountRef.current = pythonToolResultCount;
+    }
+  }, [agent.message_set, refreshTables]);
 
   // Handle loading message timeout - change message after 4 seconds
   useEffect(() => {
