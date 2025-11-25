@@ -87,7 +87,14 @@ class Dataset(models.Model):
         logger = logging.getLogger(__name__)
         logger.info(f'No next agent found, making new agent for new task based on {last_completed_agent}')
         if last_completed_agent:
-            next_task = Task.objects.filter(id__gt=last_completed_agent.task.id).first()
+            # Use order field to find next task (tasks are ordered by order, then id)
+            next_task = Task.objects.filter(order__gt=last_completed_agent.task.order).first()
+            
+            # Skip the "Phylogenetic tree linking" task if no tree files are uploaded
+            while next_task and next_task.name == "Phylogenetic tree linking" and not self.has_tree_files():
+                logger.info(f'Skipping task "{next_task.name}" - no tree files uploaded')
+                next_task = Task.objects.filter(order__gt=next_task.order).first()
+            
             if next_task:
                 next_task.create_agent_with_system_messages(dataset=self)
                 return self.next_agent()
@@ -124,6 +131,78 @@ class Dataset(models.Model):
                 break
         
         return has_tree_files
+
+    def has_tree_files(self):
+        """Check if this dataset has any tree files uploaded."""
+        for user_file in self.user_files.all():
+            ext = Path(user_file.file.name).suffix.lower()
+            if ext in UserFile.TREE_EXTENSIONS:
+                return True
+        return False
+
+    def get_tree_file_info(self, content_preview_chars=500, max_tip_labels=50):
+        """
+        Get information about tree files for display in prompts.
+        
+        Returns a list of dicts with:
+        - filename: Name of the tree file
+        - content_preview: First N characters of the file
+        - tip_labels: List of parsed tip labels (truncated if many)
+        - tip_labels_count: Total count of tip labels
+        """
+        from api.helpers.publish import parse_newick_tip_labels, parse_nexus_tip_labels
+        
+        tree_info = []
+        for user_file in self.user_files.all():
+            ext = Path(user_file.file.name).suffix.lower()
+            if ext not in UserFile.TREE_EXTENSIONS:
+                continue
+            
+            try:
+                user_file.file.open('rb')
+                file_content = user_file.file.read()
+                user_file.file.close()
+                
+                # Decode content
+                try:
+                    content = file_content.decode('utf-8')
+                except UnicodeDecodeError:
+                    content = file_content.decode('latin-1', errors='ignore')
+                
+                # Get content preview
+                content_preview = content[:content_preview_chars]
+                if len(content) > content_preview_chars:
+                    content_preview += '...'
+                
+                # Parse tip labels based on file type
+                if ext in {'.nex', '.nexus'}:
+                    tip_labels = parse_nexus_tip_labels(content)
+                else:
+                    tip_labels = parse_newick_tip_labels(content)
+                
+                tip_labels_count = len(tip_labels)
+                # Truncate tip labels if too many
+                if len(tip_labels) > max_tip_labels:
+                    tip_labels = tip_labels[:max_tip_labels]
+                
+                tree_info.append({
+                    'filename': user_file.filename,
+                    'content_preview': content_preview,
+                    'tip_labels': tip_labels,
+                    'tip_labels_count': tip_labels_count,
+                    'tip_labels_truncated': tip_labels_count > max_tip_labels,
+                })
+            except Exception as e:
+                # If we can't read the file, still include it with an error note
+                tree_info.append({
+                    'filename': user_file.filename,
+                    'content_preview': f'[Error reading file: {e}]',
+                    'tip_labels': [],
+                    'tip_labels_count': 0,
+                    'tip_labels_truncated': False,
+                })
+        
+        return tree_info
 
     class Meta:
         get_latest_by = 'created_at'
@@ -391,10 +470,11 @@ class UserFile(models.Model):
 class Task(models.Model):  # See tasks.yaml for the only objects this model is populated with
     name = models.CharField(max_length=300, unique=True)
     text = models.TextField()
+    order = models.IntegerField(default=0, help_text='Order in which tasks should be executed (from tasks.yaml)')
 
     class Meta:
         get_latest_by = 'id'
-        ordering = ['id']
+        ordering = ['order', 'id']
 
     @property
     def functions(self):

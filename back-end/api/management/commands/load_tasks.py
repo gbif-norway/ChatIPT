@@ -35,7 +35,7 @@ class Command(BaseCommand):
         upserted = 0
         created = 0
 
-        for obj in data:
+        for order, obj in enumerate(data, start=1):
             if not isinstance(obj, dict):
                 continue
             if obj.get('model') != 'api.task':
@@ -48,7 +48,7 @@ class Command(BaseCommand):
 
             task, was_created = Task.objects.update_or_create(
                 name=name,
-                defaults={'text': text},
+                defaults={'text': text, 'order': order},
             )
             upserted += 1
             if was_created:

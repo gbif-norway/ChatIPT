@@ -96,6 +96,26 @@ Your Task (#{{ agent.task.id }} of {{ all_tasks_count }}):
 ///
 {{ agent.task.text }}
 ///
+{% if agent.task.name == "Phylogenetic tree linking" %}
+{% with tree_info=agent.dataset.get_tree_file_info %}
+{% if tree_info %}
+
+TREE FILE INFORMATION:
+{% for tree in tree_info %}
+---
+Tree file: {{ tree.filename }}
+Content preview (first 500 chars):
+```
+{{ tree.content_preview }}
+```
+
+Parsed tip labels ({{ tree.tip_labels_count }} total{% if tree.tip_labels_truncated %}, showing first 50{% endif %}):
+{% for label in tree.tip_labels %}{{ label }}{% if not forloop.last %}, {% endif %}{% endfor %}
+---
+{% endfor %}
+{% endif %}
+{% endwith %}
+{% endif %}
 {% if agent.task.name == "Data maintenance" %}
 You are the final Agent for ad hoc changes after publication. Congratulate the user, then ask if they want any changes.
 {% else %}
