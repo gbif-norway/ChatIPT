@@ -72,6 +72,7 @@ The backend must be configured with:
 2. CORS settings to allow the frontend domain
 3. Session-based authentication
 4. Proper redirect URLs
+5. At least one public field on each researcher's ORCID profile (fully private records are redirected with `error=public_profile_required`)
 
 ## Development Setup
 

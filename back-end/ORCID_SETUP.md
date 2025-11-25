@@ -28,11 +28,9 @@ This guide explains how to set up ORCID OAuth2 authentication for the ChatIPT ap
      - For production: `https://yourdomain.com/api/auth/orcid/callback/`
 5. Save the application
 
-**Note**: This setup uses the ORCID Public API, which means:
-- Only public profile information is accessible
-- Email addresses are not available through the public API
-- Employment information is limited to what users have made public
-- For full access to user data, ORCID membership is required
+**Important**: ChatIPT currently supports only ORCID accounts that expose basic public profile data (name, affiliation, etc.).  
+- If a researcher hides all of their ORCID information, the login process will redirect back with `?error=public_profile_required`.  
+- Ask affected users to make some data public or process their datasets manually outside ChatIPT.
 
 ## Step 2: Get Your Credentials
 
@@ -239,6 +237,7 @@ The `CustomUser` model extends Django's `AbstractUser` and includes:
 3. **"Invalid redirect URI"**: Ensure the redirect URI in your ORCID app matches exactly
 4. **"Client ID not found"**: Check that your environment variables are set correctly
 5. **Startup Failures**: Check container logs for migration or setup errors
+6. **Public profile fetch failed**: Users with completely private ORCID records cannot log in. They will be redirected with `?error=public_profile_required`, and the backend logs will show the 403/404 response from ORCID.
 
 ### Debug Mode
 

@@ -1,9 +1,22 @@
 'use client'
 
 import { useAuth } from '../contexts/AuthContext'
+import { useSearchParams } from 'next/navigation'
+
+const ERROR_MESSAGES = {
+  callback_failed: 'We had trouble completing your ORCID sign-in. Please try again.',
+  no_code: 'ORCID did not return the authorization code we expected. Please try signing in again.',
+  no_orcid_id: 'We could not read your ORCID identifier from the login. Please try again.',
+  public_profile_required: 'ChatIPT currently supports only ORCID records with some public information. Please make parts of your ORCID profile public or contact us for help.',
+}
+
+const DEFAULT_ERROR_MESSAGE = 'Sign in with ORCID failed. Please try again.'
 
 const Login = () => {
   const { login, loading } = useAuth()
+  const searchParams = useSearchParams()
+  const errorKey = searchParams.get('error')
+  const errorMessage = errorKey ? (ERROR_MESSAGES[errorKey] || DEFAULT_ERROR_MESSAGE) : null
 
   if (loading) {
     return (
@@ -36,6 +49,12 @@ const Login = () => {
                   A chatbot for students and researchers who are new to data publication
                 </p>
               </div>
+
+              {errorMessage && (
+                <div className="alert alert-warning" role="alert">
+                  <strong>Sign-in issue:</strong> {errorMessage}
+                </div>
+              )}
 
               <div className="alert alert-info" role="alert">
                 <h5 className="alert-heading">Why ORCID Login?</h5>
