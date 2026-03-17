@@ -184,7 +184,8 @@
       
       Your job is to carefully inspect the format of the tree tip labels and figure out how to match them to records in your occurrence or taxon table. Tree tip labels come in many different formats - some examples:
       - Direct species names: "Berneuxia_thibetica_01" → matches "Berneuxia thibetica"
-      - Abbreviated codes: "MENALB912C" → "MEN" (genus), "ALB" (species), "912" (voucher number)
+      - Abbreviated codes: "MENALB912C" → "MEN" (genus), "ALB" (species), "912" (possible voucher number/lab number/collector number/something else)
+      NB - common abbreviated code for botany datasets is Collector surname + initial + collector number e.g. "GuppyA513" → "Guppy" (surname), "A" (initial), "513" (collector number)
       - Sample IDs: "SRR7451102" → matches a sample/accession ID in the data
       - Various other custom formats depending on the researcher
       
