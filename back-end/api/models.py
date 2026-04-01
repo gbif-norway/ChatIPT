@@ -495,6 +495,17 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
             agent_tools.SendDiscordMessage.__name__,
         ]
 
+        # Restrict publish/archive tools to the final publication phases only.
+        publication_enabled_tasks = {"Final Review & Publication", "Data maintenance"}
+        if self.name not in publication_enabled_tasks:
+            functions = [
+                f for f in functions
+                if f not in {
+                    agent_tools.UploadDwCA.__name__,
+                    agent_tools.PublishToGBIF.__name__,
+                }
+            ]
+
         # Exclude the completion tool for the final task (Data maintenance),
         # so it remains indefinitely open to conversation with the user.
         last_task = Task.objects.last()
@@ -860,4 +871,3 @@ class Message(models.Model):
     class Meta:
         get_latest_by = 'created_at'
         ordering = ['created_at']
-
