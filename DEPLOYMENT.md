@@ -46,6 +46,21 @@ This document describes the **current** ChatIPT deployment workflow.
   - `gbifnorway/chatipt-front-end`
 - Write access to `../gitops`
 
+### One-time buildx setup for cache support
+
+Use a `docker-container` buildx builder. The default `docker` driver often fails with:
+`Cache export is not supported for the docker driver.`
+
+```bash
+# Create once (or switch to it if it already exists)
+docker buildx create --name chatipt-builder --driver docker-container --use desktop-linux \
+  || docker buildx use chatipt-builder
+
+# Start/verify builder
+docker buildx inspect --bootstrap
+docker buildx ls
+```
+
 ### First-time cluster auth on fresh contexts
 
 On a fresh machine/session, the first `kubectl`/`helm` call against `nird-lmd` may launch an in-browser SSO login window.
@@ -116,9 +131,10 @@ STAMP=$(date -u +%Y%m%d-%H%M%S)
 TAG="${SHA}-${STAMP}"
 PROD_TAG="2.0.0-${TAG}"
 STAGING_TAG="staging-${TAG}"
+BUILDER="chatipt-builder"
 
 # Build backend once (prod tag)
-docker buildx build --platform linux/amd64 \
+docker buildx build --builder ${BUILDER} --platform linux/amd64 \
   -f back-end/Dockerfile \
   -t gbifnorway/chatipt-back-end:${PROD_TAG} \
   --cache-from=type=registry,ref=gbifnorway/chatipt-back-end:buildcache \
@@ -131,7 +147,7 @@ docker buildx imagetools create \
   gbifnorway/chatipt-back-end:${PROD_TAG}
 
 # Frontend prod (build bakes NEXT_PUBLIC_BASE_API_URL into bundle)
-docker buildx build --platform linux/amd64 \
+docker buildx build --builder ${BUILDER} --platform linux/amd64 \
   -f front-end/Dockerfile \
   --build-arg NEXT_PUBLIC_BASE_API_URL=https://api.chatipt.svc.gbif.no \
   -t gbifnorway/chatipt-front-end:${PROD_TAG} \
@@ -140,7 +156,7 @@ docker buildx build --platform linux/amd64 \
   --push front-end
 
 # Frontend staging (separate build because API URL differs)
-docker buildx build --platform linux/amd64 \
+docker buildx build --builder ${BUILDER} --platform linux/amd64 \
   -f front-end/Dockerfile \
   --build-arg NEXT_PUBLIC_BASE_API_URL=https://staging-api.chatipt.svc.gbif.no \
   -t gbifnorway/chatipt-front-end:${STAGING_TAG} \
