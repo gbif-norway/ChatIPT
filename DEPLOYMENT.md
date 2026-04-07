@@ -46,6 +46,21 @@ This document describes the **current** ChatIPT deployment workflow.
   - `gbifnorway/chatipt-front-end`
 - Write access to `../gitops`
 
+### First-time cluster auth on fresh contexts
+
+On a fresh machine/session, the first `kubectl`/`helm` call against `nird-lmd` may launch an in-browser SSO login window.
+
+- Complete the browser auth flow manually (UiO institutional login) and click through the prompts.
+- Until this is done, CLI commands can block with no output for a long time.
+- This is especially important for agent-driven deployments: the agent may appear "stuck" or idle until a human completes browser auth.
+- After successful login, rerun the command that was waiting.
+
+Quick auth check:
+
+```bash
+kubectl --context nird-lmd -n gbif-no-ns8095k get deploy
+```
+
 ## 0) Refresh Darwin Core quick reference (as needed)
 
 The quick reference files are vendored in this repo and can be refreshed from TDWG.
