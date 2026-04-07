@@ -100,6 +100,55 @@ STAMP=$(date -u +%Y%m%d-%H%M%S)
 TAG="${SHA}-${STAMP}"
 ```
 
+### Fast path (recommended)
+
+Main bottleneck is usually frontend build/push (large image), not Helm or `kubectl`.
+
+- Build backend once and retag for staging (same backend image for both envs).
+- Use buildx registry cache to speed repeated builds.
+- Skip rebuilding unchanged component(s) when possible.
+
+```bash
+cd /Users/rukayasj/Projects/chatipt
+
+SHA=$(git rev-parse --short HEAD)
+STAMP=$(date -u +%Y%m%d-%H%M%S)
+TAG="${SHA}-${STAMP}"
+PROD_TAG="2.0.0-${TAG}"
+STAGING_TAG="staging-${TAG}"
+
+# Build backend once (prod tag)
+docker buildx build --platform linux/amd64 \
+  -f back-end/Dockerfile \
+  -t gbifnorway/chatipt-back-end:${PROD_TAG} \
+  --cache-from=type=registry,ref=gbifnorway/chatipt-back-end:buildcache \
+  --cache-to=type=registry,ref=gbifnorway/chatipt-back-end:buildcache,mode=max \
+  --push back-end
+
+# Reuse exact same backend image for staging tag (no second backend build)
+docker buildx imagetools create \
+  -t gbifnorway/chatipt-back-end:${STAGING_TAG} \
+  gbifnorway/chatipt-back-end:${PROD_TAG}
+
+# Frontend prod (build bakes NEXT_PUBLIC_BASE_API_URL into bundle)
+docker buildx build --platform linux/amd64 \
+  -f front-end/Dockerfile \
+  --build-arg NEXT_PUBLIC_BASE_API_URL=https://api.chatipt.svc.gbif.no \
+  -t gbifnorway/chatipt-front-end:${PROD_TAG} \
+  --cache-from=type=registry,ref=gbifnorway/chatipt-front-end:buildcache \
+  --cache-to=type=registry,ref=gbifnorway/chatipt-front-end:buildcache,mode=max \
+  --push front-end
+
+# Frontend staging (separate build because API URL differs)
+docker buildx build --platform linux/amd64 \
+  -f front-end/Dockerfile \
+  --build-arg NEXT_PUBLIC_BASE_API_URL=https://staging-api.chatipt.svc.gbif.no \
+  -t gbifnorway/chatipt-front-end:${STAGING_TAG} \
+  --cache-from=type=registry,ref=gbifnorway/chatipt-front-end:buildcache \
+  --cache-to=type=registry,ref=gbifnorway/chatipt-front-end:buildcache,mode=max \
+  --push front-end
+```
+
 ### Production-style tags
 
 ```bash
