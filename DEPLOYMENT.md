@@ -43,7 +43,7 @@ This document describes the **current** ChatIPT deployment workflow.
 - `helm`
 - Push access to Docker Hub repos:
   - `gbifnorway/chatipt-back-end`
-- `gbifnorway/chatipt-front-end`
+  - `gbifnorway/chatipt-front-end`
 - Write access to `../gitops`
 
 ## 0) Refresh Darwin Core quick reference (as needed)
