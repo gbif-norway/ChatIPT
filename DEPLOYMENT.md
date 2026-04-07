@@ -46,6 +46,33 @@ This document describes the **current** ChatIPT deployment workflow.
   - `gbifnorway/chatipt-front-end`
 - Write access to `../gitops`
 
+## 0) Refresh Darwin Core quick reference (as needed)
+
+The quick reference files are vendored in this repo and can be refreshed from TDWG.
+
+- Source: `https://raw.githubusercontent.com/tdwg/dwc/master/docs/terms/index.md`
+- Local files:
+  - `back-end/api/templates/dwc-quick-reference-guide.md.txt`
+  - `back-end/api/templates/dwc-quick-reference-guide.yaml`
+- Generator: `back-end/api/helpers/generate_dwc_yaml.py`
+
+From repo root:
+
+```bash
+cd /Users/rukayasj/Projects/chatipt
+
+curl -fsSL https://raw.githubusercontent.com/tdwg/dwc/master/docs/terms/index.md \
+  -o back-end/api/templates/dwc-quick-reference-guide.md.txt
+
+python3 back-end/api/helpers/generate_dwc_yaml.py
+```
+
+Optional quick check:
+
+```bash
+rg -n "^MaterialCitation:|basisOfRecord:" back-end/api/templates/dwc-quick-reference-guide.yaml
+```
+
 ## 1) Build and push images
 
 Use a unique tag per release.

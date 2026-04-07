@@ -2,6 +2,8 @@ import sys
 from io import StringIO
 from pydantic import Field, PositiveInt, BaseModel, EmailStr
 import re
+from functools import lru_cache
+from html import unescape
 import pandas as pd
 import numpy as np
 from api.helpers.openai_helpers import OpenAIBaseModel
@@ -23,6 +25,7 @@ import os
 from pathlib import Path
 from requests.auth import HTTPBasicAuth
 import requests
+import yaml
 
 from api.dwc_specs import (
     ALL_SCHEMAS,
@@ -92,162 +95,176 @@ class EMLUser(BaseModel):
     orcid: Optional[str] = None
 
 
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _normalize_lookup_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
+def _strip_examples(definition: str) -> str:
+    marker = " Examples:"
+    if marker in definition:
+        return definition.split(marker, 1)[0].strip()
+    return definition
+
+
+def _clean_dwc_quick_reference_text(value: str) -> str:
+    text = unescape(value or "")
+    text = _HTML_TAG_RE.sub("", text)
+    text = text.replace("Egs -", "Examples:")
+    text = _WHITESPACE_RE.sub(" ", text).strip()
+    return text
+
+
+@lru_cache(maxsize=1)
+def _load_dwc_quick_reference() -> Dict[str, Dict[str, str]]:
+    quick_ref_path = Path(__file__).resolve().parent / "templates" / "dwc-quick-reference-guide.yaml"
+    if not quick_ref_path.exists():
+        raise FileNotFoundError(f"Darwin Core quick reference file not found at '{quick_ref_path}'.")
+
+    with quick_ref_path.open("r", encoding="utf-8") as handle:
+        raw_quick_reference = yaml.safe_load(handle) or {}
+
+    if not isinstance(raw_quick_reference, dict):
+        return {}
+
+    cleaned_quick_reference: Dict[str, Dict[str, str]] = {}
+    for section_name_raw, terms in raw_quick_reference.items():
+        if not isinstance(terms, dict):
+            continue
+        section_name = str(section_name_raw).strip()
+        if not section_name:
+            continue
+
+        cleaned_terms: Dict[str, str] = {}
+        for term_name_raw, definition_raw in terms.items():
+            term_name = str(term_name_raw).strip()
+            if not term_name:
+                continue
+            cleaned_terms[term_name] = _clean_dwc_quick_reference_text(str(definition_raw or ""))
+
+        if cleaned_terms:
+            cleaned_quick_reference[section_name] = cleaned_terms
+
+    return cleaned_quick_reference
+
+
+def _find_matching_section(quick_reference: Dict[str, Dict[str, str]], section: str) -> Optional[str]:
+    requested_key = _normalize_lookup_key(section)
+    for section_name in quick_reference.keys():
+        if _normalize_lookup_key(section_name) == requested_key:
+            return section_name
+    return None
+
+
 class GetDarwinCoreInfo(OpenAIBaseModel):
-    def get_darwin_core_info(self):
-        return '''
-    These are the Darwin Core terms: 
-    DARWIN_CORE_TERMS = {
-        # Record-level
-        "type", "modified", "language", "references", "institutionID", "collectionID", "institutionCode",
-        "collectionCode", "ownerInstitutionCode", "basisOfRecord", "informationWithheld", "dynamicProperties",
-        # Occurrence
-        "occurrenceID", "catalogNumber", "recordNumber", "recordedBy", "recordedByID", "individualCount",
-        "organismQuantity", "organismQuantityType", "sex", "lifeStage", "reproductiveCondition", "caste",
-        "behavior", "vitality", "establishmentMeans", "degreeOfEstablishment", "pathway", "georeferenceVerificationStatus",
-        "occurrenceStatus", "associatedMedia", "associatedOccurrences", "associatedReferences", "associatedTaxa",
-        "otherCatalogNumbers", "occurrenceRemarks",
-        # Organism
-        "organismID", "organismName", "organismScope", "associatedOrganisms", "previousIdentifications",
-        "organismRemarks",
-        # MaterialEntity
-        "materialEntityID", "preparations", "disposition", "verbatimLabel", "associatedSequences", "materialEntityRemarks",
-        # MaterialSample
-        "materialSampleID",
-        # Event
-        "eventID", "parentEventID", "eventType", "fieldNumber", "eventDate", "eventTime", "startDayOfYear", "endDayOfYear",
-        "year", "month", "day", "verbatimEventDate", "habitat", "samplingProtocol", "sampleSizeValue", "sampleSizeUnit",
-        "samplingEffort", "fieldNotes", "eventRemarks",
-        # Location
-        "locationID", "higherGeographyID", "higherGeography", "continent", "waterBody", "islandGroup", "island", "country",
-        "countryCode", "stateProvince", "county", "municipality", "locality", "verbatimLocality", "minimumElevationInMeters",
-        "maximumElevationInMeters", "verbatimElevation", "verticalDatum", "minimumDepthInMeters", "maximumDepthInMeters",
-        "verbatimDepth", "minimumDistanceAboveSurfaceInMeters", "maximumDistanceAboveSurfaceInMeters", "locationAccordingTo",
-        "locationRemarks", "decimalLatitude", "decimalLongitude", "geodeticDatum", "coordinateUncertaintyInMeters",
-        "coordinatePrecision", "pointRadiusSpatialFit", "verbatimCoordinates", "verbatimLatitude", "verbatimLongitude",
-        "verbatimCoordinateSystem", "verbatimSRS", "footprintWKT", "footprintSRS", "footprintSpatialFit", "georeferencedBy",
-        "georeferencedDate", "georeferenceProtocol", "georeferenceSources", "georeferenceRemarks",
-        # GeologicalContext
-        "geologicalContextID", "earliestEonOrLowestEonothem", "latestEonOrHighestEonothem", "earliestEraOrLowestErathem",
-        "latestEraOrHighestErathem", "earliestPeriodOrLowestSystem", "latestPeriodOrHighestSystem", "earliestEpochOrLowestSeries",
-        "latestEpochOrHighestSeries", "earliestAgeOrLowestStage", "latestAgeOrHighestStage", "lowestBiostratigraphicZone",
-        "highestBiostratigraphicZone", "lithostratigraphicTerms", "group", "formation", "member", "bed",
-        # Identification
-        "identificationID", "verbatimIdentification", "identificationQualifier", "typeStatus", "identifiedBy", "identifiedByID",
-        "dateIdentified", "identificationReferences", "identificationVerificationStatus", "identificationRemarks",
-        # Taxon
-        "taxonID", "scientificNameID", "acceptedNameUsageID", "parentNameUsageID", "originalNameUsageID", "nameAccordingToID",
-        "namePublishedInID", "taxonConceptID", "scientificName", "acceptedNameUsage", "parentNameUsage", "originalNameUsage",
-        "nameAccordingTo", "namePublishedIn", "namePublishedInYear", "higherClassification", "kingdom", "phylum", "class", "order",
-        "superfamily", "family", "subfamily", "tribe", "subtribe", "genus", "genericName", "subgenus", "infragenericEpithet",
-        "specificEpithet", "infraspecificEpithet", "cultivarEpithet", "taxonRank", "verbatimTaxonRank", "scientificNameAuthorship",
-        "vernacularName", "nomenclaturalCode", "taxonomicStatus", "nomenclaturalStatus", "taxonRemarks",
-        # MeasurementOrFact
-        "measurementID", "parentMeasurementID", "measurementType", "measurementValue", "measurementAccuracy", "measurementUnit",
-        "measurementDeterminedBy", "measurementDeterminedDate", "measurementMethod", "measurementRemarks"
-    }
+    """
+    Retrieve Darwin Core term definitions from the local quick-reference guide.
 
-    # Darwin Core Cores and Common Extensions
+    Call without parameters to get a section overview.
+    Optionally provide:
+    - `section` to list terms in one section (e.g. Occurrence, Event, Taxon, MeasurementOrFact)
+    - `terms` to find specific terms across all sections
+    """
 
-    ## Core Types
+    section: Optional[str] = Field(
+        default=None,
+        description="Optional section name to list terms for (case-insensitive), e.g. 'Occurrence', 'Taxon', or 'MeasurementOrFact'."
+    )
+    terms: Optional[List[str]] = Field(
+        default=None,
+        description="Optional list of term names to look up across all sections, e.g. ['basisOfRecord', 'occurrenceID']."
+    )
+    include_examples: bool = Field(
+        default=True,
+        description="Whether to include examples in returned definitions."
+    )
+    max_terms: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=200,
+        description="Optional maximum number of terms to include when returning a section. If omitted, return all terms."
+    )
 
-    | Core Type | Description | Typical Use |
-    |------------|--------------|--------------|
-    | **Occurrence Core** | Describes individual records of organisms — who, what, where, when. | Specimen or observation data (most GBIF datasets). |
-    | **Event Core** | Describes sampling events or occurrences grouped by event (e.g. a trap, transect, or survey). | Sampling-event datasets where many occurrences share context. |
-    | **Taxon Core** | Describes taxa and their classification (scientific name, rank, parent, synonymy). | Checklists, taxonomic backbones, species lists. |
+    def _display_definition(self, definition: str) -> str:
+        return definition if self.include_examples else _strip_examples(definition)
 
-    Each dataset must have **one core type**.  
-    Extensions link to the core using identifiers (`occurrenceID`, `eventID`, or `taxonID`).
+    def run(self):
+        try:
+            quick_reference = _load_dwc_quick_reference()
+        except Exception as exc:
+            return f"Unable to load Darwin Core quick reference: {exc}"
 
-    ---
+        if not quick_reference:
+            return "Darwin Core quick reference is empty."
 
-    ## Common Extensions
+        section_names = list(quick_reference.keys())
 
-    | Extension | Description | Applies To |
-    |------------|--------------|-------------|
-    | **MeasurementOrFact** | Records individual measurements or facts (e.g. body length, habitat type, sex). | Occurrence / Event |
-    | **ExtendedMeasurementOrFact (eMoF)** | A flexible structure for multiple environmental or sampling parameters per record. | Event / Occurrence |
-    | **Identification** | Details about the identification process — who, when, method, reference. | Occurrence |
-    | **ResourceRelationship** | Defines relationships between records (e.g. host-parasite, parent-offspring). | Occurrence / Taxon |
-    | **Multimedia** | Simple attachment of images, sound, or video. | Any |
-    | **Audubon Media Description** | Rich multimedia metadata (preferred over simple Multimedia extension). | Any |
-    | **ChronometricAge** | Provides age estimates for fossils or archaeological specimens. | Occurrence |
-    | **DNA-derived Data** | Links occurrence or taxon records with genetic or molecular data. | Occurrence / Taxon |
-    | **Occurrence Extension** | Adds additional fields for occurrence-level detail not in the core. | Occurrence |
-    | **Event Measurement** | Records event-level environmental measurements (temperature, pH, salinity, etc.). | Event |
+        if not self.section and not self.terms:
+            lines = [
+                "Darwin Core quick reference sections:",
+                *(f"- {section_name} ({len(quick_reference[section_name])} terms)" for section_name in section_names),
+                "",
+                "Call with `section` for terms in one section, or with `terms` for specific term lookups."
+            ]
+            return "\n".join(lines)
 
-    ---
+        if self.terms:
+            normalized_terms_by_section: Dict[str, Dict[str, tuple[str, str]]] = {}
+            for section_name, terms in quick_reference.items():
+                normalized_terms_by_section[section_name] = {
+                    _normalize_lookup_key(term_name): (term_name, definition)
+                    for term_name, definition in terms.items()
+                }
 
-    ## Summary
+            found_lines = []
+            missing_terms = []
+            for requested_term in self.terms:
+                lookup_key = _normalize_lookup_key(str(requested_term))
+                if not lookup_key:
+                    continue
 
-    - **Core** = main table (one per dataset)  
-    - **Extensions** = optional linked tables that add richer metadata  
+                match = None
+                for section_name, section_terms in normalized_terms_by_section.items():
+                    if lookup_key in section_terms:
+                        term_name, definition = section_terms[lookup_key]
+                        match = (section_name, term_name, definition)
+                        break
 
-    For details, see:  
-    - [Darwin Core quick reference guide](https://dwc.tdwg.org/terms/)  
-    - [GBIF extensions overview](https://tools.gbif.org/dwca-validator/extensions.do)
+                if not match:
+                    missing_terms.append(str(requested_term))
+                    continue
 
+                section_name, term_name, definition = match
+                found_lines.append(f"- {term_name} ({section_name}): {self._display_definition(definition)}")
 
-    Ensure any extension table records link back to the core table using occurrenceID or taxonID, and discard all derived/summary data so only primary data is published.
+            if not found_lines:
+                return "None of the requested terms were found in the Darwin Core quick reference."
 
-      **Key Darwin Core Fields to Consider (Refer to these definitions):**
+            response_lines = ["Darwin Core term lookup results:", *found_lines]
+            if missing_terms:
+                response_lines.extend(["", f"Not found: {', '.join(missing_terms)}"])
+            return "\n".join(response_lines)
 
-      **Occurrence Core:**
-      *   occurrenceID: REQUIRED (Record level unique identifier for the occurrence. Create UUIDs if not present)
-      *   basisOfRecord: REQUIRED (Nature of the record, valid values: HumanObservation, PreservedSpecimen, MaterialSample, LivingSpecimen, FossilSpecimen, MachineObservation. You will often need to infer or create this and fill it)
-      *   eventDate: REQUIRED (Date of occurrence, ISO 8601 format: YYYY-MM-DD, YYYY-MM, YYYY, YYYY-MM-DD/YYYY-MM-DD). Or, separate year, month, day columns
-      *   scientificName: REQUIRED (Lowest possible taxonomic rank, e.g., species, genus, family. Cannot be empty)
-      *   kingdom: REQUIRED (e.g., Animalia, Plantae. May need to be inferred or filled)
-      *   locality: REQUIRED if decimalLatitude/decimalLongitude are null (Description of the place)
-      *   decimalLatitude, decimalLongitude: REQUIRED if locality is null
-      *   geodeticDatum: REQUIRED if decimalLatitude/decimalLongitude are populated (e.g., WGS84)
-      *   **Quantity (At least ONE of these groups is REQUIRED):**
-          *   occurrenceStatus: For presence/absence data (valid values: present, absent) - NB absence data can be published if the user is certain of absences (e.g. there was no elephant here), or can be excluded from publication if it's possible the species was actually present but not seen (e.g. a small and cryptic plant).
-          *   individualCount: For whole number counts of individuals
-          *   organismQuantity & organismQuantityType: For non-integer counts or other quantity measures (e.g., organismQuantity=5.5, organismQuantityType=%cover; organismQuantity=10, organismQuantityType='biomass g/m^2'). ALWAYS ask the user for organismQuantityType if organismQuantity is used and the type isn't obvious. DO NOT use these for simple counts if individualCount is appropriate.
-      *   Other useful fields: 
-          - locationRemarks
-          - waterBody (if a marine or aquatic occurrence, e.g. Baltic Sea, Hudson River)
-          - islandGroup
-          - island
-          - minimumElevationInMeters (this + maximumElevationInMeters = altitude. If only a single value for altitude available, put it in both fields, e.g. minimumElevationInMeters=30, maximumElevationInMeters=30)
-          - maximumElevationInMeters
-          - minimumDepthInMeters
-          - maximumDepthInMeters
-          - minimumDistanceAboveSurfaceInMeters
-          - maximumDistanceAboveSurfaceInMeters
-          - country
-          - coordinateUncertaintyInMeters
-          - fieldNotes
-          - recordedBy (collector/observer's name)
-          - recordedByID (often ORCID, NOTE: ask the user for ORCIDs if recordedBy is populated with only a few names)
-          - occurrenceRemarks (can hold any miscellaneous information)
-          - sex
-          - lifeStage
-          - behavior (e.g. roosting, foraging, running)
-          - vitality (valid values: alive, dead, mixedLot, uncertain, notAssessed)
-          - establishmentMeans (valid values: native, nativeReintroduced, introduced, introducedAssistedColonisation, vagrant, uncertain)
-          - degreeOfEstablishment (valid values: native, captive, cultivated, released, failing, casual, reproducing, established, colonising, invasive, widespreadInvasive)
-          - preparations (preparation/preservation methods, e.g. fossil, cast, photograph, DNA extract)
-          - associatedSequences (list of associated genetic sequence information, e.g. http://www.ncbi.nlm.nih.gov/nuccore/U34853.1)
-          - habitat
-          - samplingProtocol (e.g. UV light trap, mist net, bottom trawl)
-          - samplingEffort (e.g. 40 trap-nights, 10 observer-hours, 10 km by foot)
+        matched_section = _find_matching_section(quick_reference, self.section or "")
+        if matched_section is None:
+            return (
+                f"Section '{self.section}' not recognised. "
+                f"Available sections: {', '.join(section_names)}."
+            )
 
-      **Checklist/Taxonomy Core (Common Fields):**
-      *   taxonID: REQUIRED (A unique identifier for the taxon name).
-      *   scientificName: REQUIRED.
-      *   kingdom: REQUIRED.
-      *   Other useful fields: family, genus, specificEpithet, taxonRank, nameAccordingTo, taxonRemarks.
+        section_terms = quick_reference[matched_section]
+        lines = [f"{matched_section} ({len(section_terms)} terms total):"]
+        for index, (term_name, definition) in enumerate(section_terms.items()):
+            if self.max_terms is not None and index >= self.max_terms:
+                remaining = len(section_terms) - self.max_terms
+                lines.append(f"... {remaining} more terms not shown. Increase `max_terms` to see more.")
+                break
+            lines.append(f"- {term_name}: {self._display_definition(definition)}")
 
-      **MeasurementOrFact Extension (ONLY these fields):**
-      *   occurrenceID or eventID or taxonID: REQUIRED (links back to the core record).
-      *   measurementType: REQUIRED (e.g., 'tail length', 'water temperature', 'tree height').
-      *   measurementValue: REQUIRED (e.g., '12.5', '22', '15.7').
-      *   measurementUnit: REQUIRED (e.g., 'cm', 'degrees Celsius', 'meters').
-      *   Optional: measurementAccuracy, measurementDeterminedBy, measurementDeterminedDate, measurementMethod, measurementRemarks.
-      *   IMPORTANT: DO NOT put individualCount or organismQuantity/Type data in MeasurementOrFact. If possible keep everything in a single core table (e.g. altitude should go in minimumElevationInMeters and maximumElevationInMeters in the Occurrence core).
-    '''
+        return "\n".join(lines)
 
 
 class GetDwCExtensionInfo(OpenAIBaseModel):

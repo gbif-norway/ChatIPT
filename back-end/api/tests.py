@@ -1,11 +1,13 @@
 import os
 import xml.etree.ElementTree as ET
+from unittest.mock import patch
 from django.test import SimpleTestCase
 from .helpers.publish import (
     make_eml,
     parse_newick_tip_labels,
     parse_nexus_tip_labels,
 )
+from .agent_tools import GetDarwinCoreInfo
 
 
 class EmlGenerationTests(SimpleTestCase):
@@ -208,3 +210,76 @@ END;"""
         self.assertIsInstance(tip_labels, list)
 
 
+class GetDarwinCoreInfoTests(SimpleTestCase):
+    def test_summary_response_lists_sections_only(self):
+        sample_reference = {
+            "Occurrence": {
+                "occurrenceID": "An identifier. Examples: abc",
+                "basisOfRecord": "The specific nature of the data record. Examples: HumanObservation",
+            },
+            "Event": {
+                "eventID": "An identifier for the event. Examples: EVT-1",
+            },
+        }
+        with patch("api.agent_tools._load_dwc_quick_reference", return_value=sample_reference):
+            response = GetDarwinCoreInfo().run()
+
+        self.assertIn("Darwin Core quick reference sections:", response)
+        self.assertIn("- Occurrence (2 terms)", response)
+        self.assertIn("- Event (1 terms)", response)
+        self.assertNotIn("The specific nature of the data record", response)
+
+    def test_section_response_returns_all_terms_and_includes_examples_by_default(self):
+        sample_reference = {
+            "Occurrence": {
+                "occurrenceID": "An identifier for the occurrence. Examples: 1234",
+                "basisOfRecord": "The specific nature of the data record. Examples: HumanObservation",
+            },
+        }
+        with patch("api.agent_tools._load_dwc_quick_reference", return_value=sample_reference):
+            response = GetDarwinCoreInfo(section="Occurrence").run()
+
+        self.assertIn("Occurrence (2 terms total):", response)
+        self.assertIn("- occurrenceID: An identifier for the occurrence. Examples: 1234", response)
+        self.assertIn("- basisOfRecord: The specific nature of the data record. Examples: HumanObservation", response)
+
+    def test_section_response_can_strip_examples_when_requested(self):
+        sample_reference = {
+            "Occurrence": {
+                "occurrenceID": "An identifier for the occurrence. Examples: 1234",
+                "basisOfRecord": "The specific nature of the data record. Examples: HumanObservation",
+            },
+        }
+        with patch("api.agent_tools._load_dwc_quick_reference", return_value=sample_reference):
+            response = GetDarwinCoreInfo(section="Occurrence", include_examples=False).run()
+
+        self.assertIn("Occurrence (2 terms total):", response)
+        self.assertIn("- occurrenceID: An identifier for the occurrence.", response)
+        self.assertIn("- basisOfRecord: The specific nature of the data record.", response)
+        self.assertNotIn("Examples:", response)
+
+    def test_section_response_applies_optional_limit(self):
+        sample_reference = {
+            "Occurrence": {
+                "occurrenceID": "An identifier for the occurrence.",
+                "basisOfRecord": "The specific nature of the data record.",
+            },
+        }
+        with patch("api.agent_tools._load_dwc_quick_reference", return_value=sample_reference):
+            response = GetDarwinCoreInfo(section="Occurrence", max_terms=1).run()
+
+        self.assertIn("Occurrence (2 terms total):", response)
+        self.assertIn("- occurrenceID: An identifier for the occurrence.", response)
+        self.assertIn("... 1 more terms not shown. Increase `max_terms` to see more.", response)
+
+    def test_term_lookup_can_include_examples(self):
+        sample_reference = {
+            "Occurrence": {
+                "basisOfRecord": "The specific nature of the data record. Examples: HumanObservation",
+            },
+        }
+        with patch("api.agent_tools._load_dwc_quick_reference", return_value=sample_reference):
+            response = GetDarwinCoreInfo(terms=["basisOfRecord"], include_examples=True).run()
+
+        self.assertIn("Darwin Core term lookup results:", response)
+        self.assertIn("basisOfRecord (Occurrence): The specific nature of the data record. Examples: HumanObservation", response)
