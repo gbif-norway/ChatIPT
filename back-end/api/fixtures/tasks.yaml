@@ -46,91 +46,38 @@
 
       Use Table.title to name tables according to what they are (e.g. "occurrence", "measurement_or_fact", "dna_derived_data", etc).
 
-      **Key Darwin Core Fields to Consider (Refer to these definitions):**
+      LOOKUP-FIRST RULE (critical):
+      - Do not rely on memory for Darwin Core details.
+      - Before finalizing a core table, call GetDarwinCoreInfo with section='Record-level' and section matching your core choice (Occurrence/Event/Taxon).
+      - Before adding any extension field, call GetDwCExtensionInfo with that extension key/filename.
+      - If you are unsure between similar terms, call GetDarwinCoreInfo with terms=[...] and compare definitions.
 
-      **Occurrence Core:**
-      *   occurrenceID: REQUIRED (Record level unique identifier for the occurrence. Create UUIDs if not present)
-      *   basisOfRecord: REQUIRED (Nature of the record, valid values: MaterialEntity, PreservedSpecimen, FossilSpecimen, LivingSpecimen, MaterialSample, Event, HumanObservation, MachineObservation, Taxon, Occurrence, MaterialCitation. You will often need to infer or create this and fill it). If it's eDNA data or similar, use MaterialSample. IMPORTANT - USE THE DNA DERIVED DATA EXTENSION FOR eDNA DATA.
-      *   eventDate: REQUIRED (Date of occurrence, ISO 8601 format: YYYY-MM-DD, YYYY-MM, YYYY, YYYY-MM-DD/YYYY-MM-DD). Or, separate year, month, day columns
-      *   scientificName: REQUIRED (Lowest possible taxonomic rank, e.g., species, genus, family. Cannot be empty)
-      *   kingdom: REQUIRED (e.g., Animalia, Plantae. May need to be inferred or filled)
-      *   locality: REQUIRED if decimalLatitude/decimalLongitude are null (Description of the place)
-      *   decimalLatitude, decimalLongitude: REQUIRED if locality is null
-      *   geodeticDatum: REQUIRED if decimalLatitude/decimalLongitude are populated (e.g., WGS84)
-      *   **Quantity (At least ONE of these groups is REQUIRED):**
-          *   occurrenceStatus: For presence/absence data (valid values: present, absent) - NB absence data can be published if the user is certain of absences (e.g. there was no elephant here), or can be excluded from publication if it's possible the species was actually present but not seen (e.g. a small and cryptic plant).
-          *   individualCount: For whole number counts of individuals
-          *   organismQuantity & organismQuantityType: For non-integer counts or other quantity measures (e.g., organismQuantity=5.5, organismQuantityType=%cover; organismQuantity=10, organismQuantityType='biomass g/m^2'). ALWAYS ask the user for organismQuantityType if organismQuantity is used and the type isn't obvious. DO NOT use these for simple counts if individualCount is appropriate.
-      *   Other useful fields: 
-          - locationRemarks
-          - waterBody (if a marine or aquatic occurrence, e.g. Baltic Sea, Hudson River)
-          - islandGroup
-          - island
-          - minimumElevationInMeters (this + maximumElevationInMeters = altitude. If only a single value for altitude available, put it in both fields, e.g. minimumElevationInMeters=30, maximumElevationInMeters=30)
-          - maximumElevationInMeters
-          - minimumDepthInMeters
-          - maximumDepthInMeters
-          - minimumDistanceAboveSurfaceInMeters
-          - maximumDistanceAboveSurfaceInMeters
-          - country
-          - coordinateUncertaintyInMeters
-          - fieldNotes
-          - recordedBy (collector/observer's name)
-          - recordedByID (often ORCID, NOTE: ask the user for ORCIDs if recordedBy is populated with only a few names)
-          - occurrenceRemarks (can hold any miscellaneous information)
-          - sex
-          - lifeStage
-          - behavior (e.g. roosting, foraging, running)
-          - vitality (valid values: alive, dead, mixedLot, uncertain, notAssessed)
-          - establishmentMeans (valid values: native, nativeReintroduced, introduced, introducedAssistedColonisation, vagrant, uncertain)
-          - degreeOfEstablishment (valid values: native, captive, cultivated, released, failing, casual, reproducing, established, colonising, invasive, widespreadInvasive)
-          - preparations (preparation/preservation methods, e.g. fossil, cast, photograph, DNA extract)
-          - associatedSequences (list of associated genetic sequence information, e.g. http://www.ncbi.nlm.nih.gov/nuccore/U34853.1)
-          - habitat
-          - samplingProtocol (e.g. UV light trap, mist net, bottom trawl)
-          - samplingEffort (e.g. 40 trap-nights, 10 observer-hours, 10 km by foot)
+      Publication-critical terms (usually expected for most occurrence datasets):
+      - occurrenceID: unique record identifier (create UUIDs if absent).
+      - basisOfRecord: controlled values only (MaterialEntity, PreservedSpecimen, FossilSpecimen, LivingSpecimen, MaterialSample, Event, HumanObservation, MachineObservation, Taxon, Occurrence, MaterialCitation). For eDNA-like records prefer MaterialSample and use DNA Derived Data extension where appropriate.
+      - scientificName: best available taxonomic name.
+      - eventDate (or year/month/day): ISO-compatible date information where available.
+      - location representation: locality OR decimalLatitude+decimalLongitude (and geodeticDatum when coordinates are present).
+      - quantity representation when available: occurrenceStatus OR individualCount OR organismQuantity+organismQuantityType.
 
-      **Checklist/Taxonomy Core (Common Fields):**
-      *   taxonID: REQUIRED (A unique identifier for the taxon name).
-      *   scientificName: REQUIRED.
-      *   kingdom: REQUIRED.
-      *   Other useful fields: family, genus, specificEpithet, taxonRank, nameAccordingTo, taxonRemarks.
-
-      **EXAMPLE EXTENSION: MeasurementOrFact (ONLY these fields):**
-      *   occurrenceID or eventID or taxonID: REQUIRED (links back to the core record).
-      *   measurementType: REQUIRED (e.g., 'tail length', 'water temperature', 'tree height').
-      *   measurementValue: REQUIRED (e.g., '12.5', '22', '15.7').
-      *   measurementUnit: REQUIRED (e.g., 'cm', 'degrees Celsius', 'meters').
-      *   Optional: measurementAccuracy, measurementDeterminedBy, measurementDeterminedDate, measurementMethod, measurementRemarks.
-      *   IMPORTANT: DO NOT put individualCount or organismQuantity/Type data in MeasurementOrFact. If possible keep everything in a single core table (e.g. altitude should go in minimumElevationInMeters and maximumElevationInMeters in the Occurrence core).
-
-      **CALL GetDwCExtensionInfo TO GET FIELD LISTS FOR OTHER EXTENSIONS**
-      - It is absolutely vital you do not make up fields and use the correct field for the correct extensions.
+      Context-dependent high-risk mappings (easy to misuse):
+      - recordedBy vs recordedByID (IDs are identifiers such as ORCID, not names).
+      - individualCount vs organismQuantity/organismQuantityType (do not use organismQuantity without a clear type).
+      - MeasurementOrFact should hold true measurement/assertion records; do not move core location/date/abundance fields there just because they are hard to map.
+      - dynamicProperties is last structured fallback only after checking relevant core and extension terms.
+      - extension linking IDs must reference valid core IDs (occurrenceID/eventID/taxonID).
 
       **Your Process:**
-      1. Write a detailed plan for the data transformation, include notes about your proposed DwC core (Occurrence or Checklist) and any necessary MeasurementOrFact extension, checking ambiguity with the user. Remember to:
+      1. Write a concise transformation plan with your proposed DwC core and likely extensions.
+      2. Perform the required GetDarwinCoreInfo/GetDwCExtensionInfo lookups before mapping terms.
+      3. Execute transformation in Python in small, testable chunks. Remember to:
           *   Rename columns to DwC terms.
           *   Create new DwC columns, populating them with existing data, default values (e.g., for basisOfRecord if clear), or by transforming existing data.
           *   Handle structural transformations like unpivoting crosstabs to long format (1 row per observation/record).
           *   Join tables if necessary (e.g., merging a locality lookup table into the main data). Double-check join correctness.
           *   Delete redundant or intermediate tables once their data is incorporated.
-      2. Execute the plan using the Python tool, step by step.
-      3.  If your understanding of the dataset changes significantly, use SetBasicMetadata to update the Title/Description and SetStructureNotes to update the structure_notes.
-
-      Example occurrence core:
-      occurrenceID	recordedBy	individualCount	eventDate	country	locality	decimalLatitude	decimalLongitude	scientificName	kingdom
-      urn:uuid:19b0f3b0-0e02-4a3e-b9d2-1919a3c1cd11	Sverdrup	4	2019-08-04	Norway	Oslo fjord	60.587	11.589	Cis comptus	Animalia
-      urn:uuid:19b0f3b0-0e02-4a3e-b9d2-1919a3c1cd12	Tone Birkemoe	1	2019-09	Norway	Nordmarka	60.591	11.789	Cryptophagus dentatus	Animalia
-      urn:uuid:19b0f3b0-0e02-4a3e-b9d2-1919a3c1cd13	Sverdrup	1	2019-08-06	Norway	Oslo fjord	60.587	11.589	Dryocoetes spp.	Animalia
-      urn:uuid:19b0f3b0-0e02-4a3e-b9d2-1919a3c1cd14
-
-      With measurement or fact extension:
-      measurementID	occurrenceID	measurementType	measurementValue	measurementUnit
-      urn:uuid:1f4735f0-3240-46c1-a6cd-21a4d55b0b01	urn:uuid:19b0f3b0-0e02-4a3e-b9d2-1919a3c1cd11	body length	2.2	mm
-      urn:uuid:1f4735f0-3240-46c1-a6cd-21a4d55b0b02	urn:uuid:19b0f3b0-0e02-4a3e-b9d2-1919a3c1cd11	body mass	3.4	mg
-      urn:uuid:1f4735f0-3240-46c1-a6cd-21a4d55b0b03	urn:uuid:19b0f3b0-0e02-4a3e-b9d2-1919a3c1cd12	body length	3.0	mm
-      urn:uuid:1f4735f0-3240-46c1-a6cd-21a4d55b0b04	urn:uuid:19b0f3b0-0e02-4a3e-b9d2-1919a3c1cd13	body length	2.7	mm
-      urn:uuid:1f4735f0-3240-46c1-a6cd-21a4d55b0b05	urn:uuid:19b0f3b0-0e02-4a3e-b9d2-1919a3c1cd14	body length	4.4	mm
+      4. If key publication-critical values are missing and cannot be inferred safely, leave them blank, ask the user only when necessary, and record the gap in SetStructureNotes (do not invent values).
+      5. If your understanding of the dataset changes significantly, update SetBasicMetadata and SetStructureNotes.
 
 - model: api.task
   fields:
@@ -138,37 +85,25 @@
     text: |-
       Systematically check the Darwin Core-transformed data for errors, inconsistencies, and adherence to standards, then correct these issues. The user is unlikely to be able to judge the correctness of technical fixes, so for these you must use your best judgment. You are expected to resolve issues without user input unless absolutely necessary.
 
-      1.  **Intelligent assessment**: Run your eye over the snapshots and do a manual assessment. Engage your brain - does everything make sense? What needs to be fixed for the data to be publishable? 
-      3.  **Execute Code Checks:** Use BasicValidationForSomeDwCTerms for standard checks (it handles date parsing, lat/long bounds, individualCount, basisOfRecord vocabulary, etc.). For more specific or complex checks not covered by the tool, write your own code and run using the Python tool.
-      3.  **Identify Issues:** Review the validation results from BasicValidationForSomeDwCTerms and your own manual assessment.
-      4.  **Plan Corrections:** Carefully write out what you need to do step by step in order to create a corrected and final DwC core file and extension file(s). 
-      5.  **Execute Corrections:**
-          *  Implement your corrections in reasonably self contained small to medium size chunks
-          *   If the code fails or introduces new problems, break the problem down further 
-      6.  **Re-Validate:** After attempting fixes, re-run relevant validation checks to ensure the issue is resolved and no new errors were introduced.
-      7.  **Loop:** Repeat the cycle: Validate → Identify Issues → Plan Fixes → Execute Fixes → Re-Validate, until no further issues remain or you've reached the best possible state using your tools and judgment. Any encountered issues that are genuinely ambiguous or require conceptual clarification (which should be rare) may be escalated to the user only if you cannot make a reasonable judgment. You do not need to ask the user before continuing the loop. Only stop or escalate if you hit an issue that cannot reasonably be resolved without domain expertise.
+      LOOKUP-FIRST RULE (critical):
+      - For each core/extension table, call GetDarwinCoreInfo and/or GetDwCExtensionInfo before deciding a term is wrong.
+      - Do not "fix" terms based on memory alone.
+
+      Validation loop:
+      1. Manual assessment: inspect snapshots for semantic issues and suspicious mappings.
+      2. Run standard checks with BasicValidationForSomeDwCTerms.
+      3. Add targeted Python checks where needed.
+      4. Plan corrections in small chunks, execute, then re-validate.
+      5. Repeat until stable or until no safe automatic improvement remains.
 
       If your understanding of the dataset changes significantly, use SetBasicMetadata to update the Title/Description and SetStructureNotes to update the structure_notes.
 
-      **Key Areas for Validation and Refinement:**
-      *   **Required Fields:** Ensure all REQUIRED DwC fields (based on the chosen core) are present and populated.
-      *   **Data Types & Formats:**
-          *   eventDate: Must be ISO 8601.
-          *   decimalLatitude: Numeric, between -90 and 90.
-          *   decimalLongitude: Numeric, between -180 and 180.
-          *   decimalLatitude and decimalLongitude vs country or countryCode: Check that given coordinates might realistically fall within the bounding box of the specified country. 
-          *   individualCount: Whole positive integers.
-          *   Other numeric fields are valid numbers.
-      *   **Controlled Vocabularies:**
-          *   basisOfRecord: Must be from the allowed list.
-          *   occurrenceStatus: ('present', 'absent').
-          *   Other DwC terms with controlled vocabularies (e.g., sex, lifeStage if used).
-      *   **Data Integrity & Consistency:**
-          *   occurrenceID (or taxonID in Checklist core) must be unique if it's a core table.
-          *   If a MeasurementOrFact extension is used, its linking ID (e.g., occurrenceID) must correspond to valid IDs in the core table.
-          *   Consistency in scientificName usage.
-          *   Look for and attempt to clean common issues like leading/trailing whitespace, inconsistent capitalization (especially in scientificName or locality), or mixed data types within a column that should be uniform.
-      *   **Common Structural Patterns:** Re-check for any structural issues missed earlier that become apparent after transformation (e.g., a column that should have been numeric but contains text that prevented conversion).
+      Validation priorities:
+      - Publication-critical terms: ensure presence/population where possible for the chosen core. If unavailable, leave blank and note clearly; do not fabricate.
+      - Formats and numeric bounds: eventDate (ISO-compatible), lat/long ranges, individualCount integer positivity, numeric coercion sanity.
+      - Controlled values: basisOfRecord, occurrenceStatus, and any controlled fields actually used.
+      - Link integrity: extension linking IDs must resolve to valid core IDs.
+      - Consistency and hygiene: scientificName/locality normalization, whitespace/case cleanup, mixed-type cleanup, duplicate ID handling.
 
       Your goal is to produce the cleanest, most compliant dataset possible, using your AI judgment to resolve issues autonomously.
 
