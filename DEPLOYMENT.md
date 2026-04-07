@@ -221,6 +221,11 @@ helm --kube-context nird-lmd -n gbif-no-ns8095k rollback chatipt-staging <REVISI
 - Backend secret names expected by the chart:
   - prod: `chatipt-backend`
   - staging: `chatipt-backend-staging`
+- Discord bug-report env vars should be set in those backend secrets:
+  - `DISCORD_WEBHOOK` (required for Discord notifications)
+  - `DISCORD_DEVELOPER_USER_ID` (recommended for reliable user mention ping)
+  - `DISCORD_DEVELOPER_HANDLE` (optional fallback, defaults to `@_rkian`)
+  - Backward compatibility: `DISCORD_RUKAYA_USER_ID` is still accepted if already present.
 - Persistent storage is currently configured via existing shared PVC:
   - claim: `573890b9-3346-4027-ab0c-22eec6dfd665`
   - subPath:

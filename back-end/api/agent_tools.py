@@ -1779,3 +1779,53 @@ class SendDiscordMessage(OpenAIBaseModel):
         
         except Exception as e:
             return f"Failed to send Discord message: {repr(e)}"
+
+
+class LogBugWithDeveloper(OpenAIBaseModel):
+    """
+    Log a bug report for the developer in Discord
+    Use this when a tool or workflow behaves unexpectedly and needs developer intervention.
+    """
+
+    message: str = Field(..., description="Short bug summary describing what failed.")
+    agent_id: Optional[PositiveInt] = Field(
+        default=None,
+        description="Optional current agent ID for debugging context.",
+    )
+    urgent: bool = Field(
+        default=False,
+        description="Set to true if this bug blocks the current user flow.",
+    )
+    context: Optional[str] = Field(
+        default=None,
+        description="Optional extra technical details, e.g. stack trace or reproduction steps.",
+    )
+
+    def run(self):
+        try:
+            developer_mention = discord_bot.get_developer_mention()
+            developer_user_id = discord_bot.get_developer_user_id()
+
+            header = f"{developer_mention} Bug report from agent"
+            if self.urgent:
+                header = f"{developer_mention} 🚨 **URGENT BUG REPORT**"
+
+            lines = [header]
+            if self.agent_id is not None:
+                lines.append(f"Agent ID: {self.agent_id}")
+            lines.append(f"Message: {self.message}")
+            if self.context:
+                lines.append(f"Context: {self.context}")
+
+            allowed_mentions = None
+            if developer_user_id:
+                allowed_mentions = {"parse": [], "users": [developer_user_id]}
+
+            formatted_message = "\n".join(lines)
+            if allowed_mentions is None:
+                discord_bot.send_discord_message(formatted_message)
+            else:
+                discord_bot.send_discord_message(formatted_message, allowed_mentions=allowed_mentions)
+            return "Bug report sent to developers via Discord (tagged @_rkian)."
+        except Exception as e:
+            return f"Failed to log bug with developer: {repr(e)}"

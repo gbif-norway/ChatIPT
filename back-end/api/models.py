@@ -493,6 +493,7 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
             agent_tools.PublishToGBIF.__name__,
             agent_tools.ValidateDwCA.__name__,
             agent_tools.SendDiscordMessage.__name__,
+            agent_tools.LogBugWithDeveloper.__name__,
         ]
 
         # Restrict publish/archive tools to the final publication phases only.

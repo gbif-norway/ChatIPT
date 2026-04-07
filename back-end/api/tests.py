@@ -9,7 +9,7 @@ from .helpers.publish import (
     parse_newick_tip_labels,
     parse_nexus_tip_labels,
 )
-from .agent_tools import GetDarwinCoreInfo, SetEML
+from .agent_tools import GetDarwinCoreInfo, SetEML, LogBugWithDeveloper
 
 
 class EmlGenerationTests(SimpleTestCase):
@@ -449,3 +449,35 @@ class SetEMLTemporalInferenceTests(SimpleTestCase):
 
         inferred = SetEML._infer_methodology_from_dataset(dataset)
         self.assertEqual(inferred, "Camera trap")
+
+
+class LogBugWithDeveloperTests(SimpleTestCase):
+    @patch("api.agent_tools.discord_bot.send_discord_message")
+    def test_uses_discord_user_id_for_direct_mention(self, send_discord_message_mock):
+        with patch.dict(os.environ, {"DISCORD_DEVELOPER_USER_ID": "1234567890"}, clear=False):
+            result = LogBugWithDeveloper(
+                message="Python tool failed with unexpected KeyError",
+                agent_id=44,
+                urgent=True,
+            ).run()
+
+        self.assertIn("Bug report sent", result)
+        sent_message = send_discord_message_mock.call_args.args[0]
+        sent_allowed_mentions = send_discord_message_mock.call_args.kwargs["allowed_mentions"]
+
+        self.assertIn("<@1234567890>", sent_message)
+        self.assertIn("Agent ID: 44", sent_message)
+        self.assertIn("Python tool failed with unexpected KeyError", sent_message)
+        self.assertEqual(sent_allowed_mentions, {"parse": [], "users": ["1234567890"]})
+
+    @patch("api.agent_tools.discord_bot.send_discord_message")
+    def test_falls_back_to_plain_rkian_tag_without_user_id(self, send_discord_message_mock):
+        with patch.dict(os.environ, {"DISCORD_DEVELOPER_USER_ID": "", "DISCORD_DEVELOPER_HANDLE": "@_rkian"}, clear=False):
+            result = LogBugWithDeveloper(message="Validation response parsing failed").run()
+
+        self.assertIn("Bug report sent", result)
+        sent_message = send_discord_message_mock.call_args.args[0]
+
+        self.assertIn("@_rkian", sent_message)
+        self.assertIn("Validation response parsing failed", sent_message)
+        self.assertNotIn("allowed_mentions", send_discord_message_mock.call_args.kwargs)
