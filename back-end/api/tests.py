@@ -1,13 +1,15 @@
 import os
+import datetime
 import xml.etree.ElementTree as ET
 from unittest.mock import patch
 from django.test import SimpleTestCase
+import pandas as pd
 from .helpers.publish import (
     make_eml,
     parse_newick_tip_labels,
     parse_nexus_tip_labels,
 )
-from .agent_tools import GetDarwinCoreInfo
+from .agent_tools import GetDarwinCoreInfo, SetEML
 
 
 class EmlGenerationTests(SimpleTestCase):
@@ -283,3 +285,167 @@ class GetDarwinCoreInfoTests(SimpleTestCase):
 
         self.assertIn("Darwin Core term lookup results:", response)
         self.assertIn("basisOfRecord (Occurrence): The specific nature of the data record. Examples: HumanObservation", response)
+
+
+class SetEMLTemporalInferenceTests(SimpleTestCase):
+    def test_infer_temporal_bounds_from_eventdate_column(self):
+        df = pd.DataFrame(
+            {
+                "eventDate": [
+                    "2019-01-15",
+                    "2020-02",
+                    "2018",
+                    "2007-03-01/2008-05-11",
+                ]
+            }
+        )
+
+        bounds = SetEML._infer_temporal_bounds_from_df(df)
+
+        self.assertEqual(bounds[0].isoformat(), "2007-03-01")
+        self.assertEqual(bounds[1].isoformat(), "2020-02-29")
+
+    def test_infer_temporal_bounds_from_year_month_day_columns(self):
+        df = pd.DataFrame(
+            {
+                "year": ["2011", "2013", "2012"],
+                "month": ["", "6", "2"],
+                "day": ["", "", "29"],
+            }
+        )
+
+        bounds = SetEML._infer_temporal_bounds_from_df(df)
+
+        self.assertEqual(bounds[0].isoformat(), "2011-01-01")
+        self.assertEqual(bounds[1].isoformat(), "2013-06-30")
+
+    def test_resolve_temporal_scope_replaces_today_placeholder_with_inferred_range(self):
+        today = datetime.date.today()
+        today_text = today.strftime("%d %B %Y")
+        provided_scope = f"{today_text} - {today_text}"
+        inferred_scope = "2018-01-01/2020-12-31"
+
+        resolved_scope, note = SetEML._resolve_temporal_scope(provided_scope, None, inferred_scope)
+
+        self.assertEqual(resolved_scope, inferred_scope)
+        self.assertIn("adjusted from placeholder", note)
+
+    def test_resolve_temporal_scope_keeps_non_placeholder_value(self):
+        provided_scope = "2015-01-01/2016-12-31"
+        inferred_scope = "2018-01-01/2020-12-31"
+
+        resolved_scope, note = SetEML._resolve_temporal_scope(provided_scope, None, inferred_scope)
+
+        self.assertEqual(resolved_scope, provided_scope)
+        self.assertIsNone(note)
+
+    def test_resolve_temporal_scope_keeps_existing_non_placeholder_when_not_provided(self):
+        existing_scope = "2001-01-01/2003-12-31"
+        inferred_scope = "2018-01-01/2020-12-31"
+
+        resolved_scope, note = SetEML._resolve_temporal_scope(None, existing_scope, inferred_scope)
+
+        self.assertEqual(resolved_scope, existing_scope)
+        self.assertIsNone(note)
+
+    def test_infer_geographic_scope_from_country_and_coordinates(self):
+        class DummyTable:
+            def __init__(self, df):
+                self.df = df
+
+        class DummyTableSet:
+            def __init__(self, tables):
+                self._tables = tables
+
+            def all(self):
+                return self._tables
+
+        class DummyDataset:
+            def __init__(self, tables):
+                self.table_set = DummyTableSet(tables)
+
+        dataset = DummyDataset(
+            [
+                DummyTable(
+                    pd.DataFrame(
+                        {
+                            "country": ["Norway", "Sweden", "Norway"],
+                            "decimalLatitude": ["60.1", "61.2", "59.9"],
+                            "decimalLongitude": ["10.0", "11.5", "9.8"],
+                        }
+                    )
+                )
+            ]
+        )
+
+        inferred = SetEML._infer_geographic_scope_from_dataset(dataset)
+
+        self.assertIn("Countries:", inferred)
+        self.assertIn("Norway", inferred)
+        self.assertIn("Sweden", inferred)
+        self.assertIn("Coordinate bounds:", inferred)
+
+    def test_infer_taxonomic_scope_from_taxonomic_columns(self):
+        class DummyTable:
+            def __init__(self, df):
+                self.df = df
+
+        class DummyTableSet:
+            def __init__(self, tables):
+                self._tables = tables
+
+            def all(self):
+                return self._tables
+
+        class DummyDataset:
+            def __init__(self, tables):
+                self.table_set = DummyTableSet(tables)
+
+        dataset = DummyDataset(
+            [
+                DummyTable(
+                    pd.DataFrame(
+                        {
+                            "family": ["Felidae", "Canidae", "Felidae"],
+                        }
+                    )
+                )
+            ]
+        )
+
+        inferred = SetEML._infer_taxonomic_scope_from_dataset(dataset)
+
+        self.assertIn("Families:", inferred)
+        self.assertIn("Felidae", inferred)
+        self.assertIn("Canidae", inferred)
+
+    def test_infer_methodology_from_sampling_protocol(self):
+        class DummyTable:
+            def __init__(self, df):
+                self.df = df
+
+        class DummyTableSet:
+            def __init__(self, tables):
+                self._tables = tables
+
+            def all(self):
+                return self._tables
+
+        class DummyDataset:
+            def __init__(self, tables):
+                self.table_set = DummyTableSet(tables)
+
+        dataset = DummyDataset(
+            [
+                DummyTable(
+                    pd.DataFrame(
+                        {
+                            "samplingProtocol": ["Camera trap", "Camera trap"],
+                        }
+                    )
+                )
+            ]
+        )
+
+        inferred = SetEML._infer_methodology_from_dataset(dataset)
+        self.assertEqual(inferred, "Camera trap")

@@ -1,5 +1,6 @@
 import sys
 from io import StringIO
+import calendar
 from pydantic import Field, PositiveInt, BaseModel, EmailStr
 import re
 from functools import lru_cache
@@ -7,7 +8,7 @@ from html import unescape
 import pandas as pd
 import numpy as np
 from api.helpers.openai_helpers import OpenAIBaseModel
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple, ClassVar
 from api.helpers.publish import (
     upload_dwca, 
     register_dataset_and_endpoint,
@@ -888,6 +889,402 @@ class SetEML(OpenAIBaseModel):
         None,
         description="Optional list of people involved in the dataset. Each entry should be an object with first_name, last_name, email, and orcid keys."
     )
+    TEXT_PLACEHOLDER_VALUES: ClassVar[set[str]] = {
+        "", "unknown", "not known", "not provided", "n/a", "na", "none", "null", "tbd", "pending"
+    }
+
+    @classmethod
+    def _clean_text_value(cls, value) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @staticmethod
+    def _coerce_float(value) -> Optional[float]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text or text.lower() in {'nan', 'none', 'nat'}:
+            return None
+        try:
+            return float(text)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _coerce_int(value) -> Optional[int]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text or text.lower() in {'nan', 'none', 'nat'}:
+            return None
+        try:
+            return int(float(text))
+        except Exception:
+            return None
+
+    @classmethod
+    def _parse_single_date_token(cls, token: str) -> Optional[Tuple[datetime.date, datetime.date]]:
+        text = (token or "").strip()
+        if not text:
+            return None
+
+        # Explicit ISO-style granularities
+        m_year = re.fullmatch(r"(\d{4})", text)
+        if m_year:
+            year = int(m_year.group(1))
+            return datetime.date(year, 1, 1), datetime.date(year, 12, 31)
+
+        m_year_month = re.fullmatch(r"(\d{4})-(\d{2})", text)
+        if m_year_month:
+            year = int(m_year_month.group(1))
+            month = int(m_year_month.group(2))
+            if 1 <= month <= 12:
+                last_day = calendar.monthrange(year, month)[1]
+                return datetime.date(year, month, 1), datetime.date(year, month, last_day)
+            return None
+
+        m_full_date = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", text)
+        if m_full_date:
+            try:
+                date_obj = datetime.date(int(m_full_date.group(1)), int(m_full_date.group(2)), int(m_full_date.group(3)))
+                return date_obj, date_obj
+            except ValueError:
+                return None
+
+        # Fallback parser for non-ISO strings (e.g. "11 March 2026")
+        try:
+            parsed = parse(text, default=datetime.datetime(1900, 1, 1), fuzzy=False)
+            date_obj = parsed.date()
+            return date_obj, date_obj
+        except (ParserError, ValueError, OverflowError):
+            return None
+
+    @classmethod
+    def _extract_temporal_bounds_from_value(cls, value) -> Optional[Tuple[datetime.date, datetime.date]]:
+        text = str(value).strip() if value is not None else ""
+        if not text or text.lower() in {'nan', 'none', 'nat'}:
+            return None
+
+        # Interval encoded as "start/end"
+        if "/" in text:
+            start_raw, end_raw = [part.strip() for part in text.split("/", 1)]
+            start_bounds = cls._parse_single_date_token(start_raw)
+            end_bounds = cls._parse_single_date_token(end_raw)
+            if start_bounds and end_bounds:
+                start_date, end_date = start_bounds[0], end_bounds[1]
+                return (start_date, end_date) if start_date <= end_date else (end_date, start_date)
+            return None
+
+        # Interval encoded as "start - end", "start – end", or "start to end"
+        m = re.split(r"\s(?:to|-|–)\s", text, maxsplit=1)
+        if len(m) == 2:
+            start_bounds = cls._parse_single_date_token(m[0])
+            end_bounds = cls._parse_single_date_token(m[1])
+            if start_bounds and end_bounds:
+                start_date, end_date = start_bounds[0], end_bounds[1]
+                return (start_date, end_date) if start_date <= end_date else (end_date, start_date)
+            return None
+
+        return cls._parse_single_date_token(text)
+
+    @classmethod
+    def _infer_temporal_bounds_from_df(cls, df: pd.DataFrame) -> Optional[Tuple[datetime.date, datetime.date]]:
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return None
+
+        min_date = None
+        max_date = None
+
+        normalized_cols = {str(col).strip().lower(): col for col in df.columns}
+        date_like_columns = [orig for norm, orig in normalized_cols.items() if 'date' in norm]
+
+        def update_bounds(bounds: Tuple[datetime.date, datetime.date]):
+            nonlocal min_date, max_date
+            start, end = bounds
+            if min_date is None or start < min_date:
+                min_date = start
+            if max_date is None or end > max_date:
+                max_date = end
+
+        # Any date-like columns (eventDate, Date, sampling_date, etc.)
+        for col in date_like_columns:
+            for value in df[col].tolist():
+                bounds = cls._extract_temporal_bounds_from_value(value)
+                if bounds:
+                    update_bounds(bounds)
+
+        # Explicit year/month/day decomposition
+        year_col = normalized_cols.get('year')
+        month_col = normalized_cols.get('month')
+        day_col = normalized_cols.get('day')
+        if year_col is not None:
+            for _, row in df.iterrows():
+                year = cls._coerce_int(row.get(year_col))
+                if year is None or year < 1:
+                    continue
+                month = cls._coerce_int(row.get(month_col)) if month_col is not None else None
+                day = cls._coerce_int(row.get(day_col)) if day_col is not None else None
+
+                try:
+                    if month is None:
+                        update_bounds((datetime.date(year, 1, 1), datetime.date(year, 12, 31)))
+                    elif day is None:
+                        if 1 <= month <= 12:
+                            last_day = calendar.monthrange(year, month)[1]
+                            update_bounds((datetime.date(year, month, 1), datetime.date(year, month, last_day)))
+                    else:
+                        update_bounds((datetime.date(year, month, day), datetime.date(year, month, day)))
+                except ValueError:
+                    continue
+
+        if min_date is None or max_date is None:
+            return None
+        return min_date, max_date
+
+    @classmethod
+    def _infer_temporal_scope_from_dataset(cls, dataset) -> Optional[str]:
+        min_date = None
+        max_date = None
+
+        for table in dataset.table_set.all():
+            bounds = cls._infer_temporal_bounds_from_df(table.df)
+            if not bounds:
+                continue
+            start, end = bounds
+            if min_date is None or start < min_date:
+                min_date = start
+            if max_date is None or end > max_date:
+                max_date = end
+
+        if min_date is None or max_date is None:
+            return None
+        if min_date == max_date:
+            return min_date.isoformat()
+        return f"{min_date.isoformat()}/{max_date.isoformat()}"
+
+    @classmethod
+    def _add_unique_text(cls, values: List[str], seen: set, value, max_values: int = 50):
+        text = cls._clean_text_value(value)
+        if text is None:
+            return
+        key = text.lower()
+        if key in seen:
+            return
+        if len(values) >= max_values:
+            return
+        seen.add(key)
+        values.append(text)
+
+    @classmethod
+    def _summarize_values(cls, label: str, values: List[str], max_values: int = 5) -> str:
+        if len(values) <= max_values:
+            return f"{label}: {', '.join(values)}"
+        shown = ", ".join(values[:max_values])
+        return f"{label}: {shown} (+{len(values) - max_values} more)"
+
+    @classmethod
+    def _infer_geographic_scope_from_dataset(cls, dataset) -> Optional[str]:
+        countries: List[str] = []
+        countries_seen = set()
+        regions: List[str] = []
+        regions_seen = set()
+        min_lat = None
+        max_lat = None
+        min_lon = None
+        max_lon = None
+
+        for table in dataset.table_set.all():
+            df = table.df
+            if not isinstance(df, pd.DataFrame) or df.empty:
+                continue
+            normalized_cols = {str(col).strip().lower(): col for col in df.columns}
+
+            country_col = normalized_cols.get("country")
+            if country_col is not None:
+                for value in df[country_col].tolist():
+                    cls._add_unique_text(countries, countries_seen, value, max_values=30)
+
+            if country_col is None:
+                for fallback_region_col in ("stateprovince", "county", "municipality", "locality"):
+                    region_col = normalized_cols.get(fallback_region_col)
+                    if region_col is None:
+                        continue
+                    for value in df[region_col].tolist():
+                        cls._add_unique_text(regions, regions_seen, value, max_values=30)
+
+            lat_col = normalized_cols.get("decimallatitude")
+            lon_col = normalized_cols.get("decimallongitude")
+            if lat_col is None or lon_col is None:
+                continue
+
+            for _, row in df.iterrows():
+                lat = cls._coerce_float(row.get(lat_col))
+                lon = cls._coerce_float(row.get(lon_col))
+                if lat is None or lon is None:
+                    continue
+                if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                    continue
+                min_lat = lat if min_lat is None else min(min_lat, lat)
+                max_lat = lat if max_lat is None else max(max_lat, lat)
+                min_lon = lon if min_lon is None else min(min_lon, lon)
+                max_lon = lon if max_lon is None else max(max_lon, lon)
+
+        parts = []
+        if countries:
+            parts.append(cls._summarize_values("Countries", countries))
+        elif regions:
+            parts.append(cls._summarize_values("Regions", regions))
+
+        if min_lat is not None and max_lat is not None and min_lon is not None and max_lon is not None:
+            parts.append(
+                f"Coordinate bounds: lat {min_lat:.4f} to {max_lat:.4f}, lon {min_lon:.4f} to {max_lon:.4f}"
+            )
+
+        if not parts:
+            return None
+        return "; ".join(parts)
+
+    @classmethod
+    def _infer_taxonomic_scope_from_dataset(cls, dataset) -> Optional[str]:
+        rank_columns = ["kingdom", "phylum", "class", "order", "family", "genus"]
+        rank_labels = {
+            "kingdom": "Kingdoms",
+            "phylum": "Phyla",
+            "class": "Classes",
+            "order": "Orders",
+            "family": "Families",
+            "genus": "Genera",
+        }
+        rank_values: Dict[str, List[str]] = {rank: [] for rank in rank_columns}
+        rank_seen: Dict[str, set] = {rank: set() for rank in rank_columns}
+        scientific_names: List[str] = []
+        scientific_names_seen = set()
+
+        for table in dataset.table_set.all():
+            df = table.df
+            if not isinstance(df, pd.DataFrame) or df.empty:
+                continue
+            normalized_cols = {str(col).strip().lower(): col for col in df.columns}
+
+            for rank in rank_columns:
+                col = normalized_cols.get(rank)
+                if col is None:
+                    continue
+                for value in df[col].tolist():
+                    cls._add_unique_text(rank_values[rank], rank_seen[rank], value, max_values=50)
+
+            scientific_name_col = normalized_cols.get("scientificname")
+            if scientific_name_col is not None:
+                for value in df[scientific_name_col].tolist():
+                    cls._add_unique_text(scientific_names, scientific_names_seen, value, max_values=50)
+
+        for rank in rank_columns:
+            values = rank_values[rank]
+            if not values:
+                continue
+            if len(values) == 1:
+                return f"{rank.capitalize()}: {values[0]}"
+            return cls._summarize_values(rank_labels.get(rank, f"{rank.capitalize()}s"), values)
+
+        if scientific_names:
+            return cls._summarize_values("Scientific names", scientific_names)
+        return None
+
+    @classmethod
+    def _infer_methodology_from_dataset(cls, dataset) -> Optional[str]:
+        methods: List[str] = []
+        methods_seen = set()
+
+        for table in dataset.table_set.all():
+            df = table.df
+            if not isinstance(df, pd.DataFrame) or df.empty:
+                continue
+            normalized_cols = {str(col).strip().lower(): col for col in df.columns}
+            candidate_cols = []
+            for exact in ("samplingprotocol", "methodology", "method", "protocol", "eventtype"):
+                col = normalized_cols.get(exact)
+                if col is not None:
+                    candidate_cols.append(col)
+            if not candidate_cols:
+                for norm_name, original_name in normalized_cols.items():
+                    if "protocol" in norm_name or "method" in norm_name:
+                        candidate_cols.append(original_name)
+
+            for col in candidate_cols:
+                for value in df[col].tolist():
+                    cls._add_unique_text(methods, methods_seen, value, max_values=12)
+
+        if not methods:
+            return None
+        if len(methods) == 1:
+            return methods[0]
+        return cls._summarize_values("Sampling protocol(s)", methods, max_values=4)
+
+    @classmethod
+    def _is_placeholder_text(cls, value: Optional[str]) -> bool:
+        text = cls._clean_text_value(value)
+        if text is None:
+            return True
+        return text.lower() in cls.TEXT_PLACEHOLDER_VALUES
+
+    @classmethod
+    def _is_today_placeholder_scope(cls, temporal_scope: str) -> bool:
+        bounds = cls._extract_temporal_bounds_from_value(temporal_scope)
+        if not bounds:
+            return False
+        today = datetime.date.today()
+        return bounds[0] == today and bounds[1] == today
+
+    @classmethod
+    def _resolve_temporal_scope(
+        cls, provided_scope: Optional[str], existing_scope: Optional[str], inferred_scope: Optional[str]
+    ) -> Tuple[Optional[str], Optional[str]]:
+        chosen_scope = provided_scope if provided_scope is not None else existing_scope
+        chosen_text = cls._clean_text_value(chosen_scope)
+        if chosen_text is None:
+            if inferred_scope:
+                return inferred_scope, f"Temporal scope inferred from table dates: {inferred_scope}."
+            return None, None
+
+        if inferred_scope and cls._is_today_placeholder_scope(chosen_text) and chosen_text != inferred_scope:
+            return inferred_scope, (
+                f"Temporal scope adjusted from placeholder '{chosen_text}' "
+                f"to data-derived range '{inferred_scope}'."
+            )
+
+        if inferred_scope and cls._is_placeholder_text(chosen_text) and chosen_text != inferred_scope:
+            return inferred_scope, (
+                f"Temporal scope adjusted from placeholder '{chosen_text}' "
+                f"to data-derived range '{inferred_scope}'."
+            )
+
+        return chosen_text, None
+
+    @classmethod
+    def _resolve_text_scope(
+        cls,
+        field_label: str,
+        provided_value: Optional[str],
+        existing_value: Optional[str],
+        inferred_value: Optional[str],
+    ) -> Tuple[Optional[str], Optional[str]]:
+        chosen_value = provided_value if provided_value is not None else existing_value
+        chosen_text = cls._clean_text_value(chosen_value)
+
+        if chosen_text is None:
+            if inferred_value:
+                return inferred_value, f"{field_label} inferred from table data: {inferred_value}."
+            return None, None
+
+        if inferred_value and cls._is_placeholder_text(chosen_text) and chosen_text != inferred_value:
+            return inferred_value, (
+                f"{field_label} adjusted from placeholder '{chosen_text}' "
+                f"to data-derived value '{inferred_value}'."
+            )
+
+        return chosen_text, None
 
     def run(self):
         try:
@@ -895,19 +1292,53 @@ class SetEML(OpenAIBaseModel):
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
             eml = dataset.eml or {}
-            if self.temporal_scope is not None:
-                eml["temporal_scope"] = self.temporal_scope
-            if self.geographic_scope is not None:
-                eml["geographic_scope"] = self.geographic_scope
-            if self.taxonomic_scope is not None:
-                eml["taxonomic_scope"] = self.taxonomic_scope
-            if self.methodology is not None:
-                eml["methodology"] = self.methodology
+
+            inferred_temporal_scope = self._infer_temporal_scope_from_dataset(dataset)
+            temporal_scope_to_set, temporal_note = self._resolve_temporal_scope(
+                self.temporal_scope, eml.get("temporal_scope"), inferred_temporal_scope
+            )
+            if temporal_scope_to_set is not None:
+                eml["temporal_scope"] = temporal_scope_to_set
+
+            inferred_geographic_scope = self._infer_geographic_scope_from_dataset(dataset)
+            geographic_scope_to_set, geographic_note = self._resolve_text_scope(
+                "Geographic scope",
+                self.geographic_scope,
+                eml.get("geographic_scope"),
+                inferred_geographic_scope,
+            )
+            if geographic_scope_to_set is not None:
+                eml["geographic_scope"] = geographic_scope_to_set
+
+            inferred_taxonomic_scope = self._infer_taxonomic_scope_from_dataset(dataset)
+            taxonomic_scope_to_set, taxonomic_note = self._resolve_text_scope(
+                "Taxonomic scope",
+                self.taxonomic_scope,
+                eml.get("taxonomic_scope"),
+                inferred_taxonomic_scope,
+            )
+            if taxonomic_scope_to_set is not None:
+                eml["taxonomic_scope"] = taxonomic_scope_to_set
+
+            inferred_methodology = self._infer_methodology_from_dataset(dataset)
+            methodology_to_set, methodology_note = self._resolve_text_scope(
+                "Methodology",
+                self.methodology,
+                eml.get("methodology"),
+                inferred_methodology,
+            )
+            if methodology_to_set is not None:
+                eml["methodology"] = methodology_to_set
+
             if self.users is not None:
                 # Ensure we store plain dicts, not Pydantic objects
                 eml["users"] = [u.dict() for u in self.users]
             dataset.eml = eml
             dataset.save()
+
+            notes = [note for note in (temporal_note, geographic_note, taxonomic_note, methodology_note) if note]
+            if notes:
+                return f"EML has been successfully set. {' '.join(notes)}"
             return 'EML has been successfully set.'
         except Exception as e:
             print('There has been an error with SetEML')
