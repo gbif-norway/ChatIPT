@@ -1,10 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Remove standalone output for Kaniko compatibility
-  // output: 'standalone',
-  experimental: {
-    outputFileTracingRoot: undefined,
-  },
+  output: 'standalone',
 }
 
 module.exports = nextConfig
