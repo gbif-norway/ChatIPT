@@ -30,6 +30,9 @@ body { overflow: auto !important }
     margin-top: 0;
     margin-bottom: 0;
 }
+.chat-composer textarea.user-input {
+    resize: none;
+}
 .input-group-append .input-group-text { border-top-left-radius: 0; border-bottom-left-radius: 0;}
 
 .text-bg-success { background-color: #90d28b}

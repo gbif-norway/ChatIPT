@@ -249,7 +249,7 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
           </div>
 
           <form className={composerClassName} onSubmit={handleSubmit}>
-            <div className="d-flex flex-wrap align-items-center gap-2">
+            <div className="d-flex flex-wrap align-items-start gap-2">
               <button
                 type="button"
                 className="btn btn-outline-secondary"
@@ -261,8 +261,8 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
                 <span className="visually-hidden">Attach files</span>
               </button>
               <div className="flex-grow-1">
-                <input
-                  type="text"
+                <textarea
+                  rows={2}
                   className="form-control user-input"
                   value={userInput}
                   onChange={(e) => {
