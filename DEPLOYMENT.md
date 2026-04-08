@@ -46,6 +46,61 @@ This document describes the **current** ChatIPT deployment workflow.
   - `gbifnorway/chatipt-front-end`
 - Write access to `../gitops`
 
+## Local Development For Agent Sessions
+
+Use this when an agent needs to run and debug the app locally (especially frontend/UI work).
+
+### Start local stack
+
+From repo root:
+
+```bash
+cd /Users/rukayasj/Projects/chatipt
+docker compose up --build
+```
+
+Expected local URLs:
+
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:8000/api`
+
+Notes:
+
+- Backend startup uses `back-end/start.sh` as entrypoint in Docker.
+- In local compose, `SKIP_COLLECTSTATIC=1` is set to speed up dev startup.
+- Frontend runs via `npm run dev` inside compose.
+
+### Let Codex inspect the live browser UI
+
+For high-quality frontend debugging, expose Chrome DevTools to Codex via MCP.
+
+One-time install/config:
+
+```bash
+brew install chrome-devtools-mcp
+codex mcp add chrome-devtools -- chrome-devtools-mcp --autoConnect --channel stable --no-usage-statistics
+```
+
+Checks:
+
+```bash
+codex mcp list
+curl -i http://127.0.0.1:9222/json/version
+```
+
+Expected:
+
+- `codex mcp list` shows `chrome-devtools`.
+- Chrome debug endpoint returns `200` with JSON (not `404`).
+
+If `9222` is not available, enable Chrome remote debugging (for example via
+`chrome://inspect/#remote-debugging`) and restart Chrome if needed.
+
+Important:
+
+- Existing Codex sessions do not always hot-load newly added MCP servers.
+- After adding/enabling Chrome DevTools MCP, start a new Codex session before asking it to inspect UI.
+
 ### One-time buildx setup for cache support
 
 Use a `docker-container` buildx builder. The default `docker` driver often fails with:

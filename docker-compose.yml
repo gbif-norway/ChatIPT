@@ -24,6 +24,8 @@ services:
       - "8000:8000"
     env_file:
       - ./back-end/.env.dev
+    environment:
+      - SKIP_COLLECTSTATIC=1
     # environment:
       # # ORCID OAuth2 credentials (override from env file if needed)
       # - ORCID_CLIENT_ID=${ORCID_CLIENT_ID}

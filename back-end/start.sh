@@ -26,15 +26,22 @@ python manage.py setup_orcid
 echo "Loading tasks from fixtures..."
 python manage.py load_tasks
 
-# Create superuser if environment variables are set
+# Create superuser when email/password are provided.
+# Keep username aligned with email to match project auth conventions.
 if [ -n "$DJANGO_SUPERUSER_EMAIL" ] && [ -n "$DJANGO_SUPERUSER_PASSWORD" ]; then
     echo "Creating superuser..."
-    python manage.py createsuperuser --noinput --email $DJANGO_SUPERUSER_EMAIL || echo "Superuser already exists or creation failed"
+    python manage.py createsuperuser --noinput --username "$DJANGO_SUPERUSER_EMAIL" --email "$DJANGO_SUPERUSER_EMAIL" || echo "Superuser already exists or creation failed"
+elif [ -n "$DJANGO_SUPERUSER_EMAIL" ] || [ -n "$DJANGO_SUPERUSER_PASSWORD" ]; then
+    echo "Skipping superuser creation (set both DJANGO_SUPERUSER_EMAIL and DJANGO_SUPERUSER_PASSWORD to enable it)."
 fi
 
-# Collect static files (if needed)
-echo "Collecting static files..."
-python manage.py collectstatic --noinput
+# Collect static files unless explicitly skipped (useful for local dev)
+if [ "${SKIP_COLLECTSTATIC:-0}" = "1" ]; then
+    echo "Skipping static collection (SKIP_COLLECTSTATIC=1)."
+else
+    echo "Collecting static files..."
+    python manage.py collectstatic --noinput
+fi
 
 # Start the application
 echo "Starting Django server..."
