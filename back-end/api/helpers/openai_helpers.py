@@ -2,6 +2,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
+from django.conf import settings
 from pydantic import BaseModel
 from openai import OpenAI, InternalServerError
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
@@ -51,7 +52,8 @@ class CompatAssistantMessage:
 
 @retry(retry=retry_if_exception_type(InternalServerError), stop=stop_after_attempt(10), wait=wait_fixed(2))
 def query_responses_api(args):
-    with OpenAI(timeout=180.0) as client:
+    timeout_seconds = float(getattr(settings, "OPENAI_RESPONSES_TIMEOUT_SECONDS", 180.0))
+    with OpenAI(timeout=timeout_seconds) as client:
         return client.responses.create(**args)
 
 

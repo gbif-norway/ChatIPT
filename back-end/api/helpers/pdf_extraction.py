@@ -329,7 +329,8 @@ def _run_openai_pdf_extraction(
     conversation_digest: str,
     extraction_mode: str,
 ):
-    with OpenAI(timeout=180.0) as client:
+    timeout_seconds = float(getattr(settings, "PDF_EXTRACTION_OPENAI_TIMEOUT_SECONDS", 600.0))
+    with OpenAI(timeout=timeout_seconds) as client:
         with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
             tmp.write(pdf_bytes)
             tmp.flush()
