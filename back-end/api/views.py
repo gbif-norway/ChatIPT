@@ -13,6 +13,11 @@ import requests
 from urllib.parse import urlencode
 import logging
 from math import isfinite
+from api.helpers.pdf_extraction import (
+    PDF_EXTRACTION_MODE_METADATA_AND_TABLES,
+    PDF_EXTRACTION_MODE_METADATA_ONLY,
+    summarize_extraction_for_note,
+)
 
 logger = logging.getLogger(__name__)
 PRIVATE_PROFILE_STATUS_CODES = {401, 403, 404}
@@ -759,6 +764,16 @@ class UserFileViewSet(viewsets.ModelViewSet):
         # Ensure user cannot override dataset assignment
         if hasattr(serializer, 'validated_data'):
             serializer.validated_data.pop('dataset', None)
+        has_tabular_uploads = any(
+            existing_file.file_type == UserFile.FileType.TABULAR
+            for existing_file in dataset.user_files.all()
+        )
+        serializer.context['is_new_dataset_upload'] = False
+        serializer.context['pdf_extraction_mode'] = (
+            PDF_EXTRACTION_MODE_METADATA_ONLY
+            if has_tabular_uploads
+            else PDF_EXTRACTION_MODE_METADATA_AND_TABLES
+        )
         serializer.save(dataset=dataset)
 
 class TaskViewSet(viewsets.ModelViewSet):
@@ -805,6 +820,8 @@ class MessageViewSet(viewsets.ModelViewSet):
             new_tables = list(new_tables_qs)
 
             note_sections = []
+            pdf_extraction_notes = []
+            multi_candidate_detected = False
             if new_files:
                 file_descriptions = []
                 for user_file in new_files:
@@ -813,8 +830,17 @@ class MessageViewSet(viewsets.ModelViewSet):
                         preview = self._read_tree_preview(user_file)
                         if preview:
                             description = f"{description} (preview: {preview})"
+                    elif user_file.file_type == UserFile.FileType.PDF:
+                        extraction = user_file.get_pdf_extraction()
+                        if extraction:
+                            pdf_extraction_notes.append(summarize_extraction_for_note(extraction))
+                            extracted_json = extraction.extracted_json or {}
+                            if (extracted_json.get('candidate_dataset_count') or 0) > 1:
+                                multi_candidate_detected = True
                     file_descriptions.append(description)
                 note_sections.append(f"User uploaded file(s): {', '.join(file_descriptions)}")
+                if pdf_extraction_notes:
+                    note_sections.append("PDF extraction: " + " || ".join(pdf_extraction_notes))
 
             if new_tables:
                 note_sections.append("New table ids: [" + ", ".join(str(table.id) for table in new_tables) + "]")
@@ -823,6 +849,12 @@ class MessageViewSet(viewsets.ModelViewSet):
                 note = "[NOTE: " + "; ".join(note_sections) + "]"
                 content = (openai_obj.get('content') or '').strip()
                 openai_obj['content'] = f"{content}\n\n{note}" if content else note
+                if multi_candidate_detected:
+                    openai_obj['content'] += (
+                        "\n\n[PLEASE ASK USER: Multiple candidate datasets were detected from the PDF extraction. "
+                        "Ask whether to proceed with one candidate dataset or combine selected candidates, and which "
+                        "extracted tables to keep or discard.]"
+                    )
                 openai_obj['role'] = Message.Role.USER
                 serializer.validated_data['openai_obj'] = openai_obj
 

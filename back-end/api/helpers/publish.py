@@ -114,6 +114,16 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         if elem is not None and text not in (None, ''):
             elem.text = str(text)
 
+    def normalize_doi(value: str | None) -> str | None:
+        if value in (None, ''):
+            return None
+        doi = str(value).strip()
+        if not doi:
+            return None
+        doi = doi.replace('https://doi.org/', '').replace('http://doi.org/', '')
+        doi = doi.replace('doi:', '').strip()
+        return doi or None
+
     dataset_node = find(root, 'dataset')
     if dataset_node is None:
         dataset_node = ET.SubElement(root, 'dataset')
@@ -169,17 +179,12 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
 
     # Users array: add additional creators and project personnel
     users_list = eml_extra.get('users') or []
-    # Append additional creators for any extra users beyond the primary
-    for idx, person in enumerate(users_list):
-        # If this user is effectively the same as primary, skip duplicating as extra
-        is_primary_like = (
-            (person.get('first_name') or '') == primary_person.get('first_name') and
-            (person.get('last_name') or '') == primary_person.get('last_name')
-        )
-        # Always include in project personnel; add as extra creator only for non-primary users
-        if not is_primary_like:
-            extra_creator = ET.SubElement(dataset_node, 'creator')
-            set_person(extra_creator, person)
+    if users_list:
+        for existing_creator in list(findall(dataset_node, 'creator')):
+            dataset_node.remove(existing_creator)
+        for person in users_list:
+            creator = ET.SubElement(dataset_node, 'creator')
+            set_person(creator, person)
 
     # Project personnel
     project_node = find(dataset_node, 'project')
@@ -223,6 +228,30 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     method_step = get_or_create(methods, 'methodStep')
     description_node = get_or_create(method_step, 'description')
     set_text(get_or_create(description_node, 'para'), eml_extra.get('methodology'))
+
+    manuscript_doi = normalize_doi(eml_extra.get('manuscript_doi'))
+    if manuscript_doi:
+        alternate_identifier = ET.SubElement(dataset_node, 'alternateIdentifier')
+        set_text(alternate_identifier, f"https://doi.org/{manuscript_doi}")
+
+    dataset_citation = eml_extra.get('dataset_citation')
+    manuscript_title = eml_extra.get('manuscript_title')
+    journal = eml_extra.get('journal')
+    publication_year = eml_extra.get('publication_year')
+    has_manuscript_metadata = any(
+        value for value in [dataset_citation, manuscript_title, journal, publication_year]
+    )
+    if has_manuscript_metadata:
+        additional_metadata = get_or_create(dataset_node, 'additionalMetadata')
+        metadata_node = get_or_create(additional_metadata, 'metadata')
+        gbif_node = get_or_create(metadata_node, 'gbif')
+        set_text(get_or_create(gbif_node, 'citation'), dataset_citation)
+
+        manuscript_node = get_or_create(metadata_node, 'manuscript')
+        set_text(get_or_create(manuscript_node, 'title'), manuscript_title)
+        set_text(get_or_create(manuscript_node, 'journal'), journal)
+        if publication_year is not None:
+            set_text(get_or_create(manuscript_node, 'publicationYear'), str(publication_year))
 
     # Prune empty elements except root and dataset and intellectualRights
     def is_empty(element: ET.Element) -> bool:

@@ -304,6 +304,9 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
           const formData = new FormData();
           formData.append('dataset', currentDatasetId);
           formData.append('file', file);
+          if (trimmedInput.length > 0) {
+            formData.append('upload_context_message', trimmedInput);
+          }
 
           const response = await fetch(`${config.baseUrl}/api/user-files/`, {
             method: 'POST',
@@ -509,7 +512,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
                   type="button"
                   className="btn btn-outline-secondary"
                   onClick={triggerFileDialog}
-                  title="Add data files or phylogenetic tree files"
+                  title="Add data files, phylogenetic tree files, or manuscript PDFs"
                   disabled={isUserSending}
                 >
                   <i className="bi bi-paperclip" aria-hidden="true"></i>
@@ -586,7 +589,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
                 className="d-none"
               />
               <div className="text-muted small mt-3">
-                Tip: use the paperclip to add data files or phylogenetic tree files.
+                Tip: use the paperclip to add data files, tree files, or manuscript PDFs.
               </div>
             </form>
           )}

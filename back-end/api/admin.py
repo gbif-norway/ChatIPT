@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from .models import CustomUser, Dataset, Task, Table, Agent, Message, UserFile
+from .models import CustomUser, Dataset, Task, Table, Agent, Message, UserFile, PdfExtraction
 
 
 @admin.register(CustomUser)
@@ -31,8 +31,8 @@ class CustomUserAdmin(UserAdmin):
 
 @admin.register(Dataset)
 class DatasetAdmin(admin.ModelAdmin):
-    list_display = ('title', 'user', 'orcid', 'created_at', 'published_at', 'dwc_core')
-    list_filter = ('dwc_core', 'published_at', 'rejected_at', 'created_at')
+    list_display = ('title', 'user', 'orcid', 'source_mode', 'created_at', 'published_at', 'dwc_core')
+    list_filter = ('source_mode', 'dwc_core', 'published_at', 'rejected_at', 'created_at')
     search_fields = ('title', 'description', 'user__email', 'orcid')
     readonly_fields = ('created_at', 'published_at', 'rejected_at')
     date_hierarchy = 'created_at'
@@ -40,9 +40,9 @@ class DatasetAdmin(admin.ModelAdmin):
 
 @admin.register(Task)
 class TaskAdmin(admin.ModelAdmin):
-    list_display = ('name', 'id')
+    list_display = ('name', 'order', 'id')
     search_fields = ('name', 'text')
-    ordering = ('id',)
+    ordering = ('order', 'id')
 
 
 @admin.register(Table)
@@ -64,6 +64,14 @@ class UserFileAdmin(admin.ModelAdmin):
         return obj.file_type_label
 
     get_file_type.short_description = 'File type'
+
+
+@admin.register(PdfExtraction)
+class PdfExtractionAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user_file', 'status', 'page_count', 'model', 'updated_at')
+    list_filter = ('status', 'updated_at', 'created_at')
+    search_fields = ('user_file__file', 'user_file__dataset__title', 'fingerprint', 'openai_file_id')
+    readonly_fields = ('created_at', 'updated_at')
 
 
 @admin.register(Agent)

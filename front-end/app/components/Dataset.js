@@ -202,6 +202,25 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   })();
 
   const title = currentDataset.title || fallbackFileName;
+  const pdfFiles = Array.isArray(currentDataset?.user_files)
+    ? currentDataset.user_files.filter((file) => {
+        const fileType = String(file?.file_type || '').toLowerCase();
+        return fileType.includes('pdf');
+      })
+    : [];
+
+  const getPdfStatusBadge = (pdfFile) => {
+    const status = String(pdfFile?.extraction_status || '').toLowerCase();
+    const outcome = String(pdfFile?.extraction_outcome || '').toLowerCase();
+
+    if (status === 'pending' || !status) {
+      return { label: 'Processing PDF', className: 'text-bg-warning' };
+    }
+    if (status === 'failed' || outcome === 'success_no_raw_data') {
+      return { label: 'Needs review', className: 'text-bg-danger' };
+    }
+    return { label: 'Metadata extracted', className: 'text-bg-success' };
+  };
 
   return (
     <div className="container">
@@ -267,6 +286,45 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
             <p className="mb-3">{currentDataset.description}</p>
           )}
           {currentDataset.rejected_at && (<div className="alert alert-warning" role="alert">This dataset cannot be published on GBIF as it does not contain valid occurrence or checklist data with all the required fields. Please try uploading a new dataset</div>)}
+          {pdfFiles.length > 0 && (
+            <div className="mb-3">
+              <div className="d-flex flex-wrap gap-2">
+                {pdfFiles.map((pdfFile) => {
+                  const badge = getPdfStatusBadge(pdfFile);
+                  return (
+                    <span key={pdfFile.id} className={`badge ${badge.className} d-inline-flex align-items-center gap-1`}>
+                      <i className="bi bi-file-earmark-pdf" aria-hidden="true"></i>
+                      <span>{pdfFile.filename}</span>
+                      <span>•</span>
+                      <span>{badge.label}</span>
+                    </span>
+                  );
+                })}
+              </div>
+              {pdfFiles.map((pdfFile) => {
+                const extractionSummary = pdfFile?.extraction_summary;
+                const extractionTableIds = Array.isArray(pdfFile?.extraction_table_ids) ? pdfFile.extraction_table_ids : [];
+                if (!extractionSummary && extractionTableIds.length === 0) {
+                  return null;
+                }
+                return (
+                  <div key={`summary-${pdfFile.id}`} className="card mt-2">
+                    <div className="card-body py-2 px-3">
+                      <div className="small fw-semibold">{pdfFile.filename}</div>
+                      {extractionSummary && (
+                        <div className="small text-muted">{extractionSummary}</div>
+                      )}
+                      {extractionTableIds.length > 0 && (
+                        <div className="small mt-1">
+                          Extracted tables: {extractionTableIds.join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
       <div className="row mx-auto p-4 no-left-padding">
@@ -286,8 +344,17 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
           ) : (
             <div className="message assistant-message">
               <div className="inner-message">
-                <strong>Initializing dataset...</strong><br />
-                This dataset is being set up for processing. Please wait while the system prepares your data.
+                {currentDataset.rejected_at ? (
+                  <>
+                    <strong>Dataset requires new source data.</strong><br />
+                    PDF metadata was saved, but no high-confidence raw biodiversity table could be extracted.
+                  </>
+                ) : (
+                  <>
+                    <strong>Initializing dataset...</strong><br />
+                    This dataset is being set up for processing. Please wait while the system prepares your data.
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -352,7 +419,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
               <div className="alert alert-info">
                 <strong>No tables to display yet.</strong>
                 <div className="small">
-                  Tree files are stored for later use. Upload a spreadsheet to generate preview tables.
+                  If you uploaded only PDFs, review extraction status above and upload raw biodiversity tables when needed.
                 </div>
               </div>
             )}

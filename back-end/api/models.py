@@ -58,6 +58,18 @@ class Dataset(models.Model):
         TAXONOMY = 'taxonomy'
     dwc_core = models.CharField(max_length=30, choices=DWCCore.choices, blank=True)
 
+    class SourceMode(models.TextChoices):
+        TABULAR_ONLY = 'tabular_only', _('Tabular only')
+        PDF_ONLY = 'pdf_only', _('PDF only')
+        HYBRID = 'hybrid', _('Hybrid')
+    source_mode = models.CharField(
+        max_length=20,
+        choices=SourceMode.choices,
+        default=SourceMode.TABULAR_ONLY,
+    )
+
+    MANUSCRIPT_TASK_NAME = "Manuscript extraction and dataset scoping"
+
     def rebuild_tables_from_user_files(self):
         """
         Regenerate tables from all stored user files.
@@ -91,8 +103,8 @@ class Dataset(models.Model):
             next_task = Task.objects.filter(order__gt=last_completed_agent.task.order).first()
             
             # Skip the "Phylogenetic tree linking" task if no tree files are uploaded
-            while next_task and next_task.name == "Phylogenetic tree linking" and not self.has_tree_files():
-                logger.info(f'Skipping task "{next_task.name}" - no tree files uploaded')
+            while next_task and self._should_skip_task(next_task):
+                logger.info(f'Skipping task "{next_task.name}" for source_mode "{self.source_mode}"')
                 next_task = Task.objects.filter(order__gt=next_task.order).first()
             
             if next_task:
@@ -110,11 +122,25 @@ class Dataset(models.Model):
             
             # Get tables for this dataset
             tables = Table.objects.filter(dataset=self)
-            if not tables.exists():
+            if not tables.exists() and self.source_mode == self.SourceMode.TABULAR_ONLY:
                 raise Exception('No tables found for this dataset. Please ensure the dataset has been properly processed.')
+
+            while first_task and self._should_skip_task(first_task):
+                logger.info(f'Skipping initial task "{first_task.name}" for source_mode "{self.source_mode}"')
+                first_task = Task.objects.filter(order__gt=first_task.order).first()
+
+            if not first_task:
+                raise Exception('No eligible tasks are configured in the system for this dataset.')
             
             first_task.create_agent_with_system_messages(dataset=self)
             return self.next_agent()
+
+    def _should_skip_task(self, task):
+        if task.name == "Phylogenetic tree linking" and not self.has_tree_files():
+            return True
+        if task.name == self.MANUSCRIPT_TASK_NAME and self.source_mode != self.SourceMode.PDF_ONLY:
+            return True
+        return False
 
     def can_visualize_tree(self):
         """
@@ -139,6 +165,65 @@ class Dataset(models.Model):
             if ext in UserFile.TREE_EXTENSIONS:
                 return True
         return False
+
+    def has_pdf_files(self):
+        for user_file in self.user_files.all():
+            ext = Path(user_file.file.name).suffix.lower()
+            if ext in UserFile.PDF_EXTENSIONS:
+                return True
+        return False
+
+    def refresh_source_mode(self, save=True):
+        has_tabular = False
+        has_pdf = False
+        for user_file in self.user_files.all():
+            file_type = user_file.file_type
+            if file_type == UserFile.FileType.TABULAR:
+                has_tabular = True
+            elif file_type == UserFile.FileType.PDF:
+                has_pdf = True
+
+        if has_tabular and has_pdf:
+            source_mode = self.SourceMode.HYBRID
+        elif has_pdf:
+            source_mode = self.SourceMode.PDF_ONLY
+        else:
+            source_mode = self.SourceMode.TABULAR_ONLY
+
+        changed = source_mode != self.source_mode
+        self.source_mode = source_mode
+        if save and changed:
+            self.save(update_fields=['source_mode'])
+        return source_mode
+
+    def get_pdf_extraction_summaries(self):
+        summaries = []
+        for user_file in self.user_files.order_by('uploaded_at', 'id'):
+            if user_file.file_type != UserFile.FileType.PDF:
+                continue
+            extraction = user_file.get_pdf_extraction()
+            if not extraction:
+                continue
+            extracted_json = extraction.extracted_json or {}
+            summaries.append(
+                {
+                    'user_file_id': user_file.id,
+                    'filename': user_file.filename,
+                    'status': extraction.status,
+                    'outcome': extracted_json.get('outcome'),
+                    'summary': extracted_json.get('summary') or '',
+                    'confidence': extracted_json.get('confidence'),
+                    'candidate_dataset_count': extracted_json.get('candidate_dataset_count'),
+                    'candidate_dataset_summaries': extracted_json.get('candidate_dataset_summaries') or [],
+                    'required_data_for_publication': extracted_json.get('required_data_for_publication') or [],
+                    'extraction_mode': extracted_json.get('extraction_mode'),
+                    'materialized_table_ids': extracted_json.get('materialized_table_ids') or [],
+                    'high_confidence_table_count': extracted_json.get('high_confidence_table_count', 0),
+                    'error': extraction.error or '',
+                    'updated_at': extraction.updated_at,
+                }
+            )
+        return summaries
 
     def get_tree_file_info(self, content_preview_chars=500, max_tip_labels=50):
         """
@@ -213,11 +298,13 @@ class UserFile(models.Model):
     class FileType(models.TextChoices):
         TABULAR = 'tabular', _('Tabular data')
         TREE = 'tree', _('Phylogenetic tree')
+        PDF = 'pdf', _('PDF manuscript')
         UNKNOWN = 'unknown', _('Unknown')
 
     TABULAR_TEXT_EXTENSIONS = {'.csv', '.tsv', '.txt'}
     TABULAR_EXCEL_EXTENSIONS = {'.xlsx', '.xls', '.xlsm', '.xlsb', '.ods'}
     TREE_EXTENSIONS = {'.newick', '.nwk', '.nex', '.nexus', '.tre', '.tree'}
+    PDF_EXTENSIONS = {'.pdf'}
 
     dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, related_name='user_files')
     uploaded_at = models.DateTimeField(auto_now_add=True)
@@ -256,9 +343,17 @@ class UserFile(models.Model):
         ext = Path(self.file.name).suffix.lower()
         if ext in self.TREE_EXTENSIONS:
             return self.FileType.TREE
+        if ext in self.PDF_EXTENSIONS:
+            return self.FileType.PDF
         if ext in self.TABULAR_TEXT_EXTENSIONS or ext in self.TABULAR_EXCEL_EXTENSIONS:
             return self.FileType.TABULAR
         return self.FileType.UNKNOWN
+
+    def get_pdf_extraction(self):
+        try:
+            return self.pdf_extraction
+        except Exception:
+            return None
 
     def _load_tabular_dataframes(self):
         ext = Path(self.file.name).suffix.lower()
@@ -467,6 +562,37 @@ class UserFile(models.Model):
         ordering = ['uploaded_at', 'id']
 
 
+class PdfExtraction(models.Model):
+    class Status(models.TextChoices):
+        PENDING = 'pending', _('Pending')
+        SUCCESS = 'success', _('Success')
+        FAILED = 'failed', _('Failed')
+
+    user_file = models.OneToOneField(
+        UserFile,
+        on_delete=models.CASCADE,
+        related_name='pdf_extraction',
+    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    fingerprint = models.CharField(max_length=128, blank=True)
+    page_count = models.PositiveIntegerField(null=True, blank=True)
+    openai_file_id = models.CharField(max_length=200, blank=True)
+    model = models.CharField(max_length=200, blank=True)
+    extracted_json = models.JSONField(null=True, blank=True)
+    error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at', '-id']
+
+    @property
+    def extraction_outcome(self):
+        if not isinstance(self.extracted_json, dict):
+            return None
+        return self.extracted_json.get('outcome')
+
+
 class Task(models.Model):  # See tasks.yaml for the only objects this model is populated with
     name = models.CharField(max_length=300, unique=True)
     text = models.TextField()
@@ -485,6 +611,9 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
             agent_tools.SetUserLanguage.__name__,
             agent_tools.SetAgentTaskToComplete.__name__,
             agent_tools.Python.__name__,
+            agent_tools.CreateNewTables.__name__,
+            agent_tools.ViewUserPDFs.__name__,
+            agent_tools.ExtractTablesFromPDFs.__name__,
             agent_tools.BasicValidationForSomeDwCTerms.__name__,
             agent_tools.GetDarwinCoreInfo.__name__,
             agent_tools.GetDwCExtensionInfo.__name__,
@@ -745,6 +874,7 @@ class Agent(models.Model):
             'agent': self,
             'all_tasks_count': Task.objects.count(),
             'new_table_cutoff': new_table_cutoff,
+            'pdf_extractions': self.dataset.get_pdf_extraction_summaries(),
         }
         system_message_text = render_to_string('prompt.txt', context=context)
         system_message = self.message_set.filter(openai_obj__role=Message.Role.SYSTEM).order_by('created_at').first()

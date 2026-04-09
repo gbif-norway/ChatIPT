@@ -261,6 +261,13 @@ REST_FRAMEWORK = {
     ],
 }
 
+# PDF pipeline configuration
+ENABLE_PDF_PIPELINE = os.environ.get("ENABLE_PDF_PIPELINE", "True") == "True"
+PDF_MAX_PAGES = int(os.environ.get("PDF_MAX_PAGES", "40"))
+PDF_TABLE_CONFIDENCE_THRESHOLD = float(os.environ.get("PDF_TABLE_CONFIDENCE_THRESHOLD", "0.7"))
+PDF_EXTRACTION_MODEL = os.environ.get("PDF_EXTRACTION_MODEL", "gpt-5.4-mini")
+PDF_EXTRACTION_FAILURE_ALERT_THRESHOLD = int(os.environ.get("PDF_EXTRACTION_FAILURE_ALERT_THRESHOLD", "3"))
+
 # CORS settings for React frontend
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 CORS_ALLOWED_ORIGINS = [

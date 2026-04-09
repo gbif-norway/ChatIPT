@@ -7,6 +7,7 @@ export const ALLOWED_FILE_EXTENSIONS = [
   '.xlsm',
   '.xlsb',
   '.ods',
+  '.pdf',
   '.newick',
   '.nex',
   '.nexus',
@@ -28,4 +29,3 @@ export const isExtensionAllowed = (filename) => {
   const extension = filename.slice(lastDot).toLowerCase();
   return ALLOWED_FILE_EXTENSIONS.includes(extension);
 };
-

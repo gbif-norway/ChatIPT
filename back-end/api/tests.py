@@ -70,6 +70,50 @@ class EmlGenerationTests(SimpleTestCase):
         # methods description present
         self.assertIsNotNone(dataset.find('methods/methodStep/description/para'))
 
+    def test_make_eml_maps_manuscript_fields_and_creators(self):
+        class DummyUser:
+            first_name = 'Alice'
+            last_name = 'Smith'
+            orcid_id = '0000-0001-2345-6789'
+            email = 'alice@example.org'
+
+        xml_text = make_eml(
+            title='PDF-derived dataset',
+            description='Abstract text',
+            user=DummyUser(),
+            eml_extra={
+                'manuscript_doi': '10.1234/abcd.1',
+                'dataset_citation': 'Doe J, Roe R (2025) Example manuscript.',
+                'manuscript_title': 'Example manuscript',
+                'journal': 'Journal of Examples',
+                'publication_year': 2025,
+                'users': [
+                    {'first_name': 'Jane', 'last_name': 'Doe', 'email': 'jane@example.org'},
+                    {'first_name': 'Richard', 'last_name': 'Roe', 'email': 'richard@example.org'},
+                ],
+            },
+        )
+        root = ET.fromstring(xml_text.encode('utf-8'))
+        dataset = root.find('dataset')
+        self.assertIsNotNone(dataset)
+
+        creators = dataset.findall('creator')
+        self.assertEqual(len(creators), 2)
+        self.assertEqual(creators[0].find('individualName/givenName').text, 'Jane')
+        self.assertEqual(creators[1].find('individualName/givenName').text, 'Richard')
+
+        contact_email = dataset.find('contact/electronicMailAddress')
+        self.assertIsNotNone(contact_email)
+        self.assertEqual(contact_email.text, 'alice@example.org')
+
+        alternate_identifier = dataset.find('alternateIdentifier')
+        self.assertIsNotNone(alternate_identifier)
+        self.assertEqual(alternate_identifier.text, 'https://doi.org/10.1234/abcd.1')
+
+        citation = dataset.find('additionalMetadata/metadata/gbif/citation')
+        self.assertIsNotNone(citation)
+        self.assertEqual(citation.text, 'Doe J, Roe R (2025) Example manuscript.')
+
 
 class PhylogenyParsingTests(SimpleTestCase):
     """Tests for phylogenetic tree parsing and matching functions."""

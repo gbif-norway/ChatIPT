@@ -132,6 +132,10 @@ const HomeContent = () => {
                   <p>ChatIPT helps students and researchers publish biodiversity datasets to GBIF.</p>
                   <p className="no-bottom-margin">Upload data files, then use the chat to clean and standardize data, create metadata, and publish as a Darwin Core Archive.</p>
                 </div>
+                <div className="alert alert-info" role="alert">
+                  <p><strong>Latest update:</strong> PDF manuscript parsing is now available.</p>
+                  <p className="no-bottom-margin">Try uploading manuscripts to extract metadata, or extract tabular data when available.</p>
+                </div>
                 <hr />
                 <p><strong>Who this is for</strong></p>
                 <ul>

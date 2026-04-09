@@ -841,6 +841,299 @@ class Python(OpenAIBaseModel):
         return str(result)[:3000]
 
 
+class NewTableInput(BaseModel):
+    title: str = Field(..., description="Human-readable title for the table.")
+    csv: str = Field(..., description="CSV content including a header row.")
+    description: Optional[str] = Field(None, description="Optional description for this table.")
+    source_user_file_id: Optional[PositiveInt] = Field(
+        None,
+        description="Optional source PDF user_file id used for provenance notes.",
+    )
+    provenance_note: Optional[str] = Field(
+        None,
+        description="Optional additional provenance context.",
+    )
+
+
+class CreateNewTables(OpenAIBaseModel):
+    """
+    Create one or more dataset Tables from CSV strings in one call.
+    This is intended for deterministic parser-to-table ingestion.
+    """
+
+    agent_id: PositiveInt = Field(...)
+    tables: List[NewTableInput] = Field(
+        ...,
+        description="List of table payloads to create.",
+    )
+
+    def run(self):
+        from api.models import Agent, Table, UserFile
+
+        try:
+            agent = Agent.objects.get(id=self.agent_id)
+            dataset = agent.dataset
+        except Agent.DoesNotExist:
+            return f"Error: Agent with id {self.agent_id} does not exist."
+
+        created = []
+        warnings = []
+
+        for index, table_input in enumerate(self.tables):
+            title = (table_input.title or "").strip()
+            if not title:
+                warnings.append(f"tables[{index}] skipped: title is required.")
+                continue
+
+            csv_payload = (table_input.csv or "").strip()
+            if not csv_payload:
+                warnings.append(f"tables[{index}] skipped: csv content is empty.")
+                continue
+
+            try:
+                df = pd.read_csv(StringIO(csv_payload), dtype='str', keep_default_na=False)
+            except Exception as exc:
+                warnings.append(f"tables[{index}] skipped: failed to parse CSV ({exc}).")
+                continue
+
+            if df.empty:
+                warnings.append(f"tables[{index}] skipped: parsed CSV has no rows.")
+                continue
+
+            for col in df.columns:
+                df[col] = df[col].astype(str)
+
+            provenance_bits = []
+            if table_input.provenance_note:
+                provenance_bits.append(str(table_input.provenance_note).strip())
+
+            if table_input.source_user_file_id is not None:
+                source_file = UserFile.objects.filter(
+                    id=table_input.source_user_file_id,
+                    dataset_id=dataset.id,
+                ).first()
+                if source_file:
+                    provenance_bits.append(f"source_user_file_id={source_file.id} ({source_file.filename})")
+                else:
+                    warnings.append(
+                        f"tables[{index}] source_user_file_id={table_input.source_user_file_id} "
+                        "does not belong to this dataset and was ignored."
+                    )
+
+            description = (table_input.description or "").strip()
+            if provenance_bits:
+                provenance_text = " | ".join([bit for bit in provenance_bits if bit])
+                description = f"{description} | {provenance_text}".strip(" |")
+
+            table = Table.objects.create(
+                dataset=dataset,
+                title=title[:200],
+                df=df,
+                description=description[:1900],
+            )
+            created.append(
+                {
+                    "table_id": table.id,
+                    "title": table.title,
+                    "row_count": int(df.shape[0]),
+                    "column_count": int(df.shape[1]),
+                }
+            )
+
+        result = {
+            "table_ids": [item["table_id"] for item in created],
+            "tables": created,
+            "warnings": warnings,
+        }
+        return json.dumps(result)
+
+
+def _resolve_pdf_user_files_for_agent(agent_id: int, requested_ids: Optional[List[int]] = None):
+    from api.models import Agent, UserFile
+
+    try:
+        agent = Agent.objects.get(id=agent_id)
+    except Agent.DoesNotExist:
+        return None, [], f"Error: Agent with id {agent_id} does not exist."
+
+    dataset = agent.dataset
+    user_files_qs = dataset.user_files.order_by('uploaded_at', 'id')
+
+    if requested_ids:
+        requested_ids_set = {int(value) for value in requested_ids}
+        user_files_qs = user_files_qs.filter(id__in=requested_ids_set)
+
+    pdf_files = [user_file for user_file in user_files_qs if user_file.file_type == UserFile.FileType.PDF]
+    if not pdf_files:
+        return agent, [], "No PDF files were found for this dataset."
+    return agent, pdf_files, None
+
+
+class ViewUserPDFs(OpenAIBaseModel):
+    """
+    Re-read one or more uploaded PDF manuscripts with file input and return concise extraction summaries.
+    Use this to refresh manuscript context before asking questions or making metadata decisions.
+    """
+
+    agent_id: PositiveInt = Field(...)
+    user_file_ids: Optional[List[PositiveInt]] = Field(
+        default=None,
+        description="Optional list of PDF user_file IDs to inspect. If omitted, all PDFs in the dataset are used.",
+    )
+    focus_question: Optional[str] = Field(
+        default=None,
+        description="Optional short focus question/instruction to guide re-reading (metadata only).",
+    )
+    force_refresh: bool = Field(
+        default=True,
+        description="When true, always re-run extraction against the PDF file input even if cached extraction exists.",
+    )
+
+    def run(self):
+        from api.models import PdfExtraction
+        from api.helpers.pdf_extraction import (
+            PDF_EXTRACTION_MODE_METADATA_ONLY,
+            PdfExtractionHardReject,
+            build_dataset_conversation_digest,
+            extract_pdf_for_user_file,
+        )
+
+        agent, pdf_files, error = _resolve_pdf_user_files_for_agent(self.agent_id, self.user_file_ids)
+        if error:
+            return error
+        if not agent:
+            return "Unable to load agent context."
+
+        digest = build_dataset_conversation_digest(agent.dataset)
+        focus = (self.focus_question or "").strip()
+        items = []
+        warnings = []
+
+        for user_file in pdf_files:
+            extraction = user_file.get_pdf_extraction()
+            should_refresh = self.force_refresh or extraction is None
+            if should_refresh:
+                try:
+                    extraction = extract_pdf_for_user_file(
+                        user_file,
+                        is_new_dataset=False,
+                        latest_user_message=focus,
+                        conversation_digest=digest,
+                        extraction_mode=PDF_EXTRACTION_MODE_METADATA_ONLY,
+                    )
+                except PdfExtractionHardReject as exc:
+                    warnings.append(f"{user_file.filename}: {exc}")
+                    continue
+
+            if extraction is None:
+                warnings.append(f"{user_file.filename}: extraction unavailable.")
+                continue
+
+            extracted_json = extraction.extracted_json or {}
+            items.append(
+                {
+                    "user_file_id": user_file.id,
+                    "filename": user_file.filename,
+                    "status": extraction.status,
+                    "outcome": extracted_json.get("outcome"),
+                    "summary": extracted_json.get("summary"),
+                    "confidence": extracted_json.get("confidence"),
+                    "candidate_dataset_count": extracted_json.get("candidate_dataset_count"),
+                    "candidate_dataset_summaries": extracted_json.get("candidate_dataset_summaries") or [],
+                    "required_data_for_publication": extracted_json.get("required_data_for_publication") or [],
+                }
+            )
+
+            if extraction.status == PdfExtraction.Status.FAILED and extraction.error:
+                warnings.append(f"{user_file.filename}: {extraction.error}")
+
+        return json.dumps({"pdfs": items, "warnings": warnings}, ensure_ascii=False)
+
+
+class ExtractTablesFromPDFs(OpenAIBaseModel):
+    """
+    Extract tabular data from one or more uploaded PDFs and materialize high-confidence tables.
+    Use this when a dataset has PDFs but you want to explicitly pull tables now.
+    """
+
+    agent_id: PositiveInt = Field(...)
+    user_file_ids: Optional[List[PositiveInt]] = Field(
+        default=None,
+        description="Optional list of PDF user_file IDs to process. If omitted, all PDFs in the dataset are used.",
+    )
+    focus_question: Optional[str] = Field(
+        default=None,
+        description="Optional short instruction describing which tables to prioritize.",
+    )
+
+    def run(self):
+        from api.models import PdfExtraction
+        from api.helpers.pdf_extraction import (
+            PDF_EXTRACTION_MODE_METADATA_AND_TABLES,
+            PdfExtractionHardReject,
+            build_dataset_conversation_digest,
+            extract_pdf_for_user_file,
+        )
+
+        agent, pdf_files, error = _resolve_pdf_user_files_for_agent(self.agent_id, self.user_file_ids)
+        if error:
+            return error
+        if not agent:
+            return "Unable to load agent context."
+
+        digest = build_dataset_conversation_digest(agent.dataset)
+        focus = (self.focus_question or "").strip()
+        items = []
+        all_table_ids = []
+        warnings = []
+
+        for user_file in pdf_files:
+            try:
+                extraction = extract_pdf_for_user_file(
+                    user_file,
+                    is_new_dataset=False,
+                    latest_user_message=focus,
+                    conversation_digest=digest,
+                    extraction_mode=PDF_EXTRACTION_MODE_METADATA_AND_TABLES,
+                )
+            except PdfExtractionHardReject as exc:
+                warnings.append(f"{user_file.filename}: {exc}")
+                continue
+
+            if extraction is None:
+                warnings.append(f"{user_file.filename}: extraction unavailable.")
+                continue
+
+            extracted_json = extraction.extracted_json or {}
+            table_ids = extracted_json.get("materialized_table_ids") or []
+            all_table_ids.extend(table_ids)
+            items.append(
+                {
+                    "user_file_id": user_file.id,
+                    "filename": user_file.filename,
+                    "status": extraction.status,
+                    "outcome": extracted_json.get("outcome"),
+                    "summary": extracted_json.get("summary"),
+                    "materialized_table_ids": table_ids,
+                    "high_confidence_table_count": extracted_json.get("high_confidence_table_count", 0),
+                    "confidence": extracted_json.get("confidence"),
+                }
+            )
+
+            if extraction.status == PdfExtraction.Status.FAILED and extraction.error:
+                warnings.append(f"{user_file.filename}: {extraction.error}")
+
+        unique_table_ids = sorted({int(table_id) for table_id in all_table_ids})
+        return json.dumps(
+            {
+                "table_ids": unique_table_ids,
+                "pdfs": items,
+                "warnings": warnings,
+            },
+            ensure_ascii=False,
+        )
+
+
 class RollBack(OpenAIBaseModel):
     """
     USE WITH EXTREME CAUTION! RESETS TABLES COMPLETELY to the original dataframes loaded into pandas from the Excel sheet uploaded by the user. 
@@ -885,6 +1178,14 @@ class SetEML(OpenAIBaseModel):
     geographic_scope: Optional[str] = Field(None, description="Optional geographic coverage of the dataset (e.g. Amazon Basin, Brazil)")
     taxonomic_scope: Optional[str] = Field(None, description="Optional taxonomic coverage (e.g. Lepidoptera, Aves)")
     methodology: Optional[str] = Field(None, description="Optional description of the sampling / data collection methodology")
+    manuscript_doi: Optional[str] = Field(None, description="Optional manuscript DOI (without or with DOI URL).")
+    manuscript_title: Optional[str] = Field(None, description="Optional manuscript title.")
+    journal: Optional[str] = Field(None, description="Optional manuscript journal name.")
+    publication_year: Optional[int] = Field(None, description="Optional manuscript publication year.")
+    dataset_citation: Optional[str] = Field(None, description="Optional dataset-level citation text (GBIF profile citation).")
+    abstract_source: Optional[str] = Field(None, description="Optional source of abstract text: user|manuscript|mixed.")
+    methods_source: Optional[str] = Field(None, description="Optional source of methods text: user|manuscript|mixed.")
+    creators_source: Optional[str] = Field(None, description="Optional source of creator list: user_profile|manuscript|mixed.")
     users: Optional[List[EMLUser]] = Field(
         None,
         description="Optional list of people involved in the dataset. Each entry should be an object with first_name, last_name, email, and orcid keys."
@@ -923,6 +1224,17 @@ class SetEML(OpenAIBaseModel):
             return int(float(text))
         except Exception:
             return None
+
+    @staticmethod
+    def _normalize_doi(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        text = text.replace('https://doi.org/', '').replace('http://doi.org/', '')
+        text = text.replace('doi:', '').strip()
+        return text or None
 
     @classmethod
     def _parse_single_date_token(cls, token: str) -> Optional[Tuple[datetime.date, datetime.date]]:
@@ -1329,6 +1641,38 @@ class SetEML(OpenAIBaseModel):
             )
             if methodology_to_set is not None:
                 eml["methodology"] = methodology_to_set
+
+            manuscript_doi = self._normalize_doi(self.manuscript_doi)
+            if manuscript_doi is not None:
+                eml["manuscript_doi"] = manuscript_doi
+
+            manuscript_title = self._clean_text_value(self.manuscript_title)
+            if manuscript_title is not None:
+                eml["manuscript_title"] = manuscript_title
+
+            journal = self._clean_text_value(self.journal)
+            if journal is not None:
+                eml["journal"] = journal
+
+            publication_year = self._coerce_int(self.publication_year)
+            if publication_year is not None:
+                eml["publication_year"] = publication_year
+
+            dataset_citation = self._clean_text_value(self.dataset_citation)
+            if dataset_citation is not None:
+                eml["dataset_citation"] = dataset_citation
+
+            abstract_source = self._clean_text_value(self.abstract_source)
+            if abstract_source is not None:
+                eml["abstract_source"] = abstract_source
+
+            methods_source = self._clean_text_value(self.methods_source)
+            if methods_source is not None:
+                eml["methods_source"] = methods_source
+
+            creators_source = self._clean_text_value(self.creators_source)
+            if creators_source is not None:
+                eml["creators_source"] = creators_source
 
             if self.users is not None:
                 # Ensure we store plain dicts, not Pydantic objects

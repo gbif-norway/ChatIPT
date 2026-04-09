@@ -131,7 +131,7 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
     }
 
     if (!selectedFiles.length) {
-      setError('Attach at least one data file to start your dataset.');
+      setError('Attach at least one data file, tree file, or manuscript PDF to start your dataset.');
       return;
     }
 
@@ -152,6 +152,9 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
       selectedFiles.forEach(({ file }) => {
         formData.append('files', file);
       });
+      if (trimmedInput.length > 0) {
+        formData.append('upload_context_message', trimmedInput);
+      }
 
       const response = await fetch(`${config.baseUrl}/api/datasets/`, {
         method: 'POST',
@@ -244,7 +247,7 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
           <div className="message assistant-message mb-4">
             <div className="inner-message">
               <strong>Hello {displayName}.</strong><br />
-              Upload a data file and let's get started with a new dataset!
+              Upload data files, tree files, or manuscript PDFs to start a new dataset.
             </div>
           </div>
 
@@ -254,7 +257,7 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
                 type="button"
                 className="btn btn-outline-secondary"
                 onClick={triggerFileDialog}
-                title="Add data files or phylogenetic tree files"
+                title="Add data files, phylogenetic tree files, or manuscript PDFs"
                 disabled={isSubmitting}
               >
                 <i className="bi bi-paperclip" aria-hidden="true"></i>
@@ -330,7 +333,7 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
               className="d-none"
             />
             <div className="text-muted small mt-3">
-              Tip: use the paperclip to add data files or phylogenetic tree files.
+              Tip: use the paperclip to add data files, tree files, or manuscript PDFs.
             </div>
           </form>
         </div>

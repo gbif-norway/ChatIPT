@@ -1,6 +1,16 @@
 from api.models import Dataset, Table, Agent, Message, Task, UserFile
 from rest_framework import serializers
 from api.helpers import discord_bot
+from django.conf import settings
+from django.utils import timezone
+from pathlib import Path
+from api.helpers.pdf_extraction import (
+    PDF_EXTRACTION_MODE_METADATA_AND_TABLES,
+    PDF_EXTRACTION_MODE_METADATA_ONLY,
+    PdfExtractionHardReject,
+    build_dataset_conversation_digest,
+    extract_pdf_for_user_file,
+)
 
 
 class TaskSerializer(serializers.ModelSerializer):
@@ -48,6 +58,10 @@ class UserFileSerializer(serializers.ModelSerializer):
     filename = serializers.CharField(read_only=True)
     file_url = serializers.SerializerMethodField()
     file_type = serializers.SerializerMethodField()
+    extraction_status = serializers.SerializerMethodField()
+    extraction_outcome = serializers.SerializerMethodField()
+    extraction_summary = serializers.SerializerMethodField()
+    extraction_table_ids = serializers.SerializerMethodField()
 
     class Meta:
         model = UserFile
@@ -59,6 +73,10 @@ class UserFileSerializer(serializers.ModelSerializer):
             'filename',
             'file_url',
             'file_type',
+            'extraction_status',
+            'extraction_outcome',
+            'extraction_summary',
+            'extraction_table_ids',
         ]
         read_only_fields = [
             'id',
@@ -66,6 +84,10 @@ class UserFileSerializer(serializers.ModelSerializer):
             'filename',
             'file_url',
             'file_type',
+            'extraction_status',
+            'extraction_outcome',
+            'extraction_summary',
+            'extraction_table_ids',
         ]
         extra_kwargs = {
             'dataset': {'required': False}
@@ -83,6 +105,32 @@ class UserFileSerializer(serializers.ModelSerializer):
     def get_file_type(self, obj):
         return obj.file_type_label
 
+    def get_extraction_status(self, obj):
+        extraction = obj.get_pdf_extraction()
+        return extraction.status if extraction else None
+
+    def get_extraction_outcome(self, obj):
+        extraction = obj.get_pdf_extraction()
+        if not extraction:
+            return None
+        return extraction.extraction_outcome
+
+    def get_extraction_summary(self, obj):
+        extraction = obj.get_pdf_extraction()
+        if not extraction:
+            return None
+        extracted_json = extraction.extracted_json or {}
+        if extraction.error:
+            return extraction.error
+        return extracted_json.get('summary')
+
+    def get_extraction_table_ids(self, obj):
+        extraction = obj.get_pdf_extraction()
+        if not extraction:
+            return []
+        extracted_json = extraction.extracted_json or {}
+        return extracted_json.get('materialized_table_ids') or []
+
     def create(self, validated_data):
         try:
             user_file = UserFile.objects.create(**validated_data)
@@ -92,6 +140,12 @@ class UserFileSerializer(serializers.ModelSerializer):
                 user_file.delete()
             raise serializers.ValidationError(f"An error was encountered when loading your data. Error details: {exc}.")
 
+        if file_type == UserFile.FileType.UNKNOWN:
+            user_file.delete()
+            raise serializers.ValidationError(
+                "Unsupported file type. Please upload a spreadsheet/delimited file, a phylogenetic tree file, or a PDF manuscript."
+            )
+
         if file_type == UserFile.FileType.TABULAR:
             try:
                 filtered_dfs = UserFile.filter_dataframes(dfs)
@@ -99,6 +153,40 @@ class UserFileSerializer(serializers.ModelSerializer):
                 user_file.delete()
                 raise serializers.ValidationError(str(exc))
             user_file.create_tables(filtered_dfs)
+        elif file_type == UserFile.FileType.PDF and settings.ENABLE_PDF_PIPELINE:
+            request = self.context.get('request')
+            latest_user_message = ''
+            if request:
+                latest_user_message = str(request.data.get('upload_context_message') or '').strip()
+            conversation_digest = build_dataset_conversation_digest(user_file.dataset)
+            is_new_dataset_upload = bool(self.context.get('is_new_dataset_upload'))
+            dataset_has_tabular_uploads = any(
+                existing_file.file_type == UserFile.FileType.TABULAR
+                for existing_file in user_file.dataset.user_files.exclude(id=user_file.id)
+            )
+            extraction_mode = str(
+                self.context.get('pdf_extraction_mode')
+                or (
+                    PDF_EXTRACTION_MODE_METADATA_ONLY
+                    if dataset_has_tabular_uploads
+                    else PDF_EXTRACTION_MODE_METADATA_AND_TABLES
+                )
+            ).strip().lower()
+            if extraction_mode not in {PDF_EXTRACTION_MODE_METADATA_ONLY, PDF_EXTRACTION_MODE_METADATA_AND_TABLES}:
+                extraction_mode = PDF_EXTRACTION_MODE_METADATA_AND_TABLES
+            try:
+                extract_pdf_for_user_file(
+                    user_file,
+                    is_new_dataset=is_new_dataset_upload,
+                    latest_user_message=latest_user_message,
+                    conversation_digest=conversation_digest,
+                    extraction_mode=extraction_mode,
+                )
+            except PdfExtractionHardReject as exc:
+                user_file.delete()
+                raise serializers.ValidationError(str(exc))
+
+        user_file.dataset.refresh_source_mode(save=True)
 
         return user_file
 
@@ -126,6 +214,7 @@ class DatasetSerializer(serializers.ModelSerializer):
             'gbif_url',
             'user_language',
             'dwc_core',
+            'source_mode',
             'visible_agent_set',
             'user_info',
             'user_files',
@@ -140,6 +229,7 @@ class DatasetSerializer(serializers.ModelSerializer):
             'published_at',
             'rejected_at',
             'can_visualize_tree',
+            'source_mode',
         ]
     
     def get_visible_agent_set(self, dataset):
@@ -184,12 +274,27 @@ class DatasetSerializer(serializers.ModelSerializer):
 
         dataset = Dataset.objects.create(**validated_data)
         uploaded_names = []
+        uploaded_exts = [Path(getattr(uploaded_file, 'name', '')).suffix.lower() for uploaded_file in uploaded_files]
+        incoming_has_tabular = any(
+            ext in (UserFile.TABULAR_TEXT_EXTENSIONS | UserFile.TABULAR_EXCEL_EXTENSIONS)
+            for ext in uploaded_exts
+        )
+        incoming_has_pdf = any(ext in UserFile.PDF_EXTENSIONS for ext in uploaded_exts)
+        new_dataset_pdf_extraction_mode = (
+            PDF_EXTRACTION_MODE_METADATA_ONLY
+            if incoming_has_tabular and incoming_has_pdf
+            else PDF_EXTRACTION_MODE_METADATA_AND_TABLES
+        )
 
         try:
             for uploaded_file in uploaded_files:
                 file_serializer = UserFileSerializer(
                     data={'file': uploaded_file},
-                    context=self.context,
+                    context={
+                        **self.context,
+                        'is_new_dataset_upload': True,
+                        'pdf_extraction_mode': new_dataset_pdf_extraction_mode,
+                    },
                 )
                 file_serializer.is_valid(raise_exception=True)
                 user_file = file_serializer.save(dataset=dataset)
@@ -203,29 +308,53 @@ class DatasetSerializer(serializers.ModelSerializer):
                 f"An error was encountered when loading your data. Error details: {exc}."
             )
 
-        if not dataset.table_set.exists():
+        file_types = [user_file.file_type for user_file in dataset.user_files.all()]
+        has_tabular = any(file_type == UserFile.FileType.TABULAR for file_type in file_types)
+        has_pdf = any(file_type == UserFile.FileType.PDF for file_type in file_types)
+
+        if not has_tabular and not has_pdf:
+            dataset.delete()
+            raise serializers.ValidationError(
+                "No usable dataset source was found. "
+                "Please upload at least one spreadsheet/delimited text file or a PDF manuscript."
+            )
+
+        dataset.refresh_source_mode(save=True)
+
+        if not dataset.table_set.exists() and has_tabular and not has_pdf:
             dataset.delete()
             raise serializers.ValidationError(
                 "No tabular data could be loaded from your files. "
                 "Please upload at least one spreadsheet or delimited text file with two or more data rows."
             )
 
+        if not dataset.table_set.exists() and has_pdf:
+            successful_pdf_extractions = []
+            for user_file in dataset.user_files.all():
+                if user_file.file_type != UserFile.FileType.PDF:
+                    continue
+                extraction = user_file.get_pdf_extraction()
+                if extraction and extraction.status == extraction.Status.SUCCESS:
+                    successful_pdf_extractions.append(extraction)
+
+            if successful_pdf_extractions and all(
+                extraction.extraction_outcome in {'SUCCESS_NO_RAW_DATA', 'SUCCESS_METADATA_ONLY'}
+                for extraction in successful_pdf_extractions
+            ):
+                dataset.rejected_at = timezone.now()
+                dataset.save(update_fields=['rejected_at'])
+
         discord_bot.send_discord_message(
             f"V3 New dataset publication starting on ChatIPT. User files: {', '.join(uploaded_names) if uploaded_names else 'none'}."
         )
 
-        first_task = Task.objects.first()
-        if not first_task:
-            dataset.delete()
-            raise serializers.ValidationError(
-                "No tasks are configured in the system. Please contact the administrator to load the required tasks."
-            )
-
-        Agent.create_with_system_message(
-            dataset=dataset,
-            task=first_task,
-            tables=list(dataset.table_set.all()),
-        )
+        if not dataset.rejected_at:
+            first_agent = dataset.next_agent()
+            if not first_agent:
+                dataset.delete()
+                raise serializers.ValidationError(
+                    "No tasks are configured in the system. Please contact the administrator to load the required tasks."
+                )
 
         discord_bot.send_discord_message(f"Dataset ID assigned: {dataset.id}.")
         return dataset
@@ -245,7 +374,7 @@ class DatasetListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'description', 'dwc_core',
             'created_at', 'published_at', 'rejected_at',
-            'record_count', 'last_updated', 'status', 'progress', 'last_message_preview', 'user_info', 'user_files'
+            'record_count', 'last_updated', 'status', 'progress', 'last_message_preview', 'user_info', 'user_files', 'source_mode'
         ]
 
     def get_record_count(self, obj):
