@@ -46,9 +46,16 @@ This document describes the **current** ChatIPT deployment workflow.
   - `gbifnorway/chatipt-front-end`
 - Write access to `../gitops`
 
+Important local workflow policy:
+
+- Local app development and local deployment are Docker-only.
+- Do not rely on a project Python virtualenv (`.venv`) for normal local run/test/deploy steps.
+- Use `docker compose` for local backend/frontend startup and local verification.
+
 ## Local Development For Agent Sessions
 
-Use this when an agent needs to run and debug the app locally (especially frontend/UI work). NOTE: All development should be done in Docker.
+Use this when an agent needs to run and debug the app locally (especially frontend/UI work).
+All local development should be done in Docker.
 
 ### Start local stack
 

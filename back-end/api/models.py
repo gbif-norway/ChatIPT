@@ -5,7 +5,7 @@ from django.utils.translation import gettext_lazy as _
 from django.contrib.postgres.fields import ArrayField
 from django.contrib.auth.models import AbstractUser
 from api import agent_tools
-from api.helpers.openai_helpers import create_chat_completion
+from api.helpers.openai_helpers import create_response_message
 from picklefield.fields import PickledObjectField
 import pandas as pd
 from django.template.loader import render_to_string
@@ -18,6 +18,7 @@ import tempfile
 import re
 import numpy as np
 import io
+import zipfile
 from pathlib import Path
 
 
@@ -490,6 +491,51 @@ class UserFile(models.Model):
         }
         return labels.get(delimiter, repr(delimiter))
 
+    @staticmethod
+    def _sanitize_excel_xml_font_families(file_bytes):
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as source_zip:
+                sanitized_buffer = io.BytesIO()
+                modified = False
+
+                with zipfile.ZipFile(sanitized_buffer, 'w', zipfile.ZIP_DEFLATED) as sanitized_zip:
+                    for info in source_zip.infolist():
+                        data = source_zip.read(info.filename)
+
+                        if info.filename.endswith('.xml'):
+                            try:
+                                xml_text = data.decode('utf-8')
+                            except UnicodeDecodeError:
+                                pass
+                            else:
+                                repaired_xml = re.sub(
+                                    r'family val="(\d+)"',
+                                    lambda match: 'family val="14"' if int(match.group(1)) > 14 else match.group(0),
+                                    xml_text,
+                                )
+                                if repaired_xml != xml_text:
+                                    modified = True
+                                    data = repaired_xml.encode('utf-8')
+
+                        sanitized_zip.writestr(info, data)
+
+                if modified:
+                    return sanitized_buffer.getvalue(), True
+        except zipfile.BadZipFile:
+            pass
+
+        return file_bytes, False
+
+    @classmethod
+    def _load_workbook_with_xml_repair(cls, file_bytes):
+        try:
+            return openpyxl.load_workbook(io.BytesIO(file_bytes))
+        except ValueError:
+            repaired_bytes, repaired = cls._sanitize_excel_xml_font_families(file_bytes)
+            if not repaired:
+                raise
+            return openpyxl.load_workbook(io.BytesIO(repaired_bytes))
+
     def _load_excel_workbook(self):
         self.file.open('rb')
         try:
@@ -498,7 +544,7 @@ class UserFile(models.Model):
             self.file.close()
 
         try:
-            workbook = openpyxl.load_workbook(io.BytesIO(file_bytes))
+            workbook = self._load_workbook_with_xml_repair(file_bytes)
             for sheet in workbook.worksheets:
                 for row in sheet.iter_rows():
                     for cell in row:
@@ -908,7 +954,7 @@ class Agent(models.Model):
             self.regenerate_system_message(new_table_cutoff)
 
             # Main GPT interaction
-            response_message = create_chat_completion(self.message_set.all(), self.task.functions)
+            response_message = create_response_message(self.message_set.all(), self.task.functions)
 
             # Store the assistant message returned by OpenAI
             message = Message.objects.create(agent=self, openai_obj=response_message.dict())  # response_message.__dict__

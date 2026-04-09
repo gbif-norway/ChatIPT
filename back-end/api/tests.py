@@ -1,8 +1,12 @@
 import os
 import datetime
+import io
+import zipfile
 import xml.etree.ElementTree as ET
+from types import SimpleNamespace
 from unittest.mock import patch
 from django.test import SimpleTestCase
+import openpyxl
 import pandas as pd
 from .helpers.publish import (
     make_eml,
@@ -10,6 +14,11 @@ from .helpers.publish import (
     parse_nexus_tip_labels,
 )
 from .agent_tools import GetDarwinCoreInfo, SetEML, LogBugWithDeveloper
+from .helpers.openai_helpers import (
+    _functions_to_responses_tools,
+    _messages_to_responses_input,
+    _response_to_compat_message,
+)
 
 
 class EmlGenerationTests(SimpleTestCase):
@@ -495,6 +504,59 @@ class SetEMLTemporalInferenceTests(SimpleTestCase):
         self.assertEqual(inferred, "Camera trap")
 
 
+class ExcelWorkbookRepairTests(SimpleTestCase):
+    @staticmethod
+    def _build_workbook_bytes():
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "template"
+        sheet["A1"] = "column"
+        sheet["A2"] = "value"
+        sheet["A1"].comment = openpyxl.comments.Comment("sample comment", "tester")
+
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        return buffer.getvalue()
+
+    @staticmethod
+    def _inject_invalid_font_family_values(workbook_bytes):
+        source = io.BytesIO(workbook_bytes)
+        output = io.BytesIO()
+
+        with zipfile.ZipFile(source, "r") as source_zip:
+            with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as output_zip:
+                for info in source_zip.infolist():
+                    data = source_zip.read(info.filename)
+                    if info.filename.endswith(".xml"):
+                        xml = data.decode("utf-8")
+                        xml = xml.replace('family val="2"', 'family val="34"')
+                        data = xml.encode("utf-8")
+                    output_zip.writestr(info, data)
+
+        return output.getvalue()
+
+    def test_loader_repairs_out_of_range_font_family_values(self):
+        from .models import UserFile
+
+        valid_workbook = self._build_workbook_bytes()
+        broken_workbook = self._inject_invalid_font_family_values(valid_workbook)
+
+        with self.assertRaises(ValueError):
+            openpyxl.load_workbook(io.BytesIO(broken_workbook))
+
+        workbook = UserFile._load_workbook_with_xml_repair(broken_workbook)
+        self.assertEqual(workbook.sheetnames, ["template"])
+
+    def test_sanitizer_is_noop_for_valid_workbook(self):
+        from .models import UserFile
+
+        workbook_bytes = self._build_workbook_bytes()
+        sanitized_bytes, modified = UserFile._sanitize_excel_xml_font_families(workbook_bytes)
+
+        self.assertFalse(modified)
+        self.assertEqual(workbook_bytes, sanitized_bytes)
+
+
 class LogBugWithDeveloperTests(SimpleTestCase):
     @patch("api.agent_tools.discord_bot.send_discord_message")
     def test_uses_discord_user_id_for_direct_mention(self, send_discord_message_mock):
@@ -525,3 +587,133 @@ class LogBugWithDeveloperTests(SimpleTestCase):
         self.assertIn("@_rkian", sent_message)
         self.assertIn("Validation response parsing failed", sent_message)
         self.assertNotIn("allowed_mentions", send_discord_message_mock.call_args.kwargs)
+
+
+class ResponsesAdapterCompatibilityTests(SimpleTestCase):
+    class _Message:
+        def __init__(self, openai_obj):
+            self.openai_obj = openai_obj
+
+    def test_messages_are_mapped_to_responses_input_with_tool_history(self):
+        messages = [
+            self._Message({"role": "system", "content": "You are a helper."}),
+            self._Message({"role": "user", "content": "Clean my table"}),
+            self._Message(
+                {
+                    "role": "assistant",
+                    "content": "I will run Python.",
+                    "tool_calls": [
+                        {
+                            "id": "call_abc",
+                            "type": "function",
+                            "function": {
+                                "name": "Python",
+                                "arguments": "{\"code\":\"print(1)\"}",
+                            },
+                        }
+                    ],
+                }
+            ),
+            self._Message({"role": "tool", "tool_call_id": "call_abc", "content": "1"}),
+        ]
+
+        items = _messages_to_responses_input(messages)
+
+        self.assertEqual(items[0], {"role": "system", "content": "You are a helper."})
+        self.assertEqual(items[1], {"role": "user", "content": "Clean my table"})
+        self.assertEqual(items[2], {"role": "assistant", "content": "I will run Python."})
+        self.assertEqual(
+            items[3],
+            {
+                "type": "function_call",
+                "call_id": "call_abc",
+                "name": "Python",
+                "arguments": "{\"code\":\"print(1)\"}",
+            },
+        )
+        self.assertEqual(
+            items[4],
+            {
+                "type": "function_call_output",
+                "call_id": "call_abc",
+                "output": "1",
+            },
+        )
+
+    def test_responses_output_is_mapped_back_to_legacy_message_shape(self):
+        response = SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="function_call",
+                    call_id="call_xyz",
+                    name="Python",
+                    arguments="{\"code\":\"print(2)\"}",
+                ),
+                SimpleNamespace(
+                    type="message",
+                    content=[SimpleNamespace(type="output_text", text="Done.")],
+                ),
+            ],
+            output_text="Done.",
+        )
+
+        compat_message = _response_to_compat_message(response)
+
+        self.assertEqual(compat_message.role, "assistant")
+        self.assertEqual(compat_message.content, "Done.")
+        self.assertEqual(len(compat_message.tool_calls), 1)
+        self.assertEqual(compat_message.tool_calls[0].id, "call_xyz")
+        self.assertEqual(compat_message.tool_calls[0].function.name, "Python")
+        self.assertEqual(compat_message.tool_calls[0].function.arguments, "{\"code\":\"print(2)\"}")
+        self.assertEqual(
+            compat_message.dict(),
+            {
+                "role": "assistant",
+                "content": "Done.",
+                "tool_calls": [
+                    {
+                        "id": "call_xyz",
+                        "type": "function",
+                        "function": {
+                            "name": "Python",
+                            "arguments": "{\"code\":\"print(2)\"}",
+                        },
+                    }
+                ],
+            },
+        )
+
+    def test_functions_are_mapped_to_responses_tool_schema(self):
+        class DummyFunction:
+            @classmethod
+            def openai_schema(cls):
+                return {
+                    "name": "DummyFunction",
+                    "description": "A test helper function.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "foo": {"type": "string"},
+                        },
+                        "required": ["foo"],
+                    },
+                }
+
+        tools = _functions_to_responses_tools([DummyFunction])
+        self.assertEqual(
+            tools,
+            [
+                {
+                    "type": "function",
+                    "name": "DummyFunction",
+                    "description": "A test helper function.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "foo": {"type": "string"},
+                        },
+                        "required": ["foo"],
+                    },
+                }
+            ],
+        )

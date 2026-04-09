@@ -1837,6 +1837,16 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
         from api.models import Agent
         try:
             agent = Agent.objects.get(id=self.agent_id)
+            # Guardrail: Data content exploration must set basic metadata first.
+            if (
+                agent.task
+                and agent.task.name == "Data content exploration"
+                and (not agent.dataset.title or not agent.dataset.description)
+            ):
+                return (
+                    "Error: Cannot complete 'Data content exploration' without dataset title "
+                    "and description. Call SetBasicMetadata first."
+                )
             agent.completed_at = datetime.datetime.now()
             agent.save()
             print('Marking as complete...')

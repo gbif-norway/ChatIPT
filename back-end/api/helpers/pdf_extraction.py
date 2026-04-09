@@ -203,7 +203,7 @@ def extract_pdf_for_user_file(
             _materialize_tables_from_extraction(extraction, extraction_mode=extraction_mode)
             return extraction
 
-        model = getattr(settings, "PDF_EXTRACTION_MODEL", "gpt-5.4-mini")
+        model = getattr(settings, "PDF_EXTRACTION_MODEL", "gpt-5.4")
         extraction.model = model
 
         start = time.monotonic()
@@ -360,14 +360,7 @@ def _run_openai_pdf_extraction(
                     ],
                 }
             ],
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "pdf_extraction_result",
-                    "schema": PDF_EXTRACTION_SCHEMA,
-                    "strict": True,
-                }
-            },
+            text={"format": {"type": "json_object"}},
         )
 
     parsed = _extract_json_from_response(response)
@@ -485,6 +478,7 @@ def _normalize_extraction_json(payload: dict, *, extraction_mode: str) -> dict:
         "outcome": outcome,
         "materialized_table_ids": [],
         "evidence": normalized_evidence,
+        "raw_parser_output": payload,
     }
 
 
