@@ -175,7 +175,8 @@ TAG="${SHA}-${STAMP}"
 Main bottleneck is usually frontend build/push (large image), not Helm or `kubectl`.
 
 - Build backend once and retag for staging (same backend image for both envs).
-- Use buildx registry cache to speed repeated builds.
+- Reuse the persistent local `chatipt-builder` cache (Dockerfiles use BuildKit cache mounts).
+- Avoid `--cache-to ... mode=max` in normal releases; it adds a lot of push time.
 - Skip rebuilding unchanged component(s) when possible.
 
 ```bash
@@ -192,8 +193,7 @@ BUILDER="chatipt-builder"
 docker buildx build --builder ${BUILDER} --platform linux/amd64 \
   -f back-end/Dockerfile \
   -t gbifnorway/chatipt-back-end:${PROD_TAG} \
-  --cache-from=type=registry,ref=gbifnorway/chatipt-back-end:buildcache \
-  --cache-to=type=registry,ref=gbifnorway/chatipt-back-end:buildcache,mode=max \
+  --provenance=false --sbom=false \
   --push back-end
 
 # Reuse exact same backend image for staging tag (no second backend build)
@@ -205,18 +205,18 @@ docker buildx imagetools create \
 docker buildx build --builder ${BUILDER} --platform linux/amd64 \
   -f front-end/Dockerfile \
   --build-arg NEXT_PUBLIC_BASE_API_URL=https://api.chatipt.svc.gbif.no \
+  --build-arg NEXT_BUILD_CACHE_SCOPE=prod \
   -t gbifnorway/chatipt-front-end:${PROD_TAG} \
-  --cache-from=type=registry,ref=gbifnorway/chatipt-front-end:buildcache \
-  --cache-to=type=registry,ref=gbifnorway/chatipt-front-end:buildcache,mode=max \
+  --provenance=false --sbom=false \
   --push front-end
 
 # Frontend staging (separate build because API URL differs)
 docker buildx build --builder ${BUILDER} --platform linux/amd64 \
   -f front-end/Dockerfile \
   --build-arg NEXT_PUBLIC_BASE_API_URL=https://staging-api.chatipt.svc.gbif.no \
+  --build-arg NEXT_BUILD_CACHE_SCOPE=staging \
   -t gbifnorway/chatipt-front-end:${STAGING_TAG} \
-  --cache-from=type=registry,ref=gbifnorway/chatipt-front-end:buildcache \
-  --cache-to=type=registry,ref=gbifnorway/chatipt-front-end:buildcache,mode=max \
+  --provenance=false --sbom=false \
   --push front-end
 ```
 
@@ -233,6 +233,7 @@ docker buildx build --platform linux/amd64 \
 docker buildx build --platform linux/amd64 \
   -f front-end/Dockerfile \
   --build-arg NEXT_PUBLIC_BASE_API_URL=https://api.chatipt.svc.gbif.no \
+  --build-arg NEXT_BUILD_CACHE_SCOPE=prod \
   -t gbifnorway/chatipt-front-end:${PROD_TAG} \
   --push front-end
 ```
@@ -250,6 +251,7 @@ docker buildx build --platform linux/amd64 \
 docker buildx build --platform linux/amd64 \
   -f front-end/Dockerfile \
   --build-arg NEXT_PUBLIC_BASE_API_URL=https://staging-api.chatipt.svc.gbif.no \
+  --build-arg NEXT_BUILD_CACHE_SCOPE=staging \
   -t gbifnorway/chatipt-front-end:${STAGING_TAG} \
   --push front-end
 ```

@@ -40,3 +40,12 @@ node_modules/
 .next/
 dist/
 build/
+
+# Large local example assets are not needed in backend images.
+api/templates/examples/**/*.pdf
+api/templates/examples/**/*.xlsx
+api/templates/examples/**/*.xls
+api/templates/examples/**/*.xlsm
+api/templates/examples/**/*.xlsb
+api/templates/examples/**/*.ods
+api/templates/examples/**/~$*

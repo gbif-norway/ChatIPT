@@ -3,6 +3,7 @@
 node_modules/
 .npm/
 .next/
+.next.bak*/
 dist/
 build/
 .git/

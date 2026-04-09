@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1
@@ -15,8 +17,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt /srv/requirements.txt
 
 # Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r /srv/requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip \
+    && pip install -r /srv/requirements.txt
 
 # Copy application code
 COPY . /app
