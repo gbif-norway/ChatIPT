@@ -286,12 +286,12 @@ rg -n "^backEnd:|^frontEnd:|^  image:|^    repository:|^    tag:" apps/chatipt/v
 cd /Users/rukayasj/Projects/gitops
 
 helm upgrade --install chatipt apps/chatipt \
-  --context nird-lmd \
+  --kube-context nird-lmd \
   -n gbif-no-ns8095k \
   -f apps/chatipt/values-prod.yaml
 
 helm upgrade --install chatipt-staging apps/chatipt \
-  --context nird-lmd \
+  --kube-context nird-lmd \
   -n gbif-no-ns8095k \
   -f apps/chatipt/values-staging.yaml
 ```
