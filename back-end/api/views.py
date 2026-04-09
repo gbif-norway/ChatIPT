@@ -272,9 +272,9 @@ def orcid_callback(request):
             if 'name' in person:
                 name = person['name']
                 if 'given-names' in name:
-                    first_name = name['given-names'].get('value', '')
+                    first_name = (name.get('given-names') or {}).get('value', '')
                 if 'family-name' in name:
-                    last_name = name['family-name'].get('value', '')
+                    last_name = (name.get('family-name') or {}).get('value', '')
             
             # Extract employment information from public profile
             if 'employments' in person and 'employment-summary' in person['employments']:

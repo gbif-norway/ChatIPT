@@ -48,7 +48,7 @@ This document describes the **current** ChatIPT deployment workflow.
 
 ## Local Development For Agent Sessions
 
-Use this when an agent needs to run and debug the app locally (especially frontend/UI work).
+Use this when an agent needs to run and debug the app locally (especially frontend/UI work). NOTE: All development should be done in Docker.
 
 ### Start local stack
 
