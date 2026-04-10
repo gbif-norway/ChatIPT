@@ -110,6 +110,7 @@ class EmlGenerationTests(SimpleTestCase):
         self.assertEqual(len(creators), 2)
         self.assertEqual(creators[0].find('individualName/givenName').text, 'Jane')
         self.assertEqual(creators[1].find('individualName/givenName').text, 'Richard')
+        self.assertEqual(len(dataset.findall('project/personnel')), 0)
 
         contact_email = dataset.find('contact/electronicMailAddress')
         self.assertIsNotNone(contact_email)
@@ -122,6 +123,35 @@ class EmlGenerationTests(SimpleTestCase):
         citation = dataset.find('additionalMetadata/metadata/gbif/citation')
         self.assertIsNotNone(citation)
         self.assertEqual(citation.text, 'Doe J, Roe R (2025) Example manuscript.')
+
+    def test_make_eml_adds_project_personnel_when_project_title_is_set(self):
+        class DummyUser:
+            first_name = 'Alice'
+            last_name = 'Smith'
+            orcid_id = '0000-0001-2345-6789'
+            email = 'alice@example.org'
+
+        xml_text = make_eml(
+            title='Project-backed dataset',
+            description='Abstract text',
+            user=DummyUser(),
+            eml_extra={
+                'project_title': 'Arctic Deep Survey',
+                'users': [
+                    {'first_name': 'Jane', 'last_name': 'Doe', 'email': 'jane@example.org'},
+                    {'first_name': 'Richard', 'last_name': 'Roe', 'email': 'richard@example.org'},
+                ],
+            },
+        )
+        root = ET.fromstring(xml_text.encode('utf-8'))
+        dataset = root.find('dataset')
+        self.assertIsNotNone(dataset)
+
+        self.assertEqual(dataset.find('project/title').text, 'Arctic Deep Survey')
+        personnel_nodes = dataset.findall('project/personnel')
+        self.assertEqual(len(personnel_nodes), 2)
+        self.assertEqual(personnel_nodes[0].find('individualName/givenName').text, 'Jane')
+        self.assertEqual(personnel_nodes[1].find('individualName/givenName').text, 'Richard')
 
 
 class PhylogenyParsingTests(SimpleTestCase):

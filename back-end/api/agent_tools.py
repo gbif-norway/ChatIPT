@@ -1183,6 +1183,7 @@ class SetEML(OpenAIBaseModel):
     journal: Optional[str] = Field(None, description="Optional manuscript journal name.")
     publication_year: Optional[int] = Field(None, description="Optional manuscript publication year.")
     dataset_citation: Optional[str] = Field(None, description="Optional dataset-level citation text (GBIF profile citation).")
+    project_title: Optional[str] = Field(None, description="Optional project title for EML project metadata. Required if project personnel should be included.")
     abstract_source: Optional[str] = Field(None, description="Optional source of abstract text: user|manuscript|mixed.")
     methods_source: Optional[str] = Field(None, description="Optional source of methods text: user|manuscript|mixed.")
     creators_source: Optional[str] = Field(None, description="Optional source of creator list: user_profile|manuscript|mixed.")
@@ -1661,6 +1662,10 @@ class SetEML(OpenAIBaseModel):
             dataset_citation = self._clean_text_value(self.dataset_citation)
             if dataset_citation is not None:
                 eml["dataset_citation"] = dataset_citation
+
+            project_title = self._clean_text_value(self.project_title)
+            if project_title is not None:
+                eml["project_title"] = project_title
 
             abstract_source = self._clean_text_value(self.abstract_source)
             if abstract_source is not None:

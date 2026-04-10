@@ -87,7 +87,7 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         description: Dataset description (abstract)
         user: Primary user (creator/metadataProvider)
         eml_extra: Optional dict from `dataset.eml` with keys like
-                   geographic_scope, temporal_scope, taxonomic_scope, methodology, users
+                   geographic_scope, temporal_scope, taxonomic_scope, methodology, users, project_title
     """
     eml_path = _TEMPLATES_ROOT / "eml.xml"
     if not eml_path.exists():
@@ -177,7 +177,7 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     # Optional additional metadata
     eml_extra = eml_extra or {}
 
-    # Users array: add additional creators and project personnel
+    # Users array: add additional creators and (optionally) project personnel
     users_list = eml_extra.get('users') or []
     if users_list:
         for existing_creator in list(findall(dataset_node, 'creator')):
@@ -186,13 +186,22 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
             creator = ET.SubElement(dataset_node, 'creator')
             set_person(creator, person)
 
-    # Project personnel
-    project_node = find(dataset_node, 'project')
-    if project_node is None:
-        project_node = ET.SubElement(dataset_node, 'project')
-    for person in users_list:
-        personnel = ET.SubElement(project_node, 'personnel')
-        set_person(personnel, person, include_role=True, role_value='metadataProvider')
+    project_title = eml_extra.get('project_title')
+    if isinstance(project_title, str):
+        project_title = project_title.strip()
+    if not project_title:
+        project_title = None
+
+    # Project personnel are only valid when a project title is present.
+    if project_title is not None:
+        project_node = find(dataset_node, 'project')
+        if project_node is None:
+            project_node = ET.SubElement(dataset_node, 'project')
+        set_text(get_or_create(project_node, 'title'), project_title)
+
+        for person in users_list:
+            personnel = ET.SubElement(project_node, 'personnel')
+            set_person(personnel, person, include_role=True, role_value='metadataProvider')
 
     # Coverage
     coverage = get_or_create(dataset_node, 'coverage')
