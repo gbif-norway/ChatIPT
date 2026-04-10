@@ -59,7 +59,7 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset }) {
   if (items.length === 0) {
     return (
       <div className="text-center my-5">
-        <p>You don't have any datasets yet.</p>
+        <p>You do not have any datasets yet.</p>
         <button className="btn btn-primary btn-lg" onClick={onNewDataset}>
           <i className="bi bi-plus-circle me-2"></i>Add new dataset
         </button>
@@ -122,7 +122,9 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset }) {
                       )}
                     </div>
                   )}
-                  {d.last_message_preview && <div className="text-truncate">"{d.last_message_preview}"</div>}
+                  {d.last_message_preview && (
+                    <div className="text-truncate">{`"${d.last_message_preview}"`}</div>
+                  )}
                 </div>
                 <div className="d-flex gap-2 mt-3">
                   <button className="btn btn-outline-primary flex-grow-1" onClick={() => onOpenDataset(d.id)}>

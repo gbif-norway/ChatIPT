@@ -79,7 +79,7 @@ const Login = () => {
               <div className="mt-4">
                 <small className="text-muted">
                   <strong>What is ORCID?</strong> ORCID provides a persistent digital identifier 
-                  that distinguishes you from every other researcher. It's free to register at{' '}
+                  that distinguishes you from every other researcher. It is free to register at{' '}
                   <a href="https://orcid.org" target="_blank" rel="noopener noreferrer">
                     orcid.org
                   </a>

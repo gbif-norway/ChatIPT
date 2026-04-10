@@ -63,22 +63,38 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
   const [uploadError, setUploadError] = useState(null);
   const fileInputRef = useRef(null);
   const { isDark } = useTheme();
+  const agentRef = useRef(agent);
+  const refreshDatasetRef = useRef(refreshDataset);
+  const refreshTablesRef = useRef(refreshTables);
+
+  useEffect(() => {
+    agentRef.current = agent;
+  }, [agent]);
+
+  useEffect(() => {
+    refreshDatasetRef.current = refreshDataset;
+  }, [refreshDataset]);
+
+  useEffect(() => {
+    refreshTablesRef.current = refreshTables;
+  }, [refreshTables]);
 
   useEffect(() => {
     const runAsyncEffect = async () => {
+      const currentAgent = agentRef.current;
       const timestamp = new Date().toISOString();
-      console.log(`[${timestamp}] 🤖 Agent ${agent.id} mount refresh`);
+      console.log(`[${timestamp}] 🤖 Agent ${currentAgent.id} mount refresh`);
 
-      const last_message_role = agent.message_set?.length > 0 ? agent.message_set.at(-1).role : null;
-      const hasToolCalls = agent.message_set?.length > 0 ? Array.isArray(agent.message_set.at(-1)?.openai_obj?.tool_calls) && agent.message_set.at(-1).openai_obj.tool_calls.length > 0 : false;
+      const last_message_role = currentAgent.message_set?.length > 0 ? currentAgent.message_set.at(-1).role : null;
+      const hasToolCalls = currentAgent.message_set?.length > 0 ? Array.isArray(currentAgent.message_set.at(-1)?.openai_obj?.tool_calls) && currentAgent.message_set.at(-1).openai_obj.tool_calls.length > 0 : false;
 
       // Kick the dataset refresh loop when the agent is in progress or tool calls are pending
-      if (agent.completed_at === null && (agent.busy_thinking || hasToolCalls || last_message_role !== 'assistant')) {
+      if (currentAgent.completed_at === null && (currentAgent.busy_thinking || hasToolCalls || last_message_role !== 'assistant')) {
         setIsLoading(true);
         try {
-          await refreshDataset();
-          if (typeof refreshTables === 'function') {
-            await refreshTables();
+          await refreshDatasetRef.current();
+          if (typeof refreshTablesRef.current === 'function') {
+            await refreshTablesRef.current();
           }
         } catch (error) {
           console.error(`[${timestamp}] ❌ Error in agent refresh:`, error);
@@ -133,7 +149,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
         setIsLoading(false);
       }
     }
-  }, [agent.completed_at, agent.message_set, agent.busy_thinking, isLoading, isUserSending, optimisticMessage]);
+  }, [agent.id, agent.completed_at, agent.message_set, agent.busy_thinking, isLoading, isUserSending, optimisticMessage]);
 
   // Watch for new Python tool results and refresh tables when they arrive
   useEffect(() => {

@@ -253,6 +253,48 @@ const TreeVisualization = ({ datasetId, onClose }) => {
     console.log(`[TreeViz] Cleared map layers in ${(performance.now() - clearStart).toFixed(2)}ms`);
   }, []);
 
+  // Build nodeIdMap helper
+  const buildNodeIdMap = useCallback(function walkNodeIdMap(
+    node,
+    map = {},
+    parentKey = 'root',
+    index = 0,
+    leafIndex = { current: 0 },
+    nodeIndex = { current: 0 }
+  ) {
+    const key = `${parentKey}-${index}`;
+    const isLeaf = !node.children || node.children.length === 0;
+
+    node.key = key;
+    node.nodeIndex = nodeIndex.current++;
+    node.title = node.name || null;
+
+    if (isLeaf) {
+      node.leafIndex = leafIndex.current++;
+      map[key] = {
+        key: key,
+        title: node.name || 'Unknown',
+        leafIndex: node.leafIndex,
+        nodeIndex: node.nodeIndex
+      };
+    } else {
+      map[key] = {
+        key: key,
+        title: null,
+        leafIndex: null,
+        nodeIndex: node.nodeIndex
+      };
+    }
+
+    if (node.children) {
+      node.children.forEach((child, i) => {
+        walkNodeIdMap(child, map, key, i, leafIndex, nodeIndex);
+      });
+    }
+
+    return map;
+  }, []);
+
   // Fetch tree data function
   const fetchTreeData = useCallback(async ({ keepExistingData = false } = {}) => {
     if (!datasetId) return;
@@ -344,7 +386,7 @@ const TreeVisualization = ({ datasetId, onClose }) => {
       const totalTime = performance.now() - perfStart;
       console.log(`[TreeViz] Total fetchTreeData time: ${totalTime.toFixed(2)}ms (${(totalTime / 1000).toFixed(2)}s)`);
     }
-  }, [datasetId, clearMapLayers]);
+  }, [datasetId, clearMapLayers, buildNodeIdMap]);
 
   // Fetch tree data on mount and when datasetId changes
   useEffect(() => {
@@ -404,41 +446,6 @@ const TreeVisualization = ({ datasetId, onClose }) => {
       }
     };
   }, [leafletLoaded, decoratedTree, hasCoordinates]);
-
-  // Build nodeIdMap helper
-  const buildNodeIdMap = (node, map = {}, parentKey = 'root', index = 0, leafIndex = { current: 0 }, nodeIndex = { current: 0 }) => {
-    const key = `${parentKey}-${index}`;
-    const isLeaf = !node.children || node.children.length === 0;
-    
-    node.key = key;
-    node.nodeIndex = nodeIndex.current++;
-    node.title = node.name || null;
-    
-    if (isLeaf) {
-      node.leafIndex = leafIndex.current++;
-      map[key] = {
-        key: key,
-        title: node.name || 'Unknown',
-        leafIndex: node.leafIndex,
-        nodeIndex: node.nodeIndex
-      };
-    } else {
-      map[key] = {
-        key: key,
-        title: null,
-        leafIndex: null,
-        nodeIndex: node.nodeIndex
-      };
-    }
-
-    if (node.children) {
-      node.children.forEach((child, i) => {
-        buildNodeIdMap(child, map, key, i, leafIndex, nodeIndex);
-      });
-    }
-
-    return map;
-  };
 
   // Collect descendant tip labels (using original_tip_label if available, else name)
   // This is now only used as a fallback - descendant tips are precomputed during decoration
@@ -927,13 +934,12 @@ const SimpleTreeView = ({ tree, nodeIdMap, highlighted, highlightedLeaf, onToggl
   const [fontSize, setFontSize] = useState(12);
   const [q, setQ] = useState('');
   const [hoveredNode, setHoveredNode] = useState(null);
-  const [elementHeight, setElementHeight] = useState(20);
   const multiplier = 5;
 
-  useEffect(() => {
+  const elementHeight = useMemo(() => {
     const baseHeight = Math.max(10, Math.floor(fontSize * 1.15) + 2);
     const verticalGap = Math.max(2, Math.round(fontSize * 0.35));
-    setElementHeight(baseHeight + verticalGap);
+    return baseHeight + verticalGap;
   }, [fontSize]);
 
   // Memoize leaf suggestions
