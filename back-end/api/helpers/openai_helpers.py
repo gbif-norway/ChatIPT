@@ -220,9 +220,9 @@ def custom_schema(cls: BaseModel) -> Dict[str, Any]:
     # We only ensure the key exists so OpenAI gets a well-formed JSON Schema.
     parameters['required'] = parameters.get('required', [])
 
-    # Clean out noisy keys that inflate the schema size.
-    for remove_key in ['title', 'additionalProperties', 'description']:
-        _remove_a_key(parameters, remove_key)
+    # Clean out noisy schema metadata keys while preserving actual field names
+    # in maps like `properties` (e.g., a real field named "description").
+    _remove_schema_metadata_noise(parameters)
     return {
         'name': cls.__name__,
         'description': cls.__doc__,
@@ -243,11 +243,24 @@ class OpenAIBaseModel(BaseModel):
 #         fn.arguments = json.loads(fn.arguments, strict=False) 
 #     return fn
 
-def _remove_a_key(d, remove_key) -> None:
-    """Remove a key from a dictionary recursively"""
-    if isinstance(d, dict):
-        for key in list(d.keys()):
-            if key == remove_key:
-                del d[key]
-            else:
-                _remove_a_key(d[key], remove_key)
+def _remove_schema_metadata_noise(node, preserve_map_keys: bool = False) -> None:
+    """Remove verbose schema metadata without deleting actual property names."""
+    if isinstance(node, dict):
+        for key in list(node.keys()):
+            value = node[key]
+
+            # In mapping containers, keys are user-defined identifiers (e.g. field names).
+            # Preserve those keys even if they match metadata names like "title".
+            if preserve_map_keys:
+                _remove_schema_metadata_noise(value, preserve_map_keys=False)
+                continue
+
+            if key in {"title", "description", "additionalProperties"}:
+                del node[key]
+                continue
+
+            child_preserve_map_keys = key in {"properties", "$defs", "definitions", "patternProperties"}
+            _remove_schema_metadata_noise(value, preserve_map_keys=child_preserve_map_keys)
+    elif isinstance(node, list):
+        for item in node:
+            _remove_schema_metadata_noise(item, preserve_map_keys=False)

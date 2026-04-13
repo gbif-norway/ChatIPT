@@ -13,7 +13,7 @@ from .helpers.publish import (
     parse_newick_tip_labels,
     parse_nexus_tip_labels,
 )
-from .agent_tools import GetDarwinCoreInfo, SetEML, LogBugWithDeveloper
+from .agent_tools import GetDarwinCoreInfo, SetEML, LogBugWithDeveloper, SetBasicMetadata
 from .helpers.openai_helpers import (
     _functions_to_responses_tools,
     _messages_to_responses_input,
@@ -747,3 +747,13 @@ class ResponsesAdapterCompatibilityTests(SimpleTestCase):
                 }
             ],
         )
+
+    def test_set_basic_metadata_schema_keeps_title_and_description_properties(self):
+        schema = SetBasicMetadata.openai_schema()
+        parameters = schema["parameters"]
+        properties = parameters["properties"]
+
+        self.assertIn("agent_id", properties)
+        self.assertIn("title", properties)
+        self.assertIn("description", properties)
+        self.assertIn("suitable_for_publication_on_gbif", properties)
