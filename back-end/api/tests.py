@@ -9,6 +9,7 @@ from django.test import SimpleTestCase
 import openpyxl
 import pandas as pd
 from .helpers.publish import (
+    assert_case_insensitive_unique_identifier,
     make_eml,
     parse_newick_tip_labels,
     parse_nexus_tip_labels,
@@ -121,8 +122,12 @@ class EmlGenerationTests(SimpleTestCase):
         self.assertEqual(alternate_identifier.text, 'https://doi.org/10.1234/abcd.1')
 
         citation = dataset.find('additionalMetadata/metadata/gbif/citation')
+        if citation is None:
+            citation = root.find('additionalMetadata/metadata/gbif/citation')
         self.assertIsNotNone(citation)
         self.assertEqual(citation.text, 'Doe J, Roe R (2025) Example manuscript.')
+        self.assertIsNotNone(root.find('additionalMetadata/metadata/gbif/dateStamp'))
+        self.assertIsNone(root.find('additionalMetadata/metadata/manuscript'))
 
     def test_make_eml_adds_project_personnel_when_project_title_is_set(self):
         class DummyUser:
@@ -152,6 +157,139 @@ class EmlGenerationTests(SimpleTestCase):
         self.assertEqual(len(personnel_nodes), 2)
         self.assertEqual(personnel_nodes[0].find('individualName/givenName').text, 'Jane')
         self.assertEqual(personnel_nodes[1].find('individualName/givenName').text, 'Richard')
+        self.assertIsNone(personnel_nodes[0].find('electronicMailAddress'))
+        self.assertIsNotNone(personnel_nodes[0].find('userId'))
+        self.assertEqual(personnel_nodes[0].find('role').text, 'metadataProvider')
+
+    def test_make_eml_keeps_creator_before_metadata_provider_when_users_override_primary_creator(self):
+        class DummyUser:
+            first_name = 'Alice'
+            last_name = 'Smith'
+            orcid_id = '0000-0001-2345-6789'
+            email = 'alice@example.org'
+
+        xml_text = make_eml(
+            title='Ordered creators',
+            description='Abstract text',
+            user=DummyUser(),
+            eml_extra={
+                'users': [
+                    {'first_name': 'Jane', 'last_name': 'Doe', 'email': 'jane@example.org'},
+                ],
+            },
+        )
+        root = ET.fromstring(xml_text.encode('utf-8'))
+        dataset = root.find('dataset')
+        self.assertIsNotNone(dataset)
+
+        child_tags = [child.tag for child in list(dataset)]
+        creator_index = child_tags.index('creator')
+        metadata_provider_index = child_tags.index('metadataProvider')
+        self.assertLess(creator_index, metadata_provider_index)
+
+    def test_make_eml_builds_taxonomic_classification_from_scope(self):
+        class DummyUser:
+            first_name = 'Alice'
+            last_name = 'Smith'
+            orcid_id = '0000-0001-2345-6789'
+            email = 'alice@example.org'
+
+        xml_text = make_eml(
+            title='Taxonomy',
+            description='Abstract text',
+            user=DummyUser(),
+            eml_extra={
+                'taxonomic_scope': 'Plantae, Solanaceae',
+            },
+        )
+        root = ET.fromstring(xml_text.encode('utf-8'))
+        dataset = root.find('dataset')
+        self.assertIsNotNone(dataset)
+
+        self.assertEqual(
+            dataset.find('coverage/taxonomicCoverage/generalTaxonomicCoverage').text,
+            'Plantae, Solanaceae',
+        )
+        first_classification = dataset.find('coverage/taxonomicCoverage/taxonomicClassification')
+        self.assertIsNotNone(first_classification)
+        self.assertEqual(first_classification.find('taxonRankName').text, 'kingdom')
+        self.assertEqual(first_classification.find('taxonRankValue').text, 'Plantae')
+
+        nested_classification = first_classification.find('taxonomicClassification')
+        self.assertIsNotNone(nested_classification)
+        self.assertEqual(nested_classification.find('taxonRankName').text, 'family')
+        self.assertEqual(nested_classification.find('taxonRankValue').text, 'Solanaceae')
+
+    def test_make_eml_normalizes_temporal_textual_range(self):
+        class DummyUser:
+            first_name = 'Alice'
+            last_name = 'Smith'
+            orcid_id = '0000-0001-2345-6789'
+            email = 'alice@example.org'
+
+        xml_text = make_eml(
+            title='Temporal text range',
+            description='Abstract text',
+            user=DummyUser(),
+            eml_extra={
+                'temporal_scope': '17 - 22 October 2025',
+            },
+        )
+
+        root = ET.fromstring(xml_text.encode('utf-8'))
+        dataset = root.find('dataset')
+        self.assertIsNotNone(dataset)
+
+        begin = dataset.find('coverage/temporalCoverage/rangeOfDates/beginDate/calendarDate')
+        end = dataset.find('coverage/temporalCoverage/rangeOfDates/endDate/calendarDate')
+        self.assertIsNotNone(begin)
+        self.assertIsNotNone(end)
+        self.assertEqual(begin.text, '2025-10-17')
+        self.assertEqual(end.text, '2025-10-22')
+
+    def test_make_eml_extracts_iso_dates_from_free_text_temporal_scope(self):
+        class DummyUser:
+            first_name = 'Alice'
+            last_name = 'Smith'
+            orcid_id = '0000-0001-2345-6789'
+            email = 'alice@example.org'
+
+        xml_text = make_eml(
+            title='Temporal free text',
+            description='Abstract text',
+            user=DummyUser(),
+            eml_extra={
+                'temporal_scope': (
+                    'Field observations appear span 2025-09-18 to 2025-09-23 based on project naming.'
+                ),
+            },
+        )
+
+        root = ET.fromstring(xml_text.encode('utf-8'))
+        dataset = root.find('dataset')
+        self.assertIsNotNone(dataset)
+
+        begin = dataset.find('coverage/temporalCoverage/rangeOfDates/beginDate/calendarDate')
+        end = dataset.find('coverage/temporalCoverage/rangeOfDates/endDate/calendarDate')
+        self.assertIsNotNone(begin)
+        self.assertIsNotNone(end)
+        self.assertEqual(begin.text, '2025-09-18')
+        self.assertEqual(end.text, '2025-09-23')
+
+
+class IdentifierValidationTests(SimpleTestCase):
+    def test_case_insensitive_identifier_uniqueness_passes_for_unique_values(self):
+        df = pd.DataFrame({'occurrenceID': ['abc-1', 'Abc-2', 'ABC-3']})
+        assert_case_insensitive_unique_identifier(df, 'occurrenceID')
+
+    def test_case_insensitive_identifier_uniqueness_fails_for_collisions(self):
+        df = pd.DataFrame({'occurrenceID': ['1764255881670-v4s75yh73|185À', '1764255881670-v4s75yh73|185à']})
+        with self.assertRaises(ValueError):
+            assert_case_insensitive_unique_identifier(df, 'occurrenceID')
+
+    def test_case_insensitive_identifier_uniqueness_ignores_empty_values(self):
+        df = pd.DataFrame({'occurrenceID': ['', None, 'x-1']})
+        assert_case_insensitive_unique_identifier(df, 'occurrenceID')
 
 
 class PhylogenyParsingTests(SimpleTestCase):

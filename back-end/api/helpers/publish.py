@@ -1,6 +1,7 @@
+import calendar
 import xml.etree.ElementTree as ET
 import tempfile
-from datetime import datetime
+from datetime import date, datetime, timezone
 import os
 from pathlib import Path
 import traceback
@@ -110,6 +111,22 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
             child = ET.SubElement(parent, tag)
         return child
 
+    def local_tag(tag_name: str) -> str:
+        if "}" in tag_name:
+            return tag_name.rsplit("}", 1)[-1]
+        return tag_name
+
+    def ensure_child_order(parent: ET.Element, ordered_tags: list[str]):
+        order_map = {tag: i for i, tag in enumerate(ordered_tags)}
+        indexed_children = list(enumerate(list(parent)))
+        indexed_children.sort(
+            key=lambda item: (
+                order_map.get(local_tag(item[1].tag), len(order_map)),
+                item[0],
+            )
+        )
+        parent[:] = [child for _, child in indexed_children]
+
     def set_text(elem, text: str | None):
         if elem is not None and text not in (None, ''):
             elem.text = str(text)
@@ -123,6 +140,81 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         doi = doi.replace('https://doi.org/', '').replace('http://doi.org/', '')
         doi = doi.replace('doi:', '').strip()
         return doi or None
+
+    def _to_iso_date(value: str | None, is_end: bool = False, context: date | None = None) -> str | None:
+        if value in (None, ''):
+            return None
+
+        token = str(value).strip().strip(",.;:")
+        if not token:
+            return None
+
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(token, fmt).date().isoformat()
+            except ValueError:
+                pass
+
+        for fmt in ("%d %B %Y", "%d %b %Y", "%B %d %Y", "%b %d %Y"):
+            try:
+                return datetime.strptime(token, fmt).date().isoformat()
+            except ValueError:
+                pass
+
+        year_month = re.fullmatch(r"(\d{4})-(\d{2})", token)
+        if year_month:
+            year = int(year_month.group(1))
+            month = int(year_month.group(2))
+            if 1 <= month <= 12:
+                day = calendar.monthrange(year, month)[1] if is_end else 1
+                return datetime(year, month, day).date().isoformat()
+
+        year_only = re.fullmatch(r"\d{4}", token)
+        if year_only:
+            year = int(token)
+            return f"{year}-12-31" if is_end else f"{year}-01-01"
+
+        day_only = re.fullmatch(r"\d{1,2}", token)
+        if day_only and context is not None:
+            day = int(token)
+            max_day = calendar.monthrange(context.year, context.month)[1]
+            if 1 <= day <= max_day:
+                return datetime(context.year, context.month, day).date().isoformat()
+
+        return None
+
+    def _normalize_temporal_scope(raw_value: str) -> tuple[str, str] | tuple[str, str, str] | None:
+        temporal_value_str = str(raw_value or "").strip()
+        if not temporal_value_str:
+            return None
+
+        iso_dates = re.findall(r"\b\d{4}-\d{2}-\d{2}\b", temporal_value_str)
+        if len(iso_dates) >= 2:
+            return ("range", iso_dates[0], iso_dates[-1])
+        if len(iso_dates) == 1:
+            return ("single", iso_dates[0])
+
+        range_parts = None
+        for sep in ("/", " to ", " - ", " – "):
+            if sep in temporal_value_str:
+                parts = [s.strip() for s in temporal_value_str.split(sep, 1)]
+                if len(parts) == 2 and parts[0] and parts[1]:
+                    range_parts = parts
+                    break
+
+        if range_parts is not None:
+            left, right = range_parts
+            right_iso = _to_iso_date(right, is_end=True)
+            right_context = datetime.strptime(right_iso, "%Y-%m-%d").date() if right_iso else None
+            left_iso = _to_iso_date(left, is_end=False, context=right_context)
+            if left_iso and right_iso:
+                return ("range", left_iso, right_iso)
+
+        single_iso = _to_iso_date(temporal_value_str)
+        if single_iso:
+            return ("single", single_iso)
+
+        return None
 
     dataset_node = find(root, 'dataset')
     if dataset_node is None:
@@ -142,26 +234,53 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     set_text(get_or_create(abstract, 'para'), description)
 
     # Helper to set a person into creator/metadataProvider/personnel
-    def set_person(parent_node, person: dict, include_role: bool = False, role_value: str | None = None):
+    def set_person(
+        parent_node,
+        person: dict,
+        include_role: bool = False,
+        role_value: str | None = None,
+        include_email: bool = True,
+    ):
         individual = get_or_create(parent_node, 'individualName')
         set_text(get_or_create(individual, 'givenName'), person.get('first_name') or person.get('givenName') or '')
         set_text(get_or_create(individual, 'surName'), person.get('last_name') or person.get('surName') or '')
+
+        # GBIF profile expects userId in responsible parties. Keep the node even when value is missing.
+        orcid_value = (person.get('orcid') or person.get('userId') or '')
+        if orcid_value is None:
+            orcid_value = ''
+        orcid_value = str(orcid_value).strip()
         user_id = get_or_create(parent_node, 'userId')
         user_id.set('directory', 'https://orcid.org/')
-        set_text(user_id, person.get('orcid') or person.get('userId') or '')
-        # Email if available
-        email_value = person.get('email') or person.get('electronicMailAddress') or ''
-        if email_value:
-            set_text(get_or_create(parent_node, 'electronicMailAddress'), email_value)
+        user_id.text = orcid_value
+
+        if include_email:
+            email_value = person.get('email') or person.get('electronicMailAddress') or ''
+            if email_value:
+                set_text(get_or_create(parent_node, 'electronicMailAddress'), email_value)
         if include_role:
             set_text(get_or_create(parent_node, 'role'), role_value or 'metadataProvider')
 
+        ensure_child_order(
+            parent_node,
+            [
+                'individualName',
+                'organizationName',
+                'positionName',
+                'address',
+                'userId',
+                'role',
+                'electronicMailAddress',
+                'onlineUrl',
+            ],
+        )
+
     # Primary user as creator and metadataProvider
     primary_person = {
-        'first_name': getattr(user, 'first_name', 'Unknown') if user else 'Test',
-        'last_name': getattr(user, 'last_name', 'Unknown') if user else 'User',
-        'orcid': getattr(user, 'orcid_id', '0000-0000-0000-0000') if user else '0000-0002-1825-0097',
-        'email': getattr(user, 'email', '') if user else '',
+        'first_name': (getattr(user, 'first_name', None) or 'Test') if user else 'Test',
+        'last_name': (getattr(user, 'last_name', None) or 'User') if user else 'User',
+        'orcid': (getattr(user, 'orcid_id', None) or '0000-0000-0000-0000') if user else '0000-0002-1825-0097',
+        'email': (getattr(user, 'email', None) or '') if user else '',
     }
 
     creator_node = get_or_create(dataset_node, 'creator')
@@ -170,21 +289,32 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     metadata_provider_node = get_or_create(dataset_node, 'metadataProvider')
     set_person(metadata_provider_node, primary_person)
 
-    # Contact (required by IPT): copy primary user
-    contact_node = get_or_create(dataset_node, 'contact')
-    set_person(contact_node, primary_person)
-
     # Optional additional metadata
     eml_extra = eml_extra or {}
+
+    # Contact (required by IPT): copy primary user by default, allow explicit override
+    contact_person = dict(primary_person)
+    contact_email = eml_extra.get('contact_email')
+    if isinstance(contact_email, str) and contact_email.strip():
+        contact_person['email'] = contact_email.strip()
+    contact_node = get_or_create(dataset_node, 'contact')
+    set_person(contact_node, contact_person)
 
     # Users array: add additional creators and (optionally) project personnel
     users_list = eml_extra.get('users') or []
     if users_list:
         for existing_creator in list(findall(dataset_node, 'creator')):
             dataset_node.remove(existing_creator)
+        metadata_provider = find(dataset_node, 'metadataProvider')
+        insert_index = 0
+        if metadata_provider is not None:
+            insert_index = list(dataset_node).index(metadata_provider)
+
         for person in users_list:
-            creator = ET.SubElement(dataset_node, 'creator')
+            creator = ET.Element('creator')
             set_person(creator, person)
+            dataset_node.insert(insert_index, creator)
+            insert_index += 1
 
     project_title = eml_extra.get('project_title')
     if isinstance(project_title, str):
@@ -201,7 +331,13 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
 
         for person in users_list:
             personnel = ET.SubElement(project_node, 'personnel')
-            set_person(personnel, person, include_role=True, role_value='metadataProvider')
+            set_person(
+                personnel,
+                person,
+                include_role=True,
+                role_value='metadataProvider',
+                include_email=False,
+            )
 
     # Coverage
     coverage = get_or_create(dataset_node, 'coverage')
@@ -211,26 +347,51 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     # Temporal
     temporal_value = eml_extra.get('temporal_scope')
     if temporal_value:
-        # Try to detect range vs single date
-        temporal_value_str = str(temporal_value).strip()
-        if any(sep in temporal_value_str for sep in ['/', '-', '–', ' to ']):
-            # Split on first common separators
-            for sep in ['/', ' to ', '-', '–']:
-                if sep in temporal_value_str:
-                    start, end = [s.strip() for s in temporal_value_str.split(sep, 1)]
-                    break
+        normalized_temporal = _normalize_temporal_scope(str(temporal_value))
+        if normalized_temporal and normalized_temporal[0] == "range":
+            _, start, end = normalized_temporal
             range_node = get_or_create(coverage, 'temporalCoverage')
             rnd = get_or_create(range_node, 'rangeOfDates')
             set_text(get_or_create(get_or_create(rnd, 'beginDate'), 'calendarDate'), start)
             set_text(get_or_create(get_or_create(rnd, 'endDate'), 'calendarDate'), end)
-        else:
+        elif normalized_temporal and normalized_temporal[0] == "single":
+            _, single_date = normalized_temporal
             single_node = get_or_create(coverage, 'temporalCoverage')
             sdt = get_or_create(single_node, 'singleDateTime')
-            set_text(get_or_create(sdt, 'calendarDate'), temporal_value_str)
+            set_text(get_or_create(sdt, 'calendarDate'), single_date)
 
     # Taxonomic
     tax = get_or_create(coverage, 'taxonomicCoverage')
-    set_text(get_or_create(tax, 'generalTaxonomicCoverage'), eml_extra.get('taxonomic_scope'))
+    taxonomic_scope = eml_extra.get('taxonomic_scope')
+    set_text(get_or_create(tax, 'generalTaxonomicCoverage'), taxonomic_scope)
+    for existing_taxon in list(findall(tax, 'taxonomicClassification')):
+        tax.remove(existing_taxon)
+
+    if taxonomic_scope:
+        taxa = [token.strip() for token in str(taxonomic_scope).split(',') if token.strip()]
+        if taxa:
+            def infer_taxon_rank(name: str, index: int, total: int) -> str:
+                lower = name.lower()
+                if lower in {'animalia', 'plantae', 'fungi', 'bacteria', 'archaea', 'protista', 'chromista'}:
+                    return 'kingdom'
+                if lower.endswith('aceae') or lower.endswith('idae'):
+                    return 'family'
+                if lower.endswith('ales'):
+                    return 'order'
+                if lower.endswith('mycota') or lower.endswith('phyta'):
+                    return 'phylum'
+                if lower.endswith('opsida') or lower.endswith('phyceae'):
+                    return 'class'
+                if total == 1:
+                    return 'taxon'
+                return 'higherTaxon' if index == 0 else 'taxon'
+
+            classification = ET.SubElement(tax, 'taxonomicClassification')
+            for index, taxon_name in enumerate(taxa):
+                set_text(get_or_create(classification, 'taxonRankName'), infer_taxon_rank(taxon_name, index, len(taxa)))
+                set_text(get_or_create(classification, 'taxonRankValue'), taxon_name)
+                if index < len(taxa) - 1:
+                    classification = ET.SubElement(classification, 'taxonomicClassification')
 
     # Methods / methodology
     methods = get_or_create(dataset_node, 'methods')
@@ -240,33 +401,56 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
 
     manuscript_doi = normalize_doi(eml_extra.get('manuscript_doi'))
     if manuscript_doi:
-        alternate_identifier = ET.SubElement(dataset_node, 'alternateIdentifier')
+        alternate_identifier = ET.Element('alternateIdentifier')
         set_text(alternate_identifier, f"https://doi.org/{manuscript_doi}")
+        title_node = find(dataset_node, 'title')
+        if title_node is not None:
+            dataset_node.insert(list(dataset_node).index(title_node), alternate_identifier)
+        else:
+            dataset_node.insert(0, alternate_identifier)
 
     dataset_citation = eml_extra.get('dataset_citation')
-    manuscript_title = eml_extra.get('manuscript_title')
-    journal = eml_extra.get('journal')
-    publication_year = eml_extra.get('publication_year')
-    has_manuscript_metadata = any(
-        value for value in [dataset_citation, manuscript_title, journal, publication_year]
-    )
-    if has_manuscript_metadata:
-        additional_metadata = get_or_create(dataset_node, 'additionalMetadata')
+    if dataset_citation:
+        additional_metadata = get_or_create(root, 'additionalMetadata')
         metadata_node = get_or_create(additional_metadata, 'metadata')
         gbif_node = get_or_create(metadata_node, 'gbif')
+        set_text(
+            get_or_create(gbif_node, 'dateStamp'),
+            datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        )
+        set_text(get_or_create(gbif_node, 'hierarchyLevel'), 'dataset')
         set_text(get_or_create(gbif_node, 'citation'), dataset_citation)
+        ensure_child_order(gbif_node, ['dateStamp', 'hierarchyLevel', 'citation'])
 
-        manuscript_node = get_or_create(metadata_node, 'manuscript')
-        set_text(get_or_create(manuscript_node, 'title'), manuscript_title)
-        set_text(get_or_create(manuscript_node, 'journal'), journal)
-        if publication_year is not None:
-            set_text(get_or_create(manuscript_node, 'publicationYear'), str(publication_year))
+    ensure_child_order(
+        dataset_node,
+        [
+            'alternateIdentifier',
+            'title',
+            'creator',
+            'metadataProvider',
+            'associatedParty',
+            'pubDate',
+            'language',
+            'abstract',
+            'keywordSet',
+            'intellectualRights',
+            'distribution',
+            'coverage',
+            'purpose',
+            'maintenance',
+            'contact',
+            'methods',
+            'project',
+        ],
+    )
 
     # Prune empty elements except root and dataset and intellectualRights
     def is_empty(element: ET.Element) -> bool:
         has_text = (element.text or '').strip() != ''
         has_children = len(element) > 0
-        return not has_text and not has_children
+        has_attributes = len(element.attrib) > 0
+        return not has_text and not has_children and not has_attributes
 
     def prune(element: ET.Element):
         # Copy list to avoid modification during iteration
@@ -302,6 +486,32 @@ def ensure_identifier_column(df, target_name: str) -> int:
 
     df[target_name] = [str(uuid.uuid4()) for _ in range(len(df))]
     return df.columns.get_loc(target_name)
+
+
+def assert_case_insensitive_unique_identifier(df, column_name: str):
+    """
+    Validate that non-empty identifier values are unique in a case-insensitive way.
+    Raises ValueError with sample collisions when duplicates are found.
+    """
+    identifiers = df[column_name].astype('string').fillna('').str.strip()
+    non_empty_identifiers = identifiers[identifiers != '']
+    folded = non_empty_identifiers.str.casefold()
+    duplicate_mask = folded.duplicated(keep=False)
+
+    if duplicate_mask.any():
+        duplicate_values = non_empty_identifiers[duplicate_mask]
+        folded_values = duplicate_values.str.casefold()
+        collision_examples = []
+        for key in folded_values.drop_duplicates().head(5):
+            variants = duplicate_values[folded_values == key].drop_duplicates().tolist()
+            if variants:
+                collision_examples.append(" / ".join(map(str, variants[:3])))
+
+        example_text = "; ".join(collision_examples) if collision_examples else "No examples available"
+        raise ValueError(
+            f"Identifier column '{column_name}' contains case-insensitive duplicates. "
+            f"Examples: {example_text}"
+        )
 
 
 def parse_newick_tip_labels(content: str) -> list[str]:
@@ -569,6 +779,8 @@ def upload_dwca(
     core_id_index = None
     if core_schema.id_column:
         core_id_index = ensure_identifier_column(df_core, core_schema.id_column)
+        core_id_column = df_core.columns[core_id_index]
+        assert_case_insensitive_unique_identifier(df_core, core_id_column)
 
     # Validate spec_path exists if it's a local file (not a URL)
     core_spec_path = core_schema.spec_path

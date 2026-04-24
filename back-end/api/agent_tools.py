@@ -723,8 +723,16 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
                 if 'id' not in df.columns and 'ID' not in df.columns and 'measurementID' not in df.columns:
                     # It is an occurrence core table
                     if 'occurrenceID' in df.columns:
-                        if not df['occurrenceID'].is_unique:
-                            general_errors['occurrenceID'] = f'Is this an occurrence core table? If it is, occurrenceID must be unique - use e.g. `df["occurrenceID"] = [str(uuid.uuid4()) for _ in range(len(df))]` to force a unique value for each row. Be careful of any extension tables with linkages using the ID column.'
+                        occurrence_ids = df['occurrenceID'].astype('string').fillna('').str.strip()
+                        non_empty_occurrence_ids = occurrence_ids[occurrence_ids != '']
+                        if not non_empty_occurrence_ids.str.casefold().is_unique:
+                            general_errors['occurrenceID'] = (
+                                'Is this an occurrence core table? If it is, occurrenceID must be unique '
+                                '(case-insensitive) - use e.g. '
+                                '`df["occurrenceID"] = [str(uuid.uuid4()) for _ in range(len(df))]` '
+                                'to force a unique value for each row. Be careful of any extension tables '
+                                'with linkages using the ID column.'
+                            )
 
                 table_results[table.id]['general_errors'] = general_errors
         
