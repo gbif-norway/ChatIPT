@@ -30,6 +30,26 @@ ChatIPT helps students and researchers publish biodiversity datasets to GBIF, es
 
 Contact: `rukayasj@uio.no`
 
+## Local development policy (Docker-only)
+
+This project is run in Docker for **all** local work.
+
+- Do not install or rely on local Python, Node, `pip`, `npm`, or virtualenv for normal ChatIPT development.
+- Run backend and frontend through `docker compose`.
+- If you need Django or frontend commands, run them inside the containers (for example with `docker exec`).
+
+Quick start:
+
+```bash
+cd /Users/rukayasj/Projects/chatipt
+docker compose up --build
+```
+
+Local URLs:
+
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:8000/api`
+
 ## Deployment docs
 
 Operational deployment instructions are maintained in [`DEPLOYMENT.md`](DEPLOYMENT.md).
