@@ -7,6 +7,7 @@ import Tooltip from 'react-bootstrap/Tooltip';
 import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
 import { getLoadingText } from '../utils/loading.js';
+import { useDataset } from '../contexts/DatasetContext.js';
 import {
   ALLOWED_FILE_EXTENSIONS,
   ACCEPT_INPUT_EXTENSIONS,
@@ -63,6 +64,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
   const [uploadError, setUploadError] = useState(null);
   const fileInputRef = useRef(null);
   const { isDark } = useTheme();
+  const { consumeNextUserMessagePrefix, queueNextUserMessagePrefix } = useDataset();
   const agentRef = useRef(agent);
   const refreshDatasetRef = useRef(refreshDataset);
   const refreshTablesRef = useRef(refreshTables);
@@ -307,6 +309,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
     setUploadError(null);
 
     const uploadedFileNames = [];
+    let consumedPrefix = '';
 
     try {
       if (filesToUpload.length > 0) {
@@ -364,10 +367,15 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
           : (uploadedFileNames.length > 0 ? `Uploaded files: ${uploadedFileNames.join(', ')}` : '');
 
       if (messageContent) {
+        consumedPrefix = consumeNextUserMessagePrefix(currentDatasetId);
+        const composedMessageContent = consumedPrefix
+          ? `${consumedPrefix}\n\n${messageContent}`
+          : messageContent;
+
         setOptimisticMessage({
           id: `optimistic-${Date.now()}`,
           role: 'user',
-          openai_obj: { content: messageContent }
+          openai_obj: { content: composedMessageContent }
         });
 
         const csrfToken = await getCsrfToken();
@@ -380,7 +388,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
         const response = await fetch(`${config.baseUrl}/api/messages/`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ openai_obj: { content: messageContent, role: 'user' }, agent: agent.id }),
+          body: JSON.stringify({ openai_obj: { content: composedMessageContent, role: 'user' }, agent: agent.id }),
           credentials: 'include'
         });
 
@@ -405,6 +413,9 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
       setOptimisticMessage(null);
       setIsLoading(false);
       setIsUserSending(false);
+      if (consumedPrefix) {
+        queueNextUserMessagePrefix(currentDatasetId, consumedPrefix);
+      }
 
       const defaultMessage = 'Something went wrong while sending your message. Please try again.';
       const message =

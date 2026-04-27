@@ -1,6 +1,6 @@
 'use client'
 
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
 
@@ -19,6 +19,7 @@ export const DatasetProvider = ({ children }) => {
   const [currentDatasetId, setCurrentDatasetId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const pendingUserMessagePrefixesRef = useRef(new Map()); // Map of datasetId -> one-time prefix
 
   // Helper function to fetch data with timeout and retry logic
   const fetchData = async (url, options = {}) => {
@@ -222,6 +223,7 @@ export const DatasetProvider = ({ children }) => {
       newMap.delete(datasetId);
       return newMap;
     });
+    pendingUserMessagePrefixesRef.current.delete(datasetId);
     if (datasetId === currentDatasetId) {
       setCurrentDatasetId(null);
     }
@@ -231,6 +233,26 @@ export const DatasetProvider = ({ children }) => {
   const clearAllDatasets = useCallback(() => {
     setDatasets(new Map());
     setCurrentDatasetId(null);
+    pendingUserMessagePrefixesRef.current = new Map();
+  }, []);
+
+  const queueNextUserMessagePrefix = useCallback((datasetId, prefix) => {
+    const trimmedPrefix = typeof prefix === 'string' ? prefix.trim() : '';
+    if (!datasetId || !trimmedPrefix) {
+      return;
+    }
+    pendingUserMessagePrefixesRef.current.set(datasetId, trimmedPrefix);
+  }, []);
+
+  const consumeNextUserMessagePrefix = useCallback((datasetId) => {
+    if (!datasetId) {
+      return '';
+    }
+    const consumedPrefix = pendingUserMessagePrefixesRef.current.get(datasetId) || '';
+    if (consumedPrefix) {
+      pendingUserMessagePrefixesRef.current.delete(datasetId);
+    }
+    return consumedPrefix;
   }, []);
 
   // Helper to re-fetch datasets list for dashboard
@@ -293,7 +315,9 @@ export const DatasetProvider = ({ children }) => {
     clearAllDatasets,
     refetchDatasetsList,
     deleteDataset,
-    setCurrentDatasetId
+    setCurrentDatasetId,
+    queueNextUserMessagePrefix,
+    consumeNextUserMessagePrefix
   };
 
   return (
