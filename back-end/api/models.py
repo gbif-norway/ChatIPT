@@ -197,35 +197,6 @@ class Dataset(models.Model):
             self.save(update_fields=['source_mode'])
         return source_mode
 
-    def get_pdf_extraction_summaries(self):
-        summaries = []
-        for user_file in self.user_files.order_by('uploaded_at', 'id'):
-            if user_file.file_type != UserFile.FileType.PDF:
-                continue
-            extraction = user_file.get_pdf_extraction()
-            if not extraction:
-                continue
-            extracted_json = extraction.extracted_json or {}
-            summaries.append(
-                {
-                    'user_file_id': user_file.id,
-                    'filename': user_file.filename,
-                    'status': extraction.status,
-                    'outcome': extracted_json.get('outcome'),
-                    'summary': extracted_json.get('summary') or '',
-                    'confidence': extracted_json.get('confidence'),
-                    'candidate_dataset_count': extracted_json.get('candidate_dataset_count'),
-                    'candidate_dataset_summaries': extracted_json.get('candidate_dataset_summaries') or [],
-                    'required_data_for_publication': extracted_json.get('required_data_for_publication') or [],
-                    'extraction_mode': extracted_json.get('extraction_mode'),
-                    'materialized_table_ids': extracted_json.get('materialized_table_ids') or [],
-                    'high_confidence_table_count': extracted_json.get('high_confidence_table_count', 0),
-                    'error': extraction.error or '',
-                    'updated_at': extraction.updated_at,
-                }
-            )
-        return summaries
-
     def get_tree_file_info(self, content_preview_chars=500, max_tip_labels=50):
         """
         Get information about tree files for display in prompts.
@@ -310,6 +281,8 @@ class UserFile(models.Model):
     dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, related_name='user_files')
     uploaded_at = models.DateTimeField(auto_now_add=True)
     file = models.FileField(upload_to='user_files')
+    openai_file_id = models.CharField(max_length=200, blank=True)
+    openai_file_fingerprint = models.CharField(max_length=128, blank=True)
 
     def __str__(self):
         label = self.file_type_label or 'unknown'
@@ -349,12 +322,6 @@ class UserFile(models.Model):
         if ext in self.TABULAR_TEXT_EXTENSIONS or ext in self.TABULAR_EXCEL_EXTENSIONS:
             return self.FileType.TABULAR
         return self.FileType.UNKNOWN
-
-    def get_pdf_extraction(self):
-        try:
-            return self.pdf_extraction
-        except Exception:
-            return None
 
     def _load_tabular_dataframes(self):
         ext = Path(self.file.name).suffix.lower()
@@ -608,37 +575,6 @@ class UserFile(models.Model):
         ordering = ['uploaded_at', 'id']
 
 
-class PdfExtraction(models.Model):
-    class Status(models.TextChoices):
-        PENDING = 'pending', _('Pending')
-        SUCCESS = 'success', _('Success')
-        FAILED = 'failed', _('Failed')
-
-    user_file = models.OneToOneField(
-        UserFile,
-        on_delete=models.CASCADE,
-        related_name='pdf_extraction',
-    )
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
-    fingerprint = models.CharField(max_length=128, blank=True)
-    page_count = models.PositiveIntegerField(null=True, blank=True)
-    openai_file_id = models.CharField(max_length=200, blank=True)
-    model = models.CharField(max_length=200, blank=True)
-    extracted_json = models.JSONField(null=True, blank=True)
-    error = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ['-updated_at', '-id']
-
-    @property
-    def extraction_outcome(self):
-        if not isinstance(self.extracted_json, dict):
-            return None
-        return self.extracted_json.get('outcome')
-
-
 class Task(models.Model):  # See tasks.yaml for the only objects this model is populated with
     name = models.CharField(max_length=300, unique=True)
     text = models.TextField()
@@ -658,8 +594,6 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
             agent_tools.SetAgentTaskToComplete.__name__,
             agent_tools.Python.__name__,
             agent_tools.CreateNewTables.__name__,
-            agent_tools.ViewUserPDFs.__name__,
-            agent_tools.ExtractTablesFromPDFs.__name__,
             agent_tools.BasicValidationForSomeDwCTerms.__name__,
             agent_tools.GetDarwinCoreInfo.__name__,
             agent_tools.GetDwCExtensionInfo.__name__,
@@ -920,7 +854,6 @@ class Agent(models.Model):
             'agent': self,
             'all_tasks_count': Task.objects.count(),
             'new_table_cutoff': new_table_cutoff,
-            'pdf_extractions': self.dataset.get_pdf_extraction_summaries(),
         }
         system_message_text = render_to_string('prompt.txt', context=context)
         system_message = self.message_set.filter(openai_obj__role=Message.Role.SYSTEM).order_by('created_at').first()
@@ -954,7 +887,11 @@ class Agent(models.Model):
             self.regenerate_system_message(new_table_cutoff)
 
             # Main GPT interaction
-            response_message = create_response_message(self.message_set.all(), self.task.functions)
+            response_message = create_response_message(
+                self.message_set.all(),
+                self.task.functions,
+                pdf_user_files=self.dataset.user_files.filter(file__iendswith='.pdf').order_by('uploaded_at', 'id'),
+            )
 
             # Store the assistant message returned by OpenAI
             message = Message.objects.create(agent=self, openai_obj=response_message.dict())  # response_message.__dict__

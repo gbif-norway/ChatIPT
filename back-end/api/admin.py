@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from .models import CustomUser, Dataset, Task, Table, Agent, Message, UserFile, PdfExtraction
+from .models import CustomUser, Dataset, Task, Table, Agent, Message, UserFile
 
 
 @admin.register(CustomUser)
@@ -64,14 +64,6 @@ class UserFileAdmin(admin.ModelAdmin):
         return obj.file_type_label
 
     get_file_type.short_description = 'File type'
-
-
-@admin.register(PdfExtraction)
-class PdfExtractionAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user_file', 'status', 'page_count', 'model', 'updated_at')
-    list_filter = ('status', 'updated_at', 'created_at')
-    search_fields = ('user_file__file', 'user_file__dataset__title', 'fingerprint', 'openai_file_id')
-    readonly_fields = ('created_at', 'updated_at')
 
 
 @admin.register(Agent)

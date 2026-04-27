@@ -1,4 +1,6 @@
 import json
+import hashlib
+import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
@@ -57,13 +59,18 @@ def query_responses_api(args):
         return client.responses.create(**args)
 
 
-def create_response_message(messages, functions, temperature=1, model='gpt-5.4'):
+def create_response_message(messages, functions, temperature=1, model='gpt-5.4', pdf_user_files=None):
     print('---')
     print(f'---Calling GPT {model}---')
+    input_items = _messages_to_responses_input(messages)
+    pdf_file_inputs = _prepare_pdf_file_inputs(pdf_user_files if pdf_user_files is not None else [])
+    if pdf_file_inputs:
+        input_items = _attach_pdf_files_to_latest_user_message(input_items, pdf_file_inputs)
+
     openai_args = {
         'model': model,
         'temperature': temperature,
-        'input': _messages_to_responses_input(messages),
+        'input': input_items,
     }
     openai_args['tools'] = _functions_to_responses_tools(functions)
     response = query_responses_api(openai_args)
@@ -75,6 +82,102 @@ def create_response_message(messages, functions, temperature=1, model='gpt-5.4')
         '---'
     )
     return _response_to_compat_message(response)
+
+
+def _prepare_pdf_file_inputs(pdf_user_files) -> List[Dict[str, str]]:
+    file_inputs = []
+    for user_file in pdf_user_files:
+        if not getattr(user_file, 'file', None):
+            continue
+        filename = getattr(user_file, 'filename', '') or 'uploaded.pdf'
+        file_id = _ensure_openai_file_id(user_file)
+        file_inputs.append({
+            'type': 'input_file',
+            'file_id': file_id,
+            'filename': filename,
+            'user_file_id': str(getattr(user_file, 'id', '')),
+        })
+    return file_inputs
+
+
+def _ensure_openai_file_id(user_file) -> str:
+    user_file.file.open('rb')
+    try:
+        file_bytes = user_file.file.read()
+    finally:
+        user_file.file.close()
+
+    fingerprint = hashlib.sha256(file_bytes).hexdigest()
+    if (
+        getattr(user_file, 'openai_file_id', '')
+        and getattr(user_file, 'openai_file_fingerprint', '') == fingerprint
+    ):
+        return user_file.openai_file_id
+
+    with tempfile.NamedTemporaryFile(suffix='.pdf') as tmp:
+        tmp.write(file_bytes)
+        tmp.flush()
+        with OpenAI() as client:
+            with open(tmp.name, 'rb') as pdf_handle:
+                uploaded = client.files.create(file=pdf_handle, purpose='user_data')
+
+    user_file.openai_file_id = uploaded.id
+    user_file.openai_file_fingerprint = fingerprint
+    user_file.save(update_fields=['openai_file_id', 'openai_file_fingerprint'])
+    return uploaded.id
+
+
+def _attach_pdf_files_to_latest_user_message(
+    input_items: List[Dict[str, Any]],
+    pdf_file_inputs: List[Dict[str, str]],
+) -> List[Dict[str, Any]]:
+    if not pdf_file_inputs:
+        return input_items
+
+    file_labels = ', '.join(
+        item.get('filename') or item.get('file_id') or 'uploaded PDF'
+        for item in pdf_file_inputs
+    )
+    attachment_note = {
+        'type': 'input_text',
+        'text': (
+            f'Uploaded manuscript PDF files are attached to this message for direct reading: {file_labels}. '
+            'Use these file attachments as source evidence; do not rely on a separate PDF parser.'
+        ),
+    }
+    attachment_content = [
+        attachment_note,
+        *[
+            {'type': 'input_file', 'file_id': item['file_id']}
+            for item in pdf_file_inputs
+        ],
+    ]
+
+    for index in range(len(input_items) - 1, -1, -1):
+        item = input_items[index]
+        if item.get('role') != 'user':
+            continue
+
+        content = item.get('content')
+        if isinstance(content, list):
+            text_and_files = [*content, *attachment_content]
+        else:
+            text_and_files = [
+                {'type': 'input_text', 'text': _normalize_content_to_text(content)},
+                *attachment_content,
+            ]
+
+        updated_items = list(input_items)
+        updated_items[index] = {**item, 'content': text_and_files}
+        return updated_items
+
+    return [
+        *input_items,
+        {
+            'role': 'user',
+            'content': attachment_content,
+        },
+    ]
 
 
 def _messages_to_responses_input(messages) -> List[Dict[str, Any]]:

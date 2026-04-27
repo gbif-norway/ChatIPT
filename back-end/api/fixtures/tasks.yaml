@@ -5,15 +5,15 @@
       MANUSCRIPT_TASK: This task is required for datasets that include one or more manuscript PDFs.
 
       Your goals:
-      1. Review the manuscript extraction context and summarize what metadata and candidate tables were extracted.
+      1. Review the attached manuscript PDF directly and summarize what metadata and candidate tables are present.
       2. If multiple candidate datasets/tables were detected, ask the user whether to proceed with one candidate dataset or combine selected candidates.
       3. Keep one publication dataset scope at a time.
-      4. If no raw biodiversity table data was extracted, explain clearly what missing source data is required and ask the user to upload additional data/PDF evidence.
+      4. If no raw biodiversity table data can be grounded from the PDF, explain clearly what missing source data is required and ask the user to upload additional data/PDF evidence.
       5. Save any key decisions and missing-data notes using SetStructureNotes.
 
       Rules:
       - Do not fabricate biodiversity records for pdf-only uploads.
-      - Prefer grounded extracted tables and user-confirmed scope.
+      - Prefer tables and facts grounded directly in the attached PDF and user-confirmed scope.
       - If metadata appears trustworthy, set/update EML fields (including manuscript DOI/citation fields) with SetEML.
       - If this scoping step is complete and no blocking clarification is needed, call SetAgentTaskToComplete.
 

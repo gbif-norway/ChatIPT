@@ -16,6 +16,7 @@ from .helpers.publish import (
 )
 from .agent_tools import GetDarwinCoreInfo, SetEML, LogBugWithDeveloper, SetBasicMetadata
 from .helpers.openai_helpers import (
+    _attach_pdf_files_to_latest_user_message,
     _functions_to_responses_tools,
     _messages_to_responses_input,
     _response_to_compat_message,
@@ -1025,6 +1026,26 @@ class ResponsesAdapterCompatibilityTests(SimpleTestCase):
                 "output": "1",
             },
         )
+
+    def test_pdf_file_inputs_attach_to_latest_user_message(self):
+        items = [
+            {"role": "system", "content": "You are a helper."},
+            {"role": "user", "content": "Read the manuscript."},
+            {"role": "assistant", "content": "I can inspect it."},
+        ]
+
+        updated = _attach_pdf_files_to_latest_user_message(
+            items,
+            [{"type": "input_file", "file_id": "file_123", "filename": "paper.pdf"}],
+        )
+
+        self.assertEqual(updated[0], items[0])
+        self.assertEqual(updated[2], items[2])
+        self.assertEqual(updated[1]["role"], "user")
+        self.assertEqual(updated[1]["content"][0], {"type": "input_text", "text": "Read the manuscript."})
+        self.assertEqual(updated[1]["content"][1]["type"], "input_text")
+        self.assertIn("attached", updated[1]["content"][1]["text"])
+        self.assertEqual(updated[1]["content"][2], {"type": "input_file", "file_id": "file_123"})
 
     def test_responses_output_is_mapped_back_to_legacy_message_shape(self):
         response = SimpleNamespace(

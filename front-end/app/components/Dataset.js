@@ -209,17 +209,8 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       })
     : [];
 
-  const getPdfStatusBadge = (pdfFile) => {
-    const status = String(pdfFile?.extraction_status || '').toLowerCase();
-    const outcome = String(pdfFile?.extraction_outcome || '').toLowerCase();
-
-    if (status === 'pending' || !status) {
-      return { label: 'Processing PDF', className: 'text-bg-warning' };
-    }
-    if (status === 'failed' || outcome === 'success_no_raw_data') {
-      return { label: 'Needs review', className: 'text-bg-danger' };
-    }
-    return { label: 'Metadata extracted', className: 'text-bg-success' };
+  const getPdfStatusBadge = () => {
+    return { label: 'Available to model', className: 'text-bg-success' };
   };
 
   return (
@@ -301,28 +292,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                   );
                 })}
               </div>
-              {pdfFiles.map((pdfFile) => {
-                const extractionSummary = pdfFile?.extraction_summary;
-                const extractionTableIds = Array.isArray(pdfFile?.extraction_table_ids) ? pdfFile.extraction_table_ids : [];
-                if (!extractionSummary && extractionTableIds.length === 0) {
-                  return null;
-                }
-                return (
-                  <div key={`summary-${pdfFile.id}`} className="card mt-2">
-                    <div className="card-body py-2 px-3">
-                      <div className="small fw-semibold">{pdfFile.filename}</div>
-                      {extractionSummary && (
-                        <div className="small text-muted">{extractionSummary}</div>
-                      )}
-                      {extractionTableIds.length > 0 && (
-                        <div className="small mt-1">
-                          Extracted tables: {extractionTableIds.join(', ')}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
             </div>
           )}
         </div>
@@ -347,7 +316,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                 {currentDataset.rejected_at ? (
                   <>
                     <strong>Dataset requires new source data.</strong><br />
-                    PDF metadata was saved, but no high-confidence raw biodiversity table could be extracted.
+                    The uploaded files did not provide enough publishable biodiversity data.
                   </>
                 ) : (
                   <>
