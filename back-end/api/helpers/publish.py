@@ -111,6 +111,10 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
             child = ET.SubElement(parent, tag)
         return child
 
+    def remove_children(parent: ET.Element, tag: str):
+        for child in list(findall(parent, tag)):
+            parent.remove(child)
+
     def local_tag(tag_name: str) -> str:
         if "}" in tag_name:
             return tag_name.rsplit("}", 1)[-1]
@@ -130,6 +134,12 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     def set_text(elem, text: str | None):
         if elem is not None and text not in (None, ''):
             elem.text = str(text)
+
+    def clean_text(value) -> str | None:
+        if value in (None, ''):
+            return None
+        text = str(value).strip()
+        return text or None
 
     def normalize_doi(value: str | None) -> str | None:
         if value in (None, ''):
@@ -216,6 +226,177 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
 
         return None
 
+    def _coerce_coordinate(value) -> float | None:
+        if value in (None, ''):
+            return None
+        try:
+            return float(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+
+    def _coordinate_from_match(number: str, direction: str | None = None) -> float | None:
+        coordinate = _coerce_coordinate(number)
+        if coordinate is None:
+            return None
+        if direction:
+            direction = direction.upper()
+            if direction in {'S', 'W'}:
+                coordinate = -abs(coordinate)
+            elif direction in {'N', 'E'}:
+                coordinate = abs(coordinate)
+        return coordinate
+
+    def _normalize_geographic_bounds(bounds) -> dict[str, float] | None:
+        if not bounds:
+            return None
+
+        if isinstance(bounds, dict):
+            west = _coerce_coordinate(bounds.get('west') if 'west' in bounds else bounds.get('westBoundingCoordinate'))
+            east = _coerce_coordinate(bounds.get('east') if 'east' in bounds else bounds.get('eastBoundingCoordinate'))
+            north = _coerce_coordinate(bounds.get('north') if 'north' in bounds else bounds.get('northBoundingCoordinate'))
+            south = _coerce_coordinate(bounds.get('south') if 'south' in bounds else bounds.get('southBoundingCoordinate'))
+        elif isinstance(bounds, (list, tuple)) and len(bounds) == 4:
+            west = _coerce_coordinate(bounds[0])
+            east = _coerce_coordinate(bounds[1])
+            north = _coerce_coordinate(bounds[2])
+            south = _coerce_coordinate(bounds[3])
+        else:
+            return None
+
+        if None in {west, east, north, south}:
+            return None
+        if not all(-180 <= value <= 180 for value in (west, east)):
+            return None
+        if not all(-90 <= value <= 90 for value in (north, south)):
+            return None
+
+        return {
+            'west': min(west, east),
+            'east': max(west, east),
+            'north': max(north, south),
+            'south': min(north, south),
+        }
+
+    def _extract_axis_bounds(text: str, axis_terms: tuple[str, ...], directions: str) -> tuple[float, float] | None:
+        number = r"([+-]?\d+(?:\.\d+)?)"
+        direction = rf"\s*([{directions}])?"
+        separator = r"\s*(?:to|-|–)\s*"
+        axis_pattern = "|".join(axis_terms)
+        patterns = [
+            rf"(?:{axis_pattern})[^.;,\n]*?{number}{direction}{separator}{number}{direction}",
+            rf"{number}{direction}{separator}{number}{direction}[^.;,\n]*?(?:{axis_pattern})",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            first = _coordinate_from_match(match.group(1), match.group(2))
+            second = _coordinate_from_match(match.group(3), match.group(4))
+            if first is not None and second is not None:
+                return first, second
+        return None
+
+    def _extract_geographic_bounds_from_text(text: str | None) -> dict[str, float] | None:
+        if not text:
+            return None
+        lat_bounds = _extract_axis_bounds(text, ('lat', 'latitude'), 'NS')
+        lon_bounds = _extract_axis_bounds(text, ('lon', 'long', 'longitude'), 'EW')
+        if not lat_bounds or not lon_bounds:
+            return None
+
+        south = min(lat_bounds)
+        north = max(lat_bounds)
+        west = min(lon_bounds)
+        east = max(lon_bounds)
+        return _normalize_geographic_bounds({
+            'west': west,
+            'east': east,
+            'north': north,
+            'south': south,
+        })
+
+    def _format_coordinate(value: float) -> str:
+        text = f"{value:.6f}".rstrip('0').rstrip('.')
+        return text if text != '-0' else '0'
+
+    def _infer_taxon_rank(name: str, index: int, total: int) -> str:
+        lower = name.lower()
+        if lower in {'animalia', 'plantae', 'fungi', 'bacteria', 'archaea', 'protista', 'chromista'}:
+            return 'kingdom'
+        if lower.endswith('aceae') or lower.endswith('idae'):
+            return 'family'
+        if lower.endswith('ales'):
+            return 'order'
+        if lower.endswith('mycota') or lower.endswith('phyta'):
+            return 'phylum'
+        if lower.endswith('opsida') or lower.endswith('phyceae'):
+            return 'class'
+        if total == 1:
+            return 'taxon'
+        return 'higherTaxon' if index == 0 else 'taxon'
+
+    def _normalize_taxonomic_keywords(raw_keywords) -> list[dict[str, str]]:
+        if not isinstance(raw_keywords, list):
+            return []
+
+        normalized = []
+        seen = set()
+        for keyword in raw_keywords:
+            if not isinstance(keyword, dict):
+                continue
+            scientific_name = clean_text(
+                keyword.get('scientificName')
+                or keyword.get('scientific_name')
+                or keyword.get('taxonRankValue')
+                or keyword.get('name')
+            )
+            if not scientific_name:
+                continue
+            rank = clean_text(keyword.get('rank') or keyword.get('taxonRankName'))
+            common_name = clean_text(keyword.get('commonName') or keyword.get('common_name'))
+            key = ((rank or '').lower(), scientific_name.lower(), (common_name or '').lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append({
+                'rank': rank or 'taxon',
+                'scientificName': scientific_name,
+                'commonName': common_name,
+            })
+        return normalized
+
+    def _fallback_taxonomic_keywords_from_scope(scope: str | None) -> list[dict[str, str]]:
+        """Conservative fallback for simple scopes like "Plantae, Fabaceae".
+
+        IPT writes taxonomicClassification from structured taxon keywords, not
+        from prose descriptions. Stop before sentence-like tokens to avoid
+        turning general text into bogus classifications.
+        """
+        if not scope:
+            return []
+
+        tokens = []
+        for raw_token in str(scope).split(','):
+            token = raw_token.strip()
+            if not token:
+                continue
+            if any(char in token for char in '.;:()'):
+                break
+            if len(token.split()) > 3 or len(token) > 80:
+                break
+            tokens.append(token)
+            if len(tokens) >= 12:
+                break
+
+        return [
+            {
+                'rank': _infer_taxon_rank(token, index, len(tokens)),
+                'scientificName': token,
+                'commonName': None,
+            }
+            for index, token in enumerate(tokens)
+        ]
+
     dataset_node = find(root, 'dataset')
     if dataset_node is None:
         dataset_node = ET.SubElement(root, 'dataset')
@@ -245,19 +426,19 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         set_text(get_or_create(individual, 'givenName'), person.get('first_name') or person.get('givenName') or '')
         set_text(get_or_create(individual, 'surName'), person.get('last_name') or person.get('surName') or '')
 
-        # GBIF profile expects userId in responsible parties. Keep the node even when value is missing.
         orcid_value = (person.get('orcid') or person.get('userId') or '')
         if orcid_value is None:
             orcid_value = ''
         orcid_value = str(orcid_value).strip()
-        user_id = get_or_create(parent_node, 'userId')
-        user_id.set('directory', 'https://orcid.org/')
-        user_id.text = orcid_value
 
         if include_email:
             email_value = person.get('email') or person.get('electronicMailAddress') or ''
             if email_value:
                 set_text(get_or_create(parent_node, 'electronicMailAddress'), email_value)
+        if orcid_value:
+            user_id = get_or_create(parent_node, 'userId')
+            user_id.set('directory', 'https://orcid.org/')
+            user_id.text = orcid_value
         if include_role:
             set_text(get_or_create(parent_node, 'role'), role_value or 'metadataProvider')
 
@@ -268,10 +449,11 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
                 'organizationName',
                 'positionName',
                 'address',
-                'userId',
-                'role',
+                'phone',
                 'electronicMailAddress',
                 'onlineUrl',
+                'userId',
+                'role',
             ],
         )
 
@@ -339,59 +521,71 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
                 include_email=False,
             )
 
-    # Coverage
-    coverage = get_or_create(dataset_node, 'coverage')
+    # Coverage: rebuild from populated values only. GBIF's profile requires
+    # geographicCoverage/boundingCoordinates and taxonomicCoverage/classification.
+    remove_children(dataset_node, 'coverage')
+    coverage = ET.Element('coverage')
+    has_coverage = False
+
     # Geographic
-    geo = get_or_create(coverage, 'geographicCoverage')
-    set_text(get_or_create(geo, 'geographicDescription'), eml_extra.get('geographic_scope'))
+    geographic_scope = clean_text(eml_extra.get('geographic_scope'))
+    geographic_bounds = _normalize_geographic_bounds(eml_extra.get('geographic_bounds'))
+    if geographic_bounds is None:
+        geographic_bounds = _extract_geographic_bounds_from_text(geographic_scope)
+    if geographic_scope and geographic_bounds:
+        geo = ET.SubElement(coverage, 'geographicCoverage')
+        set_text(ET.SubElement(geo, 'geographicDescription'), geographic_scope)
+        bounds = ET.SubElement(geo, 'boundingCoordinates')
+        set_text(ET.SubElement(bounds, 'westBoundingCoordinate'), _format_coordinate(geographic_bounds['west']))
+        set_text(ET.SubElement(bounds, 'eastBoundingCoordinate'), _format_coordinate(geographic_bounds['east']))
+        set_text(ET.SubElement(bounds, 'northBoundingCoordinate'), _format_coordinate(geographic_bounds['north']))
+        set_text(ET.SubElement(bounds, 'southBoundingCoordinate'), _format_coordinate(geographic_bounds['south']))
+        has_coverage = True
+
     # Temporal
     temporal_value = eml_extra.get('temporal_scope')
     if temporal_value:
         normalized_temporal = _normalize_temporal_scope(str(temporal_value))
         if normalized_temporal and normalized_temporal[0] == "range":
             _, start, end = normalized_temporal
-            range_node = get_or_create(coverage, 'temporalCoverage')
-            rnd = get_or_create(range_node, 'rangeOfDates')
-            set_text(get_or_create(get_or_create(rnd, 'beginDate'), 'calendarDate'), start)
-            set_text(get_or_create(get_or_create(rnd, 'endDate'), 'calendarDate'), end)
+            range_node = ET.SubElement(coverage, 'temporalCoverage')
+            rnd = ET.SubElement(range_node, 'rangeOfDates')
+            set_text(ET.SubElement(ET.SubElement(rnd, 'beginDate'), 'calendarDate'), start)
+            set_text(ET.SubElement(ET.SubElement(rnd, 'endDate'), 'calendarDate'), end)
+            has_coverage = True
         elif normalized_temporal and normalized_temporal[0] == "single":
             _, single_date = normalized_temporal
-            single_node = get_or_create(coverage, 'temporalCoverage')
-            sdt = get_or_create(single_node, 'singleDateTime')
-            set_text(get_or_create(sdt, 'calendarDate'), single_date)
+            single_node = ET.SubElement(coverage, 'temporalCoverage')
+            sdt = ET.SubElement(single_node, 'singleDateTime')
+            set_text(ET.SubElement(sdt, 'calendarDate'), single_date)
+            has_coverage = True
 
     # Taxonomic
-    tax = get_or_create(coverage, 'taxonomicCoverage')
-    taxonomic_scope = eml_extra.get('taxonomic_scope')
-    set_text(get_or_create(tax, 'generalTaxonomicCoverage'), taxonomic_scope)
-    for existing_taxon in list(findall(tax, 'taxonomicClassification')):
-        tax.remove(existing_taxon)
+    taxonomic_scope = clean_text(eml_extra.get('taxonomic_scope'))
 
-    if taxonomic_scope:
-        taxa = [token.strip() for token in str(taxonomic_scope).split(',') if token.strip()]
-        if taxa:
-            def infer_taxon_rank(name: str, index: int, total: int) -> str:
-                lower = name.lower()
-                if lower in {'animalia', 'plantae', 'fungi', 'bacteria', 'archaea', 'protista', 'chromista'}:
-                    return 'kingdom'
-                if lower.endswith('aceae') or lower.endswith('idae'):
-                    return 'family'
-                if lower.endswith('ales'):
-                    return 'order'
-                if lower.endswith('mycota') or lower.endswith('phyta'):
-                    return 'phylum'
-                if lower.endswith('opsida') or lower.endswith('phyceae'):
-                    return 'class'
-                if total == 1:
-                    return 'taxon'
-                return 'higherTaxon' if index == 0 else 'taxon'
+    taxonomic_keywords = _normalize_taxonomic_keywords(eml_extra.get('taxonomic_keywords'))
+    if not taxonomic_keywords:
+        taxonomic_keywords = _fallback_taxonomic_keywords_from_scope(taxonomic_scope)
 
+    if taxonomic_keywords:
+        tax = ET.SubElement(coverage, 'taxonomicCoverage')
+        if taxonomic_scope:
+            set_text(ET.SubElement(tax, 'generalTaxonomicCoverage'), taxonomic_scope)
+        for keyword in taxonomic_keywords:
             classification = ET.SubElement(tax, 'taxonomicClassification')
-            for index, taxon_name in enumerate(taxa):
-                set_text(get_or_create(classification, 'taxonRankName'), infer_taxon_rank(taxon_name, index, len(taxa)))
-                set_text(get_or_create(classification, 'taxonRankValue'), taxon_name)
-                if index < len(taxa) - 1:
-                    classification = ET.SubElement(classification, 'taxonomicClassification')
+            if keyword.get('rank'):
+                set_text(ET.SubElement(classification, 'taxonRankName'), keyword['rank'])
+            set_text(ET.SubElement(classification, 'taxonRankValue'), keyword['scientificName'])
+            if keyword.get('commonName'):
+                set_text(ET.SubElement(classification, 'commonName'), keyword['commonName'])
+        has_coverage = True
+
+    if has_coverage:
+        methods_node = find(dataset_node, 'methods')
+        if methods_node is not None:
+            dataset_node.insert(list(dataset_node).index(methods_node), coverage)
+        else:
+            dataset_node.append(coverage)
 
     # Methods / methodology
     methods = get_or_create(dataset_node, 'methods')

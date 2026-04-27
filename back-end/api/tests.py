@@ -42,7 +42,7 @@ class EmlGenerationTests(SimpleTestCase):
             description='Plain text abstract',
             user=DummyUser(),
             eml_extra={
-                'geographic_scope': 'Norway',
+                'geographic_scope': 'Norway. Coordinate bounds: lat 58 to 71, lon 4 to 31.',
                 'temporal_scope': '2024-01-01/2024-12-31',
                 'taxonomic_scope': 'Coleoptera',
                 'methodology': 'Trap sampling',
@@ -77,6 +77,10 @@ class EmlGenerationTests(SimpleTestCase):
         coverage = dataset.find('coverage')
         self.assertIsNotNone(coverage)
         self.assertIsNotNone(coverage.find('geographicCoverage/geographicDescription'))
+        self.assertEqual(
+            coverage.find('geographicCoverage/boundingCoordinates/westBoundingCoordinate').text,
+            '4',
+        )
         # methods description present
         self.assertIsNotNone(dataset.find('methods/methodStep/description/para'))
 
@@ -158,7 +162,7 @@ class EmlGenerationTests(SimpleTestCase):
         self.assertEqual(personnel_nodes[0].find('individualName/givenName').text, 'Jane')
         self.assertEqual(personnel_nodes[1].find('individualName/givenName').text, 'Richard')
         self.assertIsNone(personnel_nodes[0].find('electronicMailAddress'))
-        self.assertIsNotNone(personnel_nodes[0].find('userId'))
+        self.assertIsNone(personnel_nodes[0].find('userId'))
         self.assertEqual(personnel_nodes[0].find('role').text, 'metadataProvider')
 
     def test_make_eml_keeps_creator_before_metadata_provider_when_users_override_primary_creator(self):
@@ -215,10 +219,189 @@ class EmlGenerationTests(SimpleTestCase):
         self.assertEqual(first_classification.find('taxonRankName').text, 'kingdom')
         self.assertEqual(first_classification.find('taxonRankValue').text, 'Plantae')
 
-        nested_classification = first_classification.find('taxonomicClassification')
-        self.assertIsNotNone(nested_classification)
-        self.assertEqual(nested_classification.find('taxonRankName').text, 'family')
-        self.assertEqual(nested_classification.find('taxonRankValue').text, 'Solanaceae')
+        self.assertIsNone(first_classification.find('taxonomicClassification'))
+        classifications = dataset.findall('coverage/taxonomicCoverage/taxonomicClassification')
+        self.assertEqual(len(classifications), 2)
+        self.assertEqual(classifications[1].find('taxonRankName').text, 'family')
+        self.assertEqual(classifications[1].find('taxonRankValue').text, 'Solanaceae')
+
+    def test_make_eml_uses_structured_taxonomic_keywords(self):
+        class DummyUser:
+            first_name = 'Alice'
+            last_name = 'Smith'
+            orcid_id = '0000-0001-2345-6789'
+            email = 'alice@example.org'
+
+        xml_text = make_eml(
+            title='Structured taxonomy',
+            description='Abstract text',
+            user=DummyUser(),
+            eml_extra={
+                'taxonomic_scope': 'Plants and fungi in source data.',
+                'taxonomic_keywords': [
+                    {'rank': 'kingdom', 'scientificName': 'Plantae'},
+                    {'rank': 'family', 'scientificName': 'Solanaceae', 'commonName': 'nightshades'},
+                ],
+            },
+        )
+        root = ET.fromstring(xml_text.encode('utf-8'))
+        dataset = root.find('dataset')
+        self.assertIsNotNone(dataset)
+
+        classifications = dataset.findall('coverage/taxonomicCoverage/taxonomicClassification')
+        self.assertEqual(len(classifications), 2)
+        self.assertEqual(classifications[0].find('taxonRankValue').text, 'Plantae')
+        self.assertEqual(classifications[1].find('commonName').text, 'nightshades')
+
+    def test_make_eml_does_not_turn_taxonomic_prose_into_classifications(self):
+        class DummyUser:
+            first_name = 'Alice'
+            last_name = 'Smith'
+            orcid_id = '0000-0001-2345-6789'
+            email = 'alice@example.org'
+
+        xml_text = make_eml(
+            title='Taxonomic prose',
+            description='Abstract text',
+            user=DummyUser(),
+            eml_extra={
+                'taxonomic_scope': (
+                    'Plantae, Fabaceae. The dataset contains specimen-linked occurrence records '
+                    'for multiple genera, with emphasis on Errazurizia and related taxa.'
+                ),
+            },
+        )
+        root = ET.fromstring(xml_text.encode('utf-8'))
+        dataset = root.find('dataset')
+        self.assertIsNotNone(dataset)
+
+        classifications = dataset.findall('coverage/taxonomicCoverage/taxonomicClassification')
+        self.assertEqual(len(classifications), 1)
+        self.assertEqual(classifications[0].find('taxonRankValue').text, 'Plantae')
+
+    def test_make_eml_orders_agent_email_before_user_id(self):
+        class DummyUser:
+            first_name = 'Alice'
+            last_name = 'Smith'
+            orcid_id = '0000-0001-2345-6789'
+            email = 'alice@example.org'
+
+        xml_text = make_eml(
+            title='Ordered agent',
+            description='Abstract text',
+            user=DummyUser(),
+            eml_extra={},
+        )
+        root = ET.fromstring(xml_text.encode('utf-8'))
+        dataset = root.find('dataset')
+        self.assertIsNotNone(dataset)
+
+        creator_tags = [child.tag for child in list(dataset.find('creator'))]
+        self.assertLess(creator_tags.index('electronicMailAddress'), creator_tags.index('userId'))
+        contact_tags = [child.tag for child in list(dataset.find('contact'))]
+        self.assertLess(contact_tags.index('electronicMailAddress'), contact_tags.index('userId'))
+
+    def test_make_eml_omits_geographic_coverage_without_bounds(self):
+        class DummyUser:
+            first_name = 'Alice'
+            last_name = 'Smith'
+            orcid_id = '0000-0001-2345-6789'
+            email = 'alice@example.org'
+
+        xml_text = make_eml(
+            title='No geographic bounds',
+            description='Abstract text',
+            user=DummyUser(),
+            eml_extra={
+                'geographic_scope': 'Norway',
+            },
+        )
+        root = ET.fromstring(xml_text.encode('utf-8'))
+        dataset = root.find('dataset')
+        self.assertIsNotNone(dataset)
+
+        self.assertIsNone(dataset.find('coverage/geographicCoverage'))
+
+    def test_make_eml_extracts_geographic_bounds_from_scope_text(self):
+        class DummyUser:
+            first_name = 'Alice'
+            last_name = 'Smith'
+            orcid_id = '0000-0001-2345-6789'
+            email = 'alice@example.org'
+
+        xml_text = make_eml(
+            title='Geographic bounds',
+            description='Abstract text',
+            user=DummyUser(),
+            eml_extra={
+                'geographic_scope': (
+                    'Coordinates range from 28.55056 S to 44.49629167 N latitude '
+                    'and from 112.71712 W to 70.80929 W longitude.'
+                ),
+            },
+        )
+        root = ET.fromstring(xml_text.encode('utf-8'))
+        dataset = root.find('dataset')
+        self.assertIsNotNone(dataset)
+
+        bounds = dataset.find('coverage/geographicCoverage/boundingCoordinates')
+        self.assertIsNotNone(bounds)
+        self.assertEqual(bounds.find('westBoundingCoordinate').text, '-112.71712')
+        self.assertEqual(bounds.find('eastBoundingCoordinate').text, '-70.80929')
+        self.assertEqual(bounds.find('northBoundingCoordinate').text, '44.496292')
+        self.assertEqual(bounds.find('southBoundingCoordinate').text, '-28.55056')
+
+    def test_make_eml_accepts_structured_geographic_bounds_with_zero_values(self):
+        class DummyUser:
+            first_name = 'Alice'
+            last_name = 'Smith'
+            orcid_id = '0000-0001-2345-6789'
+            email = 'alice@example.org'
+
+        xml_text = make_eml(
+            title='Structured geographic bounds',
+            description='Abstract text',
+            user=DummyUser(),
+            eml_extra={
+                'geographic_scope': 'Equator and prime meridian test area.',
+                'geographic_bounds': {
+                    'west': 0,
+                    'east': 10,
+                    'north': 5,
+                    'south': 0,
+                },
+            },
+        )
+        root = ET.fromstring(xml_text.encode('utf-8'))
+        dataset = root.find('dataset')
+        self.assertIsNotNone(dataset)
+
+        bounds = dataset.find('coverage/geographicCoverage/boundingCoordinates')
+        self.assertIsNotNone(bounds)
+        self.assertEqual(bounds.find('westBoundingCoordinate').text, '0')
+        self.assertEqual(bounds.find('southBoundingCoordinate').text, '0')
+
+    def test_make_eml_omits_template_coverage_when_all_scopes_are_empty(self):
+        class DummyUser:
+            first_name = 'Alice'
+            last_name = 'Smith'
+            orcid_id = '0000-0001-2345-6789'
+            email = 'alice@example.org'
+
+        xml_text = make_eml(
+            title='No coverage',
+            description='Abstract text',
+            user=DummyUser(),
+            eml_extra={
+                'geographic_scope': None,
+                'temporal_scope': None,
+                'taxonomic_scope': None,
+            },
+        )
+        root = ET.fromstring(xml_text.encode('utf-8'))
+        dataset = root.find('dataset')
+        self.assertIsNotNone(dataset)
+        self.assertIsNone(dataset.find('coverage'))
 
     def test_make_eml_normalizes_temporal_textual_range(self):
         class DummyUser:
@@ -639,6 +822,41 @@ class SetEMLTemporalInferenceTests(SimpleTestCase):
         self.assertIn("Families:", inferred)
         self.assertIn("Felidae", inferred)
         self.assertIn("Canidae", inferred)
+
+    def test_infer_taxonomic_keywords_from_taxonomic_columns(self):
+        class DummyTable:
+            def __init__(self, df):
+                self.df = df
+
+        class DummyTableSet:
+            def __init__(self, tables):
+                self._tables = tables
+
+            def all(self):
+                return self._tables
+
+        class DummyDataset:
+            def __init__(self, tables):
+                self.table_set = DummyTableSet(tables)
+
+        dataset = DummyDataset(
+            [
+                DummyTable(
+                    pd.DataFrame(
+                        {
+                            "kingdom": ["Animalia", "Animalia"],
+                            "family": ["Felidae", "Canidae"],
+                        }
+                    )
+                )
+            ]
+        )
+
+        inferred = SetEML._infer_taxonomic_keywords_from_dataset(dataset)
+
+        self.assertIn({"rank": "kingdom", "scientificName": "Animalia"}, inferred)
+        self.assertIn({"rank": "family", "scientificName": "Felidae"}, inferred)
+        self.assertIn({"rank": "family", "scientificName": "Canidae"}, inferred)
 
     def test_infer_methodology_from_sampling_protocol(self):
         class DummyTable:

@@ -1468,6 +1468,45 @@ class SetEML(OpenAIBaseModel):
         return "; ".join(parts)
 
     @classmethod
+    def _infer_geographic_bounds_from_dataset(cls, dataset) -> Optional[Dict[str, float]]:
+        min_lat = None
+        max_lat = None
+        min_lon = None
+        max_lon = None
+
+        for table in dataset.table_set.all():
+            df = table.df
+            if not isinstance(df, pd.DataFrame) or df.empty:
+                continue
+            normalized_cols = {str(col).strip().lower(): col for col in df.columns}
+
+            lat_col = normalized_cols.get("decimallatitude")
+            lon_col = normalized_cols.get("decimallongitude")
+            if lat_col is None or lon_col is None:
+                continue
+
+            for _, row in df.iterrows():
+                lat = cls._coerce_float(row.get(lat_col))
+                lon = cls._coerce_float(row.get(lon_col))
+                if lat is None or lon is None:
+                    continue
+                if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                    continue
+                min_lat = lat if min_lat is None else min(min_lat, lat)
+                max_lat = lat if max_lat is None else max(max_lat, lat)
+                min_lon = lon if min_lon is None else min(min_lon, lon)
+                max_lon = lon if max_lon is None else max(max_lon, lon)
+
+        if min_lat is None or max_lat is None or min_lon is None or max_lon is None:
+            return None
+        return {
+            "west": min_lon,
+            "east": max_lon,
+            "north": max_lat,
+            "south": min_lat,
+        }
+
+    @classmethod
     def _infer_taxonomic_scope_from_dataset(cls, dataset) -> Optional[str]:
         rank_columns = ["kingdom", "phylum", "class", "order", "family", "genus"]
         rank_labels = {
@@ -1512,6 +1551,38 @@ class SetEML(OpenAIBaseModel):
         if scientific_names:
             return cls._summarize_values("Scientific names", scientific_names)
         return None
+
+    @classmethod
+    def _infer_taxonomic_keywords_from_dataset(cls, dataset) -> List[Dict[str, str]]:
+        # Match IPT's structured taxon keyword approach: classifications come
+        # from mapped rank columns, while taxonomic_scope remains descriptive.
+        rank_columns = ["kingdom", "phylum", "class", "order", "family", "genus"]
+        keywords: List[Dict[str, str]] = []
+        seen = set()
+
+        for table in dataset.table_set.all():
+            df = table.df
+            if not isinstance(df, pd.DataFrame) or df.empty:
+                continue
+            normalized_cols = {str(col).strip().lower(): col for col in df.columns}
+
+            for rank in rank_columns:
+                col = normalized_cols.get(rank)
+                if col is None:
+                    continue
+                for value in df[col].tolist():
+                    text = cls._clean_text_value(value)
+                    if text is None:
+                        continue
+                    key = (rank, text.lower())
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    keywords.append({"rank": rank, "scientificName": text})
+                    if len(keywords) >= 250:
+                        return keywords
+
+        return keywords
 
     @classmethod
     def _infer_methodology_from_dataset(cls, dataset) -> Optional[str]:
@@ -1622,6 +1693,7 @@ class SetEML(OpenAIBaseModel):
                 eml["temporal_scope"] = temporal_scope_to_set
 
             inferred_geographic_scope = self._infer_geographic_scope_from_dataset(dataset)
+            inferred_geographic_bounds = self._infer_geographic_bounds_from_dataset(dataset)
             geographic_scope_to_set, geographic_note = self._resolve_text_scope(
                 "Geographic scope",
                 self.geographic_scope,
@@ -1630,8 +1702,11 @@ class SetEML(OpenAIBaseModel):
             )
             if geographic_scope_to_set is not None:
                 eml["geographic_scope"] = geographic_scope_to_set
+            if inferred_geographic_bounds is not None:
+                eml["geographic_bounds"] = inferred_geographic_bounds
 
             inferred_taxonomic_scope = self._infer_taxonomic_scope_from_dataset(dataset)
+            inferred_taxonomic_keywords = self._infer_taxonomic_keywords_from_dataset(dataset)
             taxonomic_scope_to_set, taxonomic_note = self._resolve_text_scope(
                 "Taxonomic scope",
                 self.taxonomic_scope,
@@ -1640,6 +1715,8 @@ class SetEML(OpenAIBaseModel):
             )
             if taxonomic_scope_to_set is not None:
                 eml["taxonomic_scope"] = taxonomic_scope_to_set
+            if inferred_taxonomic_keywords:
+                eml["taxonomic_keywords"] = inferred_taxonomic_keywords
 
             inferred_methodology = self._infer_methodology_from_dataset(dataset)
             methodology_to_set, methodology_note = self._resolve_text_scope(
