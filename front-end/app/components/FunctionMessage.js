@@ -1,8 +1,14 @@
 import { useState } from 'react';
 import Button from 'react-bootstrap/Button';
 import Collapse from 'react-bootstrap/Collapse';
-import { CodeBlock, dracula } from "react-code-blocks";
 
+function CodeBlock({ text }) {
+  return (
+    <pre className="function-code-block">
+      <code>{String(text ?? '')}</code>
+    </pre>
+  );
+}
 
 function FunctionMessage({ message_content, message_id, is_python, result_content = null, result_id = null }) {
   const [open, setOpen] = useState(false);
@@ -59,17 +65,17 @@ function FunctionMessage({ message_content, message_id, is_python, result_conten
             {is_python && (
               <div className="code-section">
                 <h6 className="code-section-title">Generated Code:</h6>
-                <CodeBlock text={content} language="python" theme={dracula} />
+                <CodeBlock text={content} />
               </div>
             )}
             {result_content && (
               <div className="results-section">
                 <h6 className="code-section-title">Results:</h6>
-                <CodeBlock text={resultContent} language="python" theme={dracula} />
+                <CodeBlock text={resultContent} />
               </div>
             )}
             {!is_python && !result_content && (
-              <CodeBlock text={content} language="python" theme={dracula} />
+              <CodeBlock text={content} />
             )}
           </div>
         </Collapse>

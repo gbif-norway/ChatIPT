@@ -51,6 +51,22 @@ button.results-only { background-color: #9ba3b0; border-color: #9ba3b0; opacity:
 }
 .code-section { margin-bottom: 16px; }
 .results-section { margin-bottom: 8px; }
+.function-code-block {
+    background: #282a36;
+    border-radius: 8px;
+    color: #f8f8f2;
+    font-size: 0.75em;
+    line-height: 1.45;
+    margin-bottom: 10px;
+    max-height: 420px;
+    overflow: auto;
+    padding: 12px;
+    white-space: pre-wrap;
+}
+.function-code-block code {
+    color: inherit;
+    font-size: inherit !important;
+}
 
 .alerts-div .alert { margin-bottom: 5px; }
 h1.title { text-align: center; margin-top: 20px; color: #c5ffc0; margin-bottom: 20px; }
