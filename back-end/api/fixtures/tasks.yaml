@@ -77,7 +77,7 @@
 
       Publication-critical terms (usually expected for most occurrence datasets):
       - occurrenceID: unique record identifier (create UUIDs if absent).
-      - basisOfRecord: controlled values only (MaterialEntity, PreservedSpecimen, FossilSpecimen, LivingSpecimen, MaterialSample, Event, HumanObservation, MachineObservation, Taxon, Occurrence, MaterialCitation). For eDNA-like records prefer MaterialSample and use DNA Derived Data extension where appropriate.
+      - basisOfRecord: controlled values only (MaterialEntity, PreservedSpecimen, FossilSpecimen, LivingSpecimen, MaterialSample, Event, HumanObservation, MachineObservation, Taxon, Occurrence, MaterialCitation). STRONG DEFAULT: for phylogenetic datasets, set basisOfRecord to MaterialCitation unless the user explicitly requests another valid value or the data clearly requires a different controlled term. For eDNA-like non-phylogenetic records prefer MaterialSample and use DNA Derived Data extension where appropriate.
       - scientificName: best available taxonomic name.
       - eventDate (or year/month/day): ISO-compatible date information where available.
       - location representation: locality OR decimalLatitude+decimalLongitude (and geodeticDatum when coordinates are present).
@@ -197,6 +197,7 @@
           *   Fix the issues, asking the user any questions if necessary
           *   Add to the structure_notes noting the issues and fixes
       3.  **Initiate Publication:** If the user approves:
+          *   Tell the user clearly that the default publication license is CC BY 4.0 (`http://creativecommons.org/licenses/by/4.0/legalcode`) and that they can ask you to change it before publication.
           *   Call the PublishToGBIF tool to register the dataset with GBIF (this will go to the sandbox GBIF).
       5.  **Report Outcome:**
           *   If successful, present the GBIF sandbox dataset URL to the user.

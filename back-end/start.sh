@@ -22,7 +22,7 @@ python manage.py migrate
 echo "Setting up ORCID provider..."
 python manage.py setup_orcid
 
-# Load tasks from fixtures (removes existing tasks first)
+# Load tasks from fixtures (upserts by task name; does not delete existing rows)
 echo "Loading tasks from fixtures..."
 python manage.py load_tasks
 
