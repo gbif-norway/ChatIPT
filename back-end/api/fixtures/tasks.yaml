@@ -65,7 +65,7 @@
   fields:
     name: Data transformation
     text: |-
-      Transform the explored and structured data into the Darwin Core (DwC) standard. Aim for one core DwC table (either Occurrence or Checklist/Taxonomy) and, if necessary, one or two optional extension tables (e.g. measurementOrFact, dnaDerivedData, etc). Ensure any extension table records link back to the core table using occurrenceID or taxonID, and discard all derived/summary data so only primary data is published.
+      Transform the explored and structured data into the Darwin Core (DwC) standard. Aim for one core DwC table (either Occurrence or Checklist/Taxonomy) and, if necessary, one or two optional extension tables (e.g. measurement_or_fact, dna_derived_data, etc). Ensure any extension table records link back to the core table using occurrenceID or taxonID, and discard all derived/summary data so only primary data is published.
 
       Use Table.title to name tables according to what they are (e.g. "occurrence", "measurement_or_fact", "dna_derived_data", etc).
 
@@ -86,8 +86,8 @@
       Context-dependent high-risk mappings (easy to misuse):
       - recordedBy vs recordedByID (IDs are identifiers such as ORCID, not names).
       - individualCount vs organismQuantity/organismQuantityType (do not use organismQuantity without a clear type).
-      - MeasurementOrFact should hold true measurement/assertion records; do not move core location/date/abundance fields there just because they are hard to map.
-      - for non-phylogenetic data, dynamicProperties is last structured fallback only after checking relevant core and extension terms.
+      - MeasurementOrFact should hold substantial/repeated measurement or assertion records; do not move core location/date/abundance fields there just because they are hard to map.
+      - dynamicProperties is acceptable for simple, low-volume structured facts that do not justify an additional extension table, after checking relevant core terms.
       - extension linking IDs must reference valid core IDs (occurrenceID/eventID/taxonID).
 
       **Your Process:**

@@ -277,6 +277,7 @@ class GetDwCExtensionInfo(OpenAIBaseModel):
     - Distribution (`distribution_2022-02-02.xml`): Geographic distribution statements including area types, occurrence status, seasonal or life-stage qualifiers.
     - DNA Derived Data (`dna_derived_data_2024-07-11.xml`): Links occurrences or taxa to sequence-based evidence (e.g. metabarcoding runs, marker genes, accession numbers).
     - Identifier (`identifier.xml`): Alternative identifiers for taxa or occurrences, tracking GUIDs, LSIDs, catalogue numbers, or database references.
+    - Measurement or Fact (`measurements_or_facts_2025-07-10.xml`): Measurements, facts, characteristics, or assertions about occurrence, event, or taxon records.
     - Multimedia (`multimedia.xml`): Generic multimedia attachment schema (audio, video, images) with basic descriptive and licensing fields.
     - References (`references.xml`): Bibliographic citations that support occurrence or taxon records.
     - Relevé (`releve_2016-05-10.xml`): Vegetation plot (relevé) descriptions including cover, stratification, sampling method, and environmental context.
@@ -315,6 +316,11 @@ class GetDwCExtensionInfo(OpenAIBaseModel):
                 'label': 'Identifier',
                 'file': 'identifier.xml',
                 'overview': 'Alternative identifiers such as GUIDs, LSIDs, catalogue numbers, or cross-database references.'
+            },
+            'measurement_or_fact': {
+                'label': 'Measurement or Fact',
+                'file': 'measurements_or_facts_2025-07-10.xml',
+                'overview': 'Measurements, facts, characteristics, or assertions linked to occurrence, event, or taxon records.'
             },
             'multimedia': {
                 'label': 'Multimedia',
