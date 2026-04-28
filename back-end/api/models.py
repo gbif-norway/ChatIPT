@@ -886,11 +886,15 @@ class Agent(models.Model):
             new_table_cutoff = previous_non_system_message.created_at if previous_non_system_message else None
             self.regenerate_system_message(new_table_cutoff)
 
+            new_pdf_files_qs = self.dataset.user_files.filter(file__iendswith='.pdf').order_by('uploaded_at', 'id')
+            if new_table_cutoff:
+                new_pdf_files_qs = new_pdf_files_qs.filter(uploaded_at__gt=new_table_cutoff)
+
             # Main GPT interaction
             response_message = create_response_message(
                 self.message_set.all(),
                 self.task.functions,
-                pdf_user_files=self.dataset.user_files.filter(file__iendswith='.pdf').order_by('uploaded_at', 'id'),
+                pdf_user_files=new_pdf_files_qs,
             )
 
             # Store the assistant message returned by OpenAI

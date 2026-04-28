@@ -118,6 +118,42 @@ class EmlGenerationTests(SimpleTestCase):
         self.assertEqual(creators[1].find('individualName/givenName').text, 'Richard')
         self.assertEqual(len(dataset.findall('project/personnel')), 0)
 
+    def test_make_eml_normalizes_orcid_url_to_identifier_and_directory(self):
+        class DummyUser:
+            first_name = 'Alice'
+            last_name = 'Smith'
+            orcid_id = 'https://orcid.org/0000-0001-2345-6789'
+            email = 'alice@example.org'
+
+        xml_text = make_eml(
+            title='ORCID normalization',
+            description='Abstract text',
+            user=DummyUser(),
+            eml_extra={
+                'users': [
+                    {
+                        'first_name': 'Jane',
+                        'last_name': 'Doe',
+                        'email': 'jane@example.org',
+                        'orcid': 'https://orcid.org/0000-0002-1825-0097',
+                    },
+                ],
+            },
+        )
+        root = ET.fromstring(xml_text.encode('utf-8'))
+        dataset = root.find('dataset')
+        self.assertIsNotNone(dataset)
+
+        creator_user_id = dataset.find('creator/userId')
+        self.assertIsNotNone(creator_user_id)
+        self.assertEqual(creator_user_id.get('directory'), 'https://orcid.org/')
+        self.assertEqual(creator_user_id.text, '0000-0002-1825-0097')
+
+        metadata_provider_user_id = dataset.find('metadataProvider/userId')
+        self.assertIsNotNone(metadata_provider_user_id)
+        self.assertEqual(metadata_provider_user_id.get('directory'), 'https://orcid.org/')
+        self.assertEqual(metadata_provider_user_id.text, '0000-0001-2345-6789')
+
         contact_email = dataset.find('contact/electronicMailAddress')
         self.assertIsNotNone(contact_email)
         self.assertEqual(contact_email.text, 'alice@example.org')
@@ -1046,6 +1082,28 @@ class ResponsesAdapterCompatibilityTests(SimpleTestCase):
         self.assertEqual(updated[1]["content"][1]["type"], "input_text")
         self.assertIn("attached", updated[1]["content"][1]["text"])
         self.assertEqual(updated[1]["content"][2], {"type": "input_file", "file_id": "file_123"})
+
+    @patch("api.helpers.openai_helpers._resolve_openai_file_id_from_user_file_id")
+    def test_user_message_pdf_attachments_are_hydrated_from_message_metadata(self, resolve_file_id_mock):
+        resolve_file_id_mock.return_value = "file_pdf_1"
+        messages = [
+            self._Message({"role": "system", "content": "You are a helper."}),
+            self._Message(
+                {
+                    "role": "user",
+                    "content": "Please use this PDF.",
+                    "pdf_attachments": [{"user_file_id": 101, "filename": "paper.pdf"}],
+                }
+            ),
+        ]
+
+        items = _messages_to_responses_input(messages)
+
+        self.assertEqual(items[0], {"role": "system", "content": "You are a helper."})
+        self.assertEqual(items[1]["role"], "user")
+        self.assertEqual(items[1]["content"][0], {"type": "input_text", "text": "Please use this PDF."})
+        self.assertEqual(items[1]["content"][1], {"type": "input_file", "file_id": "file_pdf_1"})
+        resolve_file_id_mock.assert_called_once_with(101)
 
     def test_responses_output_is_mapped_back_to_legacy_message_shape(self):
         response = SimpleNamespace(

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+docker compose up -d db back-end >/dev/null
+docker compose exec back-end python manage.py "$@"

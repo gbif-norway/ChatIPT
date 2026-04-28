@@ -807,6 +807,7 @@ class MessageViewSet(viewsets.ModelViewSet):
             note_sections = []
             if new_files:
                 file_descriptions = []
+                pdf_attachments = list(openai_obj.get('pdf_attachments') or [])
                 for user_file in new_files:
                     description = user_file.filename
                     if user_file.file_type == UserFile.FileType.TREE:
@@ -815,8 +816,14 @@ class MessageViewSet(viewsets.ModelViewSet):
                             description = f"{description} (preview: {preview})"
                     elif user_file.file_type == UserFile.FileType.PDF:
                         description = f"{description} (attached to the model as a PDF file input)"
+                        pdf_attachments.append({
+                            'user_file_id': user_file.id,
+                            'filename': user_file.filename,
+                        })
                     file_descriptions.append(description)
                 note_sections.append(f"User uploaded file(s): {', '.join(file_descriptions)}")
+                if pdf_attachments:
+                    openai_obj['pdf_attachments'] = pdf_attachments
 
             if new_tables:
                 note_sections.append("New table ids: [" + ", ".join(str(table.id) for table in new_tables) + "]")

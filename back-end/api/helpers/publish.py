@@ -141,6 +141,24 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         text = str(value).strip()
         return text or None
 
+    def normalize_orcid_identifier(value: str | None) -> str | None:
+        """Normalize ORCID input to the identifier token expected in EML userId."""
+        text = clean_text(value)
+        if text is None:
+            return None
+
+        match = re.match(
+            r"^(?:https?://)?(?:www\.)?orcid\.org/(?P<identifier>[^?#]+)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            text = (match.group("identifier") or "").strip().strip("/")
+
+        if re.fullmatch(r"\d{4}-\d{4}-\d{4}-[\dXx]{4}", text):
+            return text.upper()
+        return text
+
     def normalize_doi(value: str | None) -> str | None:
         if value in (None, ''):
             return None
@@ -426,10 +444,7 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         set_text(get_or_create(individual, 'givenName'), person.get('first_name') or person.get('givenName') or '')
         set_text(get_or_create(individual, 'surName'), person.get('last_name') or person.get('surName') or '')
 
-        orcid_value = (person.get('orcid') or person.get('userId') or '')
-        if orcid_value is None:
-            orcid_value = ''
-        orcid_value = str(orcid_value).strip()
+        orcid_value = normalize_orcid_identifier(person.get('orcid') or person.get('userId'))
 
         if include_email:
             email_value = person.get('email') or person.get('electronicMailAddress') or ''

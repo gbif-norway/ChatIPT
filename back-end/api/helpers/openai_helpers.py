@@ -218,12 +218,69 @@ def _messages_to_responses_input(messages) -> List[Dict[str, Any]]:
             continue
 
         # system/user (and any unexpected role fallback)
+        role_for_item = role if role in {'system', 'user'} else 'user'
+        content_for_item: Any = content_text
+        if role_for_item == 'user':
+            hydrated_content = _hydrate_user_message_content_with_pdf_attachments(
+                content_text=content_text,
+                openai_obj=openai_obj,
+            )
+            if hydrated_content is not None:
+                content_for_item = hydrated_content
+
         items.append({
-            'role': role if role in {'system', 'user'} else 'user',
-            'content': content_text,
+            'role': role_for_item,
+            'content': content_for_item,
         })
 
     return items
+
+
+def _hydrate_user_message_content_with_pdf_attachments(content_text: str, openai_obj: Dict[str, Any]):
+    attachment_refs = openai_obj.get('pdf_attachments')
+    if not isinstance(attachment_refs, list) or not attachment_refs:
+        return None
+
+    file_items = []
+    for attachment_ref in attachment_refs:
+        if not isinstance(attachment_ref, dict):
+            continue
+
+        file_id = str(attachment_ref.get('file_id') or '').strip()
+        if not file_id:
+            user_file_id = attachment_ref.get('user_file_id')
+            if user_file_id is None:
+                continue
+            file_id = _resolve_openai_file_id_from_user_file_id(user_file_id)
+        if not file_id:
+            continue
+        file_items.append({'type': 'input_file', 'file_id': file_id})
+
+    if not file_items:
+        return None
+
+    content_items = []
+    if content_text:
+        content_items.append({'type': 'input_text', 'text': content_text})
+    content_items.extend(file_items)
+    return content_items
+
+
+def _resolve_openai_file_id_from_user_file_id(user_file_id) -> str:
+    try:
+        normalized_id = int(user_file_id)
+    except (TypeError, ValueError):
+        return ''
+
+    from api.models import UserFile
+
+    user_file = UserFile.objects.filter(id=normalized_id).first()
+    if not user_file:
+        return ''
+    try:
+        return _ensure_openai_file_id(user_file)
+    except Exception:
+        return ''
 
 
 def _functions_to_responses_tools(functions) -> List[Dict[str, Any]]:
