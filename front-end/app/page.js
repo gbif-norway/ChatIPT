@@ -7,11 +7,10 @@ import { useAuth } from './contexts/AuthContext'
 import { DatasetProvider } from './contexts/DatasetContext'
 import { useNavigation } from './components/HeaderWrapper'
 import { useEffect, useState, useCallback } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 
 const HomeContent = () => {
   const router = useRouter()
-  const searchParams = useSearchParams()
   const { authenticated } = useAuth()
   const { updateNavigation } = useNavigation()
   const [mode, setMode] = useState('dashboard') // 'dashboard', 'upload'
@@ -31,13 +30,13 @@ const HomeContent = () => {
   }, [router])
 
   useEffect(() => {
-    const requestedMode = searchParams.get('mode')
+    const requestedMode = new URLSearchParams(window.location.search).get('mode')
     if (requestedMode === 'upload') {
       setMode('upload')
       return
     }
     setMode('dashboard')
-  }, [searchParams])
+  }, [])
 
   useEffect(() => {
     // Only show welcome modal if user is authenticated
