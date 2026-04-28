@@ -1,34 +1,43 @@
 'use client'
 
-import styles from './app.css'
-import Dataset from './components/Dataset'
 import DatasetsGrid from './components/DatasetsGrid'
 import NewDatasetComposer from './components/NewDatasetComposer'
 import ProtectedRoute from './components/ProtectedRoute'
 import { useAuth } from './contexts/AuthContext'
-import { DatasetProvider, useDataset } from './contexts/DatasetContext'
+import { DatasetProvider } from './contexts/DatasetContext'
 import { useNavigation } from './components/HeaderWrapper'
 import { useEffect, useState, useCallback } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 
 const HomeContent = () => {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const { authenticated } = useAuth()
-  const { currentDatasetId, loadDataset, setCurrentDatasetId } = useDataset()
   const { updateNavigation } = useNavigation()
-  const [mode, setMode] = useState('dashboard') // 'dashboard', 'upload', 'dataset'
+  const [mode, setMode] = useState('dashboard') // 'dashboard', 'upload'
 
   const handleDatasetSelect = useCallback((datasetId) => {
-    loadDataset(datasetId)
-    setMode('dataset')
-  }, [loadDataset])
+    router.push(`/dataset/${datasetId}`)
+  }, [router])
 
   const handleNewDataset = useCallback(() => {
     setMode('upload')
-  }, [])
+    router.push('/?mode=upload')
+  }, [router])
 
   const handleBackToDashboard = useCallback(() => {
     setMode('dashboard')
-    setCurrentDatasetId(null)
-  }, [setCurrentDatasetId])
+    router.push('/')
+  }, [router])
+
+  useEffect(() => {
+    const requestedMode = searchParams.get('mode')
+    if (requestedMode === 'upload') {
+      setMode('upload')
+      return
+    }
+    setMode('dashboard')
+  }, [searchParams])
 
   useEffect(() => {
     // Only show welcome modal if user is authenticated
@@ -69,13 +78,6 @@ const HomeContent = () => {
             onBackToDashboard: handleBackToDashboard
           });
           break;
-        case 'dataset':
-          updateNavigation({
-            showNavigation: true,
-            onNewDataset: null,
-            onBackToDashboard: handleBackToDashboard
-          });
-          break;
         default:
           updateNavigation({
             showNavigation: false,
@@ -93,31 +95,23 @@ const HomeContent = () => {
   }, [authenticated, mode, updateNavigation, handleBackToDashboard]);
 
   const handleDatasetCreated = useCallback((datasetId) => {
-    loadDataset(datasetId)
-    setMode('dataset')
-  }, [loadDataset])
+    router.push(`/dataset/${datasetId}`)
+  }, [router])
 
   return (
     <ProtectedRoute>
       <main>
         {mode === 'dashboard' && (
           <div className="container p-4">
-            <DatasetsGrid 
+            <DatasetsGrid
               onOpenDataset={handleDatasetSelect}
               onNewDataset={handleNewDataset}
             />
           </div>
         )}
-        
+
         {mode === 'upload' && (
           <NewDatasetComposer onDatasetCreated={handleDatasetCreated} />
-        )}
-        
-        {mode === 'dataset' && currentDatasetId && (
-          <Dataset 
-            onNewDataset={handleNewDataset}
-            onBackToDashboard={handleBackToDashboard}
-          />
         )}
 
         <div className="modal modal-lg fade" id="myModal" tabIndex="-1" aria-labelledby="exampleModalLabel" aria-hidden="true">
