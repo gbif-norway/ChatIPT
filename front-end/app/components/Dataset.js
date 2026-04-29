@@ -455,6 +455,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
         return fileType.includes('pdf');
       })
     : [];
+  const uploadedFiles = Array.isArray(currentDataset?.user_files) ? currentDataset.user_files : [];
 
   const getPdfStatusBadge = () => {
     return { label: 'Available to model', className: 'text-bg-success' };
@@ -1052,6 +1053,19 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                 <div style={{ whiteSpace: 'pre-wrap' }}>
                   {currentDataset.structure_notes}
                 </div>
+                <hr />
+                <h6 className="mb-2">Originally Uploaded Files</h6>
+                {uploadedFiles.length > 0 ? (
+                  <ul className="mb-0">
+                    {uploadedFiles.map((file, index) => (
+                      <li key={file.id || `${file.filename || 'file'}-${index}`}>
+                        {file.filename || 'Unnamed file'}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-muted mb-0">No uploaded files found for this dataset.</p>
+                )}
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" data-bs-dismiss="modal">Close</button>
