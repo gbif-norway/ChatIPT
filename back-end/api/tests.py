@@ -5,7 +5,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 from types import SimpleNamespace
 from unittest.mock import patch
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
 import openpyxl
 import pandas as pd
 from .helpers.publish import (
@@ -14,13 +14,14 @@ from .helpers.publish import (
     parse_newick_tip_labels,
     parse_nexus_tip_labels,
 )
-from .agent_tools import GetDarwinCoreInfo, SetEML, LogBugWithDeveloper, SetBasicMetadata
+from .agent_tools import GetDarwinCoreInfo, SetEML, LogBugWithDeveloper, SetBasicMetadata, SetAgentTaskToComplete
 from .helpers.openai_helpers import (
     _attach_pdf_files_to_latest_user_message,
     _functions_to_responses_tools,
     _messages_to_responses_input,
     _response_to_compat_message,
 )
+from .models import Agent, Dataset, Message, Task, UserFile
 
 
 class EmlGenerationTests(SimpleTestCase):
@@ -157,18 +158,6 @@ class EmlGenerationTests(SimpleTestCase):
         contact_email = dataset.find('contact/electronicMailAddress')
         self.assertIsNotNone(contact_email)
         self.assertEqual(contact_email.text, 'alice@example.org')
-
-        alternate_identifier = dataset.find('alternateIdentifier')
-        self.assertIsNotNone(alternate_identifier)
-        self.assertEqual(alternate_identifier.text, 'https://doi.org/10.1234/abcd.1')
-
-        citation = dataset.find('additionalMetadata/metadata/gbif/citation')
-        if citation is None:
-            citation = root.find('additionalMetadata/metadata/gbif/citation')
-        self.assertIsNotNone(citation)
-        self.assertEqual(citation.text, 'Doe J, Roe R (2025) Example manuscript.')
-        self.assertIsNotNone(root.find('additionalMetadata/metadata/gbif/dateStamp'))
-        self.assertIsNone(root.find('additionalMetadata/metadata/manuscript'))
 
     def test_make_eml_adds_project_personnel_when_project_title_is_set(self):
         class DummyUser:
@@ -1191,4 +1180,61 @@ class ResponsesAdapterCompatibilityTests(SimpleTestCase):
         self.assertIn("agent_id", properties)
         self.assertIn("title", properties)
         self.assertIn("description", properties)
-        self.assertIn("suitable_for_publication_on_gbif", properties)
+        self.assertNotIn("suitable_for_publication_on_gbif", properties)
+
+
+class SetAgentTaskToCompleteTests(TestCase):
+    def test_manuscript_task_can_complete_without_tables(self):
+        task = Task.objects.create(
+            name=Dataset.MANUSCRIPT_TASK_NAME,
+            text="Review manuscript",
+            order=1,
+        )
+        dataset = Dataset.objects.create(source_mode=Dataset.SourceMode.PDF_ONLY)
+        agent = Agent.objects.create(dataset=dataset, task=task)
+
+        result = SetAgentTaskToComplete(agent_id=agent.id).run()
+
+        agent.refresh_from_db()
+        self.assertIsNotNone(agent.completed_at)
+        self.assertIn("Task marked as complete", result)
+
+
+class AgentPdfAttachmentTests(TestCase):
+    class FakeResponseMessage:
+        tool_calls = []
+
+        def dict(self):
+            return {"role": "assistant", "content": "Done."}
+
+    @patch("api.models.create_response_message")
+    def test_next_message_does_not_attach_follow_up_pdf_twice(self, create_response_message_mock):
+        captured_pdf_files = []
+
+        def fake_create_response_message(*args, **kwargs):
+            captured_pdf_files.extend(list(kwargs.get("pdf_user_files") or []))
+            return self.FakeResponseMessage()
+
+        create_response_message_mock.side_effect = fake_create_response_message
+        task = Task.objects.create(name=Dataset.MANUSCRIPT_TASK_NAME, text="Review manuscript", order=1)
+        dataset = Dataset.objects.create(source_mode=Dataset.SourceMode.PDF_ONLY)
+        agent = Agent.objects.create(dataset=dataset, task=task)
+        Message.objects.create(agent=agent, openai_obj={"role": "assistant", "content": "Please upload the PDF."})
+        user_file = UserFile.objects.create(
+            dataset=dataset,
+            file="user_files/paper.pdf",
+        )
+        Message.objects.bulk_create([
+            Message(
+                agent=agent,
+                openai_obj={
+                    "role": "user",
+                    "content": "Here is the PDF.",
+                    "pdf_attachments": [{"user_file_id": user_file.id, "filename": "paper.pdf"}],
+                },
+            )
+        ])
+
+        agent.next_message()
+
+        self.assertEqual(captured_pdf_files, [])

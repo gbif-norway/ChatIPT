@@ -105,7 +105,6 @@ export const DatasetProvider = ({ children }) => {
       console.log(`[${timestamp}] ✅ Got refreshed dataset:`, {
         id: refreshedDataset.id,
         published_at: refreshedDataset.published_at,
-        rejected_at: refreshedDataset.rejected_at,
         agent_count: refreshedDataset.visible_agent_set?.length || 0,
         last_agent_completed: refreshedDataset.visible_agent_set?.at(-1)?.completed_at,
         last_message_role: refreshedDataset.visible_agent_set?.at(-1)?.message_set?.at(-1)?.role,
@@ -128,13 +127,6 @@ export const DatasetProvider = ({ children }) => {
             console.log(`[${timestamp}] 🎉 Dataset is published and complete - stopping refresh loop`);
             return;
           }
-          
-          // If the dataset is not suitable for publication, don't do any more
-          if (refreshedDataset.rejected_at != null) {
-            console.log(`[${timestamp}] ❌ Dataset was rejected - stopping refresh loop`);
-            return;
-          }
-          
           // Check if we need to continue refreshing
           const hasAgents = refreshedDataset.visible_agent_set && refreshedDataset.visible_agent_set.length > 0;
           const lastAgent = hasAgents ? refreshedDataset.visible_agent_set.at(-1) : null;

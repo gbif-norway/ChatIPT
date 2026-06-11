@@ -19,6 +19,7 @@ import utm
 from dateutil.parser import parse, ParserError
 from django.template.loader import render_to_string
 from django.db.models import Q
+from django.utils import timezone
 from api.helpers import discord_bot
 import json
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -1710,8 +1711,6 @@ class SetBasicMetadata(OpenAIBaseModel):
     agent_id: PositiveInt = Field(..., description="REQUIRED: The ID of the agent making this request")
     title: Optional[str] = Field(None, description="CONDITIONAL: A short but descriptive title for the dataset as a whole (e.g. 'Bird observations from Central Park 2020-2023'). Required only if dataset doesn't already have a title.")
     description: Optional[str] = Field(None, description="CONDITIONAL: A longer description of what the dataset contains, including any important information about why the data was gathered (e.g. for a study) as well as how it was gathered. Required only if dataset doesn't already have a description.")
-    suitable_for_publication_on_gbif: Optional[bool] = Field(default=True, description="OPTIONAL: USE WITH CAUTION! Set to false if the data is deemed unsuitable for publication on GBIF. Defaults to True. Be cautious - only reject if you are certain this spreadsheet doesn't have any suitable data!")
-
     def run(self):
         try:
             from api.models import Agent
@@ -1729,9 +1728,6 @@ class SetBasicMetadata(OpenAIBaseModel):
                 dataset.title = self.title
             if self.description:
                 dataset.description = self.description
-            if self.suitable_for_publication_on_gbif == False:
-                print('Rejecting dataset')
-                dataset.rejected_at = datetime.datetime.now()
             dataset.save()
             return 'Basic Metadata has been successfully set.'
         except Exception as e:
@@ -1757,7 +1753,7 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
                     "Error: Cannot complete 'Data content exploration' without dataset title "
                     "and description. Call SetBasicMetadata first."
                 )
-            agent.completed_at = datetime.datetime.now()
+            agent.completed_at = timezone.now()
             agent.save()
             print('Marking as complete...')
             return f'Task marked as complete for agent id {self.agent_id} .'
@@ -1925,14 +1921,14 @@ class PublishToGBIF(OpenAIBaseModel):
 
             gbif_url = register_dataset_and_endpoint(dataset.title, dataset.description, dataset.dwca_url)
             dataset.gbif_url = gbif_url
-            dataset.published_at = datetime.datetime.now()
+            dataset.published_at = timezone.now()
             dataset.save()
 
             # If this is NOT the final task, automatically mark complete and advance.
             # For the final task (e.g., Data maintenance), keep the conversation open.
             last_task = Task.objects.last()
             if agent.task_id != (last_task.id if last_task else None):
-                agent.completed_at = datetime.datetime.now()
+                agent.completed_at = timezone.now()
                 agent.save()
 
                 # Create the next agent in the workflow and kick it off, if any

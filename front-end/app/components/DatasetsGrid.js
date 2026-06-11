@@ -93,7 +93,7 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset }) {
               <div className="card-body d-flex flex-column">
                 <div className="d-flex justify-content-between align-items-start">
                   <h5 className="card-title mb-0">{getDisplayName(d)}</h5>
-                  <span className={`badge text-bg-${d.status === 'published' ? 'success' : d.status === 'rejected' ? 'warning' : d.status === 'processing' ? 'primary' : 'secondary'}`}>
+                  <span className={`badge text-bg-${d.status === 'published' ? 'success' : d.status === 'processing' ? 'primary' : 'secondary'}`}>
                     {d.status}
                   </span>
                 </div>

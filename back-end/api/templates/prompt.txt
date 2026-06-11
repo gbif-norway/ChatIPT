@@ -87,7 +87,6 @@ Dataset description: {{ agent.dataset.description }}
 DwC Core: {{ agent.dataset.dwc_core|default:"unknown" }}
 {% if agent.dataset.structure_notes %}Dataset structural notes: {{ agent.dataset.structure_notes }}{% endif %}
 {% if agent.dataset.published_at %}Published at: {{ agent.dataset.published_at }}{% endif %}
-{% if agent.dataset.rejected_at %}Rejected at: {{ agent.dataset.rejected_at }}{% endif %}
 {% endif %}
 {% with eml=agent.dataset.eml %}
 {% if eml %}

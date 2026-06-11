@@ -129,7 +129,6 @@ class DatasetSerializer(serializers.ModelSerializer):
             'description',
             'eml',
             'published_at',
-            'rejected_at',
             'dwca_url',
             'gbif_url',
             'user_language',
@@ -147,7 +146,6 @@ class DatasetSerializer(serializers.ModelSerializer):
             'user_info',
             'user_files',
             'published_at',
-            'rejected_at',
             'can_visualize_tree',
             'source_mode',
         ]
@@ -236,13 +234,12 @@ class DatasetSerializer(serializers.ModelSerializer):
             f"V3 New dataset publication starting on ChatIPT. User files: {', '.join(uploaded_names) if uploaded_names else 'none'}."
         )
 
-        if not dataset.rejected_at:
-            first_agent = dataset.next_agent()
-            if not first_agent:
-                dataset.delete()
-                raise serializers.ValidationError(
-                    "No tasks are configured in the system. Please contact the administrator to load the required tasks."
-                )
+        first_agent = dataset.next_agent()
+        if not first_agent:
+            dataset.delete()
+            raise serializers.ValidationError(
+                "No tasks are configured in the system. Please contact the administrator to load the required tasks."
+            )
 
         discord_bot.send_discord_message(f"Dataset ID assigned: {dataset.id}.")
         return dataset
@@ -261,7 +258,7 @@ class DatasetListSerializer(serializers.ModelSerializer):
         model = Dataset
         fields = [
             'id', 'title', 'description', 'dwc_core',
-            'created_at', 'published_at', 'rejected_at',
+            'created_at', 'published_at',
             'record_count', 'last_updated', 'status', 'progress', 'last_message_preview', 'user_info', 'user_files', 'source_mode'
         ]
 
@@ -274,8 +271,6 @@ class DatasetListSerializer(serializers.ModelSerializer):
         return max(ts) if ts else obj.created_at
 
     def get_status(self, obj):
-        if obj.rejected_at: 
-            return 'rejected'
         if obj.published_at: 
             return 'published'
         has_active = obj.agent_set.filter(completed_at__isnull=True).exists()

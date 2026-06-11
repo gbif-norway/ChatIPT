@@ -32,9 +32,9 @@ class CustomUserAdmin(UserAdmin):
 @admin.register(Dataset)
 class DatasetAdmin(admin.ModelAdmin):
     list_display = ('title', 'user', 'orcid', 'source_mode', 'created_at', 'published_at', 'dwc_core')
-    list_filter = ('source_mode', 'dwc_core', 'published_at', 'rejected_at', 'created_at')
+    list_filter = ('source_mode', 'dwc_core', 'published_at', 'created_at')
     search_fields = ('title', 'description', 'user__email', 'orcid')
-    readonly_fields = ('created_at', 'published_at', 'rejected_at')
+    readonly_fields = ('created_at', 'published_at')
     date_hierarchy = 'created_at'
 
 

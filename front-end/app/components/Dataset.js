@@ -527,7 +527,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
           {currentDataset.description && (
             <p className="mb-3">{currentDataset.description}</p>
           )}
-          {currentDataset.rejected_at && (<div className="alert alert-warning" role="alert">This dataset cannot be published on GBIF as it does not contain valid occurrence or checklist data with all the required fields. Please try uploading a new dataset</div>)}
           {pdfFiles.length > 0 && (
             <div className="mb-3">
               <div className="d-flex flex-wrap gap-2">
@@ -564,17 +563,8 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
           ) : (
             <div className="message assistant-message">
               <div className="inner-message">
-                {currentDataset.rejected_at ? (
-                  <>
-                    <strong>Dataset requires new source data.</strong><br />
-                    The uploaded files did not provide enough publishable biodiversity data.
-                  </>
-                ) : (
-                  <>
-                    <strong>Initializing dataset...</strong><br />
-                    This dataset is being set up for processing. Please wait while the system prepares your data.
-                  </>
-                )}
+                <strong>Initializing dataset...</strong><br />
+                This dataset is being set up for processing. Please wait while the system prepares your data.
               </div>
             </div>
           )}
@@ -595,13 +585,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                 <a href={productionPublishMailto} className="btn btn-success" role="button" aria-pressed="true">🚀 Request publication to GBIF (production) 🚀</a>
                 <a href={currentDataset.dwca_url} className="btn btn-outline-secondary" role="button" aria-pressed="true">⬇️ Download your Darwin Core Archive file</a>
               </div>
-            </div>
-          )}
-
-          {currentDataset.rejected_at && (
-            <div className="alert alert-warning" role="alert">
-              This dataset cannot be published on GBIF as it does not contain valid occurrence or checklist data with all the required fields.
-
             </div>
           )}
         </div>

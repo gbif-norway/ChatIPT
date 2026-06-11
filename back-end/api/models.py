@@ -48,7 +48,6 @@ class Dataset(models.Model):
     description = models.CharField(max_length=5000, blank=True, default='')
     eml = models.JSONField(null=True, blank=True)
     published_at = models.DateTimeField(null=True, blank=True)
-    rejected_at = models.DateTimeField(null=True, blank=True)
     dwca_url = models.CharField(max_length=2000, blank=True)
     gbif_url = models.CharField(max_length=2000, blank=True)
     user_language = models.CharField(max_length=100, blank=True)
@@ -87,10 +86,6 @@ class Dataset(models.Model):
 
     def next_agent(self):
         self.refresh_from_db()
-        if self.rejected_at:
-            logger = logging.getLogger(__name__)
-            logger.info('rejected')
-            return None
 
         next_agent = self.agent_set.filter(completed_at=None).first()
         if next_agent:
@@ -889,6 +884,13 @@ class Agent(models.Model):
             new_pdf_files_qs = self.dataset.user_files.filter(file__iendswith='.pdf').order_by('uploaded_at', 'id')
             if new_table_cutoff:
                 new_pdf_files_qs = new_pdf_files_qs.filter(uploaded_at__gt=new_table_cutoff)
+            latest_non_system_message = recent_non_system_messages[0] if recent_non_system_messages else None
+            latest_openai_obj = getattr(latest_non_system_message, 'openai_obj', None) or {}
+            if (
+                latest_openai_obj.get('role') == Message.Role.USER
+                and latest_openai_obj.get('pdf_attachments')
+            ):
+                new_pdf_files_qs = self.dataset.user_files.none()
 
             # Main GPT interaction
             response_message = create_response_message(

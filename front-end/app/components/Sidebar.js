@@ -59,8 +59,6 @@ const Sidebar = ({ isOpen, onToggle, onDatasetSelect, currentDatasetId }) => {
   const getDatasetStatus = (dataset) => {
     if (dataset.published_at) {
       return { text: 'Published', class: 'text-success', icon: 'bi-check-circle' }
-    } else if (dataset.rejected_at) {
-      return { text: 'Rejected', class: 'text-danger', icon: 'bi-x-circle' }
     } else if (dataset.visible_agent_set && dataset.visible_agent_set.length > 0) {
       const lastAgent = dataset.visible_agent_set[dataset.visible_agent_set.length - 1]
       if (lastAgent.completed_at) {
@@ -240,4 +238,4 @@ const Sidebar = ({ isOpen, onToggle, onDatasetSelect, currentDatasetId }) => {
   )
 }
 
-export default Sidebar 
+export default Sidebar
