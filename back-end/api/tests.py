@@ -21,7 +21,7 @@ from .helpers.openai_helpers import (
     _messages_to_responses_input,
     _response_to_compat_message,
 )
-from .models import Agent, Dataset, Message, Task, UserFile
+from .models import Agent, Dataset, Message, Table, Task, UserFile
 
 
 class EmlGenerationTests(SimpleTestCase):
@@ -1191,6 +1191,37 @@ class SetAgentTaskToCompleteTests(TestCase):
             order=1,
         )
         dataset = Dataset.objects.create(source_mode=Dataset.SourceMode.PDF_ONLY)
+        agent = Agent.objects.create(dataset=dataset, task=task)
+
+        result = SetAgentTaskToComplete(agent_id=agent.id).run()
+
+        agent.refresh_from_db()
+        self.assertIsNotNone(agent.completed_at)
+        self.assertIn("Task marked as complete", result)
+
+    def test_table_dependent_tasks_cannot_complete_without_tables(self):
+        task_names = [
+            "Data transformation",
+            "Data validation and refinement",
+            "Final Review & Publication",
+        ]
+
+        for index, task_name in enumerate(task_names, start=1):
+            with self.subTest(task_name=task_name):
+                task = Task.objects.create(name=task_name, text=task_name, order=index)
+                dataset = Dataset.objects.create(source_mode=Dataset.SourceMode.PDF_ONLY)
+                agent = Agent.objects.create(dataset=dataset, task=task)
+
+                result = SetAgentTaskToComplete(agent_id=agent.id).run()
+
+                agent.refresh_from_db()
+                self.assertIsNone(agent.completed_at)
+                self.assertIn(f"Cannot complete '{task_name}' while this dataset has no tables", result)
+
+    def test_table_dependent_task_can_complete_with_tables(self):
+        task = Task.objects.create(name="Data transformation", text="Transform data", order=1)
+        dataset = Dataset.objects.create(source_mode=Dataset.SourceMode.PDF_ONLY)
+        Table.objects.create(dataset=dataset, title="occurrence", df=pd.DataFrame([{"scientificName": "Acer"}]))
         agent = Agent.objects.create(dataset=dataset, task=task)
 
         result = SetAgentTaskToComplete(agent_id=agent.id).run()

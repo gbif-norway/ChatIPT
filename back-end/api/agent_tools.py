@@ -1738,6 +1738,11 @@ class SetBasicMetadata(OpenAIBaseModel):
 class SetAgentTaskToComplete(OpenAIBaseModel):
     """Mark an Agent's task as complete"""
     agent_id: PositiveInt = Field(...)
+    TABLE_REQUIRED_TASK_NAMES: ClassVar[set[str]] = {
+        "Data transformation",
+        "Data validation and refinement",
+        "Final Review & Publication",
+    }
 
     def run(self):
         from api.models import Agent
@@ -1752,6 +1757,16 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
                 return (
                     "Error: Cannot complete 'Data content exploration' without dataset title "
                     "and description. Call SetBasicMetadata first."
+                )
+            if (
+                agent.task
+                and agent.task.name in self.TABLE_REQUIRED_TASK_NAMES
+                and not agent.dataset.table_set.exists()
+            ):
+                return (
+                    f"Error: Cannot complete '{agent.task.name}' while this dataset has no tables. "
+                    "Create tables from grounded source data first, or ask the user to upload the "
+                    "original spreadsheet/CSV or another machine-readable source file."
                 )
             agent.completed_at = timezone.now()
             agent.save()
