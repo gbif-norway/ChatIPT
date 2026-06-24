@@ -415,7 +415,7 @@ def _remove_schema_metadata_noise(node, preserve_map_keys: bool = False) -> None
                 _remove_schema_metadata_noise(value, preserve_map_keys=False)
                 continue
 
-            if key in {"title", "description", "additionalProperties"}:
+            if key in {"title", "description"}:
                 del node[key]
                 continue
 

@@ -13,8 +13,9 @@ from .helpers.publish import (
     make_eml,
     parse_newick_tip_labels,
     parse_nexus_tip_labels,
+    _sanitize_dataframe_for_utf8_export,
 )
-from .agent_tools import GetDarwinCoreInfo, SetEML, LogBugWithDeveloper, SetBasicMetadata, SetAgentTaskToComplete
+from .agent_tools import GetDarwinCoreInfo, SetEML, LogBugWithDeveloper, SetBasicMetadata, SetAgentTaskToComplete, UploadDwCA
 from .helpers.openai_helpers import (
     _attach_pdf_files_to_latest_user_message,
     _functions_to_responses_tools,
@@ -1181,6 +1182,31 @@ class ResponsesAdapterCompatibilityTests(SimpleTestCase):
         self.assertIn("title", properties)
         self.assertIn("description", properties)
         self.assertNotIn("suitable_for_publication_on_gbif", properties)
+
+    def test_upload_dwca_schema_exposes_extension_table_mapping_values(self):
+        schema = UploadDwCA.openai_schema()
+        extension_tables = schema["parameters"]["properties"]["extension_tables"]
+        object_schema = next(
+            item for item in extension_tables["anyOf"] if item.get("type") == "object"
+        )
+
+        self.assertIn("additionalProperties", object_schema)
+        self.assertEqual(
+            object_schema["additionalProperties"]["$ref"],
+            "#/$defs/DarwinCoreExtensionType",
+        )
+        self.assertIn("DarwinCoreExtensionType", schema["parameters"]["$defs"])
+
+
+class DwcaExportSanitizationTests(SimpleTestCase):
+    def test_surrogateescape_text_is_safe_for_utf8_export(self):
+        df = pd.DataFrame({"occurrenceID": ["occ-1"], "fieldNotes": ["collector\udc92s note"]})
+
+        sanitized = _sanitize_dataframe_for_utf8_export(df)
+        value = sanitized.loc[0, "fieldNotes"]
+
+        self.assertEqual(value, "collector’s note")
+        value.encode("utf-8")
 
 
 class SetAgentTaskToCompleteTests(TestCase):

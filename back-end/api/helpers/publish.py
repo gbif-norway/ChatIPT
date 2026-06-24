@@ -80,6 +80,38 @@ class LocalSpecTable(DwcaWriterTable):
 
         self.dwc_fields = field_map
 
+
+def _replace_surrogateescape_chars(value: str) -> str:
+    """Convert surrogateescape bytes into real Unicode so UTF-8 export cannot fail."""
+    if not any(0xDC80 <= ord(char) <= 0xDCFF for char in value):
+        return value
+
+    result = []
+    for char in value:
+        codepoint = ord(char)
+        if 0xDC80 <= codepoint <= 0xDCFF:
+            byte = bytes([codepoint - 0xDC00])
+            result.append(byte.decode("cp1252", errors="replace"))
+        else:
+            result.append(char)
+    return "".join(result)
+
+
+def _sanitize_dataframe_for_utf8_export(df: pd.DataFrame) -> pd.DataFrame:
+    sanitized = df.copy()
+    sanitized.columns = [
+        _replace_surrogateescape_chars(column) if isinstance(column, str) else column
+        for column in sanitized.columns
+    ]
+
+    for column in sanitized.select_dtypes(include=["object"]).columns:
+        sanitized[column] = sanitized[column].map(
+            lambda value: _replace_surrogateescape_chars(value)
+            if isinstance(value, str)
+            else value
+        )
+    return sanitized
+
 def make_eml(title, description, user=None, eml_extra: dict | None = None):
     """Render an EML document populated with available metadata and prune empty elements.
 
@@ -970,6 +1002,12 @@ def upload_dwca(
     eml_extra: dict | None = None,
     additional_files: list[tuple[str, bytes]] | None = None,
 ):
+    df_core = _sanitize_dataframe_for_utf8_export(df_core)
+    extensions = [
+        (_sanitize_dataframe_for_utf8_export(ext_df), ext_type)
+        for ext_df, ext_type in extensions or []
+    ]
+
     try:
         archive = Archive()
     except Exception as e:
