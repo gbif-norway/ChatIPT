@@ -1,6 +1,9 @@
 'use client'
 
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+
 import {
+  getDatasetStatus,
   naturalList,
   pluralize,
   resourceCountLabel,
@@ -106,6 +109,33 @@ const openPackageExplorer = async () => {
   if (modalElement) bootstrap.Modal.getOrCreateInstance(modalElement).show()
 }
 
+const notificationStorageKey = (datasetId) => `chatipt:attention-notification:${datasetId}`
+const notificationPreferenceEvent = 'chatipt:attention-notification-change'
+
+const getNotificationStatus = (datasetId) => {
+  if (!datasetId || typeof window === 'undefined') return 'idle'
+  if (!('Notification' in window)) return 'unsupported'
+  if (window.Notification.permission === 'denied') return 'blocked'
+
+  const storedPreference = window.localStorage.getItem(notificationStorageKey(datasetId))
+  if (storedPreference === 'notified') return 'notified'
+  if (storedPreference === 'armed' && window.Notification.permission === 'granted') return 'armed'
+  return 'idle'
+}
+
+const subscribeToNotificationPreference = (onStoreChange) => {
+  window.addEventListener('storage', onStoreChange)
+  window.addEventListener(notificationPreferenceEvent, onStoreChange)
+  return () => {
+    window.removeEventListener('storage', onStoreChange)
+    window.removeEventListener(notificationPreferenceEvent, onStoreChange)
+  }
+}
+
+const announceNotificationPreferenceChange = () => {
+  window.dispatchEvent(new Event(notificationPreferenceEvent))
+}
+
 export default function DatasetPackageOverview({ dataset, tables }) {
   const files = Array.isArray(dataset?.user_files) ? dataset.user_files : []
   const resources = getResourceRows(dataset, tables)
@@ -113,6 +143,21 @@ export default function DatasetPackageOverview({ dataset, tables }) {
   const storyItems = getStoryItems(resources)
   const validation = dataset?.dwc_dp_validation || {}
   const ready = Boolean(dataset?.package_ready)
+  const datasetStatus = getDatasetStatus(dataset)
+  const isWorking = datasetStatus === 'preparing'
+  const attentionRequired = ['needs_input', 'ready', 'published'].includes(datasetStatus)
+  const workComplete = ['ready', 'published'].includes(datasetStatus)
+  const datasetId = dataset?.id
+  const [isRequestingNotification, setIsRequestingNotification] = useState(false)
+  const getNotificationSnapshot = useCallback(
+    () => getNotificationStatus(datasetId),
+    [datasetId],
+  )
+  const notificationStatus = useSyncExternalStore(
+    subscribeToNotificationPreference,
+    getNotificationSnapshot,
+    () => 'idle',
+  )
   const inputRows = accounting?.sourceRows ?? (
     resources.length === 0
       ? tables.reduce((sum, table) => sum + Number(table.df?.length || 0), 0)
@@ -137,6 +182,120 @@ export default function DatasetPackageOverview({ dataset, tables }) {
       }.`
     : ''
   const trustText = [accountingTrustText, validationTrustText].filter(Boolean).join(' ')
+  useEffect(() => {
+    if (
+      !attentionRequired
+      || !datasetId
+      || notificationStatus !== 'armed'
+      || typeof window === 'undefined'
+    ) {
+      return
+    }
+
+    const storageKey = notificationStorageKey(datasetId)
+    if (window.localStorage.getItem(storageKey) !== 'armed') return
+
+    window.localStorage.setItem(storageKey, 'notified')
+    announceNotificationPreferenceChange()
+
+    if ('Notification' in window && window.Notification.permission === 'granted') {
+      try {
+        const notification = new window.Notification(
+          workComplete ? 'Your ChatIPT package is ready' : 'ChatIPT needs your attention',
+          {
+            body: workComplete
+              ? (
+                  dataset?.title
+                    ? `${dataset.title} is ready to review and download.`
+                    : 'Your dataset is ready to review and download.'
+                )
+              : (
+                  dataset?.title
+                    ? `ChatIPT is waiting for your input on ${dataset.title}.`
+                    : 'ChatIPT is waiting for your input.'
+                ),
+            tag: `chatipt-attention-${datasetId}`,
+          },
+        )
+        notification.onclick = () => {
+          window.focus()
+          notification.close()
+          if (workComplete) {
+            document.getElementById('publication-packages')?.scrollIntoView({ behavior: 'smooth' })
+          }
+        }
+      } catch (error) {
+        console.error('Unable to display ChatIPT attention notification:', error)
+      }
+    }
+  }, [attentionRequired, dataset?.title, datasetId, notificationStatus, workComplete])
+
+  const handleNotificationClick = async () => {
+    if (!datasetId || typeof window === 'undefined') return
+
+    const storageKey = notificationStorageKey(datasetId)
+    if (notificationStatus === 'armed') {
+      window.localStorage.removeItem(storageKey)
+      announceNotificationPreferenceChange()
+      return
+    }
+
+    if (!('Notification' in window)) return
+
+    setIsRequestingNotification(true)
+    try {
+      const permission = window.Notification.permission === 'default'
+        ? await window.Notification.requestPermission()
+        : window.Notification.permission
+
+      if (permission === 'granted') {
+        window.localStorage.setItem(storageKey, 'armed')
+      } else {
+        window.localStorage.removeItem(storageKey)
+      }
+      announceNotificationPreferenceChange()
+    } catch (error) {
+      console.error('Unable to enable ChatIPT attention notifications:', error)
+    } finally {
+      setIsRequestingNotification(false)
+    }
+  }
+
+  const displayedNotificationStatus = isRequestingNotification ? 'requesting' : notificationStatus
+  const notificationButton = isWorking && datasetId ? (
+    <button
+      type="button"
+      className={`btn btn-sm ${
+        displayedNotificationStatus === 'armed' ? 'btn-outline-success' : 'btn-outline-secondary'
+      }`}
+      onClick={handleNotificationClick}
+      disabled={['requesting', 'blocked', 'unsupported'].includes(displayedNotificationStatus)}
+      title={
+        displayedNotificationStatus === 'armed'
+          ? 'Click to cancel this notification'
+          : displayedNotificationStatus === 'blocked'
+            ? 'Notifications are blocked in your browser settings'
+            : displayedNotificationStatus === 'unsupported'
+              ? 'This browser does not support desktop notifications'
+              : 'Notify me when ChatIPT next needs my attention; keep this tab open'
+      }
+    >
+      <i
+        className={`bi ${displayedNotificationStatus === 'armed' ? 'bi-bell-fill' : 'bi-bell'} me-1`}
+        aria-hidden="true"
+      ></i>
+      {displayedNotificationStatus === 'requesting'
+        ? 'Enabling…'
+        : displayedNotificationStatus === 'armed'
+          ? 'Notification on'
+          : displayedNotificationStatus === 'blocked'
+            ? 'Notifications blocked'
+            : displayedNotificationStatus === 'unsupported'
+              ? 'Notifications unavailable'
+              : 'Notify me'}
+    </button>
+  ) : null
+
   return (
     <section className="dataset-overview mb-2" aria-labelledby="dataset-overview-title">
       <div className="dataset-overview-line">
@@ -170,16 +329,35 @@ export default function DatasetPackageOverview({ dataset, tables }) {
       </div>
 
       {resources.length === 0 ? (
-        <p className="small mb-0 mt-1">
-          ChatIPT is examining your source data before organising it into linked Darwin Core tables.
-        </p>
+        <div className="d-flex flex-wrap align-items-center gap-2 mt-1">
+          <p className="small mb-0">
+            ChatIPT is examining your source data before organising it into linked Darwin Core tables.
+          </p>
+          {notificationButton}
+        </div>
       ) : (
-        <p className="small mb-0 mt-1">
-          {ready ? 'ChatIPT organised' : 'ChatIPT is organising'}{' '}
-          {accounting ? `${pluralize(accounting.sourceRows, 'source row')} into ` : ''}
-          {storyItems.length > 0 ? naturalList(storyItems) : pluralize(resources.length, 'linked table')}
-          {storyItems.length > 0 ? ` across ${pluralize(resources.length, 'linked table')}.` : '.'}
+        <div className="d-flex flex-wrap align-items-center gap-2 mt-1">
+          <p className="small mb-0">
+            {ready ? 'ChatIPT organised' : 'ChatIPT is organising'}{' '}
+            {accounting ? `${pluralize(accounting.sourceRows, 'source row')} into ` : ''}
+            {storyItems.length > 0 ? naturalList(storyItems) : pluralize(resources.length, 'linked table')}
+            {storyItems.length > 0 ? ` across ${pluralize(resources.length, 'linked table')}.` : '.'}
+          </p>
+          {notificationButton}
+        </div>
+      )}
+      {notificationStatus === 'armed' && (
+        <p className="small text-muted mb-0 mt-1" role="status">
+          You’ll get a browser notification when ChatIPT next needs your attention. Keep this tab open.
         </p>
+      )}
+      {notificationStatus === 'notified' && attentionRequired && (
+        <div className="alert alert-success py-2 px-3 mb-0 mt-2" role="status">
+          <i className="bi bi-check-circle-fill me-2" aria-hidden="true"></i>
+          {workComplete
+            ? 'Your package is ready to review and download.'
+            : 'ChatIPT is ready for your input.'}
+        </div>
       )}
     </section>
   )
