@@ -12,7 +12,7 @@ const ibmPlexSerif = IBM_Plex_Serif({ subsets: ['latin'], weight: '400' });
 
 export const metadata = {
   title: 'ChatIPT',
-  description: 'Publish your spreadsheets to GBIF through a chat interface',
+  description: 'Clean, standardise, and organise biodiversity data into DwC-DP and DwC-A publication packages',
   icons: {
     icon: [
       { url: '/images/chatipt.webp', type: 'image/webp' },

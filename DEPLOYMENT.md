@@ -7,6 +7,24 @@ This document describes the **current** ChatIPT deployment workflow.
 - CI/CD model: manual, command-driven
 - Not used for routine deployment: Jenkins, Argo CD
 
+## Default production path
+
+For routine production deploys from this repo, use:
+
+```bash
+cd /Users/rukayasj/Projects/chatipt
+./scripts/deploy-prod.sh
+```
+
+The script runs the end-to-end flow:
+- build and push backend/frontend production images
+- update `../gitops/apps/chatipt/values-prod.yaml`
+- commit/push gitops change
+- `helm upgrade --install` for `chatipt`
+- rollout and image-tag verification
+
+Use the manual sections below for troubleshooting or partial/custom deploy scenarios.
+
 ## Repositories
 
 - App code: `chatipt` (this repo)

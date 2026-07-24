@@ -261,6 +261,8 @@ REST_FRAMEWORK = {
 }
 
 OPENAI_RESPONSES_TIMEOUT_SECONDS = float(os.environ.get("OPENAI_RESPONSES_TIMEOUT_SECONDS", "180"))
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.4")
+OPENAI_REASONING_EFFORT = os.environ.get("OPENAI_REASONING_EFFORT", "high")
 
 # CORS settings for React frontend
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")

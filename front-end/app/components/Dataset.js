@@ -1,10 +1,13 @@
 'use client'
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useDataset } from '../contexts/DatasetContext';
 import { useAuth } from '../contexts/AuthContext';
 import Agent from './Agent';
+import DatasetPackageOverview, { PublicationPackageCards } from './DatasetPackageOverview';
+import PackageExplorer from './PackageExplorer';
 import TreeVisualization from './TreeVisualization';
+import { getDatasetStatus, getStatusMeta, pluralize } from '../utils/datasetPresentation';
 
 import Accordion from 'react-bootstrap/Accordion';
 import DataTable from 'react-data-table-component';
@@ -19,6 +22,8 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const [tables, setTables] = useState([]);
   const [tablesLoading, setTablesLoading] = useState(true);
   const [activeTableId, setActiveTableId] = useState(null);
+  const [showTableTabOverflowCue, setShowTableTabOverflowCue] = useState(false);
+  const tableTabsRef = useRef(null);
   const [activeAgentKey, setActiveAgentKey] = useState(null);
   const [isEditingMetadata, setIsEditingMetadata] = useState(false);
   const [isSavingMetadata, setIsSavingMetadata] = useState(false);
@@ -41,6 +46,32 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     methods_source: '',
     creators_source: '',
   });
+
+  useEffect(() => {
+    const tabList = tableTabsRef.current?.querySelector('.nav-tabs');
+    if (!tabList) {
+      setShowTableTabOverflowCue(false);
+      return undefined;
+    }
+
+    const updateOverflowCue = () => {
+      const hasMoreTabs = tabList.scrollWidth > tabList.clientWidth + 1
+        && tabList.scrollLeft + tabList.clientWidth < tabList.scrollWidth - 1;
+      setShowTableTabOverflowCue(hasMoreTabs);
+    };
+
+    updateOverflowCue();
+    tabList.addEventListener('scroll', updateOverflowCue, { passive: true });
+
+    const resizeObserver = new ResizeObserver(updateOverflowCue);
+    resizeObserver.observe(tabList);
+
+    return () => {
+      tabList.removeEventListener('scroll', updateOverflowCue);
+      resizeObserver.disconnect();
+    };
+  }, [tables]);
+
   // Helper function to fetch data with timeout
   const fetchData = async (url, options = {}) => {
     const { timeout = 30000, retries = 2 } = options; // 30 second timeout for table requests
@@ -129,6 +160,10 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
 
   // Load tables when dataset changes
   useEffect(() => {
+    import('bootstrap/dist/js/bootstrap.bundle.min.js');
+  }, []);
+
+  useEffect(() => {
     if (currentDatasetId) {
       loadTablesForDataset(currentDatasetId);
     } else {
@@ -183,6 +218,16 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       setMetadataSaveSuccess('');
     }
   };
+
+  const handleOpenPackageTable = useCallback((tableId) => {
+    setActiveTableId(tableId);
+    window.setTimeout(() => {
+      document.querySelector('.dataset-table-panel')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    }, 250);
+  }, []);
 
   // Dataset.js should only be shown when there's a currentDatasetId
   // The upload flow is now handled in page.js
@@ -247,8 +292,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     );
   }
 
-  const CustomTabTitle = ({ children }) => <span dangerouslySetInnerHTML={{ __html: children }} />;
-
   const fallbackFileNameRaw = currentDataset?.user_files?.[0]?.filename || '';
   const fallbackFileName = fallbackFileNameRaw.replace(/\([^)]*\)/g, '').trim();
 
@@ -257,7 +300,8 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     if (!currentDataset) return null;
     const subject = '(ChatIPT) Request to publish dataset to GBIF production';
     const mailtoTitle = currentDataset.title || fallbackFileName;
-    const body = `Hello GBIF Norway Helpdesk,\n\nI’m pleased to confirm that my dataset has been successfully published to the GBIF Sandbox for validation. I would like to request its publication to GBIF production.\n\n- Dataset title: ${mailtoTitle}\n- Darwin Core Archive (DwC-A): ${currentDataset.dwca_url}\n- GBIF Sandbox dataset page: ${currentDataset.gbif_url}\n\nPlease let me know if you need any further information or changes before proceeding.\n\nThank you for your assistance.\n\nBest regards,`;
+    const dwcDpLine = currentDataset.dwc_dp_url ? `\n- Darwin Core Data Package (DwC-DP): ${currentDataset.dwc_dp_url}` : '';
+    const body = `Hello GBIF Norway Helpdesk,\n\nI’m pleased to confirm that my dataset has been successfully published to the GBIF Sandbox for validation. I would like to request its publication to GBIF production.\n\n- Dataset title: ${mailtoTitle}${dwcDpLine}\n- Darwin Core Archive (DwC-A): ${currentDataset.dwca_url}\n- GBIF Sandbox dataset page: ${currentDataset.gbif_url}\n\nPlease let me know if you need any further information or changes before proceeding.\n\nThank you for your assistance.\n\nBest regards,`;
     return `mailto:helpdesk@gbif.no?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   })();
 
@@ -456,6 +500,20 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       })
     : [];
   const uploadedFiles = Array.isArray(currentDataset?.user_files) ? currentDataset.user_files : [];
+  const datasetStatus = getDatasetStatus(currentDataset);
+  const statusMeta = getStatusMeta(datasetStatus);
+  const normalizedStructureNotes = String(currentDataset.structure_notes || '').replace(/\\n/g, '\n');
+  const accountingSources = Array.isArray(currentDataset?.dwc_dp_accounting?.declaration?.sources)
+    ? currentDataset.dwc_dp_accounting.declaration.sources
+    : [];
+  const provenanceSummary = accountingSources.reduce((summary, source) => ({
+    sourceRows: summary.sourceRows + Number(source.source_rows || 0),
+    accountedRows: summary.accountedRows + Number(source.rows_accounted || 0),
+    omittedRows: summary.omittedRows + Number(source.omitted_rows || 0),
+  }), { sourceRows: 0, accountedRows: 0, omittedRows: 0 });
+  const packageResources = Array.isArray(currentDataset?.dwc_dp_accounting?.resources)
+    ? currentDataset.dwc_dp_accounting.resources
+    : [];
 
   const getPdfStatusBadge = () => {
     return { label: 'Available to model', className: 'text-bg-success' };
@@ -468,15 +526,36 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
           <div className="mb-3">
             <div className="d-flex flex-wrap align-items-center gap-2">
               <h2 className="mb-0 me-2">{title || 'Untitled Dataset'}</h2>
-              {currentDataset.structure_notes && (
+              <span className={`badge ${statusMeta.badgeClass}`}>
+                <i className={`bi ${statusMeta.icon} me-1`} aria-hidden="true"></i>
+                {statusMeta.label}
+              </span>
+              {(currentDataset.package_ready || currentDataset.published_at) && (
+                <a className="btn btn-warning btn-sm" href="#publication-packages">
+                  <i className="bi bi-box-arrow-down me-1" aria-hidden="true"></i>
+                  Download packages
+                </a>
+              )}
+              {currentDataset.published_at && currentDataset.gbif_url && (
+                <a
+                  className="btn btn-outline-primary btn-sm"
+                  href={currentDataset.gbif_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <i className="bi bi-globe me-1" aria-hidden="true"></i>
+                  View on GBIF (sandbox)
+                </a>
+              )}
+              {(currentDataset.structure_notes || uploadedFiles.length > 0) && (
                 <button 
                   className="btn btn-outline-secondary btn-sm" 
                   data-bs-toggle="modal" 
                   data-bs-target="#structureNotesModal"
-                  title="View structure notes"
+                  title="View data provenance and structure notes"
                 >
                   <i className="bi bi-info-circle me-1"></i>
-                  Structure Notes
+                  Data Provenance
                 </button>
               )}
               <button
@@ -527,6 +606,10 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
           {currentDataset.description && (
             <p className="mb-3">{currentDataset.description}</p>
           )}
+          <DatasetPackageOverview
+            dataset={currentDataset}
+            tables={tables}
+          />
           {pdfFiles.length > 0 && (
             <div className="mb-3">
               <div className="d-flex flex-wrap gap-2">
@@ -546,8 +629,8 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
           )}
         </div>
       </div>
-      <div className="row mx-auto p-4 no-left-padding">
-        <div className="col-6">
+      <div className="row mx-auto px-4 pb-4 pt-2 no-left-padding">
+        <div className="col-12 col-lg-6">
           {Array.isArray(currentDataset.visible_agent_set) && currentDataset.visible_agent_set.length > 0 ? (
             <Accordion activeKey={activeAgentKey} onSelect={(key) => setActiveAgentKey(key)}>
               {currentDataset.visible_agent_set.map(agent => (
@@ -568,7 +651,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
               </div>
             </div>
           )}
-          {(currentDataset.visible_agent_set && currentDataset.visible_agent_set.length > 0 && currentDataset.visible_agent_set.at(-1).completed_at != null && currentDataset.published_at == null) && (
+          {(currentDataset.visible_agent_set && currentDataset.visible_agent_set.length > 0 && currentDataset.visible_agent_set.at(-1).completed_at != null && currentDataset.published_at == null && !currentDataset.package_ready) && (
             <div className="message user-input-loading">
               <div className="d-flex align-items-center">
                 <strong>Working... loading next task</strong>
@@ -583,13 +666,16 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                 <hr />
                 <a href={currentDataset.gbif_url} className="btn btn-outline-primary" role="button" aria-pressed="true" target="_blank" rel="noopener noreferrer">🌐 View on GBIF (sandbox)</a>
                 <a href={productionPublishMailto} className="btn btn-success" role="button" aria-pressed="true">🚀 Request publication to GBIF (production) 🚀</a>
-                <a href={currentDataset.dwca_url} className="btn btn-outline-secondary" role="button" aria-pressed="true">⬇️ Download your Darwin Core Archive file</a>
               </div>
             </div>
           )}
+          <PublicationPackageCards
+            dataset={currentDataset}
+            tables={tables}
+          />
         </div>
-        <div className="col-6">
-          <div className="sticky-top">
+        <div className="col-12 col-lg-6 mt-4 mt-lg-0">
+          <div className="dataset-table-panel">
             {tablesLoading ? (
               <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '200px' }}>
                 <div className="spinner-border" role="status">
@@ -597,27 +683,38 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                 </div>
               </div>
             ) : tables.length > 0 ? (
-              <Tabs activeKey={activeTableId} onSelect={(k) => setActiveTableId(k)} className="mb-3">
-                {tables.map((table) => (
-                  <Tab
-                    eventKey={table.id}
-                    title={<CustomTabTitle>{`${table.title} <small>(ID ${table.id})</small>`}</CustomTabTitle>}
-                    key={table.id}
-                  >
-                    <DataTable
-                      columns={table.df[0] ? Object.keys(table.df[0]).map(column => ({
-                        name: column,
-                        selector: row => row[column],
-                        sortable: true,
-                      })) : []}
-                      data={table.df}
-                      theme="dark"
-                      pagination
-                      dense
-                    />
-                  </Tab>
-                ))}
-              </Tabs>
+              <div
+                ref={tableTabsRef}
+                className={`dataset-table-tabs ${showTableTabOverflowCue ? 'has-more-tabs' : ''}`}
+              >
+                <Tabs activeKey={activeTableId} onSelect={(k) => setActiveTableId(k)} className="mb-3">
+                  {tables.map((table) => (
+                    <Tab
+                      eventKey={table.id}
+                      title={(
+                        <span>
+                          {table.title}
+                          <small className="ms-1">({pluralize(table.df?.length || 0, 'row')})</small>
+                        </span>
+                      )}
+                      key={table.id}
+                    >
+                      <div data-table-id={table.id}>
+                        <DataTable
+                          columns={table.df[0] ? Object.keys(table.df[0]).map(column => ({
+                            name: column,
+                            selector: row => row[column],
+                            sortable: true,
+                          })) : []}
+                          data={table.df}
+                          pagination
+                          dense
+                        />
+                      </div>
+                    </Tab>
+                  ))}
+                </Tabs>
+              </div>
             ) : (
               <div className="alert alert-info">
                 <strong>No tables to display yet.</strong>
@@ -635,6 +732,12 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       </div>
 
       {/* Dataset Metadata Modal */}
+      <PackageExplorer
+        datasetId={currentDatasetId}
+        tables={tables}
+        onOpenTable={handleOpenPackageTable}
+      />
+
       <div className="modal fade" id="datasetMetadataModal" tabIndex="-1" aria-labelledby="datasetMetadataModalLabel" aria-hidden="true">
         <div className="modal-dialog modal-lg">
           <div className="modal-content">
@@ -711,9 +814,15 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                   <div>{currentDataset.source_mode || 'Unknown'}</div>
                 </div>
                 <div className="col-md-6">
-                  <label className="form-label">DwC Core</label>
+                  <label className="form-label">DwC-A projection core</label>
                   <div>{currentDataset.dwc_core || 'Not set'}</div>
                 </div>
+                {currentDataset.dwc_dp_url && (
+                  <div className="col-md-12">
+                    <label className="form-label">Darwin Core Data Package</label>
+                    <div><a href={currentDataset.dwc_dp_url}>Download DwC-DP</a></div>
+                  </div>
+                )}
               </div>
 
               <hr />
@@ -1021,33 +1130,106 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       </div>
 
       {/* Structure Notes Modal */}
-      {currentDataset.structure_notes && (
+      {(currentDataset.structure_notes || uploadedFiles.length > 0) && (
         <div className="modal fade" id="structureNotesModal" tabIndex="-1" aria-labelledby="structureNotesModalLabel" aria-hidden="true">
           <div className="modal-dialog modal-lg">
             <div className="modal-content">
               <div className="modal-header">
                 <h5 className="modal-title" id="structureNotesModalLabel">
                   <i className="bi bi-info-circle me-2"></i>
-                  Structure Notes
+                  How ChatIPT organised your data
                 </h5>
                 <button type="button" className="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
               </div>
               <div className="modal-body">
-                <div style={{ whiteSpace: 'pre-wrap' }}>
-                  {currentDataset.structure_notes}
-                </div>
-                <hr />
-                <h6 className="mb-2">Originally Uploaded Files</h6>
+                <p className="text-muted">
+                  Source files, transformation details, and data provenance for this dataset.
+                </p>
+
+                <h6 className="mb-2">Originally uploaded files</h6>
                 {uploadedFiles.length > 0 ? (
-                  <ul className="mb-0">
+                  <ul className="mb-3">
                     {uploadedFiles.map((file, index) => (
                       <li key={file.id || `${file.filename || 'file'}-${index}`}>
-                        {file.filename || 'Unnamed file'}
+                        {file.file_url ? (
+                          <a href={file.file_url} target="_blank" rel="noopener noreferrer">
+                            {file.filename || 'Unnamed file'}
+                          </a>
+                        ) : (file.filename || 'Unnamed file')}
+                        {file.file_type && <span className="text-muted ms-2">({file.file_type})</span>}
                       </li>
                     ))}
                   </ul>
                 ) : (
-                  <p className="text-muted mb-0">No uploaded files found for this dataset.</p>
+                  <p className="text-muted">No uploaded files found for this dataset.</p>
+                )}
+
+                {(accountingSources.length > 0 || packageResources.length > 0) && (
+                  <div className="card bg-body-tertiary mb-3">
+                    <div className="card-body">
+                      <h6 className="card-title">Summary</h6>
+                      <dl className="row small mb-0">
+                        {accountingSources.length > 0 && (
+                          <>
+                            <dt className="col-sm-5">Input</dt>
+                            <dd className="col-sm-7">
+                              {pluralize(accountingSources.length, 'source table')} · {pluralize(provenanceSummary.sourceRows, 'source row')}
+                            </dd>
+                            <dt className="col-sm-5">Coverage</dt>
+                            <dd className="col-sm-7">
+                              {provenanceSummary.accountedRows.toLocaleString()} of {provenanceSummary.sourceRows.toLocaleString()} rows represented
+                              {provenanceSummary.omittedRows === 0
+                                ? ' · no source rows omitted'
+                                : ` · ${pluralize(provenanceSummary.omittedRows, 'row')} explicitly omitted`}
+                            </dd>
+                          </>
+                        )}
+                        {packageResources.length > 0 && (
+                          <>
+                            <dt className="col-sm-5">Result</dt>
+                            <dd className="col-sm-7">{pluralize(packageResources.length, 'linked DwC-DP table')}</dd>
+                          </>
+                        )}
+                        {currentDataset.package_ready && (
+                          <>
+                            <dt className="col-sm-5">Validation</dt>
+                            <dd className="col-sm-7 mb-0">
+                              Passed
+                              {Array.isArray(currentDataset.dwc_dp_validation?.warnings)
+                                && currentDataset.dwc_dp_validation.warnings.length > 0
+                                ? ` with ${pluralize(currentDataset.dwc_dp_validation.warnings.length, 'advisory warning')}`
+                                : ''}
+                            </dd>
+                          </>
+                        )}
+                      </dl>
+                    </div>
+                  </div>
+                )}
+
+                {Array.isArray(currentDataset.dwc_dp_validation?.warnings)
+                  && currentDataset.dwc_dp_validation.warnings.length > 0 && (
+                  <div className="alert alert-warning">
+                    <h6>Warnings and assumptions</h6>
+                    <ul className="mb-0">
+                      {currentDataset.dwc_dp_validation.warnings.map((warning, index) => (
+                        <li key={`${warning}-${index}`}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {normalizedStructureNotes && (
+                  <Accordion>
+                    <Accordion.Item eventKey="structure-notes">
+                      <Accordion.Header>Detailed structure notes</Accordion.Header>
+                      <Accordion.Body>
+                        <div style={{ whiteSpace: 'pre-wrap' }}>
+                          {normalizedStructureNotes}
+                        </div>
+                      </Accordion.Body>
+                    </Accordion.Item>
+                  </Accordion>
                 )}
               </div>
               <div className="modal-footer">

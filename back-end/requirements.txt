@@ -27,6 +27,7 @@ inflection==0.5.1
 jiter==0.10.0
 jsonschema==4.24.0
 jsonschema-specifications==2025.4.1
+frictionless==5.19.0
 minio==7.2.15
 numpy==2.2.6
 openai==1.84.0
@@ -64,3 +65,4 @@ django-allauth==65.15.1
 cryptography==46.0.7
 django-storages==1.14.2
 boto3==1.39.4
+dendropy==5.0.10

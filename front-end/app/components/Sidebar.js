@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
 import config from '../config'
+import { getDatasetStatus, getStatusMeta } from '../utils/datasetPresentation'
 
 const Sidebar = ({ isOpen, onToggle, onDatasetSelect, currentDatasetId }) => {
   const { user } = useAuth()
@@ -56,19 +57,10 @@ const Sidebar = ({ isOpen, onToggle, onDatasetSelect, currentDatasetId }) => {
     }
   }
 
-  const getDatasetStatus = (dataset) => {
-    if (dataset.published_at) {
-      return { text: 'Published', class: 'text-success', icon: 'bi-check-circle' }
-    } else if (dataset.visible_agent_set && dataset.visible_agent_set.length > 0) {
-      const lastAgent = dataset.visible_agent_set[dataset.visible_agent_set.length - 1]
-      if (lastAgent.completed_at) {
-        return { text: 'In Progress', class: 'text-warning', icon: 'bi-clock' }
-      } else {
-        return { text: 'Processing', class: 'text-info', icon: 'bi-arrow-clockwise' }
-      }
-    } else {
-      return { text: 'New', class: 'text-secondary', icon: 'bi-plus-circle' }
-    }
+  const getSidebarDatasetStatus = (dataset) => {
+    const status = getDatasetStatus(dataset)
+    const meta = getStatusMeta(status)
+    return { text: meta.label, class: meta.textClass, icon: meta.icon }
   }
 
   const getDatasetTitle = (dataset) => {
@@ -182,7 +174,7 @@ const Sidebar = ({ isOpen, onToggle, onDatasetSelect, currentDatasetId }) => {
           ) : (
             <div className="dataset-list">
               {datasets.map((dataset) => {
-                const status = getDatasetStatus(dataset)
+                const status = getSidebarDatasetStatus(dataset)
                 const title = getDatasetTitle(dataset)
                 const isActive = currentDatasetId === dataset.id
                 

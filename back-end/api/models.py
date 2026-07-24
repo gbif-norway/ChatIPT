@@ -49,6 +49,10 @@ class Dataset(models.Model):
     eml = models.JSONField(null=True, blank=True)
     published_at = models.DateTimeField(null=True, blank=True)
     dwca_url = models.CharField(max_length=2000, blank=True)
+    dwc_dp_url = models.CharField(max_length=2000, blank=True)
+    dwc_dp_validation = models.JSONField(null=True, blank=True)
+    source_accounting_snapshot = models.JSONField(null=True, blank=True)
+    dwc_dp_accounting = models.JSONField(null=True, blank=True)
     gbif_url = models.CharField(max_length=2000, blank=True)
     user_language = models.CharField(max_length=100, blank=True)
 
@@ -83,6 +87,36 @@ class Dataset(models.Model):
             filtered_dfs = user_file.filter_dataframes(dfs)
             created_tables.extend(user_file.create_tables(filtered_dfs))
         return created_tables
+
+    def ensure_source_accounting_snapshot(self):
+        """Preserve lightweight source counts before DwC-DP transformation starts."""
+        if self.source_accounting_snapshot:
+            return self.source_accounting_snapshot
+
+        from api.accounting import build_source_accounting_snapshot
+
+        self.source_accounting_snapshot = build_source_accounting_snapshot(self)
+        self.dwc_dp_accounting = None
+        self.save(update_fields=['source_accounting_snapshot', 'dwc_dp_accounting'])
+        return self.source_accounting_snapshot
+
+    @property
+    def source_accounting_snapshot_json(self):
+        return json.dumps(self.source_accounting_snapshot, ensure_ascii=False, indent=2)
+
+    @property
+    def dwc_dp_accounting_json(self):
+        return json.dumps(self.dwc_dp_accounting, ensure_ascii=False, indent=2)
+
+    @property
+    def package_ready(self):
+        validation = self.dwc_dp_validation or {}
+        if not (self.dwc_dp_url and self.dwca_url and validation.get('valid')):
+            return False
+
+        from api.accounting import current_accounting_status
+
+        return current_accounting_status(self)["valid"]
 
     def next_agent(self):
         self.refresh_from_db()
@@ -587,18 +621,32 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
             agent_tools.SetEML.__name__,
             agent_tools.SetUserLanguage.__name__,
             agent_tools.SetAgentTaskToComplete.__name__,
+            agent_tools.RequestUserInput.__name__,
             agent_tools.Python.__name__,
             agent_tools.CreateNewTables.__name__,
             agent_tools.BasicValidationForSomeDwCTerms.__name__,
             agent_tools.GetDarwinCoreInfo.__name__,
             agent_tools.GetDwCExtensionInfo.__name__,
+            agent_tools.GetDwcDpTableInfo.__name__,
+            agent_tools.ValidateDwcDp.__name__,
+            agent_tools.PreviewDwcDpDescriptor.__name__,
             agent_tools.RollBack.__name__,
+            agent_tools.ExportDwcDp.__name__,
+            agent_tools.ExportDwcaFromDwcDp.__name__,
             agent_tools.UploadDwCA.__name__,
             agent_tools.PublishToGBIF.__name__,
             agent_tools.ValidateDwCA.__name__,
             agent_tools.SendDiscordMessage.__name__,
             agent_tools.LogBugWithDeveloper.__name__,
         ]
+
+        if self.name in {
+            "Data transformation",
+            "Data validation and refinement",
+            "Final Review & Publication",
+            "Data maintenance",
+        }:
+            functions.append(agent_tools.SubmitDwcDpAccounting.__name__)
 
         # Restrict publish/archive tools to the final publication phases only.
         publication_enabled_tasks = {"Final Review & Publication", "Data maintenance"}
@@ -607,6 +655,8 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
                 f for f in functions
                 if f not in {
                     agent_tools.UploadDwCA.__name__,
+                    agent_tools.ExportDwcDp.__name__,
+                    agent_tools.ExportDwcaFromDwcDp.__name__,
                     agent_tools.PublishToGBIF.__name__,
                 }
             ]
@@ -620,6 +670,8 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
         return [getattr(agent_tools, f) for f in functions]
 
     def create_agent_with_system_messages(self, dataset:Dataset):
+        if self.name == "Data transformation":
+            dataset.ensure_source_accounting_snapshot()
         tables = Table.objects.filter(dataset=dataset)
         return Agent.create_with_system_message(dataset=dataset, task=self, tables=tables)
 
@@ -899,6 +951,47 @@ class Agent(models.Model):
                 pdf_user_files=new_pdf_files_qs,
             )
 
+            # A non-final workflow task must either act, ask through the structured
+            # user-input tool, or complete. Retry once internally instead of making
+            # the user type "please continue".
+            completion_tool_available = any(
+                function.__name__ == agent_tools.SetAgentTaskToComplete.__name__
+                for function in self.task.functions
+            )
+            if not response_message.tool_calls and completion_tool_available:
+                first_response_content = getattr(response_message, "content", "") or ""
+                response_message = create_response_message(
+                    self.message_set.all(),
+                    self.task.functions,
+                    pdf_user_files=[],
+                    additional_input_items=[
+                        {
+                            "role": "assistant",
+                            "content": first_response_content,
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                "Internal workflow correction: your previous response took no action. "
+                                "Continue now with a working tool, call RequestUserInput with the "
+                                "question or questions you need answered, or call "
+                                "SetAgentTaskToComplete if this task is finished. Do not ask the user "
+                                "to say 'continue'."
+                            ),
+                        },
+                    ],
+                )
+                asks_for_user_input = any(
+                    tool_call.function.name == agent_tools.RequestUserInput.__name__
+                    for tool_call in response_message.tool_calls
+                )
+                if (
+                    response_message.tool_calls
+                    and not asks_for_user_input
+                    and not getattr(response_message, "content", "")
+                ):
+                    response_message.content = first_response_content
+
             # Store the assistant message returned by OpenAI
             message = Message.objects.create(agent=self, openai_obj=response_message.dict())  # response_message.__dict__
 
@@ -908,6 +1001,7 @@ class Agent(models.Model):
 
             # One or more tool calls requested – execute them in sequence
             messages = [message]
+            requested_user_input = None
             for tool_call in response_message.tool_calls:
                 try:
                     result = self.run_function(tool_call.function)
@@ -919,13 +1013,38 @@ class Agent(models.Model):
                         f'\nError: {e}'
                     )
 
-                messages.append(
-                    Message.create_function_message(
-                        agent=self,
-                        function_result=result,
-                        tool_call_id=tool_call.id,
-                    )
+                tool_message = Message.create_function_message(
+                    agent=self,
+                    function_result=result,
+                    tool_call_id=tool_call.id,
                 )
+                messages.append(tool_message)
+
+                if tool_call.function.name == agent_tools.RequestUserInput.__name__:
+                    try:
+                        request = agent_tools.RequestUserInput(
+                            **json.loads(tool_call.function.arguments, strict=False)
+                        )
+                        parsed_result = json.loads(result)
+                        if (
+                            request.agent_id == self.id
+                            and parsed_result.get("status") == "awaiting_user_input"
+                        ):
+                            requested_user_input = request.user_message()
+                    except Exception:
+                        requested_user_input = None
+                    # RequestUserInput is terminal for this turn.
+                    break
+
+            if requested_user_input:
+                question_message = Message.objects.create(
+                    agent=self,
+                    openai_obj={
+                        "role": Message.Role.ASSISTANT,
+                        "content": requested_user_input,
+                    },
+                )
+                messages.append(question_message)
 
             # Refresh the agent so later updates (e.g. completed_at) are not overwritten
             self.refresh_from_db()
