@@ -124,6 +124,32 @@ class DwcDpSpecTests(SimpleTestCase):
             'event_pk',
         )
 
+    def test_warns_when_weak_primary_keys_have_case_insensitive_duplicates(self):
+        resources = self._resources()
+        resources['occurrence'] = pd.DataFrame([
+            {
+                'occurrence_pk': 'occ-1',
+                'occurrenceID': 'Source-Occurrence',
+                'event_fk': 'event-1',
+                'occurrenceStatus': 'present',
+            },
+            {
+                'occurrence_pk': 'occ-2',
+                'occurrenceID': 'source-occurrence',
+                'event_fk': 'event-1',
+                'occurrenceStatus': 'present',
+            },
+        ])
+
+        validation = validate_dwc_dp_resources(resources)
+
+        self.assertTrue(validation['valid'], validation)
+        self.assertTrue(any(
+            "weak primary key 'occurrenceID'" in warning
+            and "2 row(s)" in warning
+            for warning in validation['warnings']
+        ))
+
     def test_vendored_snapshot_has_all_post_review_schemas(self):
         self.assertEqual(VENDORED_SCHEMA_ERRORS, ())
         self.assertEqual(len(RESERVED_TABLE_NAMES), 79)
@@ -419,6 +445,42 @@ class DwcDpSpecTests(SimpleTestCase):
         self.assertEqual(projected.loc[0, 'eventDate'], '2025-04-26')
         self.assertNotIn('occurrence_pk', projected.columns)
         self.assertNotIn('event_fk', projected.columns)
+
+    def test_dwca_projection_repairs_duplicate_weak_occurrence_identifiers(self):
+        resources = self._resources()
+        resources['occurrence'] = pd.DataFrame([
+            {
+                'occurrence_pk': 'occ-1',
+                'occurrenceID': 'Mangifera indica',
+                'event_fk': 'event-1',
+                'occurrenceStatus': 'present',
+            },
+            {
+                'occurrence_pk': 'occ-2',
+                'occurrenceID': 'mangifera INDICA',
+                'event_fk': 'event-1',
+                'occurrenceStatus': 'present',
+            },
+            {
+                'occurrence_pk': 'occ-3',
+                'occurrenceID': 'source-occ-3',
+                'event_fk': 'event-1',
+                'occurrenceStatus': 'present',
+            },
+        ])
+
+        projected, core_type = _project_dwca_from_dwc_dp_resources(resources)
+
+        self.assertEqual(core_type.value, 'occurrence')
+        self.assertEqual(projected['occurrenceID'].tolist(), ['occ-1', 'occ-2', 'source-occ-3'])
+        self.assertEqual(
+            len(projected['occurrenceID'].str.casefold().unique()),
+            len(projected),
+        )
+        self.assertIn(
+            'Replaced 2 non-unique occurrenceID value(s)',
+            projected.attrs['projection_warnings'][0],
+        )
 
 
 class EmlGenerationTests(SimpleTestCase):

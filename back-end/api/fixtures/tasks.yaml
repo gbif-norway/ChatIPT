@@ -197,6 +197,7 @@
       - Event cardinality: check whether events represent distinct source sampling contexts. Collapse synthetic wrapper/child hierarchies and share events across occurrences when place, time, and sampling context are genuinely shared. Keep parent hierarchies and survey resources only when source semantics justify them.
       - Identification substance: remove identification rows that contain only keys, links, or blank taxonomic content. Prefer occurrence's native scientificName/taxon fields for a single current determination; retain identification resources for real determination history, agents, methods, status, or separate evidence.
       - DwC-DP required fields: ensure required `_pk` identifiers and required `_fk` relationship fields are present and populated. Do not confuse weak source IDs with enforced package keys.
+      - Projection identifier readiness: resolve case-insensitive duplicate warnings for weak primary keys such as occurrenceID before completion. When a supplied value identifies several distinct records or is not actually an identifier, mint stable unique weak IDs from the enforced `_pk` values and preserve the original source value in an appropriate source/provenance field or remarks.
       - Formats and numeric bounds: preserve source precision in eventDate/date fields and never fill missing components from the current date; also check lat/long ranges, positive counts/areas/durations/read counts where applicable, and numeric coercion sanity.
       - Controlled/enum-like values: occurrenceStatus, survey completeness/reporting flags, assertion fields, media fractions, and any controlled fields actually used.
       - Link integrity: all populated foreign keys must resolve to records in the referenced DwC-DP resource.
@@ -259,11 +260,12 @@
           *   Ask for manual title/description only if the user explicitly wants to customize wording or if critical context is genuinely unavailable after best-effort inference.
           *   If confidence is low, provide your proposed draft and ask a single concise confirmation/edit question.
       3.  **Create and validate publication packages:**
-          *   Run ValidateDwcDp. Fix any DwC-DP schema, required-field, unique-ID, numeric-constraint, or foreign-key issues before exporting.
+          *   Run ValidateDwcDp. Fix any DwC-DP schema, required-field, unique-ID, numeric-constraint, or foreign-key issues before exporting. Treat warnings about duplicate weak primary identifiers used by the DwC-A core as issues to resolve before export.
           *   Optionally call PreviewDwcDpDescriptor if you need to inspect the generated datapackage.json before export.
           *   Call ExportDwcDp. This is the authoritative package.
           *   Call ExportDwcaFromDwcDp to create the simpler DwC-A projection for GBIF compatibility. Use UploadDwCA directly only as a fallback if the projection tool cannot represent the dataset and you have manually checked the necessary Darwin Core core/extension schemas.
           *   Check the DwC-A projection for GBIF issues by calling the ValidateDwCA tool.
+          *   Never add DwC-A-only fields such as basisOfRecord directly to a DwC-DP resource when GetDwcDpTableInfo does not list them. The authoritative DwC-DP tables must remain schema-valid after projection and validation.
           *   Fix the issues, asking the user any questions if necessary
           *   Add to the structure_notes noting the issues and fixes
       3.  **Initiate Publication:** If the user approves:

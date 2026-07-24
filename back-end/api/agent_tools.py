@@ -715,6 +715,47 @@ def _fill_projection_identifier(df: pd.DataFrame, target: str, source: str) -> N
     df.loc[blank, target] = df.loc[blank, source]
 
 
+def _repair_projection_identifier_duplicates(
+    df: pd.DataFrame,
+    target: str,
+    source: str,
+) -> Optional[str]:
+    """Use enforced package keys when weak DwC identifiers collide."""
+    if target not in df.columns or source not in df.columns:
+        return None
+
+    identifiers = df[target].astype("string").fillna("").str.strip()
+    folded = identifiers.str.casefold()
+    duplicate_mask = identifiers.ne("") & folded.duplicated(keep=False)
+    if not duplicate_mask.any():
+        return None
+
+    duplicate_rows = int(duplicate_mask.sum())
+    duplicate_groups = int(folded[duplicate_mask].nunique())
+    df.loc[duplicate_mask, target] = (
+        df.loc[duplicate_mask, source].astype("string").fillna("").str.strip()
+    )
+
+    # Enforced DwC-DP keys are exactly unique, but guard against the unlikely
+    # case-only collision or collision with an untouched weak identifier.
+    repaired = df[target].astype("string").fillna("").str.strip()
+    repaired_folded = repaired.str.casefold()
+    remaining_mask = repaired.eq("") | repaired_folded.duplicated(keep=False)
+    for index in df.index[remaining_mask]:
+        source_value = str(df.at[index, source]).strip()
+        stable_uuid = uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"chatipt:dwca:{target}:{source_value}",
+        )
+        df.at[index, target] = f"urn:uuid:{stable_uuid}"
+
+    return (
+        f"Replaced {duplicate_rows} non-unique {target} value(s) across "
+        f"{duplicate_groups} duplicate group(s) with stable identifiers derived from "
+        f"the enforced {source} package key."
+    )
+
+
 def _project_dwca_from_dwc_dp_resources(resources):
     """Return a conservative DwC-A core using the enforced DwC-DP key graph."""
     if "occurrence" in resources:
@@ -737,22 +778,42 @@ def _project_dwca_from_dwc_dp_resources(resources):
             )
             _fill_projection_identifier(core_df, "eventID", "event_fk")
 
+        projection_warnings = []
+        identifier_warning = _repair_projection_identifier_duplicates(
+            core_df,
+            "occurrenceID",
+            "occurrence_pk",
+        )
+        if identifier_warning:
+            projection_warnings.append(identifier_warning)
         internal_columns = [
             column
             for column in core_df.columns
             if str(column).endswith("_pk") or str(column).endswith("_fk")
         ]
-        return core_df.drop(columns=internal_columns), DarwinCoreCoreType.OCCURRENCE
+        projected = core_df.drop(columns=internal_columns)
+        projected.attrs["projection_warnings"] = projection_warnings
+        return projected, DarwinCoreCoreType.OCCURRENCE
 
     if "event" in resources:
         core_df = resources["event"].copy()
         _fill_projection_identifier(core_df, "eventID", "event_pk")
+        projection_warnings = []
+        identifier_warning = _repair_projection_identifier_duplicates(
+            core_df,
+            "eventID",
+            "event_pk",
+        )
+        if identifier_warning:
+            projection_warnings.append(identifier_warning)
         internal_columns = [
             column
             for column in core_df.columns
             if str(column).endswith("_pk") or str(column).endswith("_fk")
         ]
-        return core_df.drop(columns=internal_columns), DarwinCoreCoreType.EVENT
+        projected = core_df.drop(columns=internal_columns)
+        projected.attrs["projection_warnings"] = projection_warnings
+        return projected, DarwinCoreCoreType.EVENT
 
     raise ValueError("DwC-A projection requires at least an occurrence or event DwC-DP resource.")
 
@@ -1086,6 +1147,7 @@ class ExportDwcaFromDwcDp(OpenAIBaseModel):
                 core_df, core_type = _project_dwca_from_dwc_dp_resources(resources)
             except ValueError as exc:
                 return f"Error: {exc}"
+            projection_warnings = list(core_df.attrs.get("projection_warnings") or [])
 
             if core_type == DarwinCoreCoreType.OCCURRENCE:
                 dataset.dwc_core = Dataset.DWCCore.OCCURRENCE
@@ -1111,8 +1173,9 @@ class ExportDwcaFromDwcDp(OpenAIBaseModel):
             dataset.dwca_url = dwca_url
             dataset.save(update_fields=["dwca_url", "dwc_core"])
             warning_text = ""
-            if validation["warnings"]:
-                warning_text = "\nReview warnings:\n- " + "\n- ".join(validation["warnings"])
+            review_warnings = [*validation["warnings"], *projection_warnings]
+            if review_warnings:
+                warning_text = "\nReview warnings:\n- " + "\n- ".join(review_warnings)
             return (
                 f"DwC-A projection successfully created and uploaded: {dwca_url}\n"
                 "Projection note: DwC-DP remains the authoritative package. The DwC-A contains a conservative "

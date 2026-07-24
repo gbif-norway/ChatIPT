@@ -511,6 +511,36 @@ def validate_dwc_dp_resources(resources: Mapping[str, pd.DataFrame]) -> Dict[str
                 continue
             _validate_field_values(name, field, df[field_name], errors)
 
+        weak_primary_key = spec.weak_primary_key
+        if weak_primary_key and all(field in valid_columns for field in weak_primary_key):
+            populated_keys: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+            for row in df[weak_primary_key].itertuples(index=False, name=None):
+                display = tuple(str(value).strip() if pd.notna(value) else "" for value in row)
+                if not all(display):
+                    continue
+                populated_keys.append(
+                    (tuple(value.casefold() for value in display), display)
+                )
+
+            key_counts = Counter(key for key, _display in populated_keys)
+            duplicate_keys = {key for key, count in key_counts.items() if count > 1}
+            if duplicate_keys:
+                duplicate_rows = sum(key_counts[key] for key in duplicate_keys)
+                examples = []
+                for key, display in populated_keys:
+                    if key in duplicate_keys and display not in examples:
+                        examples.append(display)
+                    if len(examples) >= 5:
+                        break
+                preview = "; ".join(" | ".join(value) for value in examples)
+                warnings.append(
+                    f"Resource '{name}' weak primary key "
+                    f"'{', '.join(weak_primary_key)}' contains {duplicate_rows} row(s) across "
+                    f"{len(duplicate_keys)} case-insensitive duplicate value(s). Examples: {preview}. "
+                    "DwC-DP permits weak-key duplication, but these values should be corrected before "
+                    "using the resource as a DwC-A core."
+                )
+
     for name, df in normalized_resources.items():
         spec = get_table_spec(name)
         columns = valid_columns_by_resource[name]
