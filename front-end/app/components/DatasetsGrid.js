@@ -3,8 +3,9 @@ import { useEffect, useState } from 'react'
 import config from '../config'
 import { useDataset } from '../contexts/DatasetContext'
 import { useAuth } from '../contexts/AuthContext'
+import { getStatusMeta } from '../utils/datasetPresentation'
 
-export default function DatasetsGrid({ onOpenDataset, onNewDataset }) {
+export default function DatasetsGrid({ onOpenDataset, onNewDataset, onShowWelcome }) {
   const [items, setItems] = useState(null)
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -34,6 +35,32 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset }) {
     if (dataset.title) return dataset.title
     if (dataset.user_files && dataset.user_files.length > 0) return dataset.user_files[0].filename
     return 'Untitled Dataset'
+  }
+
+  const pluralize = (count, singular) => `${count.toLocaleString()} ${singular}${count === 1 ? '' : 's'}`
+
+  const getCountSummary = (dataset) => {
+    const counts = dataset.counts || {}
+    const resources = counts.resources || {}
+    const primaryCounts = [
+      ['occurrence', 'occurrence'],
+      ['event', 'event'],
+      ['material', 'material'],
+    ]
+      .filter(([resource]) => resources[resource] !== undefined)
+      .map(([resource, label]) => pluralize(resources[resource], label))
+
+    if (Object.keys(resources).length > 0) {
+      return {
+        primary: primaryCounts,
+        package: `${pluralize(Object.keys(resources).length, 'linked table')}`,
+      }
+    }
+
+    return {
+      primary: [pluralize(counts.source_rows || 0, 'source row')],
+      package: null,
+    }
   }
 
   const handleDeleteDataset = async (dataset) => {
@@ -69,9 +96,17 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset }) {
 
   return (
     <>
-      <div className="d-flex justify-content-between align-items-center mb-3">
+      <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
         <h2><i className="bi bi-grid-3x3-gap me-2"></i>My datasets</h2>
-        <div className="d-flex gap-2">
+        <div className="d-flex flex-wrap gap-2">
+          <button
+            className="btn btn-outline-secondary"
+            onClick={onShowWelcome}
+            title="See what is new in ChatIPT"
+          >
+            <i className="bi bi-megaphone me-1"></i>
+            What&apos;s new
+          </button>
           <button 
             className="btn btn-outline-secondary" 
             onClick={fetchDatasets}
@@ -87,21 +122,25 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset }) {
       </div>
 
       <div className="row g-3">
-        {items.map(d => (
+        {items.map(d => {
+          const countSummary = getCountSummary(d)
+          const statusMeta = getStatusMeta(d.status)
+          return (
           <div key={d.id} className="col-12 col-md-6 col-lg-4">
             <div className="card h-100">
               <div className="card-body d-flex flex-column">
                 <div className="d-flex justify-content-between align-items-start">
                   <h5 className="card-title mb-0">{getDisplayName(d)}</h5>
-                  <span className={`badge text-bg-${d.status === 'published' ? 'success' : d.status === 'processing' ? 'primary' : 'secondary'}`}>
-                    {d.status}
+                  <span className={`badge ${statusMeta.badgeClass}`}>
+                    {statusMeta.label}
                   </span>
                 </div>
                 {d.description && <p className="card-text mt-2 text-truncate" style={{maxHeight: 48}}>{d.description}</p>}
                 <div className="mt-auto small text-muted">
-                  <div>{d.record_count} records • {d.dwc_core || 'unknown'}</div>
+                  {countSummary.primary.map(label => <div key={label}>{label}</div>)}
+                  {countSummary.package && <div>{countSummary.package}</div>}
                   <div>Updated {new Date(d.last_updated).toLocaleString()}</div>
-                  <div>Progress {d.progress.done}/{d.progress.total - 1}</div>
+                  <div>{d.package_ready ? 'Publication packages ready' : `Progress ${d.progress.done}/${d.progress.total}`}</div>
                   {/* Show dataset user ORCID for superusers */}
                   {user && user.is_superuser && d.user_info && d.user_info.orcid_id && (
                     <div className="mt-1">
@@ -146,7 +185,8 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset }) {
               </div>
             </div>
           </div>
-        ))}
+          )
+        })}
       </div>
     </>
   )

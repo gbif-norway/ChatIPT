@@ -59,19 +59,33 @@ def query_responses_api(args):
         return client.responses.create(**args)
 
 
-def create_response_message(messages, functions, temperature=1, model='gpt-5.4', pdf_user_files=None):
+def create_response_message(
+    messages,
+    functions,
+    temperature=None,
+    model=None,
+    reasoning_effort=None,
+    pdf_user_files=None,
+    additional_input_items=None,
+):
+    model = model or getattr(settings, "OPENAI_MODEL", "gpt-5.4")
+    reasoning_effort = reasoning_effort or getattr(settings, "OPENAI_REASONING_EFFORT", "high")
     print('---')
     print(f'---Calling GPT {model}---')
     input_items = _messages_to_responses_input(messages)
     pdf_file_inputs = _prepare_pdf_file_inputs(pdf_user_files if pdf_user_files is not None else [])
     if pdf_file_inputs:
         input_items = _attach_pdf_files_to_latest_user_message(input_items, pdf_file_inputs)
+    if additional_input_items:
+        input_items = [*input_items, *additional_input_items]
 
     openai_args = {
         'model': model,
-        'temperature': temperature,
         'input': input_items,
+        'reasoning': {'effort': reasoning_effort},
     }
+    if temperature is not None:
+        openai_args['temperature'] = temperature
     openai_args['tools'] = _functions_to_responses_tools(functions)
     response = query_responses_api(openai_args)
     print(

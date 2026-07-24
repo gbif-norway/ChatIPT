@@ -8,7 +8,7 @@ from html import unescape
 import pandas as pd
 import numpy as np
 from api.helpers.openai_helpers import OpenAIBaseModel
-from typing import Optional, List, Dict, Tuple, ClassVar
+from typing import Optional, List, Dict, Tuple, ClassVar, Literal
 from api.helpers.publish import (
     upload_dwca, 
     register_dataset_and_endpoint,
@@ -22,7 +22,6 @@ from django.db.models import Q
 from django.utils import timezone
 from api.helpers import discord_bot
 import json
-from tenacity import retry, stop_after_attempt, wait_fixed
 import os
 from pathlib import Path
 from requests.auth import HTTPBasicAuth
@@ -36,6 +35,143 @@ from api.dwc_specs import (
     DarwinCoreCoreType,
     DarwinCoreExtensionType,
 )
+from api.dwc_dp_specs import (
+    RESERVED_TABLE_NAMES as DWC_DP_TABLE_NAMES,
+    build_datapackage_descriptor,
+    export_dwc_dp_package,
+    get_table_spec,
+    normalize_resource_name,
+    validate_dwc_dp_resources,
+)
+from api.publication_validation import accounting_semantic_warnings
+
+
+_ISO_YEAR_RE = re.compile(r"^\d{4}$")
+_ISO_YEAR_MONTH_RE = re.compile(r"^(\d{4})-(\d{2})$")
+_ISO_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_COMPACT_DATE_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})$")
+_SPREADSHEET_MIDNIGHT_RE = re.compile(
+    r"^(\d{4})-(\d{2})-(\d{2}) 00:00:00(?:\.0+)?$"
+)
+_TEXT_MONTH_YEAR_RE = re.compile(
+    r"^(?:[A-Za-z]{3,9}\s+\d{4}|\d{4}\s+[A-Za-z]{3,9})$"
+)
+_TEXT_FULL_DATE_RE = re.compile(
+    r"^(?:\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|"
+    r"[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})$"
+)
+
+
+def _normalize_event_date_token(value: str) -> tuple[Optional[str], Optional[datetime.date]]:
+    text = value.strip()
+    if not text:
+        return None, None
+
+    if _ISO_YEAR_RE.fullmatch(text):
+        year = int(text)
+        if year < 1:
+            return None, None
+        return text, datetime.date(year, 1, 1)
+
+    year_month = _ISO_YEAR_MONTH_RE.fullmatch(text)
+    if year_month:
+        year, month = map(int, year_month.groups())
+        if year < 1 or not 1 <= month <= 12:
+            return None, None
+        return text, datetime.date(year, month, 1)
+
+    full_date = _ISO_DATE_RE.fullmatch(text)
+    if full_date:
+        try:
+            parsed = datetime.date(*map(int, full_date.groups()))
+        except ValueError:
+            return None, None
+        return parsed.isoformat(), parsed
+
+    compact_date = _COMPACT_DATE_RE.fullmatch(text)
+    if compact_date:
+        try:
+            parsed = datetime.date(*map(int, compact_date.groups()))
+        except ValueError:
+            return None, None
+        return parsed.isoformat(), parsed
+
+    spreadsheet_midnight = _SPREADSHEET_MIDNIGHT_RE.fullmatch(text)
+    if spreadsheet_midnight:
+        try:
+            parsed = datetime.date(*map(int, spreadsheet_midnight.groups()))
+        except ValueError:
+            return None, None
+        return parsed.isoformat(), parsed
+
+    if "T" in text or re.search(r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}", text):
+        try:
+            parsed_datetime = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None, None
+        return parsed_datetime.isoformat(), parsed_datetime.date()
+
+    if _TEXT_MONTH_YEAR_RE.fullmatch(text):
+        try:
+            parsed = parse(text, default=datetime.datetime(1900, 1, 1), fuzzy=False)
+        except (ParserError, ValueError, OverflowError):
+            return None, None
+        normalized = f"{parsed.year:04d}-{parsed.month:02d}"
+        return normalized, datetime.date(parsed.year, parsed.month, 1)
+
+    if _TEXT_FULL_DATE_RE.fullmatch(text):
+        try:
+            parsed = parse(text, default=datetime.datetime(1900, 1, 1), fuzzy=False)
+        except (ParserError, ValueError, OverflowError):
+            return None, None
+        return parsed.date().isoformat(), parsed.date()
+
+    return None, None
+
+
+def _normalize_event_date(value) -> tuple[Optional[str], Optional[datetime.date]]:
+    if value is None:
+        return None, None
+    try:
+        if pd.isna(value):
+            return None, None
+    except (TypeError, ValueError):
+        pass
+
+    if isinstance(value, pd.Timestamp):
+        value = value.to_pydatetime()
+    if isinstance(value, datetime.datetime):
+        if value.time() == datetime.time():
+            return value.date().isoformat(), value.date()
+        return value.isoformat(), value.date()
+    if isinstance(value, datetime.date):
+        return value.isoformat(), value
+    if not isinstance(value, str):
+        return None, None
+
+    normalized, comparison_date = _normalize_event_date_token(value)
+    if normalized is not None:
+        return normalized, comparison_date
+
+    parts = value.strip().split("/")
+    if len(parts) != 2:
+        return None, None
+    start, _ = _normalize_event_date_token(parts[0])
+    end, end_date = _normalize_event_date_token(parts[1])
+    if start is None or end is None:
+        return None, None
+    return f"{start}/{end}", end_date
+
+
+def normalize_event_date(value) -> Optional[str]:
+    """
+    Normalize a DwC eventDate without inventing missing precision.
+
+    Compact YYYYMMDD values and bare midnight timestamps produced by spreadsheet
+    date cells become ISO dates. Callers should preserve the original text in
+    verbatimEventDate whenever this return value differs from the source.
+    """
+    return _normalize_event_date(value)[0]
 
 
 # Allowed Darwin Core terms
@@ -405,6 +541,614 @@ class GetDwCExtensionInfo(OpenAIBaseModel):
             return handle.read()
 
 
+class GetDwcDpTableInfo(OpenAIBaseModel):
+    """
+    Retrieve Darwin Core Data Package table schema information from vendored DwC-DP schemas.
+
+    Call without parameters to list reserved DwC-DP table names.
+    Provide `table_name` to inspect required fields, primary keys, foreign keys, and field descriptors.
+    """
+
+    table_name: Optional[str] = Field(
+        default=None,
+        description="Reserved DwC-DP table name, e.g. occurrence, event, material, nucleotide-analysis, organism-interaction.",
+    )
+    include_fields: bool = Field(default=True)
+    max_fields: PositiveInt = Field(default=120)
+
+    def run(self):
+        if not self.table_name:
+            grouped = [
+                "DwC-DP reserved table names:",
+                ", ".join(sorted(DWC_DP_TABLE_NAMES)),
+                "",
+                "Call with `table_name` to get schema details. Use exact hyphenated names.",
+            ]
+            return "\n".join(grouped)
+
+        table_name = normalize_resource_name(self.table_name)
+        try:
+            spec = get_table_spec(table_name)
+        except KeyError as exc:
+            return str(exc)
+
+        lines = [
+            f"{spec.name} — {spec.title}",
+            spec.description,
+        ]
+        if spec.schema.get("comments"):
+            lines.append(f"Table guidance: {spec.schema['comments']}")
+        if spec.schema.get("examples"):
+            lines.append(f"Table examples: {spec.schema['examples']}")
+        if spec.schema.get("namespace"):
+            lines.append(f"Namespace: {spec.schema['namespace']}")
+        if spec.schema.get("identifier"):
+            lines.append(f"Table identifier: {spec.schema['identifier']}")
+        lines.extend([
+            f"Primary key (enforced): {', '.join(spec.primary_key) if spec.primary_key else '(none)'}",
+            f"Weak primary key (preserved, not enforced): "
+            f"{', '.join(spec.weak_primary_key) if spec.weak_primary_key else '(none)'}",
+            "Foreign keys (enforced package relationships):",
+        ])
+        if spec.foreign_keys:
+            for fk in spec.foreign_keys:
+                ref = fk.get("reference") or {}
+                lines.append(
+                    f"- {fk.get('fields')} -> {ref.get('resource') or spec.name}.{ref.get('fields')} "
+                    f"({fk.get('predicate', 'relationship')})"
+                )
+        else:
+            lines.append("- (none)")
+
+        lines.append("Weak foreign keys (preserved source links, not enforced):")
+        if spec.weak_foreign_keys:
+            for fk in spec.weak_foreign_keys:
+                ref = fk.get("reference") or {}
+                lines.append(
+                    f"- {fk.get('fields')} -> {ref.get('resource') or spec.name}.{ref.get('fields')} "
+                    f"({fk.get('predicate', 'relationship')})"
+                )
+        else:
+            lines.append("- (none)")
+
+        if self.include_fields:
+            lines.append("Fields:")
+            for index, field in enumerate(spec.schema.get("fields", [])):
+                if index >= self.max_fields:
+                    lines.append(f"... {len(spec.schema.get('fields', [])) - self.max_fields} more fields not shown.")
+                    break
+                constraints = field.get("constraints") or {}
+                bits = []
+                if constraints.get("required"):
+                    bits.append("required")
+                if constraints.get("unique"):
+                    bits.append("unique")
+                if "minimum" in constraints:
+                    bits.append(f"min={constraints['minimum']}")
+                if "maximum" in constraints:
+                    bits.append(f"max={constraints['maximum']}")
+                bits.insert(0, f"type={field.get('type', 'string')}")
+                if field.get("format"):
+                    bits.append(f"format={field['format']}")
+                if field.get("namespace"):
+                    bits.append(f"namespace={field['namespace']}")
+                suffix = f" [{', '.join(bits)}]" if bits else ""
+                lines.append(f"- {field['name']}{suffix}: {field.get('description', '')}")
+                if field.get("comments"):
+                    lines.append(f"  Guidance: {field['comments']}")
+                if field.get("examples"):
+                    lines.append(f"  Examples: {field['examples']}")
+                if field.get("dcterms:isVersionOf"):
+                    lines.append(f"  Term: {field['dcterms:isVersionOf']}")
+        return "\n".join(lines)
+
+
+class DwcDpResourceTable(BaseModel):
+    table_id: PositiveInt = Field(..., description="ChatIPT Table ID.")
+    resource_name: str = Field(..., description="Reserved DwC-DP table name, e.g. occurrence, event, material.")
+
+
+def _dwc_dp_resources_from_mapping(dataset, resource_tables: Optional[List[DwcDpResourceTable]]):
+    tables_by_id = {table.id: table for table in dataset.table_set.all()}
+    resources = {}
+    resource_sources = {}
+    errors = []
+
+    def add_resource(resource_name, table):
+        if resource_name in resources:
+            errors.append(
+                f"DwC-DP resource '{resource_name}' is mapped more than once "
+                f"(table ids {resource_sources[resource_name]} and {table.id})."
+            )
+            return
+        resources[resource_name] = table.df.copy()
+        resource_sources[resource_name] = table.id
+
+    if resource_tables:
+        for item in resource_tables:
+            table = tables_by_id.get(int(item.table_id))
+            if not table:
+                errors.append(f"Table id {item.table_id} does not belong to this dataset.")
+                continue
+            resource_name = normalize_resource_name(item.resource_name)
+            add_resource(resource_name, table)
+    else:
+        for table in tables_by_id.values():
+            resource_name = normalize_resource_name(table.title)
+            if resource_name in DWC_DP_TABLE_NAMES:
+                add_resource(resource_name, table)
+
+    return resources, errors
+
+
+def _validate_dwc_dp_for_dataset(dataset, resources):
+    validation = validate_dwc_dp_resources(resources)
+    validation["warnings"] = list(dict.fromkeys([
+        *validation["warnings"],
+        *accounting_semantic_warnings(dataset.dwc_dp_accounting),
+    ]))
+    return validation
+
+
+def _accounting_gate_error(dataset) -> Optional[str]:
+    """Require a current signed receipt for datasets that have a source snapshot."""
+    if not dataset.source_accounting_snapshot:
+        return None
+    from api.accounting import current_accounting_status
+
+    status = current_accounting_status(dataset)
+    if status["valid"]:
+        return None
+    details = "; ".join(status["errors"][:5])
+    return (
+        "Source-to-DwC-DP accounting is not current, so export or publication was refused. "
+        f"Call SubmitDwcDpAccounting and resolve: {details}"
+    )
+
+
+def _tree_additional_files(dataset) -> list[tuple[str, bytes]]:
+    from api.models import UserFile
+
+    additional_files = []
+    for user_file in dataset.user_files.all():
+        if Path(user_file.filename).suffix.lower() not in UserFile.TREE_EXTENSIONS:
+            continue
+        try:
+            user_file.file.open("rb")
+            additional_files.append((user_file.filename, user_file.file.read()))
+        finally:
+            user_file.file.close()
+    return additional_files
+
+
+def _fill_projection_identifier(df: pd.DataFrame, target: str, source: str) -> None:
+    if source not in df.columns:
+        return
+    if target not in df.columns:
+        df[target] = df[source]
+        return
+    blank = df[target].astype("string").fillna("").str.strip() == ""
+    df.loc[blank, target] = df.loc[blank, source]
+
+
+def _project_dwca_from_dwc_dp_resources(resources):
+    """Return a conservative DwC-A core using the enforced DwC-DP key graph."""
+    if "occurrence" in resources:
+        core_df = resources["occurrence"].copy()
+        _fill_projection_identifier(core_df, "occurrenceID", "occurrence_pk")
+
+        if "event" in resources:
+            event_df = resources["event"].copy()
+            event_fields = [
+                column
+                for column in event_df.columns
+                if column != "event_pk" and column not in core_df.columns
+            ]
+            core_df = core_df.merge(
+                event_df[["event_pk", *event_fields]],
+                left_on="event_fk",
+                right_on="event_pk",
+                how="left",
+                validate="many_to_one",
+            )
+            _fill_projection_identifier(core_df, "eventID", "event_fk")
+
+        internal_columns = [
+            column
+            for column in core_df.columns
+            if str(column).endswith("_pk") or str(column).endswith("_fk")
+        ]
+        return core_df.drop(columns=internal_columns), DarwinCoreCoreType.OCCURRENCE
+
+    if "event" in resources:
+        core_df = resources["event"].copy()
+        _fill_projection_identifier(core_df, "eventID", "event_pk")
+        internal_columns = [
+            column
+            for column in core_df.columns
+            if str(column).endswith("_pk") or str(column).endswith("_fk")
+        ]
+        return core_df.drop(columns=internal_columns), DarwinCoreCoreType.EVENT
+
+    raise ValueError("DwC-A projection requires at least an occurrence or event DwC-DP resource.")
+
+
+class ValidateDwcDp(OpenAIBaseModel):
+    """
+    Validate selected ChatIPT tables as Darwin Core Data Package resources.
+    If `resource_tables` is omitted, tables with titles matching reserved DwC-DP names are used.
+    """
+
+    agent_id: PositiveInt = Field(...)
+    resource_tables: Optional[List[DwcDpResourceTable]] = Field(default=None)
+
+    def run(self):
+        from api.models import Agent
+
+        try:
+            agent = Agent.objects.get(id=self.agent_id)
+            dataset = agent.dataset
+            resources, mapping_errors = _dwc_dp_resources_from_mapping(dataset, self.resource_tables)
+            validation = _validate_dwc_dp_for_dataset(dataset, resources)
+            if mapping_errors:
+                validation["valid"] = False
+                validation["errors"] = mapping_errors + validation["errors"]
+            dataset.dwc_dp_validation = validation
+            dataset.save(update_fields=["dwc_dp_validation"])
+            return json.dumps(validation, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            return repr(exc)[:2000]
+
+
+class AccountingDisposition(BaseModel):
+    target_table: str = Field(description="Exact reserved DwC-DP target table title.")
+    operation: Literal["direct", "split", "deduplicated", "aggregated", "unpivoted", "joined", "derived", "other"]
+    source_rows_used: int = Field(ge=0, description="Unique source rows used in this transformation path.")
+    target_rows_contributed: int = Field(
+        ge=0,
+        description="Target rows attributable to this source table; may differ from source_rows_used.",
+    )
+    notes: Optional[str] = None
+
+
+AccountingMetadataField = Literal[
+    "title",
+    "description",
+    "orcid",
+    "eml.license",
+    "eml.temporal_scope",
+    "eml.geographic_scope",
+    "eml.geographic_bounds",
+    "eml.taxonomic_scope",
+    "eml.taxonomic_keywords",
+    "eml.methodology",
+    "eml.manuscript_doi",
+    "eml.manuscript_title",
+    "eml.journal",
+    "eml.publication_year",
+    "eml.dataset_citation",
+    "eml.project_title",
+    "eml.abstract_source",
+    "eml.methods_source",
+    "eml.creators_source",
+    "eml.users",
+]
+
+
+class AccountingResourceRoute(BaseModel):
+    target_table: str = Field(description="Exact reserved DwC-DP target table title.")
+    field_mappings: Dict[int, str] = Field(
+        description=(
+            "Map populated source column index to exact populated target field. "
+            "Use another route if one source column feeds a second field in the same table."
+        ),
+    )
+    source_values: Dict[int, int] = Field(
+        default_factory=dict,
+        description=(
+            "Optional partial coverage by source column index. Omit indexes whose route "
+            "covers every populated source value."
+        ),
+    )
+
+
+class AccountingMetadataRoute(BaseModel):
+    metadata_field: AccountingMetadataField
+    source_column_indexes: List[int] = Field(min_items=1)
+    source_values: Dict[int, int] = Field(
+        default_factory=dict,
+        description="Optional partial coverage by source column index.",
+    )
+
+
+class AccountingOmittedColumnRoute(BaseModel):
+    source_column_indexes: List[int] = Field(min_items=1)
+    reason: str = Field(min_length=1)
+    source_values: Dict[int, int] = Field(
+        default_factory=dict,
+        description="Optional partial omission count by source column index.",
+    )
+
+
+class AccountingRowOmission(BaseModel):
+    rows: int = Field(gt=0)
+    reason: str = Field(min_length=1)
+
+
+class SourceTableAccounting(BaseModel):
+    source_table_id: PositiveInt
+    rows_accounted: int = Field(
+        ge=0,
+        description="Unique source rows represented by at least one target, regardless of splits or repeated use.",
+    )
+    omissions: List[AccountingRowOmission] = Field(default_factory=list)
+    coverage_notes: str = Field(
+        description="How unique row coverage was calculated, especially when paths overlap or aggregate."
+    )
+    dispositions: List[AccountingDisposition]
+    resource_routes: List[AccountingResourceRoute] = Field(
+        default_factory=list,
+        description=(
+            "Group source-to-field mappings by target resource. The server supplies "
+            "source names, populated counts, and target table row totals."
+        ),
+    )
+    metadata_routes: List[AccountingMetadataRoute] = Field(
+        default_factory=list,
+        description="Group source column indexes by one accepted dataset/EML metadata field.",
+    )
+    omitted_column_routes: List[AccountingOmittedColumnRoute] = Field(
+        default_factory=list,
+        description="Group explicitly omitted populated source columns by reason.",
+    )
+
+
+class SubmitDwcDpAccounting(OpenAIBaseModel):
+    """
+    Submit compact source-to-DwC-DP semantic routing. The server expands source
+    names/counts, populated values, omissions, and target row totals into the
+    complete declaration, then stores a signed receipt tied to the current
+    source snapshot and resource tables. Re-submit after changing any DwC-DP
+    table.
+    """
+
+    agent_id: PositiveInt
+    sources: List[SourceTableAccounting]
+
+    def run(self):
+        from api.accounting import expand_compact_accounting, save_and_verify_accounting
+        from api.models import Agent
+
+        try:
+            agent = Agent.objects.get(id=self.agent_id)
+            declaration, expansion_errors = expand_compact_accounting(
+                agent.dataset,
+                [source.dict(exclude_none=True) for source in self.sources],
+            )
+            if expansion_errors:
+                return json.dumps(
+                    {
+                        "valid": False,
+                        "errors": expansion_errors,
+                        "warnings": [],
+                        "summary": {},
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            verification = save_and_verify_accounting(agent.dataset, declaration)
+            return json.dumps(verification, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            return repr(exc)[:2000]
+
+
+class ExportDwcDp(OpenAIBaseModel):
+    """
+    Validate, package, and upload a Darwin Core Data Package.
+    If `resource_tables` is omitted, tables with titles matching reserved DwC-DP names are used.
+    """
+
+    agent_id: PositiveInt = Field(...)
+    resource_tables: Optional[List[DwcDpResourceTable]] = Field(default=None)
+    dataset_id: Optional[str] = Field(default=None, description="Optional dataset identifier, preferably a DOI.")
+    version: Optional[str] = Field(default=None, description="Optional dataset version string.")
+
+    def run(self):
+        from api.models import Agent
+
+        try:
+            agent = Agent.objects.get(id=self.agent_id)
+            dataset = agent.dataset
+            resources, mapping_errors = _dwc_dp_resources_from_mapping(dataset, self.resource_tables)
+            if mapping_errors:
+                return "Error: " + "; ".join(mapping_errors)
+            accounting_error = _accounting_gate_error(dataset)
+            if accounting_error:
+                return "Error: " + accounting_error
+            validation = _validate_dwc_dp_for_dataset(dataset, resources)
+            dataset.dwc_dp_validation = validation
+            if not validation["valid"]:
+                dataset.save(update_fields=["dwc_dp_validation"])
+                return "DwC-DP validation failed; package was not exported:\n" + json.dumps(validation, ensure_ascii=False, indent=2)
+
+            url = export_dwc_dp_package(
+                resources,
+                dataset.title or "",
+                dataset.description or "",
+                user=dataset.user,
+                eml_extra=dataset.eml,
+                dataset_id=self.dataset_id,
+                version=self.version,
+                additional_files=_tree_additional_files(dataset),
+            )
+            dataset.dwc_dp_url = url
+            dataset.save(update_fields=["dwc_dp_url", "dwc_dp_validation"])
+            warning_text = ""
+            if validation["warnings"]:
+                warning_text = "\nReview warnings:\n- " + "\n- ".join(validation["warnings"])
+            return f"DwC-DP successfully created and uploaded: {url}{warning_text}"
+        except Exception as exc:
+            import traceback
+            discord_bot.send_discord_message(
+                f"🚨 ExportDwcDp Tool Error:\nAgent ID: {self.agent_id}\nError: {exc}\n\n{traceback.format_exc()}"
+            )
+            return repr(exc)[:2000]
+
+
+class PreviewDwcDpDescriptor(OpenAIBaseModel):
+    """
+    Build and return the datapackage.json descriptor for selected DwC-DP resources without uploading.
+    Useful for final review before ExportDwcDp.
+    """
+
+    agent_id: PositiveInt = Field(...)
+    resource_tables: Optional[List[DwcDpResourceTable]] = Field(default=None)
+    resource_name: Optional[str] = Field(
+        default=None,
+        description="Optional exact resource name to inspect on its own in the compact preview.",
+    )
+
+    def run(self):
+        from api.models import Agent
+
+        try:
+            agent = Agent.objects.get(id=self.agent_id)
+            dataset = agent.dataset
+            resources, mapping_errors = _dwc_dp_resources_from_mapping(dataset, self.resource_tables)
+            if mapping_errors:
+                return "Error: " + "; ".join(mapping_errors)
+            validation = _validate_dwc_dp_for_dataset(dataset, resources)
+            if not validation["valid"]:
+                return "DwC-DP validation failed; descriptor preview is not reliable:\n" + json.dumps(validation, ensure_ascii=False, indent=2)
+            descriptor = build_datapackage_descriptor(
+                resources,
+                title=dataset.title or "",
+                description=dataset.description or "",
+            )
+            descriptor_resources = descriptor.get("resources", [])
+            if self.resource_name:
+                descriptor_resources = [
+                    resource
+                    for resource in descriptor_resources
+                    if resource.get("name") == self.resource_name
+                ]
+                if not descriptor_resources:
+                    available = [resource.get("name") for resource in descriptor.get("resources", [])]
+                    return json.dumps(
+                        {
+                            "valid": False,
+                            "error": f"Resource {self.resource_name!r} is not in this package.",
+                            "available_resources": available,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+
+            compact_resources = []
+            for resource in descriptor_resources:
+                schema = resource.get("schema", {})
+                fields = schema.get("fields", [])
+                resource_name = resource.get("name")
+                compact_resources.append(
+                    {
+                        "name": resource_name,
+                        "path": resource.get("path"),
+                        "row_count": int(len(resources[resource_name])),
+                        "field_count": len(fields),
+                        "fields": [field.get("name") for field in fields],
+                        "primaryKey": schema.get("primaryKey"),
+                        "foreignKeys": schema.get("foreignKeys", []),
+                    }
+                )
+            preview = {
+                "valid": True,
+                "profile": descriptor.get("profile"),
+                "dwcDpSchema": descriptor.get("dwcDpSchema"),
+                "title": descriptor.get("title", "")[:500],
+                "description": descriptor.get("description", "")[:2000],
+                "description_truncated": len(descriptor.get("description", "")) > 2000,
+                "resource_count": len(descriptor.get("resources", [])),
+                "resources": compact_resources,
+                "warnings": validation["warnings"],
+            }
+            return json.dumps(preview, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            return repr(exc)[:2000]
+
+
+class ExportDwcaFromDwcDp(OpenAIBaseModel):
+    """
+    Create a conservative Darwin Core Archive projection from validated DwC-DP tables.
+    This currently projects occurrence/event data only; richer DNA, material, media, survey,
+    and interaction data remain authoritative in the DwC-DP export.
+    """
+
+    agent_id: PositiveInt = Field(...)
+    resource_tables: Optional[List[DwcDpResourceTable]] = Field(default=None)
+
+    def run(self):
+        from api.models import Agent, Dataset
+
+        try:
+            agent = Agent.objects.get(id=self.agent_id)
+            dataset = agent.dataset
+            resources, mapping_errors = _dwc_dp_resources_from_mapping(dataset, self.resource_tables)
+            if mapping_errors:
+                return "Error: " + "; ".join(mapping_errors)
+            accounting_error = _accounting_gate_error(dataset)
+            if accounting_error:
+                return "Error: " + accounting_error
+
+            validation = _validate_dwc_dp_for_dataset(dataset, resources)
+            dataset.dwc_dp_validation = validation
+            dataset.save(update_fields=["dwc_dp_validation"])
+            if not validation["valid"]:
+                return "DwC-DP validation failed; DwC-A projection was not created:\n" + json.dumps(validation, ensure_ascii=False, indent=2)
+
+            try:
+                core_df, core_type = _project_dwca_from_dwc_dp_resources(resources)
+            except ValueError as exc:
+                return f"Error: {exc}"
+
+            if core_type == DarwinCoreCoreType.OCCURRENCE:
+                dataset.dwc_core = Dataset.DWCCore.OCCURRENCE
+            else:
+                dataset.dwc_core = Dataset.DWCCore.EVENT
+
+            additional_files = (
+                _tree_additional_files(dataset)
+                if core_type == DarwinCoreCoreType.OCCURRENCE
+                else []
+            )
+
+            dwca_url = upload_dwca(
+                core_df,
+                dataset.title or "",
+                dataset.description or "",
+                core_type=core_type,
+                extensions=[],
+                user=dataset.user,
+                eml_extra=dataset.eml,
+                additional_files=additional_files if additional_files else None,
+            )
+            dataset.dwca_url = dwca_url
+            dataset.save(update_fields=["dwca_url", "dwc_core"])
+            warning_text = ""
+            if validation["warnings"]:
+                warning_text = "\nReview warnings:\n- " + "\n- ".join(validation["warnings"])
+            return (
+                f"DwC-A projection successfully created and uploaded: {dwca_url}\n"
+                "Projection note: DwC-DP remains the authoritative package. The DwC-A contains a conservative "
+                f"occurrence/event projection for GBIF compatibility.{warning_text}"
+            )
+        except Exception as exc:
+            import traceback
+            discord_bot.send_discord_message(
+                f"🚨 ExportDwcaFromDwcDp Tool Error:\nAgent ID: {self.agent_id}\nError: {exc}\n\n{traceback.format_exc()}"
+            )
+            return repr(exc)[:2000]
+
+
 class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
     """
     A few automatic basic checks for an Agent's tables against the Darwin Core standard.
@@ -476,52 +1220,19 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
         }
 
     def validate_and_format_event_dates(self, df):
-        from datetime import datetime
-        
         failed_indices = []
         future_date_indices = []
-        current_date = datetime.now()
+        current_date = datetime.date.today()
 
         if "eventDate" in df.columns:
             for idx, date_value in df["eventDate"].items():
-                try:
-                    parsed_date = None
-                    formatted_date = None
-                    
-                    if isinstance(date_value, pd.Timestamp):  # Already a datetime object
-                        formatted_date = date_value.isoformat()
-                        parsed_date = date_value.to_pydatetime()
-                    elif isinstance(date_value, str):
-                        # First, try parsing the value directly – this covers most single-date strings
-                        try:
-                            parsed_date = parse(date_value)
-                            formatted_date = parsed_date.isoformat()
-                            df.at[idx, "eventDate"] = formatted_date
-                        except (ParserError, ValueError):
-                            # If direct parsing fails **and** the string contains '/', treat it as a date range
-                            if "/" in date_value:
-                                try:
-                                    start_date, end_date = date_value.split("/", 1)
-                                    start_date_parsed = parse(start_date)
-                                    end_date_parsed = parse(end_date)
-                                    formatted_date = f"{start_date_parsed.isoformat()}/{end_date_parsed.isoformat()}"
-                                    df.at[idx, "eventDate"] = formatted_date
-                                    # For date ranges, check if the end date is in the future
-                                    parsed_date = end_date_parsed
-                                except (ParserError, ValueError):
-                                    failed_indices.append(idx)
-                            else:
-                                failed_indices.append(idx)
-                    else: 
-                        failed_indices.append(idx)
-                    
-                    # Check if the date is in the future (only if parsing was successful)
-                    if parsed_date and parsed_date.date() > current_date.date():
-                        future_date_indices.append(idx)
-                
-                except (ParserError, ValueError, TypeError):
-                    # If parsing fails, add the index to the failed_indices list
+                formatted_date, comparison_date = _normalize_event_date(date_value)
+                if formatted_date is None:
                     failed_indices.append(idx)
+                    continue
+                df.at[idx, "eventDate"] = formatted_date
+                if comparison_date and comparison_date > current_date:
+                    future_date_indices.append(idx)
 
         return df, failed_indices, future_date_indices
     
@@ -750,7 +1461,7 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
 
 class Python(OpenAIBaseModel):
     """
-    Run python code using `exec(code, globals={'Dataset': Dataset, 'Table': Table, 'pd': pd, 'np': np, 'uuid': uuid, 'datetime': datetime, 're': re, 'utm': utm, 'replace_table': replace_table, 'create_or_replace': create_or_replace, 'delete_tables': delete_tables}, {})`.
+    Run python code using `exec(code, globals={'Dataset': Dataset, 'Table': Table, 'pd': pd, 'np': np, 'uuid': uuid, 'datetime': datetime, 're': re, 'utm': utm, 'replace_table': replace_table, 'create_or_replace': create_or_replace, 'delete_tables': delete_tables, 'normalize_event_date': normalize_event_date}, {})`.
     You have access to a Django ORM with models `Table` and `Dataset` in scope. Do NOT import them, just start using them immediately, e.g. DO code="t = Table.objects.get(id=1); print(t.iloc[0])" NOT code="from Table import Table; t = Table.objects.get(id=1); print(t.iloc[0])"
 
     CRITICAL RULES FOR TABLE MANAGEMENT:
@@ -761,6 +1472,7 @@ class Python(OpenAIBaseModel):
         • `replace_table(old_table_id, new_df, new_title=None, description=None) -> int` updates in place and returns the table id.
         • `create_or_replace(dataset_id, title, new_df, description=None) -> int` updates the latest table with the same title if it exists, else creates one; returns the table id.
         • `delete_tables(dataset_id, exclude_ids=None) -> list[int]` deletes all tables for the dataset except those in `exclude_ids` and returns deleted ids.
+        • `normalize_event_date(value) -> str | None` normalizes complete or partial dates without inventing missing precision.
 
     Other notes:
     - Use print() for output – stdout is captured and truncated to 2000 chars.
@@ -777,7 +1489,8 @@ class Python(OpenAIBaseModel):
         from Table import Table
         from datetime import datetime
         ```
-        So this SHOULD NOT BE INCLUDED. Just begin using (without importing) pd, np, uuid, re, utm, replace_table, creat_or_replace, delete_tables, Table, Dataset and datetime as necessary.
+        So this SHOULD NOT BE INCLUDED. Just begin using (without importing) pd, np, uuid, re, utm, replace_table, create_or_replace, delete_tables, normalize_event_date, Table, Dataset and datetime as necessary.
+    - `Dataset.dwc_dp_accounting` is a server-owned signed receipt. Never create, edit, or clear it in Python; use SubmitDwcDpAccounting.
     """
     code: str = Field(..., description="String containing valid python code to be executed in `exec()`")
 
@@ -839,6 +1552,7 @@ class Python(OpenAIBaseModel):
                 'replace_table': replace_table,
                 'create_or_replace': create_or_replace,
                 'delete_tables': delete_tables,
+                'normalize_event_date': normalize_event_date,
             }
             combined_context = context_globals.copy()
             combined_context.update(context_locals)
@@ -1003,6 +1717,13 @@ class RollBack(OpenAIBaseModel):
 class SetEML(OpenAIBaseModel):
     """Sets the EML (Metdata) for a Dataset via an Agent, returns a success or error message. Note that SetBasicMetadata should be used to set the dataset Title and Description."""
     agent_id: PositiveInt = Field(...)
+    license: Optional[Literal["CC0 1.0", "CC BY 4.0", "CC BY-NC 4.0"]] = Field(
+        None,
+        description=(
+            "Optional GBIF dataset license. Choose CC0 1.0, CC BY 4.0, or "
+            "CC BY-NC 4.0. Existing datasets default to CC BY 4.0."
+        ),
+    )
     temporal_scope: Optional[str] = Field(None, description="Optional temporal coverage of the dataset (e.g. 1990-2020)")
     geographic_scope: Optional[str] = Field(None, description="Optional geographic coverage of the dataset (e.g. Amazon Basin, Brazil)")
     taxonomic_scope: Optional[str] = Field(None, description="Optional taxonomic coverage (e.g. Lepidoptera, Aves)")
@@ -1506,6 +2227,9 @@ class SetEML(OpenAIBaseModel):
             dataset = agent.dataset
             eml = dataset.eml or {}
 
+            if self.license is not None:
+                eml["license"] = self.license
+
             inferred_temporal_scope = self._infer_temporal_scope_from_dataset(dataset)
             temporal_scope_to_set, temporal_note = self._resolve_temporal_scope(
                 self.temporal_scope, eml.get("temporal_scope"), inferred_temporal_scope
@@ -1735,6 +2459,48 @@ class SetBasicMetadata(OpenAIBaseModel):
             return repr(e)[:2000]
 
 
+class UserInputQuestion(BaseModel):
+    question: str = Field(min_length=1, description="A clear question for the user.")
+    context: Optional[str] = Field(
+        default=None,
+        description="Optional short explanation of why this information is useful.",
+    )
+
+
+class RequestUserInput(OpenAIBaseModel):
+    """Pause the workflow and show one or more questions to the user."""
+
+    agent_id: PositiveInt
+    questions: List[UserInputQuestion] = Field(min_length=1, max_length=10)
+
+    def user_message(self) -> str:
+        parts = []
+        for index, item in enumerate(self.questions, start=1):
+            prefix = f"{index}. " if len(self.questions) > 1 else ""
+            question = f"{prefix}{item.question.strip()}"
+            if item.context and item.context.strip():
+                question += f"\n\n{item.context.strip()}"
+            parts.append(question)
+        return "\n\n".join(parts)
+
+    def run(self):
+        from api.models import Agent
+
+        try:
+            agent = Agent.objects.get(id=self.agent_id)
+            if agent.completed_at:
+                return "Error: This task is already complete."
+            return json.dumps(
+                {
+                    "status": "awaiting_user_input",
+                    "questions": [question.model_dump() for question in self.questions],
+                },
+                ensure_ascii=False,
+            )
+        except Exception as exc:
+            return repr(exc)[:2000]
+
+
 class SetAgentTaskToComplete(OpenAIBaseModel):
     """Mark an Agent's task as complete"""
     agent_id: PositiveInt = Field(...)
@@ -1743,11 +2509,20 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
         "Data validation and refinement",
         "Final Review & Publication",
     }
+    ACCOUNTING_REQUIRED_TASK_NAMES: ClassVar[set[str]] = {
+        "Data transformation",
+        "Data validation and refinement",
+    }
 
     def run(self):
         from api.models import Agent
         try:
             agent = Agent.objects.get(id=self.agent_id)
+            task_name = agent.task.name if agent.task else ""
+            if task_name in self.TABLE_REQUIRED_TASK_NAMES:
+                from api.accounting import remove_empty_dwc_dp_resources
+
+                remove_empty_dwc_dp_resources(agent.dataset)
             # Guardrail: Data content exploration must set basic metadata first.
             if (
                 agent.task
@@ -1760,7 +2535,7 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
                 )
             if (
                 agent.task
-                and agent.task.name in self.TABLE_REQUIRED_TASK_NAMES
+                and task_name in self.TABLE_REQUIRED_TASK_NAMES
                 and not agent.dataset.table_set.exists()
             ):
                 return (
@@ -1768,6 +2543,33 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
                     "Create tables from grounded source data first, or ask the user to upload the "
                     "original spreadsheet/CSV or another machine-readable source file."
                 )
+            if (
+                agent.task
+                and task_name in self.TABLE_REQUIRED_TASK_NAMES
+                and not agent.dataset.table_set.filter(title__in=DWC_DP_TABLE_NAMES).exists()
+            ):
+                return (
+                    f"Error: Cannot complete '{task_name}' without at least one non-empty "
+                    "DwC-DP resource table."
+                )
+            if (
+                agent.task
+                and task_name in self.ACCOUNTING_REQUIRED_TASK_NAMES
+                and agent.dataset.source_accounting_snapshot
+            ):
+                from api.accounting import current_accounting_status
+
+                accounting = current_accounting_status(agent.dataset)
+                if not accounting["valid"]:
+                    details = "; ".join(accounting["errors"][:5])
+                    return (
+                        f"Error: Cannot complete '{agent.task.name}' until source-to-DwC-DP "
+                        f"accounting passes. Call SubmitDwcDpAccounting and resolve: {details}"
+                    )
+            if task_name in {"Data validation and refinement", "Final Review & Publication"}:
+                from api.accounting import remove_final_staging_tables
+
+                remove_final_staging_tables(agent.dataset)
             agent.completed_at = timezone.now()
             agent.save()
             print('Marking as complete...')
@@ -1813,6 +2615,9 @@ class UploadDwCA(OpenAIBaseModel):
         try:
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
+            accounting_error = _accounting_gate_error(dataset)
+            if accounting_error:
+                return "Error: " + accounting_error
             tables = {table.id: table for table in dataset.table_set.all()}
 
             if self.core_table_id not in tables:
@@ -1928,13 +2733,21 @@ class PublishToGBIF(OpenAIBaseModel):
         try:
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
+            accounting_error = _accounting_gate_error(dataset)
+            if accounting_error:
+                return "Error: " + accounting_error
             if not dataset.dwca_url:
                 error_msg = 'Error: Dataset has no DwCA URL. Please run UploadDwCA first.'
                 # Notify developers of missing DwCA URL for publishing
                 discord_bot.send_discord_message(f"⚠️ Publishing Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
                 return error_msg
 
-            gbif_url = register_dataset_and_endpoint(dataset.title, dataset.description, dataset.dwca_url)
+            gbif_url = register_dataset_and_endpoint(
+                dataset.title,
+                dataset.description,
+                dataset.dwca_url,
+                (dataset.eml or {}).get("license", "CC BY 4.0"),
+            )
             dataset.gbif_url = gbif_url
             dataset.published_at = timezone.now()
             dataset.save()
@@ -1960,17 +2773,25 @@ class ValidateDwCA(OpenAIBaseModel):
     """
     Submits the dataset's DwCA URL to the GBIF validator, then polls the validator until the job finishes.
 
-    This can take a long time (often >10 min). The calling agent should keep the user informed while polling.
-    The polling interval can be customised via `poll_interval_seconds`; default is 60 seconds (1 min).
+    This can take a long time (often >10 min). To avoid request stalls, polling is bounded by
+    `max_poll_attempts`. If validation is still running, this tool returns a resumable response
+    containing the validator key so the agent can poll again later.
     """
     agent_id: PositiveInt = Field(...)
-    poll_interval_seconds: PositiveInt = Field(60, description="Seconds to wait between polling attempts.")
+    poll_interval_seconds: PositiveInt = Field(400, description="Seconds to wait between polling attempts.")
+    max_poll_attempts: PositiveInt = Field(
+        4,
+        description="Maximum status polls (initial + retries) before returning a resumable 'still running' response.",
+    )
+    validation_key: Optional[str] = Field(
+        None,
+        description="Optional existing GBIF validator key to resume polling instead of creating a new job.",
+    )
 
     def run(self):
         from api.models import Agent
         import requests, time
         from requests.auth import HTTPBasicAuth
-        from tenacity import retry, stop_after_attempt, wait_fixed
 
         try:
             agent = Agent.objects.get(id=self.agent_id)
@@ -1979,51 +2800,51 @@ class ValidateDwCA(OpenAIBaseModel):
                 return 'Error: No DwCA URL found. Run UploadDwCA first.'
             auth = HTTPBasicAuth(os.getenv('GBIF_USER'), os.getenv('GBIF_PASSWORD'))
 
-            # Align with GBIF Validator API: send the DwCA URL as a multipart/form-data field named "fileUrl" and
-            # request a JSON response (same behaviour as: curl -u user:pass -H "Accept: application/json" \
-            #   -F "fileUrl=<dwca_url>" https://api.gbif.org/v1/validation/url )
-            headers = {'Accept': 'application/json'}
-            files = {'fileUrl': (None, dataset.dwca_url)}  # (None, ...) ensures we send as a simple form field, not a file
-            submit_resp = requests.post(
-                'https://api.gbif.org/v1/validation/url',
-                auth=auth,
-                headers=headers,
-                files=files,
-                timeout=30,
-            )
-            if submit_resp.status_code not in (200, 201, 202):
-                error_msg = f'Validator submission failed. Status: {submit_resp.status_code}, Body: {submit_resp.text}'
-                # Notify developers of GBIF validator submission failure
-                discord_bot.send_discord_message(f"🚨 GBIF Validator Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
-                return error_msg
-
-            key = submit_resp.json().get('key')
+            key = self.validation_key
             if not key:
-                error_msg = f'Validator response did not contain a key: {submit_resp.text}'
-                # Notify developers of missing validation key
-                discord_bot.send_discord_message(f"⚠️ GBIF Validator Key Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
-                return error_msg
+                # Align with GBIF Validator API: send the DwCA URL as multipart/form-data field "fileUrl".
+                headers = {'Accept': 'application/json'}
+                files = {'fileUrl': (None, dataset.dwca_url)}  # send as simple form field, not a local file upload
+                submit_resp = requests.post(
+                    'https://api.gbif.org/v1/validation/url',
+                    auth=auth,
+                    headers=headers,
+                    files=files,
+                    timeout=30,
+                )
+                if submit_resp.status_code not in (200, 201, 202):
+                    error_msg = f'Validator submission failed. Status: {submit_resp.status_code}, Body: {submit_resp.text}'
+                    discord_bot.send_discord_message(f"🚨 GBIF Validator Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
+                    return error_msg
 
-            @retry(stop=stop_after_attempt(1000), wait=wait_fixed(self.poll_interval_seconds))
-            def fetch_status():
+                key = submit_resp.json().get('key')
+                if not key:
+                    error_msg = f'Validator response did not contain a key: {submit_resp.text}'
+                    discord_bot.send_discord_message(f"⚠️ GBIF Validator Key Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
+                    return error_msg
+
+            last_status = None
+            last_payload = None
+            for attempt in range(self.max_poll_attempts):
                 resp = requests.get(f'https://api.gbif.org/v1/validation/{key}', auth=auth, timeout=30)
                 if resp.status_code != 200:
-                    # Retry on HTTP error
                     raise requests.HTTPError(f'Status fetch failed with {resp.status_code}')
                 data = resp.json()
-                # If still running, raise to retry
-                if data.get('status') not in ('SUCCEEDED', 'FAILED', 'FINISHED'):
-                    raise Exception('Validation still running')
-                return resp.text
+                last_payload = data
+                last_status = data.get('status')
+                if last_status in ('SUCCEEDED', 'FAILED', 'FINISHED'):
+                    return resp.text
+                if attempt < self.max_poll_attempts - 1:
+                    time.sleep(self.poll_interval_seconds)
 
-            try:
-                result_json = fetch_status()
-                return result_json
-            except Exception as e:
-                error_msg = f'Validation polling stopped after many attempts. Last error: {e}'
-                # Notify developers of validation polling timeout
-                discord_bot.send_discord_message(f"⏰ GBIF Validator Timeout: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
-                return error_msg
+            running_msg = {
+                'status': 'RUNNING',
+                'message': 'Validation is still running. Call ValidateDwCA again with validation_key to continue polling.',
+                'validation_key': key,
+                'last_seen_status': last_status,
+                'last_seen_payload': last_payload,
+            }
+            return json.dumps(running_msg)
 
         except Exception as e:
             error_msg = repr(e)[:2000]

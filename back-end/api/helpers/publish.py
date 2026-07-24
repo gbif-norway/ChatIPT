@@ -1,9 +1,11 @@
 import calendar
+import csv
+import io
 import xml.etree.ElementTree as ET
 import tempfile
 from datetime import date, datetime, timezone
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import traceback
 from minio import Minio
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -14,6 +16,7 @@ import xmltodict
 import re
 import json
 import zipfile
+import dendropy
 import pandas as pd
 from dwcawriter import Archive
 from dwcawriter.table import Table as DwcaWriterTable
@@ -25,10 +28,36 @@ from api.dwc_specs import (
     DarwinCoreExtensionType,
 )
 from api.helpers import discord_bot
+from api.publication_validation import utf8_serialization_errors
 
 # Get the base directory for templates
 _BASE_DIR = Path(__file__).resolve().parent.parent
 _TEMPLATES_ROOT = _BASE_DIR / "templates"
+
+GBIF_LICENSES = {
+    "CC0 1.0": {
+        "url": "http://creativecommons.org/publicdomain/zero/1.0/legalcode",
+        "title": "Creative Commons CC0 1.0 Universal Public Domain Dedication",
+    },
+    "CC BY 4.0": {
+        "url": "http://creativecommons.org/licenses/by/4.0/legalcode",
+        "title": "Creative Commons Attribution (CC BY) 4.0 License",
+    },
+    "CC BY-NC 4.0": {
+        "url": "http://creativecommons.org/licenses/by-nc/4.0/legalcode",
+        "title": "Creative Commons Attribution-NonCommercial (CC BY-NC) 4.0 License",
+    },
+}
+DEFAULT_GBIF_LICENSE = "CC BY 4.0"
+
+
+def normalize_gbif_license(value: str | None) -> tuple[str, dict]:
+    """Return a supported GBIF license name and its canonical metadata."""
+    name = (value or DEFAULT_GBIF_LICENSE).strip()
+    if name not in GBIF_LICENSES:
+        supported = ", ".join(GBIF_LICENSES)
+        raise ValueError(f"Unsupported GBIF license '{name}'. Choose one of: {supported}.")
+    return name, GBIF_LICENSES[name]
 
 
 class LocalSpecTable(DwcaWriterTable):
@@ -521,6 +550,16 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     # Optional additional metadata
     eml_extra = eml_extra or {}
 
+    # GBIF accepts one of three dataset licenses. Keep the license in EML and
+    # registration metadata instead of requiring a DwC-DP usage-policy table.
+    _, license_metadata = normalize_gbif_license(eml_extra.get("license"))
+    rights_link = get_or_create(
+        get_or_create(get_or_create(dataset_node, "intellectualRights"), "para"),
+        "ulink",
+    )
+    rights_link.set("url", license_metadata["url"])
+    set_text(get_or_create(rights_link, "citetitle"), license_metadata["title"])
+
     # Contact (required by IPT): copy primary user by default, allow explicit override
     contact_person = dict(primary_person)
     contact_email = eml_extra.get('contact_email')
@@ -707,8 +746,8 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     return ET.tostring(root, encoding='utf-8', xml_declaration=True).decode('utf-8')
 
 @retry(stop=stop_after_attempt(10), wait=wait_fixed(2))
-def upload_file(client, bucket_name, object_name, local_path):
-    client.fput_object(bucket_name, object_name, local_path, content_type="application/zip")
+def upload_file(client, bucket_name, object_name, local_path, content_type="application/zip"):
+    client.fput_object(bucket_name, object_name, local_path, content_type=content_type)
 
 def ensure_identifier_column(df, target_name: str) -> int:
     """
@@ -755,39 +794,90 @@ def assert_case_insensitive_unique_identifier(df, column_name: str):
         )
 
 
-def parse_newick_tip_labels(content: str) -> list[str]:
-    """
-    Extract tip labels from a Newick format tree string.
-    
-    Args:
-        content: Content of a Newick file
-        
-    Returns:
-        List of tip labels found in the tree
-    """
-    tip_labels = []
-    # Newick format: labels can be inside parentheses or at the end
-    # Pattern to match labels: word characters, underscores, hyphens, dots
-    # Labels are typically separated by commas and enclosed in parentheses
-    # Match labels that appear before colons (branch lengths) or at the end
-    # Important: Don't match pure numbers (branch lengths) - they must contain at least one letter
-    # Pattern: match sequences that contain at least one letter, before : or end of token
-    pattern = r'([A-Za-z][A-Za-z0-9_\-\.]*|[A-Za-z0-9_\-\.]*[A-Za-z][A-Za-z0-9_\-\.]*|[A-Za-z])(?=:|\s*[,;)]|$)'
-    matches = re.findall(pattern, content)
-    # Filter out empty strings, pure numbers, and very short matches
-    # Also remove duplicates while preserving order
+def _unique_labels(labels) -> list[str]:
     seen = set()
-    tip_labels = []
-    for m in matches:
-        # Skip if it's a pure number (branch length) - check if it contains at least one letter
-        if m and m not in seen:
-            # Must contain at least one letter (handles single letters too)
-            if any(c.isalpha() for c in m):
-                # Additional check: if it's all digits and dots, skip it (branch length)
-                if not m.replace('.', '').replace('-', '').isdigit():
-                    seen.add(m)
-                    tip_labels.append(m)
-    return tip_labels
+    result = []
+    for label in labels:
+        normalized = str(label or "").strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    return result
+
+
+def _tolerant_newick_tip_labels(content: str) -> list[str]:
+    """Extract leaf labels from common non-standard Newick with unquoted spaces."""
+    labels = []
+    index = 0
+    expect_child = True
+    length = len(content)
+    while index < length:
+        char = content[index]
+        if char == "[":
+            end = content.find("]", index + 1)
+            index = length if end < 0 else end + 1
+            continue
+        if char in "(,":
+            expect_child = True
+            index += 1
+            continue
+        if char == ")":
+            expect_child = False
+            index += 1
+            continue
+        if not expect_child or char.isspace():
+            index += 1
+            continue
+        if char == "(":
+            index += 1
+            continue
+
+        if char in {"'", '"'}:
+            quote = char
+            index += 1
+            value = []
+            while index < length:
+                if content[index] == quote:
+                    if quote == "'" and index + 1 < length and content[index + 1] == quote:
+                        value.append(quote)
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                value.append(content[index])
+                index += 1
+            label = "".join(value).strip()
+        else:
+            start = index
+            while index < length and content[index] not in ",():;[]":
+                index += 1
+            label = content[start:index].strip()
+
+        if label:
+            labels.append(label)
+        expect_child = False
+    return _unique_labels(labels)
+
+
+def parse_newick_tip_labels(content: str) -> list[str]:
+    """Parse Newick tips strictly first, with a tolerant real-world fallback."""
+    try:
+        trees = dendropy.TreeList.get(
+            data=content,
+            schema="newick",
+            preserve_underscores=True,
+        )
+        labels = [
+            node.taxon.label
+            for tree in trees
+            for node in tree.leaf_node_iter()
+            if node.taxon and node.taxon.label
+        ]
+        if labels:
+            return _unique_labels(labels)
+    except Exception:
+        pass
+    return _tolerant_newick_tip_labels(content)
 
 
 def parse_nexus_tip_labels(content: str) -> list[str]:
@@ -801,28 +891,54 @@ def parse_nexus_tip_labels(content: str) -> list[str]:
     Returns:
         List of tip labels found in the tree(s)
     """
-    tip_labels = []
-    
-    # Check if there's a TRANSLATE block
-    translate_match = re.search(r'TRANSLATE\s+(.*?);', content, re.DOTALL | re.IGNORECASE)
+    try:
+        trees = dendropy.TreeList.get(
+            data=content,
+            schema="nexus",
+            preserve_underscores=True,
+        )
+        labels = [
+            node.taxon.label
+            for tree in trees
+            for node in tree.leaf_node_iter()
+            if node.taxon and node.taxon.label
+        ]
+        if labels:
+            return _unique_labels(labels)
+    except Exception:
+        pass
+
+    translate_match = re.search(r"TRANSLATE\s+(.*?);", content, re.DOTALL | re.IGNORECASE)
     if translate_match:
-        translate_block = translate_match.group(1)
-        # Parse translate entries: key value, or key value,
-        # Handle both comma-separated and space-separated entries
-        # Format: key value, or key value;
-        translate_entries = re.findall(r'(\S+)\s+([A-Za-z0-9_\-\.]+)[,\s]*', translate_block)
-        # Use the translated names (second value) as tip labels
-        tip_labels = [entry[1].strip() for entry in translate_entries if entry[1].strip()]
-    else:
-        # No TRANSLATE block, extract labels directly from tree
-        # Look for TREE blocks
-        tree_match = re.search(r'TREE\s+[^=]+=\s*(.*?);', content, re.DOTALL | re.IGNORECASE)
-        if tree_match:
-            tree_string = tree_match.group(1)
-            # Extract tip labels using newick parsing
-            tip_labels = parse_newick_tip_labels(tree_string)
-    
-    return tip_labels
+        entries = re.findall(
+            r"(?:^|,)\s*(\S+)\s+('(?:''|[^'])*'|\"[^\"]*\"|[^,]+)",
+            translate_match.group(1),
+            re.DOTALL,
+        )
+        return _unique_labels(
+            value.strip().strip("'\"").replace("''", "'")
+            for _, value in entries
+        )
+
+    tree_matches = re.findall(
+        r"TREE\s+[^=]+=\s*(.*?);",
+        content,
+        re.DOTALL | re.IGNORECASE,
+    )
+    return _unique_labels(
+        label
+        for tree_string in tree_matches
+        for label in parse_newick_tip_labels(re.sub(r"^\s*\[[^\]]*\]\s*", "", tree_string))
+    )
+
+
+def _dendropy_node_to_tree(node) -> dict:
+    label = node.taxon.label if node.taxon is not None else node.label
+    return {
+        "name": label,
+        "branch_length": node.edge_length if node.edge_length is not None else 0,
+        "children": [_dendropy_node_to_tree(child) for child in node.child_node_iter()],
+    }
 
 
 def parse_newick_to_tree(newick_string: str) -> dict:
@@ -840,6 +956,18 @@ def parse_newick_to_tree(newick_string: str) -> dict:
             "children": [...]
         }
     """
+    try:
+        tree = dendropy.Tree.get(
+            data=newick_string,
+            schema="newick",
+            preserve_underscores=True,
+        )
+        return _dendropy_node_to_tree(tree.seed_node)
+    except Exception:
+        # Some production files contain unquoted spaces in labels. DendroPy
+        # correctly rejects those, so retain a tolerant fallback for display.
+        pass
+
     def parse_node(token_stream, pos):
         """Recursively parse a node from the token stream."""
         node = {"name": None, "branch_length": 0, "children": []}
@@ -901,15 +1029,10 @@ def parse_newick_to_tree(newick_string: str) -> dict:
         
         return node, pos
     
-    # Remove whitespace except what's inside quoted labels
     cleaned = newick_string.strip()
     if cleaned.endswith(';'):
         cleaned = cleaned[:-1]
-    
-    # Remove whitespace for easier parsing (but preserve structure)
-    # This is a simple approach - for more complex cases, a proper tokenizer would be better
-    cleaned = re.sub(r'\s+', '', cleaned)
-    
+
     # Simple tokenization: split into individual characters for parsing
     # This handles the tree structure character by character
     tokens = list(cleaned)
@@ -930,6 +1053,18 @@ def parse_nexus_to_tree(nexus_content: str) -> dict:
     Returns:
         Dictionary representing the tree (same structure as parse_newick_to_tree)
     """
+    try:
+        trees = dendropy.TreeList.get(
+            data=nexus_content,
+            schema="nexus",
+            preserve_underscores=True,
+        )
+        if trees:
+            return _dendropy_node_to_tree(trees[0].seed_node)
+    except Exception:
+        # Fall back for non-standard but historically accepted NEXUS files.
+        pass
+
     # First, check for a TRANSLATE block and build a mapping
     translate_map = {}
     translate_match = re.search(r'TRANSLATE\s+(.*?);', nexus_content, re.DOTALL | re.IGNORECASE)
@@ -992,6 +1127,156 @@ def parse_nexus_to_tree(nexus_content: str) -> dict:
     return {"name": None, "branch_length": 0, "children": []}
 
 
+def _local_xml_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _decoded_dialect_character(value: str | None, default: str) -> str:
+    if value is None or value == "":
+        return default
+    return {
+        r"\t": "\t",
+        r"\n": "\n",
+        r"\r": "\r",
+    }.get(value, value)
+
+
+def _safe_zip_filename(filename: str) -> str:
+    path = PurePosixPath(str(filename).replace("\\", "/"))
+    if path.is_absolute() or ".." in path.parts or len(path.parts) != 1 or not path.name:
+        raise ValueError(f"Unsafe archive filename: {filename!r}.")
+    return path.name
+
+
+def validate_dwca_archive(archive_path: str | Path) -> dict:
+    """Validate the exact DwC-A ZIP that will be uploaded."""
+    errors = []
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            names = archive.namelist()
+            for name in names:
+                path = PurePosixPath(name)
+                if path.is_absolute() or ".." in path.parts:
+                    errors.append(f"Archive contains an unsafe path: {name!r}.")
+            for required in ("meta.xml", "eml.xml"):
+                if required not in names:
+                    errors.append(f"Archive is missing required file '{required}'.")
+            if errors:
+                return {"valid": False, "errors": errors}
+
+            try:
+                meta_root = ET.fromstring(archive.read("meta.xml").decode("utf-8", "strict"))
+            except Exception as exc:
+                return {"valid": False, "errors": [f"meta.xml is invalid strict UTF-8 XML: {exc}."]}
+            try:
+                ET.fromstring(archive.read("eml.xml").decode("utf-8", "strict"))
+            except Exception as exc:
+                errors.append(f"eml.xml is invalid strict UTF-8 XML: {exc}.")
+
+            table_elements = [
+                element
+                for element in meta_root
+                if _local_xml_name(element.tag) in {"core", "extension"}
+            ]
+            if not table_elements:
+                errors.append("meta.xml does not declare a core or extension table.")
+
+            for table in table_elements:
+                table_kind = _local_xml_name(table.tag)
+                files = next(
+                    (child for child in table if _local_xml_name(child.tag) == "files"),
+                    None,
+                )
+                locations = [] if files is None else [
+                    (child.text or "").strip()
+                    for child in files
+                    if _local_xml_name(child.tag) == "location"
+                ]
+                if not locations:
+                    errors.append(f"meta.xml {table_kind} does not declare a data file.")
+                    continue
+
+                indexes = []
+                id_index = None
+                for child in table:
+                    child_name = _local_xml_name(child.tag)
+                    if child_name not in {"id", "coreid", "field"}:
+                        continue
+                    try:
+                        index = int(child.attrib["index"])
+                    except (KeyError, TypeError, ValueError):
+                        errors.append(
+                            f"meta.xml {table_kind} contains a {child_name} without a valid index."
+                        )
+                        continue
+                    indexes.append(index)
+                    if child_name == "id":
+                        id_index = index
+
+                expected_columns = max(indexes, default=-1) + 1
+                delimiter = _decoded_dialect_character(
+                    table.attrib.get("fieldsTerminatedBy"),
+                    "\t",
+                )
+                enclosed_by = table.attrib.get("fieldsEnclosedBy")
+                quotechar = (
+                    _decoded_dialect_character(enclosed_by, '"')
+                    if enclosed_by
+                    else None
+                )
+                ignored_headers = int(table.attrib.get("ignoreHeaderLines") or 0)
+
+                for location in locations:
+                    if location not in names:
+                        errors.append(
+                            f"meta.xml {table_kind} references missing file '{location}'."
+                        )
+                        continue
+                    try:
+                        text = archive.read(location).decode("utf-8", "strict")
+                        reader_kwargs = {"delimiter": delimiter}
+                        if quotechar is None:
+                            reader_kwargs["quoting"] = csv.QUOTE_NONE
+                        else:
+                            reader_kwargs["quotechar"] = quotechar
+                        reader = csv.reader(io.StringIO(text, newline=""), **reader_kwargs)
+                        rows = list(reader)
+                    except Exception as exc:
+                        errors.append(
+                            f"DwC-A table '{location}' cannot be parsed as strict UTF-8 CSV: {exc}."
+                        )
+                        continue
+
+                    data_rows = rows[ignored_headers:]
+                    malformed = [
+                        row_number
+                        for row_number, row in enumerate(
+                            data_rows,
+                            start=ignored_headers + 1,
+                        )
+                        if len(row) != expected_columns
+                    ]
+                    if malformed:
+                        preview = ", ".join(map(str, malformed[:10]))
+                        errors.append(
+                            f"DwC-A table '{location}' has rows with a field count different "
+                            f"from meta.xml: {preview}."
+                        )
+
+                    if table_kind == "core" and id_index is not None and not malformed:
+                        identifiers = [row[id_index].strip() for row in data_rows]
+                        if any(not value for value in identifiers):
+                            errors.append(f"DwC-A core '{location}' contains blank identifiers.")
+                        if len(identifiers) != len(set(value.casefold() for value in identifiers)):
+                            errors.append(
+                                f"DwC-A core '{location}' contains duplicate identifiers."
+                            )
+    except Exception as exc:
+        errors.append(f"DwC-A archive cannot be opened: {exc}.")
+
+    return {"valid": not errors, "errors": list(dict.fromkeys(errors))}
+
+
 def upload_dwca(
     df_core,
     title,
@@ -1007,6 +1292,17 @@ def upload_dwca(
         (_sanitize_dataframe_for_utf8_export(ext_df), ext_type)
         for ext_df, ext_type in extensions or []
     ]
+    serialization_errors = utf8_serialization_errors({
+        "core": df_core,
+        **{
+            f"extension-{index}": ext_df
+            for index, (ext_df, _) in enumerate(extensions, start=1)
+        },
+    })
+    if serialization_errors:
+        raise ValueError(
+            "DwC-A UTF-8 preflight failed: " + "; ".join(serialization_errors)
+        )
 
     try:
         archive = Archive()
@@ -1142,7 +1438,19 @@ def upload_dwca(
             if additional_files:
                 with zipfile.ZipFile(local_path, 'a', zipfile.ZIP_DEFLATED) as zipf:
                     for filename, file_content in additional_files:
-                        zipf.writestr(filename, file_content)
+                        safe_name = _safe_zip_filename(filename)
+                        if safe_name in zipf.namelist():
+                            raise ValueError(
+                                f"Ancillary file '{safe_name}' conflicts with a DwC-A package file."
+                            )
+                        zipf.writestr(safe_name, file_content)
+
+            archive_validation = validate_dwca_archive(local_path)
+            if not archive_validation["valid"]:
+                raise ValueError(
+                    "Serialized DwC-A archive validation failed: "
+                    + "; ".join(archive_validation["errors"])
+                )
             
             client = Minio(os.getenv('MINIO_URI'), access_key=os.getenv('MINIO_ACCESS_KEY'), secret_key=os.getenv('MINIO_SECRET_KEY'))
             upload_file(client, os.getenv('MINIO_BUCKET'), f"{os.getenv('MINIO_BUCKET_FOLDER')}/{file_name}", local_path)
@@ -1157,17 +1465,25 @@ def upload_dwca(
         discord_bot.send_discord_message(error_msg)
         raise
 
-def register_dataset_and_endpoint(title, description, url):
+def register_dataset_and_endpoint(title, description, url, license_name=DEFAULT_GBIF_LICENSE):
     print('registering dataset')
+    _, license_metadata = normalize_gbif_license(license_name)
     payload = {
         'title': title,
         'description': description,
         'publishingOrganizationKey': os.getenv('GBIF_PUBLISHING_ORGANIZATION_KEY'),
         'installationKey': os.getenv('GBIF_INSTALLATION_KEY'),
         'language': 'en',
-        'type': 'OCCURRENCE'
+        'type': 'OCCURRENCE',
+        'license': license_metadata['url'],
     }
-    response = requests.post(f"{os.getenv('GBIF_API_URL')}/dataset", json=payload, headers={'Content-Type': 'application/json'}, auth=HTTPBasicAuth(os.getenv('GBIF_USER'), os.getenv('GBIF_PASSWORD')))
+    response = requests.post(
+        f"{os.getenv('GBIF_API_URL')}/dataset",
+        json=payload,
+        headers={'Content-Type': 'application/json'},
+        auth=HTTPBasicAuth(os.getenv('GBIF_USER'), os.getenv('GBIF_PASSWORD')),
+        timeout=30,
+    )
     if response.status_code == 201:
         dataset_key = response.json()
     else:
@@ -1180,6 +1496,12 @@ def register_dataset_and_endpoint(title, description, url):
 
 def register_endpoint(dataset_key, url):
     payload = { 'type': 'DWC_ARCHIVE', 'url': url, 'machineTags': [] }
-    response = requests.post(f"{os.getenv('GBIF_API_URL')}/dataset/{dataset_key}/endpoint", json=payload, headers={'Content-Type': 'application/json'}, auth=HTTPBasicAuth(os.getenv('GBIF_USER'), os.getenv('GBIF_PASSWORD')))
+    response = requests.post(
+        f"{os.getenv('GBIF_API_URL')}/dataset/{dataset_key}/endpoint",
+        json=payload,
+        headers={'Content-Type': 'application/json'},
+        auth=HTTPBasicAuth(os.getenv('GBIF_USER'), os.getenv('GBIF_PASSWORD')),
+        timeout=30,
+    )
     if response.status_code != 201:
         raise requests.exceptions.HTTPError(f'Failed to add endpoint. Status code: {response.status_code}, Response JSON: {response.json()}')

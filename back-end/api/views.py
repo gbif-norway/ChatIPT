@@ -450,6 +450,14 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=True, methods=['get'], url_path='package-explorer')
+    def package_explorer(self, request, *args, **kwargs):
+        """Return the current dataset's DwC-DP resources and schema relationships."""
+        from api.dwc_dp_specs import build_dwc_dp_explorer_model
+
+        dataset = self.get_object()
+        return Response(build_dwc_dp_explorer_model(dataset))
+
     @action(detail=True, methods=['get'])
     def tree_files(self, request, *args, **kwargs):
         """

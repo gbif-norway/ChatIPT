@@ -1,0 +1,80 @@
+entities:
+  - Agent
+  - Event
+  - Occurrence
+  - OrganismInteraction
+  - OccurrenceAssertion
+  - Identification
+  - Media
+  - EventMedia
+  - OccurrenceMedia
+  - OrganismInteractionMedia
+  - Provenance
+  - MediaProvenance
+  - UsagePolicy
+  - MediaUsagePolicy
+
+relationships:
+  - subject: OccurrenceAssertion
+    predicate: about
+    object: Occurrence
+
+  - subject: OccurrenceAssertion
+    predicate: assertedBy
+    object: Agent
+
+  - subject: Occurrence
+    predicate: happenedDuring
+    object: Event
+
+  - subject: Event
+    predicate: conductedBy
+    object: Agent
+
+  - subject: Occurrence
+    predicate: by
+    object: OrganismInteraction
+
+  - subject: Occurrence
+    predicate: with
+    object: OrganismInteraction
+
+  - subject: Identification
+    predicate: identifiedBy
+    object: Agent
+
+  - subject: Identification
+    predicate: basedOn
+    object: Media
+
+  - subject: EventMedia
+    predicate: about
+    object: Event
+
+  - subject: OccurrenceMedia
+    predicate: about
+    object: Occurrence
+
+  - subject: OrganismInteractionMedia
+    predicate: about
+    object: OrganismInteraction
+
+  - subject: MediaProvenance
+    predicate: for
+    object: Media
+
+  - subject: MediaProvenance
+    predicate: has
+    object: Provenance
+
+  - subject: Provenance
+    predicate: createdBy
+    object: Agent
+
+  - subject: MediaUsagePolicy
+    predicate: for
+    object: Media
+
+  - subject: MediaUsagePolicy
+    predicate: has
+    object: UsagePolicy
