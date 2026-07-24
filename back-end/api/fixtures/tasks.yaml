@@ -21,7 +21,9 @@
   fields:
     name: Data structure exploration
     text: |-
-      Thoroughly and systematically examine the structure of each uploaded table/file using the following steps. IMPORTANT: Because there is so much variation in the way users store biodiversity data, it is VITAL to do this MANUALLY as a first pass, running your eye over the data. Iterate and use chain of thought to do as much manual assessment as possible. Write code to do more data exploration if needed. 
+      Examine the structure of every uploaded table/file carefully, but keep the investigation bounded.
+      Start with one combined Python profile covering every table: shape, non-empty row/column spans, blank separators, repeated/header-like rows, duplicate headers, and compact row-pattern summaries. Show at most five representative records across the entire call.
+      After that profile, use at most two targeted Python calls, and only when they resolve a named structural ambiguity. Never print a complete dataframe, repeatedly inspect the same slice, or investigate details that belong to the later content/transformation tasks.
       Write a report on the structure covering the following steps:
         1.  **Data Islands:** Detect distinct, contiguous blocks of data. Pay close attention to empty rows or columns that might separate these islands. Describe the location (e.g., cell ranges) and general appearance of each island. 
         2.  **Structure & Formatting:** For each identified data island, describe its formatting.
@@ -78,13 +80,14 @@
       - After a bounded initial assessment, ask the user one grouped, plain-language question as soon as domain knowledge is needed to resolve decisions that would materially change the package. Do not attempt every possible inference first.
       - Make a concise source-authority and transformation plan. For each fact group, identify its authoritative source, target resource, grouping or join rule, and any unresolved question. Then execute it.
       - Once the plan is sufficient, stop exploring representative records. Create the first complete minimum-sufficient package, validate it, and make only targeted corrections prompted by validation or genuinely contradictory new evidence.
-      - Treat source accounting as a bounded declaration, not a new exploration phase. Build it once from the immutable snapshot and the final tables, then correct only the specific paths rejected by SubmitDwcDpAccounting.
+      - Treat source coverage as one bounded final check, not a new exploration phase. Report represented and explicitly omitted source rows by source table, with a short reason for each omission. Save material omissions in SetStructureNotes; do not construct exhaustive per-column accounting.
 
       LOOKUP-FIRST RULE (critical):
       - Do not rely on memory for DwC-DP details.
       - First propose the minimum-sufficient resource graph from source meaning. During planning, inspect candidate resources with GetDwcDpTableInfo(include_fields=false); group these compact relationship summaries into the smallest practical number of assistant turns.
-      - Immediately before creating or finalizing a resource, inspect its exact table schema. Request a full field list for only one resource per assistant turn, set max_fields no higher than 40, and use that lookup to write the resource now rather than returning to exploration.
-      - A compact planning summary followed by one field-level lookup for the selected resource is allowed. Otherwise do not fetch the same resource schema twice unless validation exposes a specific field-level problem.
+      - Once the resource graph is selected, request the exact schemas for all selected resources together in one assistant turn, using parallel GetDwcDpTableInfo calls. Set max_fields no higher than 40.
+      - A successful field-level lookup remains authoritative for the rest of this task. Do not fetch the same resource schema twice unless validation identifies a specific previously unknown field-level problem.
+      - After the batched schema lookup, create the complete minimum package in the smallest practical number of Python writes rather than alternating one schema call with one table write.
       - If you later need to reason about the derived DwC-A projection, call GetDarwinCoreInfo/GetDwCExtensionInfo then, not during primary DwC-DP mapping.
       - If a specific unresolved decision leaves two similar resources or fields genuinely plausible, call GetDwcDpTableInfo for those candidates and compare definitions. Do not inspect resources speculatively merely because they exist in the schema.
 
@@ -163,8 +166,8 @@
           *   Delete redundant or intermediate tables once their data is incorporated.
       4. Run ValidateDwcDp and fix reported schema, required-field, key, data-type, numeric-constraint, and enforced foreign-key problems before completing this task.
       5. If key values or relationships cannot be inferred safely, follow the focused user-question policy above when the ambiguity materially changes the package. Otherwise leave them blank only when the schema allows it and record the gap in SetStructureNotes (do not invent values).
-      6. Reconcile the final package against the SOURCE ACCOUNTING SNAPSHOT. Use the temporary source-row keys and targeted Python checks to calculate unique source-row coverage, explicit omissions, and each populated source column's destination. For assertion-like sources, show source rows by routing group and target assertion/native resource, plus unmatched and multiply matched counts. A source row may feed multiple resources and many source rows may aggregate into one target row, so do not sum overlapping paths as if they were unique rows.
-      7. Call SubmitDwcDpAccounting with every snapshotted source table and give every populated source column index at least one route. Group resource field mappings by target table, metadata indexes by metadata field, and omitted indexes by reason. A source column may have multiple routes when it genuinely feeds multiple destinations. Submit only semantic decisions and coverage: source table ID, rows_accounted, explicit row omissions, dispositions, and the grouped routes. Do not repeat source titles, source row counts, column names, populated-value counts, omitted-row totals, or target-table totals; the server expands and verifies those facts. Omit a route's `source_values` map entries when the route covers every populated value in those columns, and include only indexes with partial coverage. A resource destination must name an exact field that exists and has a populated value in the final table. Choose metadata destinations from the tool's accepted explicit paths such as `title`, `description`, `orcid`, `eml.project_title`, `eml.methodology`, `eml.geographic_scope`, `eml.temporal_scope`, or `eml.taxonomic_scope`. Fix false coverage, missing target tables/fields, and unexplained rows or columns until it returns valid=true. On rejection, correct all reported paths together and resubmit; do not reopen source exploration or fetch a full resource schema unless the rejection identifies a genuinely unknown resource field. Explicitly justified omissions may remain as warnings. You cannot complete this task without valid accounting.
+      6. Run one compact final coverage check against the SOURCE INVENTORY. For every source table report represented rows and explicitly omitted rows; for assertion-like sources also report unmatched and multiply matched join counts. Save material omissions, ambiguous routing, and the coverage summary in SetStructureNotes. Do not audit every source cell or build a per-column routing declaration.
+      7. Call SetAgentTaskToComplete. The server will independently re-run current DwC-DP schema, key, type, numeric, and foreign-key validation and will refuse completion if it is not valid.
       8. If your understanding of the dataset changes significantly, update SetBasicMetadata and SetStructureNotes.
 
 - model: api.task
@@ -174,18 +177,18 @@
       Systematically check the Darwin Core Data Package-transformed data for errors, inconsistencies, relationship problems, and adherence to the DwC-DP standard, then correct these issues. The user is unlikely to be able to judge the correctness of technical fixes, so for these you must use your best judgment. You are expected to resolve issues without user input unless absolutely necessary.
 
       LOOKUP-FIRST RULE (critical):
-      - For each DwC-DP table, call GetDwcDpTableInfo before deciding a field or relationship is wrong.
+      - Batch GetDwcDpTableInfo for all current DwC-DP tables in one response before deciding a field or relationship is wrong.
       - Do not "fix" DwC-DP terms based on memory alone.
+      - A successful lookup is authoritative for this task. Do not repeat it unless the final validator reports a specific schema issue that the first result did not cover.
 
-      Validation loop:
-      1. Manual assessment: inspect snapshots for semantic issues and suspicious mappings.
-      2. Run ValidateDwcDp.
-      3. Add targeted Python checks where needed.
-      4. Plan corrections in small chunks, execute, then re-validate.
-      5. Reconstruct and challenge the model-led routing for every source measurement, fact, trait, or assertion group. Inspect complete context rather than classifying from keywords. Verify the claimed subject, exact join, join cardinality, unmatched rows, multiply matched rows, and whether a native resource field or `*-assertion` table is the better representation. Never assume blank `occurrenceID` means the row is irrelevant. If the routing remains materially ambiguous after this investigation, ask the user one focused question about the underlying data or collection process rather than approving an unsupported interpretation; never ask the user to choose a DwC-DP mapping.
-      6. When a SOURCE ACCOUNTING SNAPSHOT is available, recalculate and submit source-to-package reconciliation with SubmitDwcDpAccounting. Compare retained source tables when available and use the immutable snapshot for original row and populated-column counts. For assertion-like sources, reconcile the union of all target assertion/native-resource paths against unique source rows, and explicitly identify unresolved or omitted groups. Legacy datasets may explicitly say the snapshot is unavailable; do not invent counts for them.
-      7. Fix false target counts, missing target fields, invalid or unsupported routing decisions, and unexplained rows or columns. Re-submit accounting after any change to package tables because completion re-verifies it against current table contents.
-      8. Repeat until ValidateDwcDp is valid and, when accounting is available, SubmitDwcDpAccounting is also valid. Explicitly justified omissions may remain as accounting warnings, but unresolved source rows must never disappear silently.
+      BOUNDED VALIDATION LOOP:
+      1. In the first response, batch the schema lookups and ValidateDwcDp in parallel.
+      2. Run exactly one combined read-only Python audit. It must cover the relevant validation priorities below in a single compact report: keys/links, required and controlled values, date/numeric bounds, semantic duplicates, suspicious mappings, event cardinality, and source-coverage/join exceptions already identified in the saved notes. Print counts and at most five representative records total.
+      3. If that audit confirms defects, use at most two targeted Python correction calls. Combine related fixes in each call and report before/after counts. Do not spend successive calls re-inspecting the same anomaly, and do not start an exhaustive per-column accounting phase.
+      4. Re-run ValidateDwcDp once after corrections. Recheck source coverage only for groups changed by those corrections, record material changes or unresolved groups in SetStructureNotes, and call SetAgentTaskToComplete. The server independently re-runs validation against the current tables before allowing completion.
+      5. Additional investigation beyond this budget is allowed only when ValidateDwcDp still returns a concrete error or a material domain ambiguity would otherwise force unsupported data. In the latter case ask one focused question about the underlying data or collection process; never ask the user to choose a DwC-DP mapping.
+
+      Reconstruct and challenge the model-led routing from the saved plan and the combined audit rather than from keywords. Verify the claimed subject, exact join, join cardinality, unmatched rows, multiply matched rows, and whether a native resource field or `*-assertion` table is the better representation. Never assume blank `occurrenceID` means the row is irrelevant.
 
       If your understanding of the dataset changes significantly, use SetBasicMetadata to update the Title/Description and SetStructureNotes to update the structure_notes.
 

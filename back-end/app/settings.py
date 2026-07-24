@@ -261,8 +261,13 @@ REST_FRAMEWORK = {
 }
 
 OPENAI_RESPONSES_TIMEOUT_SECONDS = float(os.environ.get("OPENAI_RESPONSES_TIMEOUT_SECONDS", "180"))
+OPENAI_SDK_MAX_RETRIES = int(os.environ.get("OPENAI_SDK_MAX_RETRIES", "0"))
+OPENAI_TOOL_HISTORY_TURNS = int(os.environ.get("OPENAI_TOOL_HISTORY_TURNS", "8"))
+OPENAI_FULL_TOOL_HISTORY_TURNS = int(os.environ.get("OPENAI_FULL_TOOL_HISTORY_TURNS", "2"))
+OPENAI_COMPACT_TOOL_CHARS = int(os.environ.get("OPENAI_COMPACT_TOOL_CHARS", "2500"))
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.4")
-OPENAI_REASONING_EFFORT = os.environ.get("OPENAI_REASONING_EFFORT", "high")
+OPENAI_REASONING_EFFORT = os.environ.get("OPENAI_REASONING_EFFORT", "medium")
+OPENAI_SIMPLE_REASONING_EFFORT = os.environ.get("OPENAI_SIMPLE_REASONING_EFFORT", "low")
 
 # CORS settings for React frontend
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
@@ -345,6 +350,6 @@ LOGGING = {
     },
     "root": {
         "handlers": ["console"],
-        "level": "DEBUG",
+        "level": os.getenv("DJANGO_LOG_LEVEL", "INFO"),
     },
 }

@@ -19,7 +19,10 @@ import re
 import numpy as np
 import io
 import zipfile
+import copy
 from pathlib import Path
+from types import SimpleNamespace
+from django.conf import settings
 
 
 class CustomUser(AbstractUser):
@@ -105,18 +108,38 @@ class Dataset(models.Model):
         return json.dumps(self.source_accounting_snapshot, ensure_ascii=False, indent=2)
 
     @property
+    def source_accounting_summary_json(self):
+        snapshot = self.source_accounting_snapshot or {}
+        summary = {
+            "version": snapshot.get("version"),
+            "tables": [
+                {
+                    "source_table_id": table.get("source_table_id"),
+                    "title": table.get("title"),
+                    "row_count": table.get("row_count"),
+                    "populated_column_count": len(table.get("columns", [])),
+                }
+                for table in snapshot.get("tables", [])
+            ],
+        }
+        return json.dumps(summary, ensure_ascii=False, indent=2)
+
+    @property
     def dwc_dp_accounting_json(self):
         return json.dumps(self.dwc_dp_accounting, ensure_ascii=False, indent=2)
 
     @property
+    def compact_structure_notes(self):
+        notes = self.structure_notes or ""
+        max_chars = 8000
+        if len(notes) <= max_chars:
+            return notes
+        return "[Earlier notes omitted from this turn]\n" + notes[-max_chars:]
+
+    @property
     def package_ready(self):
         validation = self.dwc_dp_validation or {}
-        if not (self.dwc_dp_url and self.dwca_url and validation.get('valid')):
-            return False
-
-        from api.accounting import current_accounting_status
-
-        return current_accounting_status(self)["valid"]
+        return bool(self.dwc_dp_url and self.dwca_url and validation.get('valid'))
 
     def next_agent(self):
         self.refresh_from_db()
@@ -615,7 +638,7 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
 
     @property
     def functions(self):
-        functions = [
+        common_functions = [
             agent_tools.SetBasicMetadata.__name__,
             agent_tools.SetStructureNotes.__name__,
             agent_tools.SetEML.__name__,
@@ -624,42 +647,36 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
             agent_tools.RequestUserInput.__name__,
             agent_tools.Python.__name__,
             agent_tools.CreateNewTables.__name__,
-            agent_tools.BasicValidationForSomeDwCTerms.__name__,
-            agent_tools.GetDarwinCoreInfo.__name__,
-            agent_tools.GetDwCExtensionInfo.__name__,
+            agent_tools.RollBack.__name__,
+            agent_tools.SendDiscordMessage.__name__,
+            agent_tools.LogBugWithDeveloper.__name__,
+        ]
+        dwc_dp_functions = [
             agent_tools.GetDwcDpTableInfo.__name__,
             agent_tools.ValidateDwcDp.__name__,
             agent_tools.PreviewDwcDpDescriptor.__name__,
-            agent_tools.RollBack.__name__,
+        ]
+        publication_functions = [
+            agent_tools.BasicValidationForSomeDwCTerms.__name__,
+            agent_tools.GetDarwinCoreInfo.__name__,
+            agent_tools.GetDwCExtensionInfo.__name__,
             agent_tools.ExportDwcDp.__name__,
             agent_tools.ExportDwcaFromDwcDp.__name__,
             agent_tools.UploadDwCA.__name__,
             agent_tools.PublishToGBIF.__name__,
             agent_tools.ValidateDwCA.__name__,
-            agent_tools.SendDiscordMessage.__name__,
-            agent_tools.LogBugWithDeveloper.__name__,
         ]
 
+        functions = list(common_functions)
         if self.name in {
             "Data transformation",
             "Data validation and refinement",
-            "Final Review & Publication",
-            "Data maintenance",
+            "Phylogenetic tree linking",
         }:
-            functions.append(agent_tools.SubmitDwcDpAccounting.__name__)
-
-        # Restrict publish/archive tools to the final publication phases only.
-        publication_enabled_tasks = {"Final Review & Publication", "Data maintenance"}
-        if self.name not in publication_enabled_tasks:
-            functions = [
-                f for f in functions
-                if f not in {
-                    agent_tools.UploadDwCA.__name__,
-                    agent_tools.ExportDwcDp.__name__,
-                    agent_tools.ExportDwcaFromDwcDp.__name__,
-                    agent_tools.PublishToGBIF.__name__,
-                }
-            ]
+            functions.extend(dwc_dp_functions)
+        if self.name in {"Final Review & Publication", "Data maintenance"}:
+            functions.extend(dwc_dp_functions)
+            functions.extend(publication_functions)
 
         # Exclude the completion tool for the final task (Data maintenance),
         # so it remains indefinitely open to conversation with the user.
@@ -668,6 +685,17 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
             functions = [f for f in functions if f != agent_tools.SetAgentTaskToComplete.__name__]
 
         return [getattr(agent_tools, f) for f in functions]
+
+    @property
+    def reasoning_effort(self):
+        if self.name in {
+            "Data suitability assessment",
+            "Manuscript extraction and dataset scoping",
+            "Data structure exploration",
+            "Data content exploration",
+        }:
+            return getattr(settings, "OPENAI_SIMPLE_REASONING_EFFORT", "low")
+        return getattr(settings, "OPENAI_REASONING_EFFORT", "medium")
 
     def create_agent_with_system_messages(self, dataset:Dataset):
         if self.name == "Data transformation":
@@ -740,7 +768,7 @@ class Table(models.Model):
             
         return snapshot
 
-    def _generate_value_counts_summary(self, df, max_words=2000):
+    def _generate_value_counts_summary(self, df, max_words=600):
         """Generate a summary of value counts for each column with intelligent truncation."""
         import re
         
@@ -891,16 +919,34 @@ class Agent(models.Model):
         agent.tables.set([t.id for t in tables])
         system_message_text = agent.regenerate_system_message()
         logger = logging.getLogger(__name__)
-        logger.info(system_message_text)
+        logger.debug(
+            "Created system message for agent %s (%s characters)",
+            agent.id,
+            len(system_message_text),
+        )
         return agent
 
     def regenerate_system_message(self, new_table_cutoff=None):
         tables = list(Table.objects.filter(dataset_id=self.dataset_id).order_by('created_at', 'id'))
         self.tables.set([t.id for t in tables])
+        package_focused_tasks = {
+            "Data validation and refinement",
+            "Phylogenetic tree linking",
+            "Final Review & Publication",
+            "Data maintenance",
+        }
+        snapshot_table_ids = {table.id for table in tables}
+        if self.task.name in package_focused_tasks:
+            from api.dwc_dp_specs import RESERVED_TABLE_NAMES
+
+            snapshot_table_ids = {
+                table.id for table in tables if table.title in RESERVED_TABLE_NAMES
+            }
         context = {
             'agent': self,
             'all_tasks_count': Task.objects.count(),
             'new_table_cutoff': new_table_cutoff,
+            'snapshot_table_ids': snapshot_table_ids,
         }
         system_message_text = render_to_string('prompt.txt', context=context)
         system_message = self.message_set.filter(openai_obj__role=Message.Role.SYSTEM).order_by('created_at').first()
@@ -913,6 +959,128 @@ class Agent(models.Model):
         else:
             Message.objects.create(agent=self, openai_obj={'content': system_message_text, 'role': Message.Role.SYSTEM})
         return system_message_text
+
+    def current_state_update(self, new_table_cutoff=None):
+        tables = list(Table.objects.filter(dataset_id=self.dataset_id).order_by('created_at', 'id'))
+        self.tables.set([table.id for table in tables])
+        changed_tables = []
+        if new_table_cutoff:
+            changed_tables = [
+                table
+                for table in tables
+                if table.created_at > new_table_cutoff or table.updated_at > new_table_cutoff
+            ]
+        return render_to_string(
+            'state_update.txt',
+            {
+                'agent': self,
+                'tables': tables,
+                'changed_tables': changed_tables,
+            },
+        )
+
+    def messages_for_model(self):
+        messages = list(self.message_set.all())
+        tool_turn_limit = max(int(getattr(settings, "OPENAI_TOOL_HISTORY_TURNS", 8)), 0)
+        full_tool_turn_limit = max(
+            int(getattr(settings, "OPENAI_FULL_TOOL_HISTORY_TURNS", 2)),
+            0,
+        )
+        compact_chars = max(
+            int(getattr(settings, "OPENAI_COMPACT_TOOL_CHARS", 2500)),
+            500,
+        )
+        tool_assistant_messages = [
+            message
+            for message in messages
+            if (message.openai_obj or {}).get('role') == Message.Role.ASSISTANT
+            and (message.openai_obj or {}).get('tool_calls')
+        ]
+        kept_tool_messages = set(
+            message.id for message in tool_assistant_messages[-tool_turn_limit:]
+        ) if tool_turn_limit else set()
+        kept_call_ids = {
+            str(tool_call.get('id'))
+            for message in tool_assistant_messages
+            if message.id in kept_tool_messages
+            for tool_call in ((message.openai_obj or {}).get('tool_calls') or [])
+            if tool_call.get('id')
+        }
+        full_tool_messages = {
+            message.id for message in tool_assistant_messages[-full_tool_turn_limit:]
+        } if full_tool_turn_limit else set()
+        full_call_ids = {
+            str(tool_call.get('id'))
+            for message in tool_assistant_messages
+            if message.id in full_tool_messages
+            for tool_call in ((message.openai_obj or {}).get('tool_calls') or [])
+            if tool_call.get('id')
+        }
+
+        bounded = []
+        for message in messages:
+            openai_obj = message.openai_obj or {}
+            role = openai_obj.get('role')
+            if role == Message.Role.ASSISTANT and openai_obj.get('tool_calls'):
+                if message.id not in kept_tool_messages:
+                    continue
+            if role == Message.Role.TOOL:
+                if str(openai_obj.get('tool_call_id')) not in kept_call_ids:
+                    continue
+            should_compact = (
+                role == Message.Role.ASSISTANT
+                and openai_obj.get('tool_calls')
+                and message.id not in full_tool_messages
+            ) or (
+                role == Message.Role.TOOL
+                and str(openai_obj.get('tool_call_id')) not in full_call_ids
+            )
+            if not should_compact:
+                bounded.append(message)
+                continue
+
+            compact_obj = copy.deepcopy(openai_obj)
+            if role == Message.Role.ASSISTANT:
+                for tool_call in compact_obj.get('tool_calls') or []:
+                    function = tool_call.get('function') or {}
+                    arguments = function.get('arguments')
+                    if isinstance(arguments, str) and len(arguments) > compact_chars:
+                        function['arguments'] = self._compact_tool_arguments(
+                            arguments,
+                            compact_chars,
+                        )
+            elif role == Message.Role.TOOL:
+                content = compact_obj.get('content')
+                if isinstance(content, str) and len(content) > compact_chars:
+                    half = compact_chars // 2
+                    compact_obj['content'] = (
+                        content[:half]
+                        + "\n...[older tool output compacted]...\n"
+                        + content[-half:]
+                    )
+            bounded.append(SimpleNamespace(openai_obj=compact_obj))
+        return bounded
+
+    @staticmethod
+    def _compact_tool_arguments(arguments, max_chars):
+        try:
+            parsed = json.loads(arguments)
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict):
+            compacted = {}
+            for key, value in parsed.items():
+                if isinstance(value, str) and len(value) > max_chars:
+                    half = max_chars // 2
+                    value = (
+                        value[:half]
+                        + "\n...[older tool argument compacted]...\n"
+                        + value[-half:]
+                    )
+                compacted[key] = value
+            return json.dumps(compacted, ensure_ascii=False)
+        half = max_chars // 2
+        return arguments[:half] + "...[compacted]..." + arguments[-half:]
 
     def next_message(self):
         last_message = self.message_set.last()
@@ -931,7 +1099,13 @@ class Agent(models.Model):
             )
             previous_non_system_message = recent_non_system_messages[1] if len(recent_non_system_messages) > 1 else None
             new_table_cutoff = previous_non_system_message.created_at if previous_non_system_message else None
-            self.regenerate_system_message(new_table_cutoff)
+            model_messages = self.messages_for_model()
+            state_items = []
+            if recent_non_system_messages:
+                state_items.append({
+                    "role": "system",
+                    "content": self.current_state_update(new_table_cutoff),
+                })
 
             new_pdf_files_qs = self.dataset.user_files.filter(file__iendswith='.pdf').order_by('uploaded_at', 'id')
             if new_table_cutoff:
@@ -946,9 +1120,11 @@ class Agent(models.Model):
 
             # Main GPT interaction
             response_message = create_response_message(
-                self.message_set.all(),
+                model_messages,
                 self.task.functions,
+                reasoning_effort=self.task.reasoning_effort,
                 pdf_user_files=new_pdf_files_qs,
+                additional_input_items=state_items,
             )
 
             # A non-final workflow task must either act, ask through the structured
@@ -961,10 +1137,12 @@ class Agent(models.Model):
             if not response_message.tool_calls and completion_tool_available:
                 first_response_content = getattr(response_message, "content", "") or ""
                 response_message = create_response_message(
-                    self.message_set.all(),
+                    model_messages,
                     self.task.functions,
+                    reasoning_effort=self.task.reasoning_effort,
                     pdf_user_files=[],
                     additional_input_items=[
+                        *state_items,
                         {
                             "role": "assistant",
                             "content": first_response_content,
@@ -1002,7 +1180,7 @@ class Agent(models.Model):
             # One or more tool calls requested – execute them in sequence
             messages = [message]
             requested_user_input = None
-            for tool_call in response_message.tool_calls:
+            for tool_index, tool_call in enumerate(response_message.tool_calls):
                 try:
                     result = self.run_function(tool_call.function)
                 except Exception as e:
@@ -1034,6 +1212,19 @@ class Agent(models.Model):
                     except Exception:
                         requested_user_input = None
                     # RequestUserInput is terminal for this turn.
+                    # Record outputs for later calls without executing them so the
+                    # Responses API receives a complete function-call/output pairing
+                    # after the user answers.
+                    for skipped_call in response_message.tool_calls[tool_index + 1:]:
+                        skipped_message = Message.create_function_message(
+                            agent=self,
+                            function_result=(
+                                "Skipped because RequestUserInput paused this turn. "
+                                "Reconsider this action after the user responds."
+                            ),
+                            tool_call_id=skipped_call.id,
+                        )
+                        messages.append(skipped_message)
                     break
 
             if requested_user_input:

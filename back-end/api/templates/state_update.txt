@@ -1,0 +1,31 @@
+CURRENT WORKFLOW STATE
+
+This compact state is authoritative for the current turn. Older tool calls may have
+been omitted from context. Use the current tables and saved structure notes rather
+than repeating broad exploration.
+
+Dataset title: {{ agent.dataset.title|default:"(not set)" }}
+Dataset description: {{ agent.dataset.description|default:"(not set)" }}
+{% if agent.dataset.dwc_dp_validation %}
+Latest DwC-DP validation: {{ agent.dataset.dwc_dp_validation }}
+{% endif %}
+
+Current table manifest:
+{% for table in tables %}
+- Table {{ table.id }} `{{ table.title|default:"(untitled)" }}`: {{ table.df.shape.0 }} rows x {{ table.df.shape.1 }} columns. Columns: {% for col in table.df.columns %}{{ col }}{% if not forloop.last %}, {% endif %}{% endfor %}
+{% endfor %}
+
+{% if changed_tables %}
+Tables created or changed since the previous model turn:
+{% for table in changed_tables %}
+---
+Table {{ table.id }} `{{ table.title|default:"(untitled)" }}`:
+{{ table.str_snapshot }}
+---
+{% endfor %}
+{% endif %}
+
+{% if agent.dataset.structure_notes %}
+Saved structure and transformation notes:
+{{ agent.dataset.compact_structure_notes }}
+{% endif %}

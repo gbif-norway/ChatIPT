@@ -690,22 +690,6 @@ def _validate_dwc_dp_for_dataset(dataset, resources):
     return validation
 
 
-def _accounting_gate_error(dataset) -> Optional[str]:
-    """Require a current signed receipt for datasets that have a source snapshot."""
-    if not dataset.source_accounting_snapshot:
-        return None
-    from api.accounting import current_accounting_status
-
-    status = current_accounting_status(dataset)
-    if status["valid"]:
-        return None
-    details = "; ".join(status["errors"][:5])
-    return (
-        "Source-to-DwC-DP accounting is not current, so export or publication was refused. "
-        f"Call SubmitDwcDpAccounting and resolve: {details}"
-    )
-
-
 def _tree_additional_files(dataset) -> list[tuple[str, bytes]]:
     from api.models import UserFile
 
@@ -962,9 +946,6 @@ class ExportDwcDp(OpenAIBaseModel):
             resources, mapping_errors = _dwc_dp_resources_from_mapping(dataset, self.resource_tables)
             if mapping_errors:
                 return "Error: " + "; ".join(mapping_errors)
-            accounting_error = _accounting_gate_error(dataset)
-            if accounting_error:
-                return "Error: " + accounting_error
             validation = _validate_dwc_dp_for_dataset(dataset, resources)
             dataset.dwc_dp_validation = validation
             if not validation["valid"]:
@@ -1095,10 +1076,6 @@ class ExportDwcaFromDwcDp(OpenAIBaseModel):
             resources, mapping_errors = _dwc_dp_resources_from_mapping(dataset, self.resource_tables)
             if mapping_errors:
                 return "Error: " + "; ".join(mapping_errors)
-            accounting_error = _accounting_gate_error(dataset)
-            if accounting_error:
-                return "Error: " + accounting_error
-
             validation = _validate_dwc_dp_for_dataset(dataset, resources)
             dataset.dwc_dp_validation = validation
             dataset.save(update_fields=["dwc_dp_validation"])
@@ -1490,7 +1467,7 @@ class Python(OpenAIBaseModel):
         from datetime import datetime
         ```
         So this SHOULD NOT BE INCLUDED. Just begin using (without importing) pd, np, uuid, re, utm, replace_table, create_or_replace, delete_tables, normalize_event_date, Table, Dataset and datetime as necessary.
-    - `Dataset.dwc_dp_accounting` is a server-owned signed receipt. Never create, edit, or clear it in Python; use SubmitDwcDpAccounting.
+    - Do not create or edit `Dataset.dwc_dp_accounting` in Python.
     """
     code: str = Field(..., description="String containing valid python code to be executed in `exec()`")
 
@@ -2509,11 +2486,6 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
         "Data validation and refinement",
         "Final Review & Publication",
     }
-    ACCOUNTING_REQUIRED_TASK_NAMES: ClassVar[set[str]] = {
-        "Data transformation",
-        "Data validation and refinement",
-    }
-
     def run(self):
         from api.models import Agent
         try:
@@ -2552,19 +2524,21 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
                     f"Error: Cannot complete '{task_name}' without at least one non-empty "
                     "DwC-DP resource table."
                 )
-            if (
-                agent.task
-                and task_name in self.ACCOUNTING_REQUIRED_TASK_NAMES
-                and agent.dataset.source_accounting_snapshot
-            ):
-                from api.accounting import current_accounting_status
-
-                accounting = current_accounting_status(agent.dataset)
-                if not accounting["valid"]:
-                    details = "; ".join(accounting["errors"][:5])
+            if task_name in {"Data transformation", "Data validation and refinement"}:
+                resources, mapping_errors = _dwc_dp_resources_from_mapping(agent.dataset, None)
+                if mapping_errors:
                     return (
-                        f"Error: Cannot complete '{agent.task.name}' until source-to-DwC-DP "
-                        f"accounting passes. Call SubmitDwcDpAccounting and resolve: {details}"
+                        f"Error: Cannot complete '{task_name}' because the current DwC-DP "
+                        f"resource mapping is invalid: {'; '.join(mapping_errors)}"
+                    )
+                validation = _validate_dwc_dp_for_dataset(agent.dataset, resources)
+                agent.dataset.dwc_dp_validation = validation
+                agent.dataset.save(update_fields=["dwc_dp_validation"])
+                if not validation["valid"]:
+                    details = "; ".join(validation["errors"][:5])
+                    return (
+                        f"Error: Cannot complete '{task_name}' until the current DwC-DP "
+                        f"tables validate. Resolve: {details}"
                     )
             if task_name in {"Data validation and refinement", "Final Review & Publication"}:
                 from api.accounting import remove_final_staging_tables
@@ -2615,9 +2589,6 @@ class UploadDwCA(OpenAIBaseModel):
         try:
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
-            accounting_error = _accounting_gate_error(dataset)
-            if accounting_error:
-                return "Error: " + accounting_error
             tables = {table.id: table for table in dataset.table_set.all()}
 
             if self.core_table_id not in tables:
@@ -2733,9 +2704,6 @@ class PublishToGBIF(OpenAIBaseModel):
         try:
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
-            accounting_error = _accounting_gate_error(dataset)
-            if accounting_error:
-                return "Error: " + accounting_error
             if not dataset.dwca_url:
                 error_msg = 'Error: Dataset has no DwCA URL. Please run UploadDwCA first.'
                 # Notify developers of missing DwCA URL for publishing

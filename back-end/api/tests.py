@@ -35,6 +35,7 @@ from .agent_tools import (
     SetAgentTaskToComplete,
     RequestUserInput,
     SubmitDwcDpAccounting,
+    ValidateDwcDp,
     PreviewDwcDpDescriptor,
     UploadDwCA,
     normalize_event_date,
@@ -1856,8 +1857,7 @@ class DatasetSummarySerializerTests(TestCase):
         self.assertEqual(data["counts"]["source_rows"], 7)
         self.assertEqual(data["record_count"], 5)
 
-    @patch("api.accounting.current_accounting_status", return_value={"valid": True})
-    def test_ready_packages_have_ready_status_and_complete_applicable_progress(self, _accounting):
+    def test_ready_packages_have_ready_status_and_complete_applicable_progress(self):
         Task.objects.create(name=Dataset.MANUSCRIPT_TASK_NAME, text="PDF", order=1)
         Task.objects.create(name="Data transformation", text="Transform", order=2)
         Task.objects.create(name="Phylogenetic tree linking", text="Tree", order=3)
@@ -1906,12 +1906,11 @@ class DatasetSummarySerializerTests(TestCase):
         self.assertEqual(DatasetListSerializer(preparing_dataset).data["status"], "preparing")
         self.assertEqual(DatasetListSerializer(needs_input_dataset).data["status"], "needs_input")
 
-    @patch("api.accounting.current_accounting_status", return_value={"valid": False})
-    def test_stale_accounting_prevents_package_ready_status(self, _accounting):
+    def test_failed_validation_prevents_package_ready_status(self):
         dataset = Dataset.objects.create(
             dwc_dp_url="https://example.org/package.tar.gz",
             dwca_url="https://example.org/archive.zip",
-            dwc_dp_validation={"valid": True},
+            dwc_dp_validation={"valid": False},
         )
 
         data = DatasetListSerializer(dataset).data
@@ -1922,7 +1921,7 @@ class DatasetSummarySerializerTests(TestCase):
 
 
 class TaskFunctionTests(TestCase):
-    def test_accounting_tool_is_available_whenever_package_tables_can_change(self):
+    def test_accounting_tool_is_not_exposed_to_model(self):
         for index, task_name in enumerate(
             [
                 "Data transformation",
@@ -1934,7 +1933,41 @@ class TaskFunctionTests(TestCase):
         ):
             with self.subTest(task_name=task_name):
                 task = Task.objects.create(name=task_name, text=task_name, order=index)
-                self.assertIn(SubmitDwcDpAccounting, task.functions)
+                self.assertNotIn(SubmitDwcDpAccounting, task.functions)
+
+    def test_dwc_dp_tools_are_scoped_to_package_tasks(self):
+        exploration = Task.objects.create(
+            name="Data content exploration",
+            text="Explore",
+            order=1,
+        )
+        transformation = Task.objects.create(
+            name="Data transformation",
+            text="Transform",
+            order=2,
+        )
+
+        self.assertNotIn(ValidateDwcDp, exploration.functions)
+        self.assertIn(ValidateDwcDp, transformation.functions)
+
+    @override_settings(
+        OPENAI_REASONING_EFFORT="medium",
+        OPENAI_SIMPLE_REASONING_EFFORT="low",
+    )
+    def test_exploration_uses_low_reasoning_but_transformation_uses_medium(self):
+        exploration = Task.objects.create(
+            name="Data structure exploration",
+            text="Explore",
+            order=1,
+        )
+        transformation = Task.objects.create(
+            name="Data transformation",
+            text="Transform",
+            order=2,
+        )
+
+        self.assertEqual(exploration.reasoning_effort, "low")
+        self.assertEqual(transformation.reasoning_effort, "medium")
 
 
 class DwcDpAccountingTests(TestCase):
@@ -1959,8 +1992,8 @@ class DwcDpAccountingTests(TestCase):
             title="event",
             df=pd.DataFrame(
                 [
-                    {"event_pk": "event-1", "locality": "Oslo"},
-                    {"event_pk": "event-2", "locality": "Bergen"},
+                    {"event_pk": "event-1", "eventCategory": "occurrence", "locality": "Oslo"},
+                    {"event_pk": "event-2", "eventCategory": "occurrence", "locality": "Bergen"},
                 ]
             ),
         )
@@ -1969,9 +2002,9 @@ class DwcDpAccountingTests(TestCase):
             title="occurrence",
             df=pd.DataFrame(
                 [
-                    {"occurrence_pk": "pk-1", "occurrenceID": "occ-1", "event_fk": "event-1"},
-                    {"occurrence_pk": "pk-2", "occurrenceID": "occ-2", "event_fk": "event-1"},
-                    {"occurrence_pk": "pk-3", "occurrenceID": "occ-3", "event_fk": "event-2"},
+                    {"occurrence_pk": "pk-1", "occurrenceID": "occ-1", "event_fk": "event-1", "occurrenceStatus": "present"},
+                    {"occurrence_pk": "pk-2", "occurrenceID": "occ-2", "event_fk": "event-1", "occurrenceStatus": "present"},
+                    {"occurrence_pk": "pk-3", "occurrenceID": "occ-3", "event_fk": "event-2", "occurrenceStatus": "present"},
                 ]
             ),
         )
@@ -2038,9 +2071,9 @@ class DwcDpAccountingTests(TestCase):
         self.assertIn('"source_table_id"', system_content)
         self.assertNotIn('"name": "empty"', system_content)
         self.assertNotIn("&#x27;source_table_id&#x27;", system_content)
-        self.assertIn("mechanical completeness guard, not a semantic classifier", system_content)
-        self.assertIn("valid accounting result does not by itself prove", system_content)
-        self.assertIn("Do not repeat source titles, row counts", system_content)
+        self.assertIn("completeness reminder, not as a second transformation", system_content)
+        self.assertIn("one compact coverage check by source table", system_content)
+        self.assertIn("Do not build exhaustive per-cell or per-column accounting", system_content)
 
         Table.objects.create(dataset=dataset, title="later", df=pd.DataFrame({"x": [1]}))
         task.create_agent_with_system_messages(dataset)
@@ -2277,21 +2310,21 @@ class DwcDpAccountingTests(TestCase):
         self.assertEqual(result["summary"]["explicitly_omitted_values"], 3)
         self.assertEqual(len(result["warnings"]), 2)
 
-    def test_completion_rechecks_accounting_after_target_changes(self):
+    def test_completion_rechecks_current_package_validation(self):
         dataset, source_id = self._make_transformed_dataset()
         task = Task.objects.create(name="Data transformation", text="Transform", order=1)
         agent = Agent.objects.create(dataset=dataset, task=task)
         SubmitDwcDpAccounting(agent_id=agent.id, sources=self._valid_sources(source_id)).run()
         occurrence = dataset.table_set.get(title="occurrence")
-        occurrence.df = occurrence.df.iloc[:2].copy()
+        occurrence.df.loc[0, "event_fk"] = "missing-event"
         occurrence.save()
 
         result = SetAgentTaskToComplete(agent_id=agent.id).run()
 
         agent.refresh_from_db()
         self.assertIsNone(agent.completed_at)
-        self.assertIn("accounting passes", result)
-        self.assertIn("table has 2", result)
+        self.assertIn("current DwC-DP tables validate", result)
+        self.assertIn("missing-event", result)
 
     def test_forged_verification_flag_cannot_make_accounting_valid(self):
         dataset, source_id = self._make_transformed_dataset()
@@ -2311,10 +2344,11 @@ class DwcDpAccountingTests(TestCase):
         self.assertFalse(status["valid"])
         self.assertTrue(any("not authentic" in error for error in status["errors"]))
         self.assertIn("table has 3", " ".join(status["errors"]))
-        self.assertIn("accounting passes", result)
+        self.assertIn("Task marked as complete", result)
 
     @patch("api.agent_tools.export_dwc_dp_package")
-    def test_export_refuses_a_stale_accounting_receipt(self, export_mock):
+    def test_export_ignores_a_stale_accounting_receipt_when_package_is_valid(self, export_mock):
+        export_mock.return_value = "/tmp/package.zip"
         dataset, source_id = self._make_transformed_dataset()
         task = Task.objects.create(name="Final Review & Publication", text="Publish", order=1)
         agent = Agent.objects.create(dataset=dataset, task=task)
@@ -2325,15 +2359,13 @@ class DwcDpAccountingTests(TestCase):
 
         result = ExportDwcDp(agent_id=agent.id).run()
 
-        self.assertIn("accounting is not current", result)
-        self.assertIn("resource tables changed", result)
-        export_mock.assert_not_called()
+        self.assertNotIn("accounting", result.lower())
+        export_mock.assert_called_once()
 
-    def test_completion_succeeds_with_current_valid_accounting(self):
+    def test_completion_succeeds_without_accounting(self):
         dataset, source_id = self._make_transformed_dataset()
         task = Task.objects.create(name="Data transformation", text="Transform", order=1)
         agent = Agent.objects.create(dataset=dataset, task=task)
-        SubmitDwcDpAccounting(agent_id=agent.id, sources=self._valid_sources(source_id)).run()
 
         result = SetAgentTaskToComplete(agent_id=agent.id).run()
 
@@ -2346,7 +2378,6 @@ class DwcDpAccountingTests(TestCase):
         Table.objects.create(dataset=dataset, title="material", df=pd.DataFrame(columns=["material_pk"]))
         task = Task.objects.create(name="Data transformation", text="Transform", order=1)
         agent = Agent.objects.create(dataset=dataset, task=task)
-        SubmitDwcDpAccounting(agent_id=agent.id, sources=self._valid_sources(source_id)).run()
 
         result = SetAgentTaskToComplete(agent_id=agent.id).run()
 
@@ -2358,7 +2389,6 @@ class DwcDpAccountingTests(TestCase):
         Table.objects.create(dataset=dataset, title="join scratch", df=pd.DataFrame({"x": [1]}))
         task = Task.objects.create(name="Data validation and refinement", text="Validate", order=1)
         agent = Agent.objects.create(dataset=dataset, task=task)
-        SubmitDwcDpAccounting(agent_id=agent.id, sources=self._valid_sources(source_id)).run()
 
         result = SetAgentTaskToComplete(agent_id=agent.id).run()
 
@@ -2465,19 +2495,13 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("Do not attempt every possible inference first", text)
         self.assertIn("stop exploring representative records", text)
         self.assertIn("GetDwcDpTableInfo(include_fields=false)", text)
-        self.assertIn("full field list for only one resource per assistant turn", text)
-        self.assertIn("max_fields no higher than 40", text)
-        self.assertIn("use that lookup to write the resource now", text)
-        self.assertIn("compact planning summary followed by one field-level lookup", text)
+        self.assertIn("exact schemas for all selected resources together", text)
+        self.assertIn("parallel GetDwcDpTableInfo calls", text)
+        self.assertIn("Do not fetch the same resource schema twice", text)
         self.assertIn("Do not inspect resources speculatively", text)
-        self.assertIn("Treat source accounting as a bounded declaration", text)
-        self.assertIn("give every populated source column index at least one route", text)
-        self.assertIn("Group resource field mappings by target table", text)
-        self.assertIn("metadata indexes by metadata field", text)
-        self.assertIn("A source column may have multiple routes", text)
-        self.assertIn("Do not repeat source titles, source row counts", text)
-        self.assertIn("Choose metadata destinations from the tool's accepted explicit paths", text)
-        self.assertIn("correct all reported paths together and resubmit", text)
+        self.assertIn("one bounded final check", text)
+        self.assertIn("do not construct exhaustive per-column accounting", text)
+        self.assertNotIn("SubmitDwcDpAccounting", text)
         self.assertNotIn(
             "inspect every source column, populated and missing identifier patterns",
             text,
@@ -2487,12 +2511,14 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         text = self.task_text["Data validation and refinement"]
 
         self.assertIn("Reconstruct and challenge the model-led routing", text)
-        self.assertIn("Inspect complete context rather than classifying from keywords", text)
+        self.assertIn("exactly one combined read-only Python audit", text)
+        self.assertIn("at most two targeted Python correction calls", text)
+        self.assertIn("Do not spend successive calls re-inspecting the same anomaly", text)
+        self.assertIn("Do not repeat it unless the final validator reports", text)
         self.assertIn("Never assume blank `occurrenceID` means the row is irrelevant", text)
-        self.assertIn("ask the user one focused question about the underlying data", text)
+        self.assertIn("ask one focused question about the underlying data", text)
         self.assertIn("never ask the user to choose a DwC-DP mapping", text)
-        self.assertIn("unresolved source rows must never disappear silently", text)
-        self.assertIn("independently test the specific record linkage", text)
+        self.assertIn("Recheck source coverage only for groups changed", text)
 
 
 class SetAgentTaskToCompleteTests(TestCase):
@@ -2726,6 +2752,47 @@ class AgentWorkflowActionTests(TestCase):
         self.assertIn("2. Should zero counts mean absence?", messages[-1].openai_obj["content"])
         self.assertIsNone(agent.next_message())
 
+    @patch("api.models.create_response_message")
+    def test_request_user_input_pairs_later_calls_without_executing_them(
+        self,
+        create_response_message_mock,
+    ):
+        agent = self._agent_with_user_message()
+        create_response_message_mock.return_value = CompatAssistantMessage(
+            tool_calls=[
+                CompatToolCall(
+                    id="call-question",
+                    function=CompatFunctionCall(
+                        name="RequestUserInput",
+                        arguments=json.dumps({
+                            "agent_id": agent.id,
+                            "questions": [{"question": "What does this code mean?"}],
+                        }),
+                    ),
+                ),
+                CompatToolCall(
+                    id="call-complete",
+                    function=CompatFunctionCall(
+                        name="SetAgentTaskToComplete",
+                        arguments=json.dumps({"agent_id": agent.id}),
+                    ),
+                ),
+            ],
+        )
+
+        messages = agent.next_message()
+
+        agent.refresh_from_db()
+        outputs = {
+            message.openai_obj.get("tool_call_id"): message.openai_obj.get("content")
+            for message in messages
+            if message.openai_obj.get("role") == Message.Role.TOOL
+        }
+        self.assertIn("call-question", outputs)
+        self.assertIn("call-complete", outputs)
+        self.assertIn("Skipped because RequestUserInput", outputs["call-complete"])
+        self.assertIsNone(agent.completed_at)
+
     def test_request_user_input_schema_allows_multiple_questions(self):
         schema = RequestUserInput.openai_schema()
 
@@ -2733,3 +2800,91 @@ class AgentWorkflowActionTests(TestCase):
             schema["parameters"]["properties"]["questions"]["maxItems"],
             10,
         )
+
+    @override_settings(
+        OPENAI_TOOL_HISTORY_TURNS=4,
+        OPENAI_FULL_TOOL_HISTORY_TURNS=1,
+        OPENAI_COMPACT_TOOL_CHARS=1000,
+    )
+    def test_model_history_compacts_older_large_tool_payloads(self):
+        agent = self._agent_with_user_message()
+        for index in range(4):
+            call_id = f"call-{index}"
+            Message.objects.create(
+                agent=agent,
+                openai_obj={
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": "Python",
+                            "arguments": json.dumps({"code": "x" * 5000}),
+                        },
+                    }],
+                },
+            )
+            Message.objects.create(
+                agent=agent,
+                openai_obj={
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": "y" * 5000,
+                },
+            )
+
+        bounded = [
+            message.openai_obj
+            for message in agent.messages_for_model()
+            if message.openai_obj.get("role") in {"assistant", "tool"}
+        ]
+        tool_assistants = [obj for obj in bounded if obj["role"] == "assistant"]
+        tool_outputs = [obj for obj in bounded if obj["role"] == "tool"]
+
+        self.assertEqual(len(tool_assistants), 4)
+        self.assertIn(
+            "older tool argument compacted",
+            tool_assistants[0]["tool_calls"][0]["function"]["arguments"],
+        )
+        self.assertGreater(
+            len(tool_assistants[-1]["tool_calls"][0]["function"]["arguments"]),
+            5000,
+        )
+        self.assertIn("older tool output compacted", tool_outputs[0]["content"])
+        self.assertEqual(tool_outputs[-1]["content"], "y" * 5000)
+
+    def test_validation_system_prompt_snapshots_only_package_tables(self):
+        task = Task.objects.create(
+            name="Data validation and refinement",
+            text="Validate",
+            order=1,
+        )
+        dataset = Dataset.objects.create(title="Prompt scope", description="Test")
+        source = Table.objects.create(
+            dataset=dataset,
+            title="source sheet",
+            df=pd.DataFrame({"source_column": ["SOURCE-ONLY-VALUE"]}),
+        )
+        event = Table.objects.create(
+            dataset=dataset,
+            title="event",
+            df=pd.DataFrame({
+                "event_pk": ["event-1"],
+                "eventCategory": ["occurrence"],
+            }),
+        )
+
+        agent = Agent.create_with_system_message(
+            dataset=dataset,
+            task=task,
+            tables=[source, event],
+        )
+        prompt = agent.message_set.get(
+            openai_obj__role=Message.Role.SYSTEM,
+        ).openai_obj["content"]
+
+        self.assertIn("source_column", prompt)
+        self.assertNotIn("SOURCE-ONLY-VALUE", prompt)
+        self.assertIn("event-1", prompt)
+        self.assertIn("Snapshot omitted in this package-focused task", prompt)

@@ -52,10 +52,16 @@ class CompatAssistantMessage:
         return payload
 
 
-@retry(retry=retry_if_exception_type(InternalServerError), stop=stop_after_attempt(10), wait=wait_fixed(2))
+@retry(
+    retry=retry_if_exception_type(InternalServerError),
+    stop=stop_after_attempt(2),
+    wait=wait_fixed(2),
+    reraise=True,
+)
 def query_responses_api(args):
     timeout_seconds = float(getattr(settings, "OPENAI_RESPONSES_TIMEOUT_SECONDS", 180.0))
-    with OpenAI(timeout=timeout_seconds) as client:
+    max_retries = int(getattr(settings, "OPENAI_SDK_MAX_RETRIES", 0))
+    with OpenAI(timeout=timeout_seconds, max_retries=max_retries) as client:
         return client.responses.create(**args)
 
 
@@ -69,7 +75,7 @@ def create_response_message(
     additional_input_items=None,
 ):
     model = model or getattr(settings, "OPENAI_MODEL", "gpt-5.4")
-    reasoning_effort = reasoning_effort or getattr(settings, "OPENAI_REASONING_EFFORT", "high")
+    reasoning_effort = reasoning_effort or getattr(settings, "OPENAI_REASONING_EFFORT", "medium")
     print('---')
     print(f'---Calling GPT {model}---')
     input_items = _messages_to_responses_input(messages)
