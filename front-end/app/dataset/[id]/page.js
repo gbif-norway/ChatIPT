@@ -10,7 +10,7 @@ import { useParams, useRouter } from 'next/navigation'
 const DatasetRouteContent = () => {
   const router = useRouter()
   const params = useParams()
-  const { loadDataset, setCurrentDatasetId } = useDataset()
+  const { currentDatasetId, loadDataset, setCurrentDatasetId } = useDataset()
   const { updateNavigation } = useNavigation()
 
   const routeDatasetId = Number(params?.id)
@@ -54,6 +54,23 @@ const DatasetRouteContent = () => {
         <main>
           <div className="container p-4">
             <div className="alert alert-danger">Invalid dataset URL.</div>
+          </div>
+        </main>
+      </ProtectedRoute>
+    )
+  }
+
+  if (currentDatasetId !== routeDatasetId) {
+    return (
+      <ProtectedRoute>
+        <main>
+          <div className="container p-4">
+            <div className="message assistant-message">
+              <div className="inner-message d-flex align-items-center gap-3">
+                <div className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+                <strong>Loading dataset…</strong>
+              </div>
+            </div>
           </div>
         </main>
       </ProtectedRoute>

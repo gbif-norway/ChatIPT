@@ -62,6 +62,10 @@ export const DatasetProvider = ({ children }) => {
   const loadDataset = useCallback(async (datasetId) => {
     console.log(`loadDataset called for dataset ${datasetId}`);
     if (!datasetId) return;
+
+    // Select the route dataset immediately so the page can distinguish an
+    // in-progress load from the genuine "no dataset selected" state.
+    setCurrentDatasetId(datasetId);
     
     try {
       setLoading(true);
@@ -79,7 +83,6 @@ export const DatasetProvider = ({ children }) => {
         setDatasets(prev => new Map(prev).set(datasetId, dataset));
       }
       
-      setCurrentDatasetId(datasetId);
     } catch (error) {
       console.error('Error loading dataset:', error);
       setError(error.message);
