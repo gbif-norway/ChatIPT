@@ -292,7 +292,7 @@ export default function DatasetPackageOverview({ dataset, tables }) {
             ? 'Notifications blocked'
             : displayedNotificationStatus === 'unsupported'
               ? 'Notifications unavailable'
-              : 'Notify me'}
+              : 'Notify me when done'}
     </button>
   ) : null
 

@@ -2333,9 +2333,12 @@ class SetEML(OpenAIBaseModel):
             if dataset_citation is not None:
                 eml["dataset_citation"] = dataset_citation
 
-            project_title = self._clean_text_value(self.project_title)
-            if project_title is not None:
-                eml["project_title"] = project_title
+            if "project_title" in self.model_fields_set:
+                project_title = self._clean_text_value(self.project_title)
+                if project_title is None:
+                    eml.pop("project_title", None)
+                else:
+                    eml["project_title"] = project_title
 
             abstract_source = self._clean_text_value(self.abstract_source)
             if abstract_source is not None:

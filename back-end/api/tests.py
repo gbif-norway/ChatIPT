@@ -687,6 +687,19 @@ class EmlGenerationTests(SimpleTestCase):
         self.assertIsNone(personnel_nodes[0].find('userId'))
         self.assertEqual(personnel_nodes[0].find('role').text, 'metadataProvider')
 
+    def test_make_eml_omits_project_when_title_has_no_personnel(self):
+        xml_text = make_eml(
+            title='Project-backed dataset',
+            description='Abstract text',
+            eml_extra={
+                'project_title': 'Arctic Deep Survey',
+                'users': [],
+            },
+        )
+        root = ET.fromstring(xml_text.encode('utf-8'))
+
+        self.assertIsNone(root.find('dataset/project'))
+
     def test_make_eml_keeps_creator_before_metadata_provider_when_users_override_primary_creator(self):
         class DummyUser:
             first_name = 'Alice'
@@ -1508,6 +1521,30 @@ class SetEMLTemporalInferenceTests(SimpleTestCase):
         self.assertEqual(inferred, "Camera trap")
 
 
+class SetEMLProjectTitleTests(TestCase):
+    def setUp(self):
+        self.dataset = Dataset.objects.create(
+            title="Project metadata",
+            eml={"project_title": "Existing project"},
+        )
+        task = Task.objects.create(name="Metadata", text="Set metadata", order=1)
+        self.agent = Agent.objects.create(dataset=self.dataset, task=task)
+
+    def test_explicit_null_clears_existing_project_title(self):
+        result = SetEML(agent_id=self.agent.id, project_title=None).run()
+        self.dataset.refresh_from_db()
+
+        self.assertEqual(result, "EML has been successfully set.")
+        self.assertNotIn("project_title", self.dataset.eml)
+
+    def test_omitted_project_title_preserves_existing_value(self):
+        result = SetEML(agent_id=self.agent.id).run()
+        self.dataset.refresh_from_db()
+
+        self.assertEqual(result, "EML has been successfully set.")
+        self.assertEqual(self.dataset.eml["project_title"], "Existing project")
+
+
 class ExcelWorkbookRepairTests(SimpleTestCase):
     @staticmethod
     def _build_workbook_bytes():
@@ -1843,6 +1880,28 @@ class DwcaExportSanitizationTests(SimpleTestCase):
 
         self.assertFalse(result["valid"])
         self.assertTrue(any("field count" in error for error in result["errors"]))
+
+    def test_exact_archive_validation_rejects_incomplete_eml_project(self):
+        meta = """<?xml version="1.0" encoding="UTF-8"?>
+<archive xmlns="http://rs.tdwg.org/dwc/text/">
+  <core encoding="UTF-8" fieldsTerminatedBy="\\t" ignoreHeaderLines="1"
+        rowType="http://rs.tdwg.org/dwc/terms/Occurrence">
+    <files><location>occurrence.txt</location></files>
+    <id index="0"/>
+  </core>
+</archive>"""
+        eml = """<eml><dataset><project><title>Existing project</title></project></dataset></eml>"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive_path = Path(temp_dir) / "bad-eml.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("meta.xml", meta)
+                archive.writestr("eml.xml", eml)
+                archive.writestr("occurrence.txt", "occurrenceID\nocc-1\n")
+
+            result = validate_dwca_archive(archive_path)
+
+        self.assertFalse(result["valid"])
+        self.assertTrue(any("project must contain" in error for error in result["errors"]))
 
 
 class DatasetSummarySerializerTests(TestCase):

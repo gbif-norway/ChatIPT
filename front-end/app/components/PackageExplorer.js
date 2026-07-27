@@ -86,6 +86,7 @@ const graphPalette = (isDark) => ({
 export default function PackageExplorer({ datasetId, tables, onOpenTable }) {
   const graphRef = useRef(null)
   const cyRef = useRef(null)
+  const loadControllerRef = useRef(null)
   const { isDark } = useTheme()
   const [model, setModel] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -104,26 +105,14 @@ export default function PackageExplorer({ datasetId, tables, onOpenTable }) {
     [model]
   )
 
-  useEffect(() => {
-    const modal = document.getElementById('packageExplorerModal')
-    if (!modal) return undefined
-    const onShown = () => setVisible(true)
-    const onHidden = () => {
-      setVisible(false)
-      setHoveredNodeId(null)
-    }
-    modal.addEventListener('shown.bs.modal', onShown)
-    modal.addEventListener('hidden.bs.modal', onHidden)
-    return () => {
-      modal.removeEventListener('shown.bs.modal', onShown)
-      modal.removeEventListener('hidden.bs.modal', onHidden)
-    }
-  }, [])
+  const loadModel = useCallback(() => {
+    if (!datasetId) return
 
-  useEffect(() => {
-    if (!datasetId) return undefined
+    loadControllerRef.current?.abort()
     const controller = new AbortController()
-    const loadModel = async () => {
+    loadControllerRef.current = controller
+
+    const load = async () => {
       setLoading(true)
       setError('')
       try {
@@ -135,6 +124,8 @@ export default function PackageExplorer({ datasetId, tables, onOpenTable }) {
         if (!response.ok) {
           throw new Error(data?.detail || data?.error || 'The package model could not be loaded.')
         }
+        if (controller.signal.aborted) return
+
         setModel(data)
         const firstNode = [...(data.nodes || [])].sort((a, b) => {
           const aIndex = NODE_PRIORITY.indexOf(a.id)
@@ -147,14 +138,36 @@ export default function PackageExplorer({ datasetId, tables, onOpenTable }) {
         setSelection(firstNode ? { type: 'node', id: firstNode.id } : null)
         setTrace(null)
       } catch (loadError) {
-        if (loadError.name !== 'AbortError') setError(loadError.message)
+        if (loadError.name !== 'AbortError' && loadControllerRef.current === controller) {
+          setError(loadError.message)
+        }
       } finally {
-        if (!controller.signal.aborted) setLoading(false)
+        if (loadControllerRef.current === controller) setLoading(false)
       }
     }
-    loadModel()
-    return () => controller.abort()
+
+    load()
   }, [datasetId])
+
+  useEffect(() => {
+    const modal = document.getElementById('packageExplorerModal')
+    if (!modal) return undefined
+    const onShow = () => loadModel()
+    const onShown = () => setVisible(true)
+    const onHidden = () => {
+      setVisible(false)
+      setHoveredNodeId(null)
+    }
+    modal.addEventListener('show.bs.modal', onShow)
+    modal.addEventListener('shown.bs.modal', onShown)
+    modal.addEventListener('hidden.bs.modal', onHidden)
+    return () => {
+      modal.removeEventListener('show.bs.modal', onShow)
+      modal.removeEventListener('shown.bs.modal', onShown)
+      modal.removeEventListener('hidden.bs.modal', onHidden)
+      loadControllerRef.current?.abort()
+    }
+  }, [loadModel])
 
   const relationshipIndexes = useMemo(() => {
     const indexes = new Map()

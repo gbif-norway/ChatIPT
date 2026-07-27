@@ -590,8 +590,10 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     if not project_title:
         project_title = None
 
-    # Project personnel are only valid when a project title is present.
-    if project_title is not None:
+    # The GBIF EML profile requires both a title and at least one personnel
+    # entry whenever a project is present. Project metadata is optional, so
+    # omit it rather than emitting an invalid title-only block.
+    if project_title is not None and users_list:
         project_node = find(dataset_node, 'project')
         if project_node is None:
             project_node = ET.SubElement(dataset_node, 'project')
@@ -1169,9 +1171,20 @@ def validate_dwca_archive(archive_path: str | Path) -> dict:
             except Exception as exc:
                 return {"valid": False, "errors": [f"meta.xml is invalid strict UTF-8 XML: {exc}."]}
             try:
-                ET.fromstring(archive.read("eml.xml").decode("utf-8", "strict"))
+                eml_root = ET.fromstring(archive.read("eml.xml").decode("utf-8", "strict"))
             except Exception as exc:
                 errors.append(f"eml.xml is invalid strict UTF-8 XML: {exc}.")
+            else:
+                for project in (
+                    element
+                    for element in eml_root.iter()
+                    if _local_xml_name(element.tag) == "project"
+                ):
+                    child_names = [_local_xml_name(child.tag) for child in project]
+                    if "title" not in child_names or "personnel" not in child_names:
+                        errors.append(
+                            "eml.xml project must contain a title and at least one personnel entry."
+                        )
 
             table_elements = [
                 element
