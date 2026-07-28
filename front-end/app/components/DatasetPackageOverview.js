@@ -139,10 +139,13 @@ const announceNotificationPreferenceChange = () => {
   window.dispatchEvent(new Event(notificationPreferenceEvent))
 }
 
-export default function DatasetPackageOverview({ dataset, tables }) {
+export default function DatasetPackageOverview({ dataset, tables, tablesLoading = false }) {
   const files = Array.isArray(dataset?.user_files) ? dataset.user_files : []
   const resources = getResourceRows(dataset, tables)
   const accounting = getAccountingSummary(dataset)
+  const hasReceiptResourceCounts = Array.isArray(dataset?.dwc_dp_accounting?.resources)
+    && dataset.dwc_dp_accounting.resources.length > 0
+  const resourceCountsLoading = tablesLoading && !hasReceiptResourceCounts
   const storyItems = getStoryItems(resources)
   const validation = dataset?.dwc_dp_validation || {}
   const ready = Boolean(dataset?.package_ready)
@@ -493,12 +496,19 @@ export default function DatasetPackageOverview({ dataset, tables }) {
         </div>
       ) : (
         <div className="d-flex flex-wrap align-items-center gap-2 mt-1">
-          <p className="small mb-0">
-            {ready ? 'ChatIPT organised' : 'ChatIPT is organising'}{' '}
-            {accounting ? `${pluralize(accounting.sourceRows, 'source row')} into ` : ''}
-            {storyItems.length > 0 ? naturalList(storyItems) : pluralize(resources.length, 'linked table')}
-            {storyItems.length > 0 ? ` across ${pluralize(resources.length, 'linked table')}.` : '.'}
-          </p>
+          {resourceCountsLoading ? (
+            <p className="small text-muted mb-0" role="status">
+              <span className="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+              Loading package row counts…
+            </p>
+          ) : (
+            <p className="small mb-0">
+              {ready ? 'ChatIPT organised' : 'ChatIPT is organising'}{' '}
+              {accounting ? `${pluralize(accounting.sourceRows, 'source row')} into ` : ''}
+              {storyItems.length > 0 ? naturalList(storyItems) : pluralize(resources.length, 'linked table')}
+              {storyItems.length > 0 ? ` across ${pluralize(resources.length, 'linked table')}.` : '.'}
+            </p>
+          )}
           {notificationPrompt}
         </div>
       )}

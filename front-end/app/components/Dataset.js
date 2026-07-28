@@ -609,6 +609,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
           <DatasetPackageOverview
             dataset={currentDataset}
             tables={tables}
+            tablesLoading={tablesLoading}
           />
           {pdfFiles.length > 0 && (
             <div className="mb-3">
