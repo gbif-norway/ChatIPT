@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useState } from 'react'
 
 import config from '../config'
 import { getCsrfToken } from '../utils/csrf'
@@ -112,33 +112,6 @@ const openPackageExplorer = async () => {
   if (modalElement) bootstrap.Modal.getOrCreateInstance(modalElement).show()
 }
 
-const notificationStorageKey = (datasetId) => `chatipt:attention-notification:${datasetId}`
-const notificationPreferenceEvent = 'chatipt:attention-notification-change'
-
-const getNotificationStatus = (datasetId) => {
-  if (!datasetId || typeof window === 'undefined') return 'idle'
-  if (!('Notification' in window)) return 'unsupported'
-  if (window.Notification.permission === 'denied') return 'blocked'
-
-  const storedPreference = window.localStorage.getItem(notificationStorageKey(datasetId))
-  if (storedPreference === 'notified') return 'notified'
-  if (storedPreference === 'armed' && window.Notification.permission === 'granted') return 'armed'
-  return 'idle'
-}
-
-const subscribeToNotificationPreference = (onStoreChange) => {
-  window.addEventListener('storage', onStoreChange)
-  window.addEventListener(notificationPreferenceEvent, onStoreChange)
-  return () => {
-    window.removeEventListener('storage', onStoreChange)
-    window.removeEventListener(notificationPreferenceEvent, onStoreChange)
-  }
-}
-
-const announceNotificationPreferenceChange = () => {
-  window.dispatchEvent(new Event(notificationPreferenceEvent))
-}
-
 export default function DatasetPackageOverview({ dataset, tables, tablesLoading = false }) {
   const files = Array.isArray(dataset?.user_files) ? dataset.user_files : []
   const resources = getResourceRows(dataset, tables)
@@ -151,24 +124,12 @@ export default function DatasetPackageOverview({ dataset, tables, tablesLoading 
   const ready = Boolean(dataset?.package_ready)
   const datasetStatus = getDatasetStatus(dataset)
   const isWorking = datasetStatus === 'preparing'
-  const attentionRequired = ['needs_input', 'ready', 'published'].includes(datasetStatus)
-  const workComplete = ['ready', 'published'].includes(datasetStatus)
   const datasetId = dataset?.id
-  const [isRequestingNotification, setIsRequestingNotification] = useState(false)
-  const [showNotificationOptions, setShowNotificationOptions] = useState(false)
+  const [showEmailNotificationModal, setShowEmailNotificationModal] = useState(false)
   const [emailNotification, setEmailNotification] = useState({ status: 'idle' })
   const [notificationEmail, setNotificationEmail] = useState('')
   const [emailNotificationError, setEmailNotificationError] = useState('')
   const [isSavingEmailNotification, setIsSavingEmailNotification] = useState(false)
-  const getNotificationSnapshot = useCallback(
-    () => getNotificationStatus(datasetId),
-    [datasetId],
-  )
-  const notificationStatus = useSyncExternalStore(
-    subscribeToNotificationPreference,
-    getNotificationSnapshot,
-    () => 'idle',
-  )
   const emailNotificationArmed = ['pending', 'ready', 'sending'].includes(emailNotification.status)
   const inputRows = accounting?.sourceRows ?? (
     resources.length === 0
@@ -221,82 +182,28 @@ export default function DatasetPackageOverview({ dataset, tables, tablesLoading 
   }, [datasetId, isWorking])
 
   useEffect(() => {
-    if (
-      !attentionRequired
-      || !datasetId
-      || notificationStatus !== 'armed'
-      || typeof window === 'undefined'
-    ) {
-      return
-    }
+    if (!showEmailNotificationModal) return
 
-    const storageKey = notificationStorageKey(datasetId)
-    if (window.localStorage.getItem(storageKey) !== 'armed') return
-
-    window.localStorage.setItem(storageKey, 'notified')
-    announceNotificationPreferenceChange()
-
-    if ('Notification' in window && window.Notification.permission === 'granted') {
-      try {
-        const notification = new window.Notification(
-          workComplete ? 'Your ChatIPT package is ready' : 'ChatIPT needs your attention',
-          {
-            body: workComplete
-              ? (
-                  dataset?.title
-                    ? `${dataset.title} is ready to review and download.`
-                    : 'Your dataset is ready to review and download.'
-                )
-              : (
-                  dataset?.title
-                    ? `ChatIPT is waiting for your input on ${dataset.title}.`
-                    : 'ChatIPT is waiting for your input.'
-                ),
-            tag: `chatipt-attention-${datasetId}`,
-          },
-        )
-        notification.onclick = () => {
-          window.focus()
-          notification.close()
-          if (workComplete) {
-            document.getElementById('publication-packages')?.scrollIntoView({ behavior: 'smooth' })
-          }
-        }
-      } catch (error) {
-        console.error('Unable to display ChatIPT attention notification:', error)
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape' && !isSavingEmailNotification) {
+        setShowEmailNotificationModal(false)
       }
     }
-  }, [attentionRequired, dataset?.title, datasetId, notificationStatus, workComplete])
-
-  const handleNotificationClick = async () => {
-    if (!datasetId || typeof window === 'undefined') return
-
-    const storageKey = notificationStorageKey(datasetId)
-    if (notificationStatus === 'armed') {
-      window.localStorage.removeItem(storageKey)
-      announceNotificationPreferenceChange()
-      return
+    document.addEventListener('keydown', closeOnEscape)
+    document.body.classList.add('modal-open')
+    return () => {
+      document.removeEventListener('keydown', closeOnEscape)
+      document.body.classList.remove('modal-open')
     }
+  }, [isSavingEmailNotification, showEmailNotificationModal])
 
-    if (!('Notification' in window)) return
+  const openEmailNotificationModal = () => {
+    setEmailNotificationError('')
+    setShowEmailNotificationModal(true)
+  }
 
-    setIsRequestingNotification(true)
-    try {
-      const permission = window.Notification.permission === 'default'
-        ? await window.Notification.requestPermission()
-        : window.Notification.permission
-
-      if (permission === 'granted') {
-        window.localStorage.setItem(storageKey, 'armed')
-      } else {
-        window.localStorage.removeItem(storageKey)
-      }
-      announceNotificationPreferenceChange()
-    } catch (error) {
-      console.error('Unable to enable ChatIPT attention notifications:', error)
-    } finally {
-      setIsRequestingNotification(false)
-    }
+  const closeEmailNotificationModal = () => {
+    if (!isSavingEmailNotification) setShowEmailNotificationModal(false)
   }
 
   const saveEmailNotification = async (event) => {
@@ -354,105 +261,124 @@ export default function DatasetPackageOverview({ dataset, tables, tablesLoading 
     }
   }
 
-  const displayedNotificationStatus = isRequestingNotification ? 'requesting' : notificationStatus
-  const anyNotificationArmed = notificationStatus === 'armed' || emailNotificationArmed
   const notificationPrompt = isWorking && datasetId ? (
-    <>
-      <span className="small fw-semibold text-warning-emphasis">
+    <div className="d-inline-flex flex-wrap align-items-center gap-2">
+      <span className="small text-muted">
         This process can take some time.
       </span>
       <button
         type="button"
-        className={`btn btn-sm ${anyNotificationArmed ? 'btn-success' : 'btn-warning'}`}
-        onClick={() => setShowNotificationOptions((shown) => !shown)}
-        aria-expanded={showNotificationOptions}
-        aria-controls={`notification-options-${datasetId}`}
+        className={`btn btn-sm rounded-pill px-3 ${emailNotificationArmed ? 'btn-outline-success' : 'btn-warning'}`}
+        onClick={openEmailNotificationModal}
       >
-        <i className={`bi ${anyNotificationArmed ? 'bi-bell-fill' : 'bi-bell'} me-1`} aria-hidden="true"></i>
-        {anyNotificationArmed ? 'Notifications on' : 'Notify me'}
+        <i className={`bi ${emailNotificationArmed ? 'bi-envelope-check-fill' : 'bi-envelope'} me-1`} aria-hidden="true"></i>
+        {emailNotificationArmed ? 'Email notification set' : 'Notify me by email'}
       </button>
-    </>
+    </div>
   ) : null
 
-  const notificationOptions = isWorking && datasetId && showNotificationOptions ? (
-    <div
-      className="border border-warning rounded bg-warning-subtle p-3 mt-2"
-      id={`notification-options-${datasetId}`}
-    >
-      <p className="small mb-3">
-        Get a one-time notification when ChatIPT needs your input or finishes. Keep this tab open so processing can continue.
-      </p>
-      <div className="d-flex flex-wrap align-items-center gap-2 mb-3">
-        <button
-          type="button"
-          className={`btn btn-sm ${displayedNotificationStatus === 'armed' ? 'btn-outline-success' : 'btn-outline-dark'}`}
-          onClick={handleNotificationClick}
-          disabled={['requesting', 'blocked', 'unsupported'].includes(displayedNotificationStatus)}
-        >
-          <i
-            className={`bi ${displayedNotificationStatus === 'armed' ? 'bi-bell-fill' : 'bi-browser-chrome'} me-1`}
-            aria-hidden="true"
-          ></i>
-          {displayedNotificationStatus === 'requesting'
-            ? 'Enabling…'
-            : displayedNotificationStatus === 'armed'
-              ? 'Browser notification on'
-              : displayedNotificationStatus === 'blocked'
-                ? 'Browser notifications blocked'
-                : displayedNotificationStatus === 'unsupported'
-                  ? 'Browser notifications unavailable'
-                  : 'Enable browser notification'}
-        </button>
-        {displayedNotificationStatus === 'armed' && (
-          <span className="small text-success" role="status">Enabled for this browser.</span>
-        )}
-      </div>
+  const emailNotificationModal = isWorking && datasetId && showEmailNotificationModal ? (
+    <>
+      <div
+        className="modal fade show d-block"
+        role="dialog"
+        tabIndex="-1"
+        aria-modal="true"
+        aria-labelledby={`email-notification-title-${datasetId}`}
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) closeEmailNotificationModal()
+        }}
+      >
+        <div className="modal-dialog modal-dialog-centered modal-sm">
+          <div className="modal-content border-0 shadow-lg">
+            <div className="modal-header border-0 pb-0 align-items-start">
+              <div className="d-flex gap-3">
+                <span className="bg-warning-subtle text-warning-emphasis rounded-circle d-inline-flex align-items-center justify-content-center flex-shrink-0" style={{ width: 40, height: 40 }}>
+                  <i className="bi bi-envelope-paper" aria-hidden="true"></i>
+                </span>
+                <div>
+                  <h2 className="modal-title fs-5" id={`email-notification-title-${datasetId}`}>
+                    Notify me by email
+                  </h2>
+                  <p className="small text-muted mb-0 mt-1">
+                    Step away while ChatIPT keeps working.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn-close"
+                aria-label="Close"
+                onClick={closeEmailNotificationModal}
+                disabled={isSavingEmailNotification}
+              ></button>
+            </div>
 
-      <form onSubmit={saveEmailNotification}>
-        <label className="form-label small fw-semibold mb-1" htmlFor={`notification-email-${datasetId}`}>
-          Email notification
-        </label>
-        <div className="d-flex flex-column flex-sm-row gap-2">
-          <input
-            id={`notification-email-${datasetId}`}
-            className="form-control form-control-sm"
-            type="email"
-            value={notificationEmail}
-            onChange={(event) => setNotificationEmail(event.target.value)}
-            placeholder="you@example.org"
-            autoComplete="email"
-            required
-            disabled={emailNotificationArmed || isSavingEmailNotification}
-          />
-          {emailNotificationArmed ? (
-            <button
-              type="button"
-              className="btn btn-sm btn-outline-danger text-nowrap"
-              onClick={cancelEmailNotification}
-              disabled={isSavingEmailNotification}
-            >
-              Cancel email
-            </button>
-          ) : (
-            <button
-              type="submit"
-              className="btn btn-sm btn-dark text-nowrap"
-              disabled={isSavingEmailNotification || !notificationEmail.trim()}
-            >
-              {isSavingEmailNotification ? 'Saving…' : 'Email me'}
-            </button>
-          )}
+            <div className="modal-body pt-3">
+              <p className="small mb-3">
+                We’ll send one email when ChatIPT needs your input or your package is ready. Keep this tab open so processing can continue.
+              </p>
+
+              {emailNotificationArmed ? (
+                <div className="text-center py-2">
+                  <span className="d-inline-flex align-items-center justify-content-center rounded-circle bg-success-subtle text-success mb-3" style={{ width: 48, height: 48 }}>
+                    <i className="bi bi-check-lg fs-4" aria-hidden="true"></i>
+                  </span>
+                  <h3 className="h6 mb-1">Email notification set</h3>
+                  <p className="small text-muted mb-3 text-break">{emailNotification.email}</p>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-danger"
+                    onClick={cancelEmailNotification}
+                    disabled={isSavingEmailNotification}
+                  >
+                    {isSavingEmailNotification ? 'Cancelling…' : 'Cancel notification'}
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={saveEmailNotification}>
+                  <label className="form-label small fw-semibold" htmlFor={`notification-email-${datasetId}`}>
+                    Email address
+                  </label>
+                  <input
+                    id={`notification-email-${datasetId}`}
+                    className="form-control"
+                    type="email"
+                    value={notificationEmail}
+                    onChange={(event) => setNotificationEmail(event.target.value)}
+                    placeholder="you@example.org"
+                    autoComplete="email"
+                    autoFocus
+                    required
+                    disabled={isSavingEmailNotification}
+                  />
+                  <button
+                    type="submit"
+                    className="btn btn-warning w-100 mt-3"
+                    disabled={isSavingEmailNotification || !notificationEmail.trim()}
+                  >
+                    <i className="bi bi-envelope-check me-2" aria-hidden="true"></i>
+                    {isSavingEmailNotification ? 'Saving…' : 'Notify me'}
+                  </button>
+                </form>
+              )}
+
+              {emailNotificationError && (
+                <p className="small text-danger mb-0 mt-2" role="alert">{emailNotificationError}</p>
+              )}
+
+              <div className="bg-body-tertiary rounded p-2 mt-3 d-flex gap-2">
+                <i className="bi bi-info-circle text-muted flex-shrink-0" aria-hidden="true"></i>
+                <p className="small text-muted mb-0">
+                  First notification? Check your Spam folder and mark ChatIPT as “Not spam” so future messages reach your inbox.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
-        {emailNotificationArmed && (
-          <p className="small text-success mb-0 mt-1" role="status">
-            Email notification set for {emailNotification.email}.
-          </p>
-        )}
-        {emailNotificationError && (
-          <p className="small text-danger mb-0 mt-1" role="alert">{emailNotificationError}</p>
-        )}
-      </form>
-    </div>
+      </div>
+      <div className="modal-backdrop fade show"></div>
+    </>
   ) : null
 
   return (
@@ -512,20 +438,7 @@ export default function DatasetPackageOverview({ dataset, tables, tablesLoading 
           {notificationPrompt}
         </div>
       )}
-      {notificationOptions}
-      {notificationStatus === 'armed' && (
-        <p className="small text-muted mb-0 mt-1" role="status">
-          You’ll get a browser notification when ChatIPT next needs your attention. Keep this tab open.
-        </p>
-      )}
-      {notificationStatus === 'notified' && attentionRequired && (
-        <div className="alert alert-success py-2 px-3 mb-0 mt-2" role="status">
-          <i className="bi bi-check-circle-fill me-2" aria-hidden="true"></i>
-          {workComplete
-            ? 'Your package is ready to review and download.'
-            : 'ChatIPT is ready for your input.'}
-        </div>
-      )}
+      {emailNotificationModal}
     </section>
   )
 }

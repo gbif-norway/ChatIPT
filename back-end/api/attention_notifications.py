@@ -114,21 +114,23 @@ def notification_payload(dataset):
 def _email_content(notification):
     dataset = notification.dataset
     dataset_name = dataset.title.strip() if dataset.title else f'Dataset {dataset.id}'
+    subject_dataset_name = dataset_name[:100]
     dataset_url = f"{settings.FRONTEND_URL.rstrip('/')}/dataset/{dataset.id}"
     if notification.attention_kind == DatasetAttentionNotification.AttentionKind.NEEDS_INPUT:
-        subject = 'ChatIPT needs your attention'
+        subject = f'ChatIPT needs your attention: {subject_dataset_name}'
         action = 'ChatIPT is waiting for your input.'
     elif notification.attention_kind == DatasetAttentionNotification.AttentionKind.PUBLISHED:
-        subject = 'Your ChatIPT dataset has been published'
+        subject = f'Your ChatIPT dataset has been published: {subject_dataset_name}'
         action = 'Your dataset has been published.'
     else:
-        subject = 'Your ChatIPT package is ready'
+        subject = f'Your ChatIPT package is ready: {subject_dataset_name}'
         action = 'Your package is ready to review and download.'
 
     body = (
+        f'Hello,\n\n'
         f'{action}\n\n'
-        f'{dataset_name}\n'
-        f'{dataset_url}\n\n'
+        f'Dataset: {dataset_name}\n'
+        f'Open ChatIPT: {dataset_url}\n\n'
         'You requested this one-time notification in ChatIPT.'
     )
     return subject, body

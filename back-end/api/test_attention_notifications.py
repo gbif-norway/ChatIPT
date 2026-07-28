@@ -108,6 +108,8 @@ class AttentionNotificationDispatchTests(TestCase):
         self.assertEqual(notification.attention_kind, DatasetAttentionNotification.AttentionKind.NEEDS_INPUT)
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn('needs your attention', mail.outbox[0].subject)
+        self.assertIn(self.dataset.title, mail.outbox[0].subject)
+        self.assertIn(f'Dataset: {self.dataset.title}', mail.outbox[0].body)
         self.assertIn(f'/dataset/{self.dataset.id}', mail.outbox[0].body)
 
         self.assertEqual(dispatch_due_notifications()['sent'], 0)
