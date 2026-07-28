@@ -43,6 +43,16 @@ else
     python manage.py collectstatic --noinput
 fi
 
+# Run the durable attention-email dispatcher as a separate process in the
+# backend container. Database claims make this safe if the app is scaled out.
+if [ "${RUN_ATTENTION_NOTIFICATION_WORKER:-1}" = "1" ] && {
+    [ "${1:-}" = "gunicorn" ] ||
+    { [ "${1:-}" = "python" ] && [ "${2:-}" = "manage.py" ] && [ "${3:-}" = "runserver" ]; }
+}; then
+    echo "Starting attention email worker..."
+    python manage.py send_attention_notifications --watch &
+fi
+
 # Start the application
 echo "Starting Django server..."
 exec "$@" 

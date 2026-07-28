@@ -195,6 +195,7 @@ class Dataset(models.Model):
             return True
         return False
 
+
     def can_visualize_tree(self):
         """
         Check if tree visualization is available:
@@ -1301,3 +1302,45 @@ class Message(models.Model):
     class Meta:
         get_latest_by = 'created_at'
         ordering = ['created_at']
+
+
+class DatasetAttentionNotification(models.Model):
+    """A one-shot email request for the next time a dataset needs attention."""
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', _('Waiting for attention')
+        READY = 'ready', _('Ready to send')
+        SENDING = 'sending', _('Sending')
+        SENT = 'sent', _('Sent')
+        CANCELLED = 'cancelled', _('Cancelled')
+
+    class AttentionKind(models.TextChoices):
+        NEEDS_INPUT = 'needs_input', _('Needs input')
+        READY = 'ready', _('Package ready')
+        PUBLISHED = 'published', _('Published')
+
+    dataset = models.OneToOneField(
+        Dataset,
+        on_delete=models.CASCADE,
+        related_name='attention_notification',
+    )
+    email = models.EmailField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    attention_kind = models.CharField(
+        max_length=20,
+        choices=AttentionKind.choices,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    ready_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    next_attempt_at = models.DateTimeField(null=True, blank=True)
+    attempt_count = models.PositiveIntegerField(default=0)
+    last_error = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f'Dataset {self.dataset_id}: {self.email} ({self.status})'

@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 
+import config from '../config'
+import { getCsrfToken } from '../utils/csrf'
+
 import {
   getDatasetStatus,
   naturalList,
@@ -149,6 +152,11 @@ export default function DatasetPackageOverview({ dataset, tables }) {
   const workComplete = ['ready', 'published'].includes(datasetStatus)
   const datasetId = dataset?.id
   const [isRequestingNotification, setIsRequestingNotification] = useState(false)
+  const [showNotificationOptions, setShowNotificationOptions] = useState(false)
+  const [emailNotification, setEmailNotification] = useState({ status: 'idle' })
+  const [notificationEmail, setNotificationEmail] = useState('')
+  const [emailNotificationError, setEmailNotificationError] = useState('')
+  const [isSavingEmailNotification, setIsSavingEmailNotification] = useState(false)
   const getNotificationSnapshot = useCallback(
     () => getNotificationStatus(datasetId),
     [datasetId],
@@ -158,6 +166,7 @@ export default function DatasetPackageOverview({ dataset, tables }) {
     getNotificationSnapshot,
     () => 'idle',
   )
+  const emailNotificationArmed = ['pending', 'ready', 'sending'].includes(emailNotification.status)
   const inputRows = accounting?.sourceRows ?? (
     resources.length === 0
       ? tables.reduce((sum, table) => sum + Number(table.df?.length || 0), 0)
@@ -182,6 +191,32 @@ export default function DatasetPackageOverview({ dataset, tables }) {
       }.`
     : ''
   const trustText = [accountingTrustText, validationTrustText].filter(Boolean).join(' ')
+
+  useEffect(() => {
+    if (!datasetId || !isWorking) return
+
+    let cancelled = false
+    const loadEmailNotification = async () => {
+      try {
+        const response = await fetch(
+          `${config.baseUrl}/api/datasets/${datasetId}/attention-notification/`,
+          { credentials: 'include' },
+        )
+        if (!response.ok) throw new Error('Unable to load email notification settings.')
+        const data = await response.json()
+        if (cancelled) return
+        setEmailNotification(data)
+        setNotificationEmail(data.email || data.suggested_email || '')
+      } catch (error) {
+        if (!cancelled) setEmailNotificationError(error.message)
+      }
+    }
+    loadEmailNotification()
+    return () => {
+      cancelled = true
+    }
+  }, [datasetId, isWorking])
+
   useEffect(() => {
     if (
       !attentionRequired
@@ -261,39 +296,160 @@ export default function DatasetPackageOverview({ dataset, tables }) {
     }
   }
 
-  const displayedNotificationStatus = isRequestingNotification ? 'requesting' : notificationStatus
-  const notificationButton = isWorking && datasetId ? (
-    <button
-      type="button"
-      className={`btn btn-sm ${
-        displayedNotificationStatus === 'armed' ? 'btn-outline-success' : 'btn-outline-secondary'
-      }`}
-      onClick={handleNotificationClick}
-      disabled={['requesting', 'blocked', 'unsupported'].includes(displayedNotificationStatus)}
-      title={
-        displayedNotificationStatus === 'armed'
-          ? 'Click to cancel this notification'
-          : displayedNotificationStatus === 'blocked'
-            ? 'Notifications are blocked in your browser settings'
-            : displayedNotificationStatus === 'unsupported'
-              ? 'This browser does not support desktop notifications'
-              : 'Notify me when ChatIPT next needs my attention; keep this tab open'
+  const saveEmailNotification = async (event) => {
+    event.preventDefault()
+    if (!datasetId || !notificationEmail.trim()) return
+
+    setIsSavingEmailNotification(true)
+    setEmailNotificationError('')
+    try {
+      const csrfToken = await getCsrfToken()
+      const headers = { 'Content-Type': 'application/json' }
+      if (csrfToken) headers['X-CSRFToken'] = csrfToken
+      const response = await fetch(
+        `${config.baseUrl}/api/datasets/${datasetId}/attention-notification/`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers,
+          body: JSON.stringify({ email: notificationEmail.trim() }),
+        },
+      )
+      const data = await response.json()
+      if (!response.ok) {
+        const message = data.email?.[0] || data.detail || 'Unable to enable email notifications.'
+        throw new Error(message)
       }
+      setEmailNotification(data)
+      setNotificationEmail(data.email)
+    } catch (error) {
+      setEmailNotificationError(error.message)
+    } finally {
+      setIsSavingEmailNotification(false)
+    }
+  }
+
+  const cancelEmailNotification = async () => {
+    if (!datasetId) return
+
+    setIsSavingEmailNotification(true)
+    setEmailNotificationError('')
+    try {
+      const csrfToken = await getCsrfToken()
+      const headers = {}
+      if (csrfToken) headers['X-CSRFToken'] = csrfToken
+      const response = await fetch(
+        `${config.baseUrl}/api/datasets/${datasetId}/attention-notification/`,
+        { method: 'DELETE', credentials: 'include', headers },
+      )
+      if (!response.ok) throw new Error('Unable to cancel the email notification.')
+      setEmailNotification(await response.json())
+    } catch (error) {
+      setEmailNotificationError(error.message)
+    } finally {
+      setIsSavingEmailNotification(false)
+    }
+  }
+
+  const displayedNotificationStatus = isRequestingNotification ? 'requesting' : notificationStatus
+  const anyNotificationArmed = notificationStatus === 'armed' || emailNotificationArmed
+  const notificationPrompt = isWorking && datasetId ? (
+    <>
+      <span className="small fw-semibold text-warning-emphasis">
+        This process can take some time.
+      </span>
+      <button
+        type="button"
+        className={`btn btn-sm ${anyNotificationArmed ? 'btn-success' : 'btn-warning'}`}
+        onClick={() => setShowNotificationOptions((shown) => !shown)}
+        aria-expanded={showNotificationOptions}
+        aria-controls={`notification-options-${datasetId}`}
+      >
+        <i className={`bi ${anyNotificationArmed ? 'bi-bell-fill' : 'bi-bell'} me-1`} aria-hidden="true"></i>
+        {anyNotificationArmed ? 'Notifications on' : 'Notify me'}
+      </button>
+    </>
+  ) : null
+
+  const notificationOptions = isWorking && datasetId && showNotificationOptions ? (
+    <div
+      className="border border-warning rounded bg-warning-subtle p-3 mt-2"
+      id={`notification-options-${datasetId}`}
     >
-      <i
-        className={`bi ${displayedNotificationStatus === 'armed' ? 'bi-bell-fill' : 'bi-bell'} me-1`}
-        aria-hidden="true"
-      ></i>
-      {displayedNotificationStatus === 'requesting'
-        ? 'Enabling…'
-        : displayedNotificationStatus === 'armed'
-          ? 'Notification on'
-          : displayedNotificationStatus === 'blocked'
-            ? 'Notifications blocked'
-            : displayedNotificationStatus === 'unsupported'
-              ? 'Notifications unavailable'
-              : 'Notify me when done'}
-    </button>
+      <p className="small mb-3">
+        Get a one-time notification when ChatIPT needs your input or finishes. Keep this tab open so processing can continue.
+      </p>
+      <div className="d-flex flex-wrap align-items-center gap-2 mb-3">
+        <button
+          type="button"
+          className={`btn btn-sm ${displayedNotificationStatus === 'armed' ? 'btn-outline-success' : 'btn-outline-dark'}`}
+          onClick={handleNotificationClick}
+          disabled={['requesting', 'blocked', 'unsupported'].includes(displayedNotificationStatus)}
+        >
+          <i
+            className={`bi ${displayedNotificationStatus === 'armed' ? 'bi-bell-fill' : 'bi-browser-chrome'} me-1`}
+            aria-hidden="true"
+          ></i>
+          {displayedNotificationStatus === 'requesting'
+            ? 'Enabling…'
+            : displayedNotificationStatus === 'armed'
+              ? 'Browser notification on'
+              : displayedNotificationStatus === 'blocked'
+                ? 'Browser notifications blocked'
+                : displayedNotificationStatus === 'unsupported'
+                  ? 'Browser notifications unavailable'
+                  : 'Enable browser notification'}
+        </button>
+        {displayedNotificationStatus === 'armed' && (
+          <span className="small text-success" role="status">Enabled for this browser.</span>
+        )}
+      </div>
+
+      <form onSubmit={saveEmailNotification}>
+        <label className="form-label small fw-semibold mb-1" htmlFor={`notification-email-${datasetId}`}>
+          Email notification
+        </label>
+        <div className="d-flex flex-column flex-sm-row gap-2">
+          <input
+            id={`notification-email-${datasetId}`}
+            className="form-control form-control-sm"
+            type="email"
+            value={notificationEmail}
+            onChange={(event) => setNotificationEmail(event.target.value)}
+            placeholder="you@example.org"
+            autoComplete="email"
+            required
+            disabled={emailNotificationArmed || isSavingEmailNotification}
+          />
+          {emailNotificationArmed ? (
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-danger text-nowrap"
+              onClick={cancelEmailNotification}
+              disabled={isSavingEmailNotification}
+            >
+              Cancel email
+            </button>
+          ) : (
+            <button
+              type="submit"
+              className="btn btn-sm btn-dark text-nowrap"
+              disabled={isSavingEmailNotification || !notificationEmail.trim()}
+            >
+              {isSavingEmailNotification ? 'Saving…' : 'Email me'}
+            </button>
+          )}
+        </div>
+        {emailNotificationArmed && (
+          <p className="small text-success mb-0 mt-1" role="status">
+            Email notification set for {emailNotification.email}.
+          </p>
+        )}
+        {emailNotificationError && (
+          <p className="small text-danger mb-0 mt-1" role="alert">{emailNotificationError}</p>
+        )}
+      </form>
+    </div>
   ) : null
 
   return (
@@ -333,7 +489,7 @@ export default function DatasetPackageOverview({ dataset, tables }) {
           <p className="small mb-0">
             ChatIPT is examining your source data before organising it into linked Darwin Core tables.
           </p>
-          {notificationButton}
+          {notificationPrompt}
         </div>
       ) : (
         <div className="d-flex flex-wrap align-items-center gap-2 mt-1">
@@ -343,9 +499,10 @@ export default function DatasetPackageOverview({ dataset, tables }) {
             {storyItems.length > 0 ? naturalList(storyItems) : pluralize(resources.length, 'linked table')}
             {storyItems.length > 0 ? ` across ${pluralize(resources.length, 'linked table')}.` : '.'}
           </p>
-          {notificationButton}
+          {notificationPrompt}
         </div>
       )}
+      {notificationOptions}
       {notificationStatus === 'armed' && (
         <p className="small text-muted mb-0 mt-1" role="status">
           You’ll get a browser notification when ChatIPT next needs your attention. Keep this tab open.

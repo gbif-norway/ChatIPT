@@ -271,6 +271,21 @@ OPENAI_SIMPLE_REASONING_EFFORT = os.environ.get("OPENAI_SIMPLE_REASONING_EFFORT"
 
 # CORS settings for React frontend
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+
+# One-shot attention emails. Credentials are backend-only and supplied through
+# the environment (the production deployment uses the chatipt-backend secret).
+GMAIL_APP_EMAIL = os.environ.get("GMAIL_APP_EMAIL", "")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = "smtp.gmail.com"
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = GMAIL_APP_EMAIL
+EMAIL_HOST_PASSWORD = GMAIL_APP_PASSWORD
+EMAIL_TIMEOUT = 10
+DEFAULT_FROM_EMAIL = GMAIL_APP_EMAIL or "ChatIPT <noreply@localhost>"
+ATTENTION_EMAIL_ENABLED = bool(GMAIL_APP_EMAIL and GMAIL_APP_PASSWORD)
+
 CORS_ALLOWED_ORIGINS = [
     FRONTEND_URL,
     "http://localhost:3000",

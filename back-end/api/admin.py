@@ -1,6 +1,15 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from .models import CustomUser, Dataset, Task, Table, Agent, Message, UserFile
+from .models import (
+    Agent,
+    CustomUser,
+    Dataset,
+    DatasetAttentionNotification,
+    Message,
+    Table,
+    Task,
+    UserFile,
+)
 
 
 @admin.register(CustomUser)
@@ -36,6 +45,14 @@ class DatasetAdmin(admin.ModelAdmin):
     search_fields = ('title', 'description', 'user__email', 'orcid')
     readonly_fields = ('created_at', 'published_at')
     date_hierarchy = 'created_at'
+
+
+@admin.register(DatasetAttentionNotification)
+class DatasetAttentionNotificationAdmin(admin.ModelAdmin):
+    list_display = ('dataset', 'email', 'status', 'attention_kind', 'attempt_count', 'sent_at')
+    list_filter = ('status', 'attention_kind', 'created_at', 'sent_at')
+    search_fields = ('email', 'dataset__title')
+    readonly_fields = ('created_at', 'updated_at', 'ready_at', 'sent_at', 'attempt_count', 'last_error')
 
 
 @admin.register(Task)

@@ -1,10 +1,11 @@
-from rest_framework import viewsets, status
+from rest_framework import serializers, viewsets, status
 from rest_framework.exceptions import ValidationError
 from api.serializers import DatasetSerializer, DatasetListSerializer, TableSerializer, MessageSerializer, AgentSerializer, TaskSerializer, UserFileSerializer
 from api.models import Dataset, Table, Message, Agent, Task, UserFile
 from rest_framework.response import Response
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny, BasePermission
+from rest_framework.throttling import UserRateThrottle
 from django.shortcuts import get_object_or_404, redirect
 from django.contrib.auth import get_user_model
 from rest_framework.serializers import ModelSerializer
@@ -13,11 +14,26 @@ import requests
 from urllib.parse import urlencode
 import logging
 from math import isfinite
+from api.attention_notifications import (
+    arm_notification,
+    attention_kind_for_dataset,
+    cancel_notification,
+    notification_payload,
+)
 
 logger = logging.getLogger(__name__)
 PRIVATE_PROFILE_STATUS_CODES = {401, 403, 404}
 
 User = get_user_model()
+
+
+class AttentionNotificationRateThrottle(UserRateThrottle):
+    rate = '10/hour'
+
+    def allow_request(self, request, view):
+        if request.method == 'GET':
+            return True
+        return super().allow_request(request, view)
 
 
 class IsAuthenticatedOrSuperuser(BasePermission):
@@ -423,6 +439,37 @@ class DatasetViewSet(viewsets.ModelViewSet):
         """Automatically assign the current user to the dataset"""
         logger.info(f"DatasetViewSet.perform_create - User ID: {self.request.user.id}")
         serializer.save(user=self.request.user)
+
+    @action(
+        detail=True,
+        methods=['get', 'post', 'delete'],
+        url_path='attention-notification',
+        throttle_classes=[AttentionNotificationRateThrottle],
+    )
+    def attention_notification(self, request, *args, **kwargs):
+        dataset = self.get_object()
+
+        if request.method == 'GET':
+            return Response(notification_payload(dataset))
+
+        if request.method == 'DELETE':
+            cancel_notification(dataset)
+            return Response(notification_payload(dataset))
+
+        if attention_kind_for_dataset(dataset):
+            return Response(
+                {'detail': 'ChatIPT already needs your attention. Respond before setting another notification.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            email = serializers.EmailField().run_validation(request.data.get('email', ''))
+        except serializers.ValidationError as exc:
+            raise ValidationError({'email': exc.detail})
+        notification = arm_notification(dataset, email.strip())
+        payload = notification_payload(dataset)
+        payload['status'] = notification.status
+        return Response(payload, status=status.HTTP_201_CREATED)
 
     # @action(detail=True)
     # def next_agent(self, request, *args, **kwargs):

@@ -1,13 +1,33 @@
+from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.contrib.auth import get_user_model
 from allauth.account.signals import user_signed_up
 from allauth.socialaccount.signals import pre_social_login
 from allauth.socialaccount.models import SocialAccount
-from api.models import Message
+from api.models import Agent, Dataset, Message
+from api.attention_notifications import mark_notification_ready_if_needed
 from api.helpers import discord_bot
 
 User = get_user_model()
+
+
+@receiver(post_save, sender=Dataset)
+def queue_notification_for_completed_dataset(sender, instance, **kwargs):
+    transaction.on_commit(lambda: mark_notification_ready_if_needed(instance))
+
+
+@receiver(post_save, sender=Message)
+def queue_notification_for_assistant_message(sender, instance, created, **kwargs):
+    if created and (instance.openai_obj or {}).get('role') == Message.Role.ASSISTANT:
+        dataset = instance.agent.dataset
+        transaction.on_commit(lambda: mark_notification_ready_if_needed(dataset))
+
+
+@receiver(post_save, sender=Agent)
+def queue_notification_when_agent_stops_working(sender, instance, **kwargs):
+    dataset = instance.dataset
+    transaction.on_commit(lambda: mark_notification_ready_if_needed(dataset))
 
 
 @receiver(user_signed_up)
