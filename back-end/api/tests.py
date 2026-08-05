@@ -21,6 +21,7 @@ from .helpers.publish import (
     parse_newick_tip_labels,
     parse_nexus_tip_labels,
     register_dataset_and_endpoint,
+    upload_dwca,
     _sanitize_dataframe_for_utf8_export,
     validate_dwca_archive,
 )
@@ -28,6 +29,7 @@ from .agent_tools import (
     BasicValidationForSomeDwCTerms,
     ExportDwcDp,
     GetDarwinCoreInfo,
+    GetDwCExtensionInfo,
     SetEML,
     LogBugWithDeveloper,
     SetBasicMetadata,
@@ -37,9 +39,9 @@ from .agent_tools import (
     ValidateDwcDp,
     PreviewDwcDpDescriptor,
     UploadDwCA,
+    Python,
     normalize_event_date,
     _dwc_dp_resources_from_mapping,
-    _project_dwca_from_dwc_dp_resources,
 )
 from .helpers.openai_helpers import (
     CompatAssistantMessage,
@@ -66,6 +68,7 @@ from .dwc_dp_specs import (
     validate_dwc_dp_archive,
     validate_dwc_dp_resources,
 )
+from .dwc_specs import DarwinCoreCoreType, DarwinCoreExtensionType
 
 
 class DwcDpSpecTests(SimpleTestCase):
@@ -434,53 +437,6 @@ class DwcDpSpecTests(SimpleTestCase):
         self.assertEqual(list(resources), ['event'])
         self.assertEqual(len(errors), 1)
         self.assertIn('mapped more than once', errors[0])
-
-    def test_dwca_projection_joins_enforced_keys_and_restores_dwc_identifiers(self):
-        projected, core_type = _project_dwca_from_dwc_dp_resources(self._resources())
-
-        self.assertEqual(core_type.value, 'occurrence')
-        self.assertEqual(projected.loc[0, 'occurrenceID'], 'source-occ-1')
-        self.assertEqual(projected.loc[0, 'eventID'], 'source-event-1')
-        self.assertEqual(projected.loc[0, 'eventDate'], '2025-04-26')
-        self.assertNotIn('occurrence_pk', projected.columns)
-        self.assertNotIn('event_fk', projected.columns)
-
-    def test_dwca_projection_repairs_duplicate_weak_occurrence_identifiers(self):
-        resources = self._resources()
-        resources['occurrence'] = pd.DataFrame([
-            {
-                'occurrence_pk': 'occ-1',
-                'occurrenceID': 'Mangifera indica',
-                'event_fk': 'event-1',
-                'occurrenceStatus': 'present',
-            },
-            {
-                'occurrence_pk': 'occ-2',
-                'occurrenceID': 'mangifera INDICA',
-                'event_fk': 'event-1',
-                'occurrenceStatus': 'present',
-            },
-            {
-                'occurrence_pk': 'occ-3',
-                'occurrenceID': 'source-occ-3',
-                'event_fk': 'event-1',
-                'occurrenceStatus': 'present',
-            },
-        ])
-
-        projected, core_type = _project_dwca_from_dwc_dp_resources(resources)
-
-        self.assertEqual(core_type.value, 'occurrence')
-        self.assertEqual(projected['occurrenceID'].tolist(), ['occ-1', 'occ-2', 'source-occ-3'])
-        self.assertEqual(
-            len(projected['occurrenceID'].str.casefold().unique()),
-            len(projected),
-        )
-        self.assertIn(
-            'Replaced 2 non-unique occurrenceID value(s)',
-            projected.attrs['projection_warnings'][0],
-        )
-
 
 class EmlGenerationTests(SimpleTestCase):
     def test_eml_template_is_well_formed(self):
@@ -1266,6 +1222,15 @@ class GetDarwinCoreInfoTests(SimpleTestCase):
         self.assertIn("basisOfRecord (Occurrence): The specific nature of the data record. Examples: HumanObservation", response)
 
 
+class GetDwCExtensionInfoTests(SimpleTestCase):
+    def test_lookup_includes_extensions_needed_for_rich_projections(self):
+        relationship = GetDwCExtensionInfo(extension="resource_relationship").run()
+        identification = GetDwCExtensionInfo(extension="identification_history").run()
+
+        self.assertIn("ResourceRelationship", relationship)
+        self.assertIn("Identification", identification)
+
+
 class EventDateNormalizationTests(SimpleTestCase):
     def test_preserves_partial_date_precision_and_interval_precision(self):
         self.assertEqual(normalize_event_date("2010"), "2010")
@@ -1833,14 +1798,16 @@ class ResponsesAdapterCompatibilityTests(SimpleTestCase):
     def test_upload_dwca_schema_exposes_extension_table_mapping_values(self):
         schema = UploadDwCA.openai_schema()
         extension_tables = schema["parameters"]["properties"]["extension_tables"]
-        object_schema = next(
-            item for item in extension_tables["anyOf"] if item.get("type") == "object"
+        array_schema = next(
+            item for item in extension_tables["anyOf"] if item.get("type") == "array"
         )
+        assignment_ref = array_schema["items"]["$ref"]
+        assignment_name = assignment_ref.rsplit("/", 1)[-1]
+        assignment_schema = schema["parameters"]["$defs"][assignment_name]
 
-        self.assertIn("additionalProperties", object_schema)
         self.assertEqual(
-            object_schema["additionalProperties"]["$ref"],
-            "#/$defs/DarwinCoreExtensionType",
+            set(assignment_schema["required"]),
+            {"table_id", "extension_type", "core_id_column"},
         )
         self.assertIn("DarwinCoreExtensionType", schema["parameters"]["$defs"])
 
@@ -1901,6 +1868,94 @@ class DwcaExportSanitizationTests(SimpleTestCase):
 
         self.assertFalse(result["valid"])
         self.assertTrue(any("project must contain" in error for error in result["errors"]))
+
+    def test_exact_archive_validation_rejects_unresolved_extension_core_ids(self):
+        meta = r"""<?xml version="1.0" encoding="UTF-8"?>
+<archive xmlns="http://rs.tdwg.org/dwc/text/">
+  <core encoding="UTF-8" fieldsTerminatedBy="\t" ignoreHeaderLines="1"
+        rowType="http://rs.tdwg.org/dwc/terms/Occurrence">
+    <files><location>occurrence.txt</location></files>
+    <id index="0"/>
+    <field index="0" term="http://rs.tdwg.org/dwc/terms/occurrenceID"/>
+  </core>
+  <extension encoding="UTF-8" fieldsTerminatedBy="\t" ignoreHeaderLines="1"
+        rowType="http://rs.tdwg.org/dwc/terms/Identification">
+    <files><location>identification.txt</location></files>
+    <coreid index="0"/>
+    <field index="1" term="http://rs.tdwg.org/dwc/terms/identificationID"/>
+  </extension>
+</archive>"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive_path = Path(temp_dir) / "bad-extension.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("meta.xml", meta)
+                archive.writestr("eml.xml", "<eml/>")
+                archive.writestr("occurrence.txt", "occurrenceID\nocc-1\n")
+                archive.writestr("identification.txt", "_coreid\tidentificationID\nmissing\tid-1\n")
+
+            result = validate_dwca_archive(archive_path)
+
+        self.assertFalse(result["valid"])
+        self.assertTrue(any("do not resolve to the core" in error for error in result["errors"]))
+
+    @patch("api.helpers.publish.upload_file")
+    @patch("api.helpers.publish.Minio")
+    def test_upload_dwca_writes_explicit_extension_coreid(self, minio_mock, upload_mock):
+        captured = {}
+
+        def capture_archive(client, bucket, object_name, local_path):
+            with zipfile.ZipFile(local_path) as archive:
+                captured["meta"] = archive.read("meta.xml")
+
+        upload_mock.side_effect = capture_archive
+        env = {
+            "MINIO_URI": "storage.example.org",
+            "MINIO_ACCESS_KEY": "key",
+            "MINIO_SECRET_KEY": "secret",
+            "MINIO_BUCKET": "bucket",
+            "MINIO_BUCKET_FOLDER": "packages",
+        }
+        core = pd.DataFrame([
+            {
+                "scientificName": "Apus apus",
+                "occurrenceID": "occ-1",
+                "occurrenceRemarks": "first line\nsecond line\twith tab",
+            },
+        ])
+        identification = pd.DataFrame([
+            {
+                "identificationID": "identification-1",
+                "_coreid": "occ-1",
+                "scientificName": "Apus apus",
+            },
+        ])
+
+        with patch.dict(os.environ, env):
+            upload_dwca(
+                core,
+                "Test dataset",
+                "Test description",
+                core_type=DarwinCoreCoreType.OCCURRENCE,
+                extensions=[(
+                    identification,
+                    DarwinCoreExtensionType.IDENTIFICATION_HISTORY,
+                    "_coreid",
+                )],
+            )
+
+        meta_root = ET.fromstring(captured["meta"])
+        extension = next(
+            element for element in meta_root if element.tag.rsplit("}", 1)[-1] == "extension"
+        )
+        coreid = next(
+            element for element in extension if element.tag.rsplit("}", 1)[-1] == "coreid"
+        )
+        fields = [
+            element for element in extension if element.tag.rsplit("}", 1)[-1] == "field"
+        ]
+
+        self.assertEqual(coreid.attrib["index"], "0")
+        self.assertTrue(any(field.attrib["index"] == "1" for field in fields))
 
 
 class DatasetSummarySerializerTests(TestCase):
@@ -2520,6 +2575,13 @@ class DwcDpAccountingTests(TestCase):
         )
 
 
+class PythonToolTests(SimpleTestCase):
+    def test_uuid_is_available_to_executed_code(self):
+        result = Python(code="print(uuid.UUID(int=0))").run()
+
+        self.assertEqual(result.strip(), "00000000-0000-0000-0000-000000000000")
+
+
 class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
     @classmethod
     def setUpClass(cls):
@@ -2639,6 +2701,20 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("ask one focused question about the underlying data", text)
         self.assertIn("never ask the user to choose a DwC-DP mapping", text)
         self.assertIn("Recheck source coverage only for groups changed", text)
+
+    def test_final_prompt_requires_model_led_complete_dwca_projection(self):
+        text = self.task_text["Final Review & Publication"]
+
+        self.assertIn("most complete standards-compliant DwC-A projection possible", text)
+        self.assertIn("Inspect every populated DwC-DP resource", text)
+        self.assertIn("Prefer the registered extension whenever it can express the facts cleanly", text)
+        self.assertIn("`dynamicProperties` only as a fallback", text)
+        self.assertIn("temporary non-DwC-DP projection tables", text)
+        self.assertIn("dedicated `_coreid` column", text)
+        self.assertIn("exactly matches the selected core table identifier", text)
+        self.assertIn("Silent omission is an error", text)
+        self.assertIn("explicit extension assignments", text)
+        self.assertNotIn("ExportDwcaFromDwcDp", text)
 
 
 class SetAgentTaskToCompleteTests(TestCase):

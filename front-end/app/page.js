@@ -154,7 +154,7 @@ const HomeContent = () => {
                   <p>
                     With this major update, ChatIPT now organises that data as connected entities
                     and relationships using the new Darwin Core Data Package standard, while
-                    continuing to produce a simpler Darwin Core Archive for current GBIF
+                    continuing to produce a standards-compliant Darwin Core Archive for current GBIF
                     publication workflows.
                   </p>
 
@@ -183,7 +183,7 @@ const HomeContent = () => {
 
                   <p className="small no-bottom-margin">
                     Your DwC-DP is the complete, authoritative output. The DwC-A is derived from
-                    it for compatibility; some richer relationships remain only in the DwC-DP.
+                    it as completely as the archive standard allows for current compatibility.
                   </p>
                 </div>
 

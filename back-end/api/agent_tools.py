@@ -14,7 +14,6 @@ from api.helpers.publish import (
     register_dataset_and_endpoint,
 )
 import datetime
-import uuid
 import utm
 from dateutil.parser import parse, ParserError
 from django.template.loader import render_to_string
@@ -23,6 +22,7 @@ from django.utils import timezone
 from api.helpers import discord_bot
 import json
 import os
+import uuid
 from pathlib import Path
 from requests.auth import HTTPBasicAuth
 import requests
@@ -413,10 +413,12 @@ class GetDwCExtensionInfo(OpenAIBaseModel):
     - Description (`description.xml`): Narrative text about a taxon or resource such as morphology, behaviour, ecology, or conservation context.
     - Distribution (`distribution_2022-02-02.xml`): Geographic distribution statements including area types, occurrence status, seasonal or life-stage qualifiers.
     - DNA Derived Data (`dna_derived_data_2024-07-11.xml`): Links occurrences or taxa to sequence-based evidence (e.g. metabarcoding runs, marker genes, accession numbers).
+    - Identification History (`identification_history_2025-07-10.xml`): Multiple identifications or determinations associated with occurrence records.
     - Identifier (`identifier.xml`): Alternative identifiers for taxa or occurrences, tracking GUIDs, LSIDs, catalogue numbers, or database references.
     - Measurement or Fact (`measurements_or_facts_2025-07-10.xml`): Measurements, facts, characteristics, or assertions about occurrence, event, or taxon records.
     - Multimedia (`multimedia.xml`): Generic multimedia attachment schema (audio, video, images) with basic descriptive and licensing fields.
     - References (`references.xml`): Bibliographic citations that support occurrence or taxon records.
+    - Resource Relationship (`resource_relationship_2025-07-10.xml`): Relationships between core records and other identified resources.
     - Relevé (`releve_2016-05-10.xml`): Vegetation plot (relevé) descriptions including cover, stratification, sampling method, and environmental context.
     - Species Profile (`speciesprofile_2019-01-29.xml`): Taxon-level traits such as life history, abundance, habitat preferences, and threat status.
     - Types and Specimen (`typesandspecimen.xml`): Details of type specimens and vouchers linked to taxa, including repository and typification remarks.
@@ -449,6 +451,16 @@ class GetDwCExtensionInfo(OpenAIBaseModel):
                 'file': 'dna_derived_data_2024-07-11.xml',
                 'overview': 'Sequence-based evidence linking taxa or occurrences to laboratory outputs, marker genes, and accession numbers.'
             },
+            'identification': {
+                'label': 'Identification',
+                'file': 'identification.xml',
+                'overview': 'Identification details associated with occurrence records.'
+            },
+            'identification_history': {
+                'label': 'Identification History',
+                'file': 'identification_history_2025-07-10.xml',
+                'overview': 'Multiple identifications or determinations associated with occurrence records.'
+            },
             'identifier': {
                 'label': 'Identifier',
                 'file': 'identifier.xml',
@@ -468,6 +480,16 @@ class GetDwCExtensionInfo(OpenAIBaseModel):
                 'label': 'References',
                 'file': 'references.xml',
                 'overview': 'Bibliographic citations that support occurrence or taxon records.'
+            },
+            'resource_relation': {
+                'label': 'Resource Relation',
+                'file': 'resource_relation_2018_01_18.xml',
+                'overview': 'Relationships between core records and other identified resources using the earlier Darwin Core extension.'
+            },
+            'resource_relationship': {
+                'label': 'Resource Relationship',
+                'file': 'resource_relationship_2025-07-10.xml',
+                'overview': 'Relationships between core records and other identified resources.'
             },
             'releve': {
                 'label': 'Relevé',
@@ -703,119 +725,6 @@ def _tree_additional_files(dataset) -> list[tuple[str, bytes]]:
         finally:
             user_file.file.close()
     return additional_files
-
-
-def _fill_projection_identifier(df: pd.DataFrame, target: str, source: str) -> None:
-    if source not in df.columns:
-        return
-    if target not in df.columns:
-        df[target] = df[source]
-        return
-    blank = df[target].astype("string").fillna("").str.strip() == ""
-    df.loc[blank, target] = df.loc[blank, source]
-
-
-def _repair_projection_identifier_duplicates(
-    df: pd.DataFrame,
-    target: str,
-    source: str,
-) -> Optional[str]:
-    """Use enforced package keys when weak DwC identifiers collide."""
-    if target not in df.columns or source not in df.columns:
-        return None
-
-    identifiers = df[target].astype("string").fillna("").str.strip()
-    folded = identifiers.str.casefold()
-    duplicate_mask = identifiers.ne("") & folded.duplicated(keep=False)
-    if not duplicate_mask.any():
-        return None
-
-    duplicate_rows = int(duplicate_mask.sum())
-    duplicate_groups = int(folded[duplicate_mask].nunique())
-    df.loc[duplicate_mask, target] = (
-        df.loc[duplicate_mask, source].astype("string").fillna("").str.strip()
-    )
-
-    # Enforced DwC-DP keys are exactly unique, but guard against the unlikely
-    # case-only collision or collision with an untouched weak identifier.
-    repaired = df[target].astype("string").fillna("").str.strip()
-    repaired_folded = repaired.str.casefold()
-    remaining_mask = repaired.eq("") | repaired_folded.duplicated(keep=False)
-    for index in df.index[remaining_mask]:
-        source_value = str(df.at[index, source]).strip()
-        stable_uuid = uuid.uuid5(
-            uuid.NAMESPACE_URL,
-            f"chatipt:dwca:{target}:{source_value}",
-        )
-        df.at[index, target] = f"urn:uuid:{stable_uuid}"
-
-    return (
-        f"Replaced {duplicate_rows} non-unique {target} value(s) across "
-        f"{duplicate_groups} duplicate group(s) with stable identifiers derived from "
-        f"the enforced {source} package key."
-    )
-
-
-def _project_dwca_from_dwc_dp_resources(resources):
-    """Return a conservative DwC-A core using the enforced DwC-DP key graph."""
-    if "occurrence" in resources:
-        core_df = resources["occurrence"].copy()
-        _fill_projection_identifier(core_df, "occurrenceID", "occurrence_pk")
-
-        if "event" in resources:
-            event_df = resources["event"].copy()
-            event_fields = [
-                column
-                for column in event_df.columns
-                if column != "event_pk" and column not in core_df.columns
-            ]
-            core_df = core_df.merge(
-                event_df[["event_pk", *event_fields]],
-                left_on="event_fk",
-                right_on="event_pk",
-                how="left",
-                validate="many_to_one",
-            )
-            _fill_projection_identifier(core_df, "eventID", "event_fk")
-
-        projection_warnings = []
-        identifier_warning = _repair_projection_identifier_duplicates(
-            core_df,
-            "occurrenceID",
-            "occurrence_pk",
-        )
-        if identifier_warning:
-            projection_warnings.append(identifier_warning)
-        internal_columns = [
-            column
-            for column in core_df.columns
-            if str(column).endswith("_pk") or str(column).endswith("_fk")
-        ]
-        projected = core_df.drop(columns=internal_columns)
-        projected.attrs["projection_warnings"] = projection_warnings
-        return projected, DarwinCoreCoreType.OCCURRENCE
-
-    if "event" in resources:
-        core_df = resources["event"].copy()
-        _fill_projection_identifier(core_df, "eventID", "event_pk")
-        projection_warnings = []
-        identifier_warning = _repair_projection_identifier_duplicates(
-            core_df,
-            "eventID",
-            "event_pk",
-        )
-        if identifier_warning:
-            projection_warnings.append(identifier_warning)
-        internal_columns = [
-            column
-            for column in core_df.columns
-            if str(column).endswith("_pk") or str(column).endswith("_fk")
-        ]
-        projected = core_df.drop(columns=internal_columns)
-        projected.attrs["projection_warnings"] = projection_warnings
-        return projected, DarwinCoreCoreType.EVENT
-
-    raise ValueError("DwC-A projection requires at least an occurrence or event DwC-DP resource.")
 
 
 class ValidateDwcDp(OpenAIBaseModel):
@@ -1115,77 +1024,6 @@ class PreviewDwcDpDescriptor(OpenAIBaseModel):
             }
             return json.dumps(preview, ensure_ascii=False, indent=2)
         except Exception as exc:
-            return repr(exc)[:2000]
-
-
-class ExportDwcaFromDwcDp(OpenAIBaseModel):
-    """
-    Create a conservative Darwin Core Archive projection from validated DwC-DP tables.
-    This currently projects occurrence/event data only; richer DNA, material, media, survey,
-    and interaction data remain authoritative in the DwC-DP export.
-    """
-
-    agent_id: PositiveInt = Field(...)
-    resource_tables: Optional[List[DwcDpResourceTable]] = Field(default=None)
-
-    def run(self):
-        from api.models import Agent, Dataset
-
-        try:
-            agent = Agent.objects.get(id=self.agent_id)
-            dataset = agent.dataset
-            resources, mapping_errors = _dwc_dp_resources_from_mapping(dataset, self.resource_tables)
-            if mapping_errors:
-                return "Error: " + "; ".join(mapping_errors)
-            validation = _validate_dwc_dp_for_dataset(dataset, resources)
-            dataset.dwc_dp_validation = validation
-            dataset.save(update_fields=["dwc_dp_validation"])
-            if not validation["valid"]:
-                return "DwC-DP validation failed; DwC-A projection was not created:\n" + json.dumps(validation, ensure_ascii=False, indent=2)
-
-            try:
-                core_df, core_type = _project_dwca_from_dwc_dp_resources(resources)
-            except ValueError as exc:
-                return f"Error: {exc}"
-            projection_warnings = list(core_df.attrs.get("projection_warnings") or [])
-
-            if core_type == DarwinCoreCoreType.OCCURRENCE:
-                dataset.dwc_core = Dataset.DWCCore.OCCURRENCE
-            else:
-                dataset.dwc_core = Dataset.DWCCore.EVENT
-
-            additional_files = (
-                _tree_additional_files(dataset)
-                if core_type == DarwinCoreCoreType.OCCURRENCE
-                else []
-            )
-
-            dwca_url = upload_dwca(
-                core_df,
-                dataset.title or "",
-                dataset.description or "",
-                core_type=core_type,
-                extensions=[],
-                user=dataset.user,
-                eml_extra=dataset.eml,
-                additional_files=additional_files if additional_files else None,
-            )
-            dataset.dwca_url = dwca_url
-            dataset.save(update_fields=["dwca_url", "dwc_core"])
-            warning_text = ""
-            review_warnings = [*validation["warnings"], *projection_warnings]
-            if review_warnings:
-                warning_text = "\nReview warnings:\n- " + "\n- ".join(review_warnings)
-            return (
-                f"DwC-A projection successfully created and uploaded: {dwca_url}\n"
-                "Projection note: DwC-DP remains the authoritative package. The DwC-A contains a conservative "
-                f"occurrence/event projection for GBIF compatibility.{warning_text}"
-            )
-        except Exception as exc:
-            import traceback
-            discord_bot.send_discord_message(
-                f"🚨 ExportDwcaFromDwcDp Tool Error:\nAgent ID: {self.agent_id}\nError: {exc}\n\n{traceback.format_exc()}"
-            )
             return repr(exc)[:2000]
 
 
@@ -2618,6 +2456,21 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
             return repr(e)[:2000]
 
 
+class DwcaExtensionTable(OpenAIBaseModel):
+    """A prepared DwC-A extension table and its explicit link to the core."""
+
+    table_id: PositiveInt = Field(..., description="Table ID containing the prepared extension rows.")
+    extension_type: DarwinCoreExtensionType = Field(..., description="Registered Darwin Core extension schema to use.")
+    core_id_column: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Column whose values match the selected core table identifier. This column is written "
+            "as the DwC-A <coreid> and is not a mapped Darwin Core term."
+        ),
+    )
+
+
 class UploadDwCA(OpenAIBaseModel):
     """
     Generates a Darwin Core Archive from the dataset and uploads it to object storage.
@@ -2628,9 +2481,12 @@ class UploadDwCA(OpenAIBaseModel):
     agent_id: PositiveInt = Field(...)
     core_table_id: PositiveInt = Field(..., description="Table ID to use as the DwC core.")
     core_type: DarwinCoreCoreType = Field(default=DarwinCoreCoreType.OCCURRENCE)
-    extension_tables: Optional[Dict[PositiveInt, DarwinCoreExtensionType]] = Field(
+    extension_tables: Optional[List[DwcaExtensionTable]] = Field(
         default=None,
-        description="Mapping of table ID to Darwin Core extension type (e.g. {42: 'measurement_or_fact'}).",
+        description=(
+            "Prepared extension tables. Each assignment must name the table, registered extension "
+            "schema, and the column containing identifiers that resolve to the selected core."
+        ),
     )
 
     @staticmethod
@@ -2662,32 +2518,74 @@ class UploadDwCA(OpenAIBaseModel):
 
             core_table = tables[self.core_table_id]
 
-            extension_map = {}
-            if self.extension_tables:
-                for table_id_raw, ext_type in self.extension_tables.items():
-                    table_id = int(table_id_raw)
-                    extension_map[table_id] = ext_type
+            extension_assignments = self.extension_tables or []
+            extension_table_ids = [assignment.table_id for assignment in extension_assignments]
+            duplicate_extension_ids = sorted({
+                table_id
+                for table_id in extension_table_ids
+                if extension_table_ids.count(table_id) > 1
+            })
+            if duplicate_extension_ids:
+                return (
+                    "Error: Each prepared table can be assigned to only one DwC-A extension. "
+                    f"Duplicate table ID(s): {', '.join(map(str, duplicate_extension_ids))}."
+                )
+
+            row_type_tables = {}
+            for assignment in extension_assignments:
+                row_type = EXTENSION_SCHEMAS[assignment.extension_type].row_type
+                row_type_tables.setdefault(row_type, []).append(assignment.table_id)
+            duplicate_row_types = {
+                row_type: table_ids
+                for row_type, table_ids in row_type_tables.items()
+                if len(table_ids) > 1
+            }
+            if duplicate_row_types:
+                details = "; ".join(
+                    f"{row_type}: {', '.join(map(str, table_ids))}"
+                    for row_type, table_ids in duplicate_row_types.items()
+                )
+                return (
+                    "Error: DwC-A can include only one prepared extension table per row type. "
+                    f"Combine the affected rows into one table: {details}."
+                )
 
             invalid_extension_ids = [
-                table_id for table_id in extension_map if table_id not in tables
+                table_id for table_id in extension_table_ids if table_id not in tables
             ]
             if invalid_extension_ids:
                 return self._unknown_table_error(invalid_extension_ids, tables.values())
 
-            if self.core_table_id in extension_map:
+            if self.core_table_id in extension_table_ids:
                 return (
                     f"Error: Table {self.core_table_id} was provided as both the core and an extension. "
                     "Please assign different tables to extensions."
                 )
 
             extension_payload = []
-            for table_id, extension_type in extension_map.items():
+            for assignment in extension_assignments:
+                table_id = assignment.table_id
+                extension_type = assignment.extension_type
                 if extension_type not in EXTENSION_SCHEMAS:
                     return (
                         f"Error: Unsupported extension type '{extension_type}'. "
                         f"Supported types: {', '.join(sorted(e.value for e in DarwinCoreExtensionType))}."
                     )
-                extension_payload.append((tables[table_id].df, extension_type))
+                extension_df = tables[table_id].df
+                matching_columns = [
+                    column
+                    for column in extension_df.columns
+                    if str(column).casefold() == assignment.core_id_column.casefold()
+                ]
+                if not matching_columns:
+                    return (
+                        f"Error: Extension table {table_id} has no core ID column "
+                        f"'{assignment.core_id_column}'. Available columns: "
+                        + ", ".join(map(str, extension_df.columns))
+                    )
+                extension_payload.append(
+                    (extension_df, extension_type, str(matching_columns[0]))
+                )
 
             # Process tree files if core type is OCCURRENCE or TAXON
             core_df = core_table.df.copy()

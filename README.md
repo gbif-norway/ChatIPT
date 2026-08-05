@@ -8,7 +8,7 @@ ChatIPT helps students and researchers publish biodiversity datasets to GBIF, es
 2. The chatbot helps clean and standardize the data through conversation.
 3. It guides metadata creation.
 4. It creates a relational Darwin Core Data Package (DwC-DP) as the authoritative dataset.
-5. It derives a conservative Darwin Core Archive projection for publication on GBIF.
+5. It derives the most complete standards-compliant Darwin Core Archive projection possible for publication on GBIF.
 
 ## Who it is for
 

@@ -18,7 +18,7 @@ class DarwinCoreSchema:
     local_filename: str
     row_type: str
     terms: Tuple[str, ...]
-    id_column: str | None = None
+    core_id_column: str | None = None
 
     @property
     def spec_path(self) -> str:
@@ -280,7 +280,7 @@ CORE_SCHEMAS: Dict[DarwinCoreCoreType, DarwinCoreSchema] = {
             "waterBody",
             "year",
         ),
-        id_column="occurrenceID",
+        core_id_column="occurrenceID",
     ),
     DarwinCoreCoreType.EVENT: DarwinCoreSchema(
         key="event",
@@ -387,7 +387,7 @@ CORE_SCHEMAS: Dict[DarwinCoreCoreType, DarwinCoreSchema] = {
             "waterBody",
             "year",
         ),
-        id_column="eventID",
+        core_id_column="eventID",
     ),
     DarwinCoreCoreType.TAXON: DarwinCoreSchema(
         key="taxon",
@@ -449,7 +449,7 @@ CORE_SCHEMAS: Dict[DarwinCoreCoreType, DarwinCoreSchema] = {
             "verbatimTaxonRank",
             "vernacularName",
         ),
-        id_column="taxonID",
+        core_id_column="taxonID",
     ),
 }
 
@@ -474,7 +474,6 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "parentMeasurementID",
             "verbatimMeasurementType",
         ),
-        id_column="measurementID",
     ),
     DarwinCoreExtensionType.DNA_DERIVED_DATA: DarwinCoreSchema(
         key="dna_derived_data_2024-07-11",
@@ -654,7 +653,6 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "verbatimTaxonRank",
             "vernacularName",
         ),
-        id_column="identificationID",
     ),
     DarwinCoreExtensionType.IDENTIFICATION_HISTORY: DarwinCoreSchema(
         key="identification_history_2025-07-10",
@@ -714,7 +712,6 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "verbatimTaxonRank",
             "vernacularName",
         ),
-        id_column="identificationID",
     ),
     DarwinCoreExtensionType.IDENTIFIER: DarwinCoreSchema(
         key="identifier",
@@ -830,7 +827,6 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "resourceID",
             "resourceRelationshipID",
         ),
-        id_column="resourceRelationshipID",
     ),
     DarwinCoreExtensionType.RESOURCE_RELATIONSHIP: DarwinCoreSchema(
         key="resource_relationship_2025-07-10",
@@ -848,7 +844,6 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "resourceID",
             "resourceRelationshipID",
         ),
-        id_column="resourceRelationshipID",
     ),
     DarwinCoreExtensionType.SPECIES_PROFILE: DarwinCoreSchema(
         key="speciesprofile_2019-01-29",
@@ -980,7 +975,6 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "uncalibratedChronometricAge",
             "verbatimChronometricAge",
         ),
-        id_column="chronometricAgeID",
     ),
 }
 
@@ -994,5 +988,4 @@ def iter_schemas(include_extensions: bool = True) -> Iterable[DarwinCoreSchema]:
     yield from CORE_SCHEMAS.values()
     if include_extensions:
         yield from EXTENSION_SCHEMAS.values()
-
 

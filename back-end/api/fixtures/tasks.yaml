@@ -263,7 +263,12 @@
           *   Run ValidateDwcDp. Fix any DwC-DP schema, required-field, unique-ID, numeric-constraint, or foreign-key issues before exporting. Treat warnings about duplicate weak primary identifiers used by the DwC-A core as issues to resolve before export.
           *   Optionally call PreviewDwcDpDescriptor if you need to inspect the generated datapackage.json before export.
           *   Call ExportDwcDp. This is the authoritative package.
-          *   Call ExportDwcaFromDwcDp to create the simpler DwC-A projection for GBIF compatibility. Use UploadDwCA directly only as a fallback if the projection tool cannot represent the dataset and you have manually checked the necessary Darwin Core core/extension schemas.
+          *   Build the most complete standards-compliant DwC-A projection possible. Inspect every populated DwC-DP resource and first map compatible facts to standard core terms or an applicable registered extension. Prefer the registered extension whenever it can express the facts cleanly; use projection-only `dynamicProperties` only as a fallback for genuinely unrepresentable per-core facts.
+          *   Call GetDarwinCoreInfo and GetDwCExtensionInfo for the relevant core and every extension you intend to use. Do not invent extension terms.
+          *   Use Python to create temporary non-DwC-DP projection tables for the final core and extensions. Do not alter the authoritative schema-valid DwC-DP resource tables. Temporary projection tables are removed automatically after the final task completes.
+          *   Each extension table must have a dedicated `_coreid` column. Resolve `_coreid` through the validated DwC-DP graph so every value exactly matches the selected core table identifier. Check join cardinality and unmatched rows before upload.
+          *   For every populated DwC-DP resource, record whether its compatible facts were represented in the core, represented in an extension, preserved in `dynamicProperties`, or could not be projected. Give exact row/field counts and a reason for anything not represented. Silent omission is an error.
+          *   Call UploadDwCA with the temporary core table and explicit extension assignments (`table_id`, `extension_type`, and `core_id_column`).
           *   Check the DwC-A projection for GBIF issues by calling the ValidateDwCA tool.
           *   Never add DwC-A-only fields such as basisOfRecord directly to a DwC-DP resource when GetDwcDpTableInfo does not list them. The authoritative DwC-DP tables must remain schema-valid after projection and validation.
           *   Fix the issues, asking the user any questions if necessary

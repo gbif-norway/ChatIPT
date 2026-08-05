@@ -1193,6 +1193,16 @@ def validate_dwca_archive(archive_path: str | Path) -> dict:
             ]
             if not table_elements:
                 errors.append("meta.xml does not declare a core or extension table.")
+            core_elements = [
+                element
+                for element in table_elements
+                if _local_xml_name(element.tag) == "core"
+            ]
+            if len(core_elements) != 1:
+                errors.append("meta.xml must declare exactly one core table.")
+
+            core_identifiers = None
+            extension_links = []
 
             for table in table_elements:
                 table_kind = _local_xml_name(table.tag)
@@ -1211,6 +1221,7 @@ def validate_dwca_archive(archive_path: str | Path) -> dict:
 
                 indexes = []
                 id_index = None
+                coreid_index = None
                 for child in table:
                     child_name = _local_xml_name(child.tag)
                     if child_name not in {"id", "coreid", "field"}:
@@ -1225,6 +1236,11 @@ def validate_dwca_archive(archive_path: str | Path) -> dict:
                     indexes.append(index)
                     if child_name == "id":
                         id_index = index
+                    elif child_name == "coreid":
+                        coreid_index = index
+
+                if table_kind == "extension" and coreid_index is None:
+                    errors.append("meta.xml extension does not declare a coreid field.")
 
                 expected_columns = max(indexes, default=-1) + 1
                 delimiter = _decoded_dialect_character(
@@ -1284,6 +1300,33 @@ def validate_dwca_archive(archive_path: str | Path) -> dict:
                             errors.append(
                                 f"DwC-A core '{location}' contains duplicate identifiers."
                             )
+                        if core_identifiers is None:
+                            core_identifiers = set()
+                        core_identifiers.update(identifiers)
+
+                    if (
+                        table_kind == "extension"
+                        and coreid_index is not None
+                        and not malformed
+                    ):
+                        identifiers = [row[coreid_index].strip() for row in data_rows]
+                        if any(not value for value in identifiers):
+                            errors.append(
+                                f"DwC-A extension '{location}' contains blank core identifiers."
+                            )
+                        extension_links.append((location, identifiers))
+
+            if extension_links and core_identifiers is None:
+                errors.append("DwC-A extensions require a core table with an explicit id field.")
+            elif core_identifiers is not None:
+                for location, identifiers in extension_links:
+                    unresolved = sorted(set(identifiers) - core_identifiers)
+                    if unresolved:
+                        preview = ", ".join(unresolved[:5])
+                        errors.append(
+                            f"DwC-A extension '{location}' contains {len(unresolved)} core "
+                            f"identifier(s) that do not resolve to the core. Examples: {preview}."
+                        )
     except Exception as exc:
         errors.append(f"DwC-A archive cannot be opened: {exc}.")
 
@@ -1295,21 +1338,21 @@ def upload_dwca(
     title,
     description,
     core_type: DarwinCoreCoreType,
-    extensions: list[tuple[object, DarwinCoreExtensionType]] | None = None,
+    extensions: list[tuple[object, DarwinCoreExtensionType, str]] | None = None,
     user=None,
     eml_extra: dict | None = None,
     additional_files: list[tuple[str, bytes]] | None = None,
 ):
     df_core = _sanitize_dataframe_for_utf8_export(df_core)
     extensions = [
-        (_sanitize_dataframe_for_utf8_export(ext_df), ext_type)
-        for ext_df, ext_type in extensions or []
+        (_sanitize_dataframe_for_utf8_export(ext_df), ext_type, core_id_column)
+        for ext_df, ext_type, core_id_column in extensions or []
     ]
     serialization_errors = utf8_serialization_errors({
         "core": df_core,
         **{
             f"extension-{index}": ext_df
-            for index, (ext_df, _) in enumerate(extensions, start=1)
+            for index, (ext_df, _, _) in enumerate(extensions, start=1)
         },
     })
     if serialization_errors:
@@ -1333,10 +1376,26 @@ def upload_dwca(
 
     core_schema = CORE_SCHEMAS[core_type]
     core_id_index = None
-    if core_schema.id_column:
-        core_id_index = ensure_identifier_column(df_core, core_schema.id_column)
+    core_id_column = None
+    if core_schema.core_id_column:
+        core_id_index = ensure_identifier_column(df_core, core_schema.core_id_column)
         core_id_column = df_core.columns[core_id_index]
+        if core_id_index != 0:
+            identifier_values = df_core.pop(core_id_column)
+            df_core.insert(0, core_id_column, identifier_values)
+            core_id_index = 0
+        df_core[core_id_column] = (
+            df_core[core_id_column].astype("string").fillna("").str.strip()
+        )
+        if df_core[core_id_column].eq("").any():
+            raise ValueError(f"DwC-A core identifier column '{core_id_column}' contains blank values.")
         assert_case_insensitive_unique_identifier(df_core, core_id_column)
+
+    core_identifiers = (
+        set(df_core[core_id_column].tolist())
+        if core_id_index is not None
+        else set()
+    )
 
     # Validate spec_path exists if it's a local file (not a URL)
     core_spec_path = core_schema.spec_path
@@ -1363,6 +1422,7 @@ def upload_dwca(
         "spec": core_spec_path,
         "data": df_core,
         "only_mapped_columns": True,
+        "fields_enclosed_by": '"',
     }
     if core_id_index is not None:
         core_kwargs["id_index"] = core_id_index
@@ -1398,9 +1458,42 @@ def upload_dwca(
     
     archive.core = core_table
 
-    for ext_df, ext_type in extensions or []:
+    for ext_df, ext_type, extension_core_id_column in extensions or []:
         schema = EXTENSION_SCHEMAS[ext_type]
         ext_spec_path = schema.spec_path
+
+        matching_columns = [
+            column
+            for column in ext_df.columns
+            if str(column).casefold() == str(extension_core_id_column).casefold()
+        ]
+        if not matching_columns:
+            raise ValueError(
+                f"DwC-A extension '{ext_type}' has no core ID column "
+                f"'{extension_core_id_column}'."
+            )
+        actual_core_id_column = matching_columns[0]
+        if ext_df.columns.get_loc(actual_core_id_column) != 0:
+            identifier_values = ext_df.pop(actual_core_id_column)
+            ext_df.insert(0, actual_core_id_column, identifier_values)
+        ext_df[actual_core_id_column] = (
+            ext_df[actual_core_id_column].astype("string").fillna("").str.strip()
+        )
+        blank_links = int(ext_df[actual_core_id_column].eq("").sum())
+        if blank_links:
+            raise ValueError(
+                f"DwC-A extension '{ext_type}' contains {blank_links} blank core ID value(s) "
+                f"in '{actual_core_id_column}'."
+            )
+        if core_id_index is None:
+            raise ValueError("DwC-A extensions require a core table with an explicit identifier.")
+        unresolved = sorted(set(ext_df[actual_core_id_column]) - core_identifiers)
+        if unresolved:
+            examples = ", ".join(map(str, unresolved[:5]))
+            raise ValueError(
+                f"DwC-A extension '{ext_type}' contains {len(unresolved)} core ID value(s) "
+                f"that do not resolve to the core '{core_id_column}' column. Examples: {examples}."
+            )
         
         # Validate spec_path exists if it's a local file (not a URL)
         if not ext_spec_path.startswith(('http://', 'https://')):
@@ -1425,9 +1518,9 @@ def upload_dwca(
             "spec": ext_spec_path,
             "data": ext_df,
             "only_mapped_columns": True,
+            "id_index": 0,
+            "fields_enclosed_by": '"',
         }
-        if schema.id_column:
-            ext_kwargs["id_index"] = ensure_identifier_column(ext_df, schema.id_column)
         try:
             archive.extensions.append(LocalSpecTable(**ext_kwargs))
         except Exception as e:

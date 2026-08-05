@@ -492,7 +492,7 @@ export function PublicationPackageCards({ dataset, tables }) {
         <div className="col-12 col-xl-6">
           <div className="publication-output-card h-100 border rounded p-3">
             <h4 className="h6 mb-1">Darwin Core Archive</h4>
-            <p className="small mb-3">Simplified projection for current GBIF publication workflows</p>
+            <p className="small mb-3">Standards-compliant projection for current GBIF publication workflows</p>
             {dataset.dwca_url && (
               <a href={dataset.dwca_url} className="btn btn-outline-secondary btn-sm">
                 <i className="bi bi-download me-1" aria-hidden="true"></i>
@@ -500,8 +500,8 @@ export function PublicationPackageCards({ dataset, tables }) {
               </a>
             )}
             <p className="small text-muted mb-0 mt-3">
-              The DwC-A is a simplified projection derived from the full package. Some relationships
-              and richer structures are preserved only in the DwC-DP.{' '}
+              The DwC-A preserves as much of the full package as its core-and-extension structure
+              can represent. The DwC-DP remains the complete authoritative package.{' '}
               <a
                 href="https://gbif.github.io/dwc-dp/qrg/"
                 target="_blank"
