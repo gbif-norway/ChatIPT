@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
+import { datasetNeedsWorkflowAdvance } from '../utils/workflowState.mjs';
 
 const DatasetContext = createContext();
 
@@ -74,9 +75,10 @@ export const DatasetProvider = ({ children }) => {
       console.log(`Loading dataset ${datasetId} with ${config.baseUrl}/api/datasets/${datasetId}/`);
       const dataset = await fetchData(`${config.baseUrl}/api/datasets/${datasetId}/`);
       
-      // Check if the dataset has any agents - if not, use the refresh endpoint to initialize
-      if (!dataset.visible_agent_set || dataset.visible_agent_set.length === 0) {
-        console.log('No agents found, using refresh endpoint to initialize dataset');
+      // Initialize new datasets and resume incomplete datasets that were reopened
+      // after their previous task completed but before the next task was created.
+      if (datasetNeedsWorkflowAdvance(dataset)) {
+        console.log('Dataset workflow needs advancing, using refresh endpoint');
         const refreshedDataset = await fetchData(`${config.baseUrl}/api/datasets/${datasetId}/refresh`);
         setDatasets(prev => new Map(prev).set(datasetId, refreshedDataset));
       } else {

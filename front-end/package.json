@@ -6,7 +6,8 @@
     "dev": "next dev --webpack",
     "build": "NODE_ENV=production next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "node --test app/utils/*.test.mjs"
   },
   "dependencies": {
     "bootstrap": "^5.3.3",

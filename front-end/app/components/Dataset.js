@@ -8,6 +8,7 @@ import DatasetPackageOverview, { PublicationPackageCards } from './DatasetPackag
 import PackageExplorer from './PackageExplorer';
 import TreeVisualization from './TreeVisualization';
 import { getDatasetStatus, getStatusMeta, pluralize } from '../utils/datasetPresentation';
+import { datasetIsActivelyProcessing } from '../utils/workflowState.mjs';
 
 import Accordion from 'react-bootstrap/Accordion';
 import DataTable from 'react-data-table-component';
@@ -652,10 +653,10 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
               </div>
             </div>
           )}
-          {(currentDataset.visible_agent_set && currentDataset.visible_agent_set.length > 0 && currentDataset.visible_agent_set.at(-1).completed_at != null && currentDataset.published_at == null && !currentDataset.package_ready) && (
+          {datasetIsActivelyProcessing(currentDataset) && (
             <div className="message user-input-loading">
               <div className="d-flex align-items-center">
-                <strong>Working... loading next task</strong>
+                <strong>Working...</strong>
                 <div className="spinner-border ms-auto" role="status" aria-hidden="true"></div>
               </div>
             </div>
