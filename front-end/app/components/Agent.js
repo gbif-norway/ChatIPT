@@ -2,11 +2,14 @@ import Message from './Message';
 import { useState, useEffect, useRef } from 'react';
 import Accordion from 'react-bootstrap/Accordion';
 import Badge from 'react-bootstrap/Badge';
+import Button from 'react-bootstrap/Button';
+import Collapse from 'react-bootstrap/Collapse';
 import OverlayTrigger from 'react-bootstrap/OverlayTrigger';
 import Tooltip from 'react-bootstrap/Tooltip';
 import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
 import { getLoadingText } from '../utils/loading.js';
+import { groupAgentMessages } from '../utils/agentMessageGroups.mjs';
 import { useDataset } from '../contexts/DatasetContext.js';
 import {
   ALLOWED_FILE_EXTENSIONS,
@@ -62,6 +65,7 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
   const [optimisticMessage, setOptimisticMessage] = useState(null);
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploadError, setUploadError] = useState(null);
+  const [processingDetailsOpen, setProcessingDetailsOpen] = useState(false);
   const fileInputRef = useRef(null);
   const { isDark } = useTheme();
   const { consumeNextUserMessagePrefix, queueNextUserMessagePrefix } = useDataset();
@@ -435,62 +439,28 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
     }
   };
 
-  const renderGroupedMessages = (messages) => {
-    const groupedComponents = [];
-    let i = 0;
-    
-    while (i < messages.length) {
-      const message = messages[i];
-      
-      // Handle assistant messages with python tool calls
-      if (message.role === 'assistant' && message.openai_obj.tool_calls) {
-        const python_calls = message.openai_obj.tool_calls.filter(
-          tool_call => tool_call.function.name === 'Python'
-        );
-        
-        if (python_calls.length > 0) {
-          // Look ahead for corresponding tool result messages
-          const toolResults = [];
-          let j = i + 1;
-          
-          // Collect consecutive tool messages that correspond to the python calls
-          while (j < messages.length && messages[j].role === 'tool') {
-            toolResults.push(messages[j]);
-            j++;
-          }
-          
-          // Render python calls with their results
-          python_calls.forEach((python_call, callIndex) => {
-            const correspondingResult = toolResults[callIndex];
-            
-            groupedComponents.push(
-              <Message 
-                key={`grouped-${message.id}-${python_call.id}`} 
-                message={{
-                  ...message,
-                  id: `grouped-${message.id}-${python_call.id}`,
-                  openai_obj: {
-                    ...message.openai_obj,
-                    tool_calls: [python_call]
-                  }
-                }}
-                toolResult={correspondingResult}
-              />
-            );
-          });
-          
-          // Skip the processed tool result messages
-          i = j;
-          continue;
-        }
-      }
-      
-      // Handle regular messages (including standalone tool results)
-      groupedComponents.push(<Message key={message.id} message={message} />);
-      i++;
+  const { conversationMessages, processingEntries } = groupAgentMessages(agent.message_set);
+
+  const renderProcessingEntry = (entry) => {
+    if (entry.kind === 'python') {
+      const { message, toolCall, toolResult } = entry;
+      return (
+        <Message
+          key={`grouped-${message.id}-${toolCall.id}`}
+          message={{
+            ...message,
+            id: `grouped-${message.id}-${toolCall.id}`,
+            openai_obj: {
+              ...message.openai_obj,
+              tool_calls: [toolCall]
+            }
+          }}
+          toolResult={toolResult}
+        />
+      );
     }
-    
-    return groupedComponents;
+
+    return <Message key={entry.message.id} message={entry.message} />;
   };
 
   // Determine if the assistant is waiting for a reply from the user
@@ -514,7 +484,40 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
           &nbsp;
         </Accordion.Header>
         <Accordion.Body>
-          {renderGroupedMessages(agent.message_set)}
+          {conversationMessages.map((message) => (
+            <Message key={message.id} message={message} />
+          ))}
+
+          {processingEntries.length > 0 && (
+            <div className="processing-details">
+              <Button
+                type="button"
+                variant="link"
+                className="processing-details-toggle"
+                onClick={() => setProcessingDetailsOpen((open) => !open)}
+                aria-controls={`processing-details-${agent.id}`}
+                aria-expanded={processingDetailsOpen}
+              >
+                <span
+                  className={`processing-details-chevron${processingDetailsOpen ? ' open' : ''}`}
+                  aria-hidden="true"
+                >
+                  &#9656;
+                </span>
+                <span>Processing details</span>
+                <Badge bg="secondary" pill>
+                  {processingEntries.length} {processingEntries.length === 1 ? 'step' : 'steps'}
+                </Badge>
+              </Button>
+              <Collapse in={processingDetailsOpen}>
+                <div id={`processing-details-${agent.id}`}>
+                  <div className="processing-details-log">
+                    {processingEntries.map(renderProcessingEntry)}
+                  </div>
+                </div>
+              </Collapse>
+            </div>
+          )}
           
           {/* Show optimistic user message immediately */}
           {optimisticMessage && (
