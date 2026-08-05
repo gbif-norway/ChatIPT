@@ -316,7 +316,7 @@ export default function DatasetPackageOverview({ dataset, tables, tablesLoading 
 
             <div className="modal-body pt-3">
               <p className="small mb-3">
-                We’ll send one email when ChatIPT needs your input or your package is ready. Keep this tab open so processing can continue.
+                We’ll send one email when ChatIPT needs your input or your package is ready. <strong>Keep this tab open so processing can continue.</strong>
               </p>
 
               {emailNotificationArmed ? (
