@@ -1,6 +1,5 @@
 import os
 import datetime
-import gzip
 import io
 import json
 import tarfile
@@ -112,7 +111,7 @@ class DwcDpSpecTests(SimpleTestCase):
         self.assertEqual(len(descriptor['dwcDpSchema']['sha256']), 64)
         self.assertEqual(validate_datapackage_descriptor(descriptor), [])
         occurrence = next(resource for resource in descriptor['resources'] if resource['name'] == 'occurrence')
-        self.assertEqual(occurrence['path'], 'occurrence.csv.gz')
+        self.assertEqual(occurrence['path'], 'occurrence.csv')
         self.assertEqual(occurrence['schema']['primaryKey'], 'occurrence_pk')
         self.assertEqual(occurrence['schema']['weakPrimaryKey'], 'occurrenceID')
         self.assertEqual(
@@ -232,7 +231,7 @@ class DwcDpSpecTests(SimpleTestCase):
         self.assertEqual(weak_fk['fields'], 'eventConductedByID')
         self.assertEqual(weak_fk['reference']['fields'], 'agentID')
 
-    def test_creates_rooted_archive_with_gzipped_csv_resources(self):
+    def test_creates_rooted_archive_with_plain_csv_resources(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             archive_path = Path(temp_dir) / 'package.tar.gz'
             create_dwc_dp_archive(
@@ -245,10 +244,10 @@ class DwcDpSpecTests(SimpleTestCase):
             with tarfile.open(archive_path, 'r:gz') as archive:
                 self.assertEqual(
                     sorted(archive.getnames()),
-                    ['datapackage.json', 'eml.xml', 'event.csv.gz', 'occurrence.csv.gz'],
+                    ['datapackage.json', 'eml.xml', 'event.csv', 'occurrence.csv'],
                 )
                 descriptor = json.load(archive.extractfile('datapackage.json'))
-                occurrence_csv = gzip.decompress(archive.extractfile('occurrence.csv.gz').read()).decode('utf-8')
+                occurrence_csv = archive.extractfile('occurrence.csv').read().decode('utf-8')
 
         self.assertEqual(descriptor['dwcDpSchema']['revision'], DWC_DP_SCHEMA_REVISION)
         self.assertIn('occurrence_pk,occurrenceID,event_fk', occurrence_csv)

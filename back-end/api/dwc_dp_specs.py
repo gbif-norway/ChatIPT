@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import gzip
 import hashlib
 import io
 import json
@@ -704,7 +703,7 @@ def build_datapackage_descriptor(
         descriptor["resources"].append(
             {
                 "name": name,
-                "path": f"{name}.csv.gz",
+                "path": f"{name}.csv",
                 "profile": "tabular-data-resource",
                 "format": "csv",
                 "mediatype": "text/csv",
@@ -718,11 +717,9 @@ def build_datapackage_descriptor(
     return descriptor
 
 
-def _write_csv_gzip(df: pd.DataFrame, path: Path) -> None:
-    csv_buffer = io.StringIO()
-    df.to_csv(csv_buffer, index=False, lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
-    with gzip.open(path, "wt", encoding="utf-8", newline="") as handle:
-        handle.write(csv_buffer.getvalue())
+def _write_csv(df: pd.DataFrame, path: Path) -> None:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        df.to_csv(handle, index=False, lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
 
 
 def _safe_archive_name(filename: str) -> str:
@@ -788,12 +785,11 @@ def validate_dwc_dp_archive(
                     )
                     continue
                 try:
-                    compressed = archive.extractfile(resource_path).read()
-                    text = gzip.decompress(compressed).decode("utf-8", "strict")
+                    text = archive.extractfile(resource_path).read().decode("utf-8", "strict")
                     rows = list(csv.reader(io.StringIO(text, newline="")))
                 except Exception as exc:
                     errors.append(
-                        f"Resource '{resource_name}' cannot be read as strict UTF-8 gzip CSV: {exc}."
+                        f"Resource '{resource_name}' cannot be read as strict UTF-8 CSV: {exc}."
                     )
                     continue
                 if not rows:
@@ -872,7 +868,7 @@ def create_dwc_dp_archive(
         )
         for raw_name, df in resources.items():
             name = normalize_resource_name(raw_name)
-            _write_csv_gzip(df, package_root / f"{name}.csv.gz")
+            _write_csv(df, package_root / f"{name}.csv")
 
         additional_names = []
         for filename, content in additional_files or []:
