@@ -70,6 +70,7 @@ from .dwc_dp_specs import (
     validate_dwc_dp_resources,
 )
 from .dwc_specs import EXTENSION_SCHEMAS, DarwinCoreCoreType, DarwinCoreExtensionType
+from .publication_validation import accounting_semantic_warnings
 
 
 class DwcDpSpecTests(SimpleTestCase):
@@ -234,6 +235,70 @@ class DwcDpSpecTests(SimpleTestCase):
         weak_fk = event['schema']['weakForeignKeys'][0]
         self.assertEqual(weak_fk['fields'], 'eventConductedByID')
         self.assertEqual(weak_fk['reference']['fields'], 'agentID')
+
+    def test_accounting_warns_when_supplied_higher_taxonomy_is_not_preserved(self):
+        accounting = {
+            "declaration": {
+                "sources": [{
+                    "source_table_title": "observations.csv",
+                    "columns": [{
+                        "source_column": "Identification.Kingdom",
+                        "source_populated_values": 12,
+                        "destinations": [{
+                            "kind": "omitted",
+                            "source_values": 12,
+                            "reason": "not mapped",
+                        }],
+                    }],
+                }],
+            },
+        }
+
+        warnings = accounting_semantic_warnings(accounting)
+
+        self.assertTrue(any("Higher-taxonomy preservation" in warning for warning in warnings))
+        self.assertTrue(any("observations.csv.Identification.Kingdom" in warning for warning in warnings))
+
+    def test_accounting_accepts_higher_taxonomy_routed_to_identification(self):
+        accounting = {
+            "declaration": {
+                "sources": [{
+                    "source_table_title": "observations.csv",
+                    "columns": [{
+                        "source_column": "Family",
+                        "source_populated_values": 12,
+                        "destinations": [{
+                            "kind": "resource",
+                            "source_values": 12,
+                            "target_table": "identification",
+                            "target_field": "family",
+                        }],
+                    }],
+                }],
+            },
+        }
+
+        warnings = accounting_semantic_warnings(accounting)
+
+        self.assertFalse(any("Higher-taxonomy preservation" in warning for warning in warnings))
+
+    def test_accounting_ignores_empty_higher_taxonomy_columns(self):
+        accounting = {
+            "declaration": {
+                "sources": [{
+                    "source_table_title": "observations.csv",
+                    "columns": [{
+                        "source_column": "phylum",
+                        "source_populated_values": 0,
+                        "destinations": [],
+                    }],
+                }],
+            },
+        }
+
+        warnings = accounting_semantic_warnings(accounting)
+
+        self.assertFalse(any("Higher-taxonomy preservation" in warning for warning in warnings))
 
     def test_creates_rooted_archive_with_plain_csv_resources(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2291,6 +2356,30 @@ class UploadDwcaCorrectionFeedbackTests(TestCase):
 
 
 class DatasetSummarySerializerTests(TestCase):
+    def test_serializers_expose_rich_modeling_mode(self):
+        dataset = Dataset.objects.create(
+            title="Rich package",
+            dwc_dp_modeling_mode=Dataset.DwcDpModelingMode.RICH,
+        )
+
+        self.assertEqual(DatasetSerializer(dataset).data["dwc_dp_modeling_mode"], "rich")
+        self.assertEqual(DatasetListSerializer(dataset).data["dwc_dp_modeling_mode"], "rich")
+
+    def test_rich_modeling_mode_is_included_in_agent_prompt(self):
+        dataset = Dataset.objects.create(
+            title="Rich package",
+            description="Test",
+            dwc_dp_modeling_mode=Dataset.DwcDpModelingMode.RICH,
+        )
+        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+
+        agent = Agent.create_with_system_message(dataset=dataset, task=task, tables=[])
+        prompt = agent.message_set.get(openai_obj__role="system").openai_obj["content"]
+
+        self.assertIn("Package modelling preference: rich", prompt)
+        self.assertIn("RICH RELATIONAL MODE", prompt)
+        self.assertIn("Usage Policy", prompt)
+
     def test_package_explorer_model_uses_current_schema_and_reports_link_coverage(self):
         dataset = Dataset.objects.create(title="Explorer")
         Table.objects.create(
@@ -2981,9 +3070,21 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("supported by source structure, identifiers, metadata", text)
         self.assertIn("One current scientificName per occurrence normally stays in occurrence", text)
         self.assertIn("Never create identification rows containing only identification_pk", text)
+        self.assertIn("Higher-taxonomy preservation is mandatory", text)
+        self.assertIn("Never reduce such a row to scientificName alone", text)
         self.assertIn("DATE PRECISION", text)
         self.assertIn("Never use today's month or day as a parser default", text)
         self.assertIn("normalize_event_date", text)
+
+    def test_transformation_prompt_reviews_dedicated_resource_candidates(self):
+        text = self.task_text["Data transformation"]
+
+        self.assertIn("DEDICATED RESOURCE CANDIDATE REVIEW", text)
+        self.assertIn("Agent/Agent Role", text)
+        self.assertIn("Bibliographic Resource/Reference", text)
+        self.assertIn("Usage Policy", text)
+        self.assertIn("Provenance", text)
+        self.assertIn("Assertions are not a generic overflow destination", text)
 
     def test_transformation_prompt_requires_assertion_coverage_and_join_checks(self):
         text = self.task_text["Data transformation"]

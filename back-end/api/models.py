@@ -43,6 +43,10 @@ class CustomUser(AbstractUser):
 
 
 class Dataset(models.Model):
+    class DwcDpModelingMode(models.TextChoices):
+        GUIDED = 'guided', _('Guided package')
+        RICH = 'rich', _('Rich relational package')
+
     created_at = models.DateTimeField(auto_now_add=True)
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='datasets', null=True, blank=True)
     orcid = models.CharField(max_length=2000, blank=True)
@@ -58,6 +62,11 @@ class Dataset(models.Model):
     dwc_dp_accounting = models.JSONField(null=True, blank=True)
     gbif_url = models.CharField(max_length=2000, blank=True)
     user_language = models.CharField(max_length=100, blank=True)
+    dwc_dp_modeling_mode = models.CharField(
+        max_length=20,
+        choices=DwcDpModelingMode.choices,
+        default=DwcDpModelingMode.GUIDED,
+    )
 
     class DWCCore(models.TextChoices):
         EVENT = 'event_occurrences'

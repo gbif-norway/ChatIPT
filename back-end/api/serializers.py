@@ -139,6 +139,7 @@ class DatasetSerializer(serializers.ModelSerializer):
             'gbif_url',
             'user_language',
             'dwc_core',
+            'dwc_dp_modeling_mode',
             'source_mode',
             'visible_agent_set',
             'user_info',
@@ -279,6 +280,7 @@ class DatasetListSerializer(serializers.ModelSerializer):
         model = Dataset
         fields = [
             'id', 'title', 'description', 'dwc_core',
+            'dwc_dp_modeling_mode',
             'created_at', 'published_at',
             'record_count', 'counts', 'last_updated', 'status', 'progress',
             'last_message_preview', 'user_info', 'user_files', 'source_mode',

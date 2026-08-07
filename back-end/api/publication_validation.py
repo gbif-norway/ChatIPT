@@ -529,10 +529,50 @@ def accounting_semantic_warnings(accounting: Any) -> list[str]:
         int(destination.get("source_values") or 0)
         for destination in omitted_destinations
     )
-    if not any((omitted_values, omitted_columns, omitted_rows)):
-        return []
-    return [
-        "Semantic review: source accounting records explicit omissions "
-        f"({omitted_rows} row(s), {omitted_columns} column(s), {omitted_values} populated value(s)). "
-        "Confirm that these omissions are intentional or user-requested before publication."
-    ]
+    warnings = []
+    if any((omitted_values, omitted_columns, omitted_rows)):
+        warnings.append(
+            "Semantic review: source accounting records explicit omissions "
+            f"({omitted_rows} row(s), {omitted_columns} column(s), {omitted_values} populated value(s)). "
+            "Confirm that these omissions are intentional or user-requested before publication."
+        )
+
+    higher_taxonomy_fields = {
+        "kingdom", "subkingdom", "phylum", "subphylum", "class", "subclass",
+        "order", "suborder", "superfamily", "family", "subfamily", "tribe",
+        "subtribe", "genus", "subgenus", "specificEpithet", "infraspecificEpithet",
+    }
+    missing_taxonomy = []
+    for source in sources:
+        for column in source.get("columns") or []:
+            source_name = str(column.get("source_column") or "").strip()
+            source_term = source_name.rsplit(".", 1)[-1].strip()
+            canonical_name = next(
+                (field for field in higher_taxonomy_fields if field.casefold() == source_term.casefold()),
+                None,
+            )
+            if not canonical_name:
+                continue
+            populated_values = int(column.get("source_populated_values") or 0)
+            if populated_values <= 0:
+                continue
+            preserved = any(
+                destination.get("kind") == "resource"
+                and destination.get("target_table") in {"identification", "identification-taxon"}
+                and destination.get("target_field") == canonical_name
+                and int(destination.get("source_values") or 0) > 0
+                for destination in column.get("destinations") or []
+            )
+            if not preserved:
+                missing_taxonomy.append(
+                    f"{source.get('source_table_title', 'source')}.{source_name} "
+                    f"({populated_values} populated value(s))"
+                )
+    if missing_taxonomy:
+        warnings.append(
+            "Higher-taxonomy preservation: populated source classification fields are not routed "
+            "to identification or identification-taxon: " + "; ".join(missing_taxonomy[:10]) + ". "
+            "Create a linked Identification resource and preserve these fields, or verify that the "
+            "accounting route is accurate before publication."
+        )
+    return warnings

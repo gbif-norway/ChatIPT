@@ -34,6 +34,7 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
   const { isDark } = useTheme();
   const [userInput, setUserInput] = useState('');
   const [selectedFiles, setSelectedFiles] = useState([]);
+  const [modelingMode, setModelingMode] = useState('guided');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const fileInputRef = useRef(null);
@@ -155,6 +156,7 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
       if (trimmedInput.length > 0) {
         formData.append('upload_context_message', trimmedInput);
       }
+      formData.append('dwc_dp_modeling_mode', modelingMode);
 
       const response = await fetch(`${config.baseUrl}/api/datasets/`, {
         method: 'POST',
@@ -317,6 +319,40 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
                 ))}
               </div>
             )}
+
+            <fieldset className="mt-3" disabled={isSubmitting}>
+              <legend className="form-label small fw-semibold mb-2">DwC-DP package detail</legend>
+              <div className="d-flex flex-column flex-md-row gap-2">
+                <label className="border rounded p-2 flex-fill d-flex gap-2 align-items-start">
+                  <input
+                    className="form-check-input mt-1"
+                    type="radio"
+                    name="dwcDpModelingMode"
+                    value="guided"
+                    checked={modelingMode === 'guided'}
+                    onChange={(event) => setModelingMode(event.target.value)}
+                  />
+                  <span>
+                    <span className="d-block fw-semibold">Guided package</span>
+                    <span className="d-block text-muted small">A clear, minimum sufficient structure. Recommended for most users.</span>
+                  </span>
+                </label>
+                <label className="border rounded p-2 flex-fill d-flex gap-2 align-items-start">
+                  <input
+                    className="form-check-input mt-1"
+                    type="radio"
+                    name="dwcDpModelingMode"
+                    value="rich"
+                    checked={modelingMode === 'rich'}
+                    onChange={(event) => setModelingMode(event.target.value)}
+                  />
+                  <span>
+                    <span className="d-block fw-semibold">Rich relational package</span>
+                    <span className="d-block text-muted small">Actively reviews Identification, Agent, Reference, Protocol, Usage Policy, and Provenance tables when your data supports them.</span>
+                  </span>
+                </label>
+              </div>
+            </fieldset>
 
             {error && (
               <div className="text-danger small mt-3" role="alert">

@@ -467,9 +467,9 @@ export function PublicationPackageCards({ dataset, tables }) {
               DwC-DP profile {profileVersion(standard.profile)} ·{' '}
               {schema.source ? (
                 <a href={schema.source} target="_blank" rel="noopener noreferrer">
-                  schema {schema.version || 'Unknown'}
+                  schema snapshot {schema.version || 'Unknown'}{schema.issued ? ` (${schema.issued})` : ''}
                 </a>
-              ) : `schema ${schema.version || 'Unknown'}`}
+              ) : `schema snapshot ${schema.version || 'Unknown'}${schema.issued ? ` (${schema.issued})` : ''}`}
             </p>
             {dataset.dwc_dp_url && (
               <div className="d-flex flex-column align-items-start gap-2">
