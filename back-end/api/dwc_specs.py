@@ -19,6 +19,11 @@ class DarwinCoreSchema:
     row_type: str
     terms: Tuple[str, ...]
     core_id_column: str | None = None
+    compatible_cores: Tuple[str, ...] = ()
+    subject: str = ""
+    typical_dwc_dp_resources: Tuple[str, ...] = ()
+    use_when: str = ""
+    avoid_when: str = ""
 
     @property
     def spec_path(self) -> str:
@@ -52,6 +57,8 @@ class DarwinCoreCoreType(str, Enum):
 
 
 class DarwinCoreExtensionType(str, Enum):
+    OCCURRENCE = "occurrence"
+    HUMBOLDT_ECOLOGICAL_INVENTORY = "humboldt_ecological_inventory"
     MEASUREMENT_OR_FACT = "measurement_or_fact"
     DNA_DERIVED_DATA = "dna_derived_data"
     IDENTIFICATION = "identification"
@@ -455,6 +462,99 @@ CORE_SCHEMAS: Dict[DarwinCoreCoreType, DarwinCoreSchema] = {
 
 
 EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
+    DarwinCoreExtensionType.OCCURRENCE: DarwinCoreSchema(
+        key="dwc_occurrence_2025-07-10",
+        title="Darwin Core Occurrence",
+        spec_uri="https://rs.gbif.org/core/dwc_occurrence_2025-07-10.xml",
+        local_filename="cores/dwc_occurrence_2025-07-10.xml",
+        row_type="http://rs.tdwg.org/dwc/terms/Occurrence",
+        terms=CORE_SCHEMAS[DarwinCoreCoreType.OCCURRENCE].terms,
+        compatible_cores=("event", "taxon"),
+        subject="An organism occurrence linked to a focal Event or Taxon core record.",
+        typical_dwc_dp_resources=("occurrence",),
+        use_when=(
+            "The chosen core is Event or Taxon and the package contains meaningful occurrence "
+            "records that can be linked unambiguously to it."
+        ),
+        avoid_when="Occurrence is already the core, or rows cannot resolve to one core record.",
+    ),
+    DarwinCoreExtensionType.HUMBOLDT_ECOLOGICAL_INVENTORY: DarwinCoreSchema(
+        key="humboldt_2025-07-10",
+        title="Humboldt Ecological Inventory",
+        spec_uri="https://rs.gbif.org/extension/eco/humboldt_2025-07-10.xml",
+        local_filename="extensions/humboldt_2025-07-10.xml",
+        row_type="http://rs.tdwg.org/eco/terms/Event",
+        terms=(
+            "siteCount",
+            "siteNestingDescription",
+            "verbatimSiteDescriptions",
+            "verbatimSiteNames",
+            "geospatialScopeAreaValue",
+            "geospatialScopeAreaUnit",
+            "totalAreaSampledValue",
+            "totalAreaSampledUnit",
+            "reportedWeather",
+            "reportedExtremeConditions",
+            "targetHabitatScope",
+            "excludedHabitatScope",
+            "eventDurationValue",
+            "eventDurationUnit",
+            "targetTaxonomicScope",
+            "excludedTaxonomicScope",
+            "taxonCompletenessReported",
+            "taxonCompletenessProtocols",
+            "isTaxonomicScopeFullyReported",
+            "isAbsenceReported",
+            "absentTaxa",
+            "hasNonTargetTaxa",
+            "nonTargetTaxa",
+            "areNonTargetTaxaFullyReported",
+            "targetLifeStageScope",
+            "excludedLifeStageScope",
+            "isLifeStageScopeFullyReported",
+            "targetDegreeOfEstablishmentScope",
+            "excludedDegreeOfEstablishmentScope",
+            "isDegreeOfEstablishmentScopeFullyReported",
+            "targetGrowthFormScope",
+            "excludedGrowthFormScope",
+            "isGrowthFormScopeFullyReported",
+            "hasNonTargetOrganisms",
+            "verbatimTargetScope",
+            "identifiedBy",
+            "identificationReferences",
+            "compilationTypes",
+            "compilationSourceTypes",
+            "inventoryTypes",
+            "protocolNames",
+            "protocolDescriptions",
+            "protocolReferences",
+            "isAbundanceReported",
+            "isAbundanceCapReported",
+            "abundanceCap",
+            "isVegetationCoverReported",
+            "isLeastSpecificTargetCategoryQuantityInclusive",
+            "hasVouchers",
+            "voucherInstitutions",
+            "hasMaterialSamples",
+            "materialSampleTypes",
+            "samplingPerformedBy",
+            "isSamplingEffortReported",
+            "samplingEffortProtocol",
+            "samplingEffortValue",
+            "samplingEffortUnit",
+        ),
+        compatible_cores=("event",),
+        subject="Survey design, scope, methods, effort, and completeness for a Darwin Core Event.",
+        typical_dwc_dp_resources=("survey",),
+        use_when=(
+            "The Event-centred package explicitly reports inventory or survey design, scope, "
+            "protocol, effort, completeness, abundance, or non-detection context."
+        ),
+        avoid_when=(
+            "The data merely contain field occurrences, the chosen core is not Event, or survey "
+            "properties would have to be inferred from detected occurrences."
+        ),
+    ),
     DarwinCoreExtensionType.MEASUREMENT_OR_FACT: DarwinCoreSchema(
         key="measurements_or_facts_2025-07-10",
         title="Darwin Core Measurement or Facts",
@@ -474,6 +574,16 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "parentMeasurementID",
             "verbatimMeasurementType",
         ),
+        compatible_cores=("occurrence", "event", "taxon"),
+        subject="A repeatable measurement or fact about a core record.",
+        typical_dwc_dp_resources=(
+            "occurrence-assertion",
+            "event-assertion",
+            "survey-assertion",
+            "material-assertion",
+        ),
+        use_when="Repeated or qualified measurements or facts map exactly to registered terms.",
+        avoid_when="A native core term expresses the fact without losing meaning.",
     ),
     DarwinCoreExtensionType.DNA_DERIVED_DATA: DarwinCoreSchema(
         key="dna_derived_data_2024-07-11",
@@ -606,6 +716,11 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "wga_amp_appr",
             "wga_amp_kit",
         ),
+        compatible_cores=("occurrence", "event"),
+        subject="DNA sequences, assays, and laboratory or bioinformatics methods for an occurrence or event.",
+        typical_dwc_dp_resources=("nucleotide-analysis", "nucleotide-sequence", "molecular-protocol"),
+        use_when="Explicit molecular data or methods can be linked to an Occurrence or Event core record.",
+        avoid_when="The package has no molecular evidence, or rows cannot resolve to a core record.",
     ),
     DarwinCoreExtensionType.IDENTIFICATION: DarwinCoreSchema(
         key="identification",
@@ -653,6 +768,11 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "verbatimTaxonRank",
             "vernacularName",
         ),
+        compatible_cores=("occurrence",),
+        subject="A taxonomic identification or determination of an occurrence.",
+        typical_dwc_dp_resources=("identification",),
+        use_when="Multiple or detailed determinations are explicitly recorded for an occurrence.",
+        avoid_when="Only the current identification represented in the Occurrence core is available.",
     ),
     DarwinCoreExtensionType.IDENTIFICATION_HISTORY: DarwinCoreSchema(
         key="identification_history_2025-07-10",
@@ -712,6 +832,11 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "verbatimTaxonRank",
             "vernacularName",
         ),
+        compatible_cores=("occurrence",),
+        subject="The history of taxonomic identifications for an occurrence.",
+        typical_dwc_dp_resources=("identification",),
+        use_when="One occurrence has multiple dated, attributed, or qualified determinations.",
+        avoid_when="There is no identification history beyond the current core values.",
     ),
     DarwinCoreExtensionType.IDENTIFIER: DarwinCoreSchema(
         key="identifier",
@@ -720,6 +845,11 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
         local_filename="extensions/identifier.xml",
         row_type="http://rs.gbif.org/terms/1.0/Identifier",
         terms=("datasetID", "format", "identifier", "subject", "title"),
+        compatible_cores=("occurrence", "event", "taxon"),
+        subject="An alternative identifier for a core record.",
+        typical_dwc_dp_resources=("identifier",),
+        use_when="A core record has an additional meaningful, typed identifier.",
+        avoid_when="The row would only repeat the core identifier.",
     ),
     DarwinCoreExtensionType.DESCRIPTION: DarwinCoreSchema(
         key="description",
@@ -740,6 +870,11 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "source",
             "type",
         ),
+        compatible_cores=("taxon",),
+        subject="A narrative description of a taxon.",
+        typical_dwc_dp_resources=("taxon-description",),
+        use_when="Taxon records have attributed descriptive text suitable for species pages.",
+        avoid_when="The description is structured trait data or the core is not Taxon.",
     ),
     DarwinCoreExtensionType.DISTRIBUTION: DarwinCoreSchema(
         key="distribution_2022-02-02",
@@ -765,6 +900,11 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "startDayOfYear",
             "threatStatus",
         ),
+        compatible_cores=("taxon",),
+        subject="A geographic distribution assertion about a taxon.",
+        typical_dwc_dp_resources=("taxon",),
+        use_when="A checklist explicitly states taxon presence, absence, or status in an area.",
+        avoid_when="The data describe individual observations rather than taxon distribution.",
     ),
     DarwinCoreExtensionType.MULTIMEDIA: DarwinCoreSchema(
         key="multimedia",
@@ -789,6 +929,11 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "title",
             "type",
         ),
+        compatible_cores=("occurrence", "event", "taxon"),
+        subject="Image, audio, video, or other media associated with a core record.",
+        typical_dwc_dp_resources=("media",),
+        use_when="A resolvable media resource has meaningful metadata and a core-record link.",
+        avoid_when="There is no media identifier or the resource cannot be linked to the core.",
     ),
     DarwinCoreExtensionType.REFERENCES: DarwinCoreSchema(
         key="references",
@@ -811,6 +956,11 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "title",
             "type",
         ),
+        compatible_cores=("occurrence", "event", "taxon"),
+        subject="A literature reference associated with a core record.",
+        typical_dwc_dp_resources=("reference",),
+        use_when="The source supplies a distinct bibliographic record linked to the core.",
+        avoid_when="A single core references or bibliographicCitation value is sufficient.",
     ),
     DarwinCoreExtensionType.RESOURCE_RELATION: DarwinCoreSchema(
         key="resource_relation_2018_01_18",
@@ -827,6 +977,11 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "resourceID",
             "resourceRelationshipID",
         ),
+        compatible_cores=("occurrence", "event", "taxon"),
+        subject="A typed relationship between the core record and another resource.",
+        typical_dwc_dp_resources=("relationship",),
+        use_when="An explicit, meaningful resource relationship is present.",
+        avoid_when="Either endpoint or the relationship type would need to be invented.",
     ),
     DarwinCoreExtensionType.RESOURCE_RELATIONSHIP: DarwinCoreSchema(
         key="resource_relationship_2025-07-10",
@@ -844,6 +999,11 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "resourceID",
             "resourceRelationshipID",
         ),
+        compatible_cores=("occurrence", "event", "taxon"),
+        subject="A typed relationship between the core record and another resource.",
+        typical_dwc_dp_resources=("relationship",),
+        use_when="An explicit, meaningful resource relationship is present.",
+        avoid_when="Either endpoint or the relationship type would need to be invented.",
     ),
     DarwinCoreExtensionType.SPECIES_PROFILE: DarwinCoreSchema(
         key="speciesprofile_2019-01-29",
@@ -868,6 +1028,11 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "sizeInMillimeters",
             "source",
         ),
+        compatible_cores=("taxon",),
+        subject="Structured biological or ecological characteristics of a taxon.",
+        typical_dwc_dp_resources=("taxon",),
+        use_when="A Taxon package explicitly reports one or more registered profile properties.",
+        avoid_when="The values are observations of individuals rather than taxon-level traits.",
     ),
     DarwinCoreExtensionType.TYPES_AND_SPECIMEN: DarwinCoreSchema(
         key="typesandspecimen",
@@ -896,6 +1061,11 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "verbatimLatitude",
             "verbatimLongitude",
         ),
+        compatible_cores=("taxon",),
+        subject="Type designations and specimens associated with a taxon name.",
+        typical_dwc_dp_resources=("material-entity", "nomenclatural-type"),
+        use_when="A Taxon record has explicit specimen or nomenclatural type information.",
+        avoid_when="The specimen is only an occurrence with no relationship to a Taxon core record.",
     ),
     DarwinCoreExtensionType.VERNACULAR_NAME: DarwinCoreSchema(
         key="vernacularname",
@@ -919,6 +1089,11 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "temporal",
             "vernacularName",
         ),
+        compatible_cores=("taxon",),
+        subject="A vernacular name for a taxon, optionally scoped by language or place.",
+        typical_dwc_dp_resources=("taxon",),
+        use_when="A Taxon has one or more explicit vernacular names with useful qualifiers.",
+        avoid_when="There is only one unqualified vernacularName already represented in the core.",
     ),
     DarwinCoreExtensionType.RELEVE: DarwinCoreSchema(
         key="releve_2016-05-10",
@@ -948,6 +1123,11 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "syntaxonName",
             "treeLayerHeightInMeters",
         ),
+        compatible_cores=("event",),
+        subject="Vegetation plot measurements associated with a survey Event.",
+        typical_dwc_dp_resources=("survey", "event-assertion"),
+        use_when="An Event-centred vegetation survey explicitly reports registered relevé properties.",
+        avoid_when="The event is not a vegetation plot survey or values would be inferred.",
     ),
     DarwinCoreExtensionType.CHRONOMETRIC_AGE: DarwinCoreSchema(
         key="ChronometricAge_2024-03-11",
@@ -975,6 +1155,11 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
             "uncalibratedChronometricAge",
             "verbatimChronometricAge",
         ),
+        compatible_cores=("occurrence",),
+        subject="A chronometric age determination for dated material represented by an occurrence.",
+        typical_dwc_dp_resources=("material-entity", "material-assertion"),
+        use_when="Explicit dating results and their method or reference can be linked to an occurrence.",
+        avoid_when="Only broad geological context is available or the dated material cannot be resolved.",
     ),
 }
 
@@ -988,4 +1173,3 @@ def iter_schemas(include_extensions: bool = True) -> Iterable[DarwinCoreSchema]:
     yield from CORE_SCHEMAS.values()
     if include_extensions:
         yield from EXTENSION_SCHEMAS.values()
-

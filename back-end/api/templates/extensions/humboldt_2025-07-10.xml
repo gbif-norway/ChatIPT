@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extension xmlns="http://rs.gbif.org/extension/"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:dc="http://purl.org/dc/terms/"
+    xsi:schemaLocation="http://rs.gbif.org/extension/ http://rs.gbif.org/schema/extension.xsd"
+    dc:title="Humboldt Ecological Inventory"
+    name="HumboldtEcologicalInventory"
+    namespace="http://rs.tdwg.org/eco/terms/"
+    rowType="http://rs.tdwg.org/eco/terms/Event"
+    dc:issued="2026-02-12"
+    dc:subject="dwc:Event"
+    dc:relation="http://rs.tdwg.org/eco/terms/Event"
+    dc:description="Extended support for Darwin Core Events related to ecological inventories.">
+  <property group="Site" name="siteCount" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/siteCount" required="false"/>
+  <property group="Site" name="siteNestingDescription" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/siteNestingDescription" required="false"/>
+  <property group="Site" name="verbatimSiteDescriptions" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/verbatimSiteDescriptions" required="false"/>
+  <property group="Site" name="verbatimSiteNames" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/verbatimSiteNames" required="false"/>
+  <property group="Site" name="geospatialScopeAreaValue" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/geospatialScopeAreaValue" required="false"/>
+  <property group="Site" name="geospatialScopeAreaUnit" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/geospatialScopeAreaUnit" required="false"/>
+  <property group="Site" name="totalAreaSampledValue" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/totalAreaSampledValue" required="false"/>
+  <property group="Site" name="totalAreaSampledUnit" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/totalAreaSampledUnit" required="false"/>
+  <property group="Site" name="reportedWeather" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/reportedWeather" required="false"/>
+  <property group="Site" name="reportedExtremeConditions" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/reportedExtremeConditions" required="false"/>
+  <property group="Habitat Scope" name="targetHabitatScope" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/targetHabitatScope" required="false"/>
+  <property group="Habitat Scope" name="excludedHabitatScope" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/excludedHabitatScope" required="false"/>
+  <property group="Temporal Scope" name="eventDurationValue" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/eventDurationValue" required="false"/>
+  <property group="Temporal Scope" name="eventDurationUnit" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/eventDurationUnit" required="false"/>
+  <property group="Taxonomic Scope" name="targetTaxonomicScope" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/targetTaxonomicScope" required="false"/>
+  <property group="Taxonomic Scope" name="excludedTaxonomicScope" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/excludedTaxonomicScope" required="false"/>
+  <property group="Taxonomic Scope" name="taxonCompletenessReported" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/taxonCompletenessReported" required="false"/>
+  <property group="Taxonomic Scope" name="taxonCompletenessProtocols" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/taxonCompletenessProtocols" required="false"/>
+  <property group="Taxonomic Scope" name="isTaxonomicScopeFullyReported" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/isTaxonomicScopeFullyReported" required="false"/>
+  <property group="Taxonomic Scope" name="isAbsenceReported" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/isAbsenceReported" required="false"/>
+  <property group="Taxonomic Scope" name="absentTaxa" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/absentTaxa" required="false"/>
+  <property group="Taxonomic Scope" name="hasNonTargetTaxa" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/hasNonTargetTaxa" required="false"/>
+  <property group="Taxonomic Scope" name="nonTargetTaxa" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/nonTargetTaxa" required="false"/>
+  <property group="Taxonomic Scope" name="areNonTargetTaxaFullyReported" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/areNonTargetTaxaFullyReported" required="false"/>
+  <property group="Organismal Scope" name="targetLifeStageScope" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/targetLifeStageScope" required="false"/>
+  <property group="Organismal Scope" name="excludedLifeStageScope" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/excludedLifeStageScope" required="false"/>
+  <property group="Organismal Scope" name="isLifeStageScopeFullyReported" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/isLifeStageScopeFullyReported" required="false"/>
+  <property group="Organismal Scope" name="targetDegreeOfEstablishmentScope" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/targetDegreeOfEstablishmentScope" required="false"/>
+  <property group="Organismal Scope" name="excludedDegreeOfEstablishmentScope" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/excludedDegreeOfEstablishmentScope" required="false"/>
+  <property group="Organismal Scope" name="isDegreeOfEstablishmentScopeFullyReported" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/isDegreeOfEstablishmentScopeFullyReported" required="false"/>
+  <property group="Organismal Scope" name="targetGrowthFormScope" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/targetGrowthFormScope" required="false"/>
+  <property group="Organismal Scope" name="excludedGrowthFormScope" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/excludedGrowthFormScope" required="false"/>
+  <property group="Organismal Scope" name="isGrowthFormScopeFullyReported" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/isGrowthFormScopeFullyReported" required="false"/>
+  <property group="Organismal Scope" name="hasNonTargetOrganisms" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/hasNonTargetOrganisms" required="false"/>
+  <property group="Organismal Scope" name="verbatimTargetScope" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/verbatimTargetScope" required="false"/>
+  <property group="Identification" name="identifiedBy" namespace="http://rs.tdwg.org/dwc/terms/" qualName="http://rs.tdwg.org/dwc/terms/identifiedBy" required="false"/>
+  <property group="Identification" name="identificationReferences" namespace="http://rs.tdwg.org/dwc/terms/" qualName="http://rs.tdwg.org/dwc/terms/identificationReferences" required="false"/>
+  <property group="Methodology" name="compilationTypes" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/compilationTypes" required="false"/>
+  <property group="Methodology" name="compilationSourceTypes" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/compilationSourceTypes" required="false"/>
+  <property group="Methodology" name="inventoryTypes" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/inventoryTypes" required="false"/>
+  <property group="Methodology" name="protocolNames" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/protocolNames" required="false"/>
+  <property group="Methodology" name="protocolDescriptions" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/protocolDescriptions" required="false"/>
+  <property group="Methodology" name="protocolReferences" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/protocolReferences" required="false"/>
+  <property group="Methodology" name="isAbundanceReported" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/isAbundanceReported" required="false"/>
+  <property group="Methodology" name="isAbundanceCapReported" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/isAbundanceCapReported" required="false"/>
+  <property group="Methodology" name="abundanceCap" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/abundanceCap" required="false"/>
+  <property group="Methodology" name="isVegetationCoverReported" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/isVegetationCoverReported" required="false"/>
+  <property group="Methodology" name="isLeastSpecificTargetCategoryQuantityInclusive" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/isLeastSpecificTargetCategoryQuantityInclusive" required="false"/>
+  <property group="Material Collected" name="hasVouchers" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/hasVouchers" required="false"/>
+  <property group="Material Collected" name="voucherInstitutions" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/voucherInstitutions" required="false"/>
+  <property group="Material Collected" name="hasMaterialSamples" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/hasMaterialSamples" required="false"/>
+  <property group="Material Collected" name="materialSampleTypes" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/materialSampleTypes" required="false"/>
+  <property group="Sampling Effort" name="samplingPerformedBy" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/samplingPerformedBy" required="false"/>
+  <property group="Sampling Effort" name="isSamplingEffortReported" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/isSamplingEffortReported" required="false"/>
+  <property group="Sampling Effort" name="samplingEffortProtocol" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/samplingEffortProtocol" required="false"/>
+  <property group="Sampling Effort" name="samplingEffortValue" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/samplingEffortValue" required="false"/>
+  <property group="Sampling Effort" name="samplingEffortUnit" namespace="http://rs.tdwg.org/eco/terms/" qualName="http://rs.tdwg.org/eco/terms/samplingEffortUnit" required="false"/>
+</extension>

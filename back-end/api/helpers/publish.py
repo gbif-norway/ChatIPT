@@ -63,6 +63,15 @@ def normalize_gbif_license(value: str | None) -> tuple[str, dict]:
 class LocalSpecTable(DwcaWriterTable):
     """Table implementation that supports both vendored local spec files and GBIF URLs."""
 
+    def __init__(self, *args, output_filename: str | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.output_filename = output_filename
+
+    def get_filename(self) -> str:
+        if self.output_filename:
+            return self.output_filename
+        return super().get_filename()
+
     def update_spec(self):
         spec = self.spec
         if isinstance(spec, str) and spec.startswith(("http://", "https://")):
@@ -1460,6 +1469,12 @@ def upload_dwca(
 
     for ext_df, ext_type, extension_core_id_column in extensions or []:
         schema = EXTENSION_SCHEMAS[ext_type]
+        if schema.compatible_cores and core_type.value not in schema.compatible_cores:
+            compatible = ", ".join(schema.compatible_cores)
+            raise ValueError(
+                f"DwC-A extension '{ext_type}' is not compatible with the '{core_type.value}' "
+                f"core. Compatible cores: {compatible}."
+            )
         ext_spec_path = schema.spec_path
 
         matching_columns = [
@@ -1520,6 +1535,7 @@ def upload_dwca(
             "only_mapped_columns": True,
             "id_index": 0,
             "fields_enclosed_by": '"',
+            "output_filename": re.sub(r"[^a-z0-9._-]+", "-", schema.key.casefold()) + ".txt",
         }
         try:
             archive.extensions.append(LocalSpecTable(**ext_kwargs))

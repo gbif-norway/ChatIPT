@@ -407,160 +407,89 @@ class GetDarwinCoreInfo(OpenAIBaseModel):
 
 class GetDwCExtensionInfo(OpenAIBaseModel):
     """
-    Provide concise guidance on common Darwin Core extensions and optionally return the full XML definition.
+    Return the registered DwC-A extension catalogue with projection guidance.
 
-    Extension overviews (useful when deciding whether to add an extension after exhausting core fields):
-    - Description (`description.xml`): Narrative text about a taxon or resource such as morphology, behaviour, ecology, or conservation context.
-    - Distribution (`distribution_2022-02-02.xml`): Geographic distribution statements including area types, occurrence status, seasonal or life-stage qualifiers.
-    - DNA Derived Data (`dna_derived_data_2024-07-11.xml`): Links occurrences or taxa to sequence-based evidence (e.g. metabarcoding runs, marker genes, accession numbers).
-    - Identification History (`identification_history_2025-07-10.xml`): Multiple identifications or determinations associated with occurrence records.
-    - Identifier (`identifier.xml`): Alternative identifiers for taxa or occurrences, tracking GUIDs, LSIDs, catalogue numbers, or database references.
-    - Measurement or Fact (`measurements_or_facts_2025-07-10.xml`): Measurements, facts, characteristics, or assertions about occurrence, event, or taxon records.
-    - Multimedia (`multimedia.xml`): Generic multimedia attachment schema (audio, video, images) with basic descriptive and licensing fields.
-    - References (`references.xml`): Bibliographic citations that support occurrence or taxon records.
-    - Resource Relationship (`resource_relationship_2025-07-10.xml`): Relationships between core records and other identified resources.
-    - Relevé (`releve_2016-05-10.xml`): Vegetation plot (relevé) descriptions including cover, stratification, sampling method, and environmental context.
-    - Species Profile (`speciesprofile_2019-01-29.xml`): Taxon-level traits such as life history, abundance, habitat preferences, and threat status.
-    - Types and Specimen (`typesandspecimen.xml`): Details of type specimens and vouchers linked to taxa, including repository and typification remarks.
-    - Vernacular Name (`vernacularname.xml`): Common names with language, locality, life stage, and source attribution.
-
-    Call without parameters to receive the overview list and usage hints.
-    Supply `extension` (case-insensitive key or filename) to receive the full XML payload from `back-end/api/templates/extensions`.
+    Call without parameters before choosing a DwC-A core or extensions. The catalogue includes
+    core compatibility, subject, typical DwC-DP source resources, and use/avoid guidance.
+    Supply `extension` to receive that extension's guidance and full vendored XML definition.
     """
 
     extension: Optional[str] = Field(
         default=None,
-        description="Optional extension key or filename (e.g. 'distribution', 'Distribution', 'distribution.xml', or 'distribution_2022-02-02.xml'). Case-insensitive, .xml extension and date suffixes are optional."
+        description=(
+            "Optional extension key, title, or filename, e.g. 'occurrence', "
+            "'humboldt_ecological_inventory', 'distribution', or a vendored XML filename."
+        ),
     )
 
-    def run(self):
-        base_dir = os.path.join(os.path.dirname(__file__), 'templates', 'extensions')
-        extensions = {
-            'description': {
-                'label': 'Description',
-                'file': 'description.xml',
-                'overview': 'Narrative text about a taxon or resource such as morphology, behaviour, ecology, or conservation context.'
-            },
-            'distribution': {
-                'label': 'Distribution',
-                'file': 'distribution_2022-02-02.xml',
-                'overview': 'Geographic distribution statements including area types, occurrence status, seasonal or life-stage qualifiers.'
-            },
-            'dna_derived_data': {
-                'label': 'DNA Derived Data',
-                'file': 'dna_derived_data_2024-07-11.xml',
-                'overview': 'Sequence-based evidence linking taxa or occurrences to laboratory outputs, marker genes, and accession numbers.'
-            },
-            'identification': {
-                'label': 'Identification',
-                'file': 'identification.xml',
-                'overview': 'Identification details associated with occurrence records.'
-            },
-            'identification_history': {
-                'label': 'Identification History',
-                'file': 'identification_history_2025-07-10.xml',
-                'overview': 'Multiple identifications or determinations associated with occurrence records.'
-            },
-            'identifier': {
-                'label': 'Identifier',
-                'file': 'identifier.xml',
-                'overview': 'Alternative identifiers such as GUIDs, LSIDs, catalogue numbers, or cross-database references.'
-            },
-            'measurement_or_fact': {
-                'label': 'Measurement or Fact',
-                'file': 'measurements_or_facts_2025-07-10.xml',
-                'overview': 'Measurements, facts, characteristics, or assertions linked to occurrence, event, or taxon records.'
-            },
-            'multimedia': {
-                'label': 'Multimedia',
-                'file': 'multimedia.xml',
-                'overview': 'Generic multimedia attachment schema covering audio, video, images with licensing and attribution.'
-            },
-            'references': {
-                'label': 'References',
-                'file': 'references.xml',
-                'overview': 'Bibliographic citations that support occurrence or taxon records.'
-            },
-            'resource_relation': {
-                'label': 'Resource Relation',
-                'file': 'resource_relation_2018_01_18.xml',
-                'overview': 'Relationships between core records and other identified resources using the earlier Darwin Core extension.'
-            },
-            'resource_relationship': {
-                'label': 'Resource Relationship',
-                'file': 'resource_relationship_2025-07-10.xml',
-                'overview': 'Relationships between core records and other identified resources.'
-            },
-            'releve': {
-                'label': 'Relevé',
-                'file': 'releve_2016-05-10.xml',
-                'overview': 'Vegetation relevé (plot) descriptions capturing cover, stratification, environmental and methodological details.'
-            },
-            'speciesprofile': {
-                'label': 'Species Profile',
-                'file': 'speciesprofile_2019-01-29.xml',
-                'overview': 'Taxon-level traits such as habitat preferences, abundance, and life history notes.'
-            },
-            'typesandspecimen': {
-                'label': 'Types and Specimen',
-                'file': 'typesandspecimen.xml',
-                'overview': 'Details of type specimens and vouchers including repository, type status, and remarks.'
-            },
-            'vernacularname': {
-                'label': 'Vernacular Name',
-                'file': 'vernacularname.xml',
-                'overview': 'Common names annotated with language, locality, sex or life stage relevance, and sources.'
-            }
-        }
+    @staticmethod
+    def _lookup_key(value: str) -> str:
+        normalized = str(value or "").strip().casefold()
+        if normalized.endswith(".xml"):
+            normalized = normalized[:-4]
+        normalized = re.sub(r"_\d{4}-\d{2}-\d{2}$", "", normalized)
+        return re.sub(r"[^a-z0-9]+", "", normalized)
 
+    @staticmethod
+    def _guidance_lines(extension_type, schema) -> list[str]:
+        compatible = ", ".join(schema.compatible_cores) or "not restricted in the local registry"
+        sources = ", ".join(schema.typical_dwc_dp_resources) or "depends on source meaning"
+        return [
+            f"- {schema.title} (`{extension_type.value}`)",
+            f"  Compatible cores: {compatible}",
+            f"  Subject: {schema.subject or 'See the registered XML definition.'}",
+            f"  Typical DwC-DP sources: {sources}",
+            f"  Use when: {schema.use_when or 'Its registered terms exactly express meaningful facts not represented by the core.'}",
+            f"  Avoid when: {schema.avoid_when or 'The core already expresses the facts, or rows cannot link unambiguously to the core.'}",
+        ]
+
+    def run(self):
         if not self.extension:
             lines = [
-                "Darwin Core extension quick reference:",
-                *(f"- {meta['label']} (`{meta['file']}`): {meta['overview']}" for meta in extensions.values()),
-                "",
-                "Call this tool with `extension` set to a key (e.g. 'distribution', 'dna_derived_data'). "
-                "You can use the key name, filename with or without .xml extension, or filename with or without date suffix. "
-                "Matching is case-insensitive."
+                "Darwin Core extension projection catalogue:",
+                "Select the minimum sufficient set after choosing the focal core. Core compatibility is enforced during export.",
             ]
+            for extension_type, schema in EXTENSION_SCHEMAS.items():
+                lines.extend(self._guidance_lines(extension_type, schema))
+            lines.extend([
+                "",
+                "Call with `extension` to inspect the exact registered fields before building a projection table.",
+            ])
             return "\n".join(lines)
 
-        # Normalize the requested extension: lowercase, strip .xml, strip date suffixes
-        requested = self.extension.strip().lower()
-        # Remove .xml extension if present
-        if requested.endswith('.xml'):
-            requested = requested[:-4]
-        # Remove date suffix pattern (e.g., _2022-02-02, _2024-07-11)
-        requested = re.sub(r'_\d{4}-\d{2}-\d{2}$', '', requested)
-        
-        match_key = None
-        for key, meta in extensions.items():
-            # Normalize the filename the same way for comparison
-            normalized_file = meta['file'].lower()
-            if normalized_file.endswith('.xml'):
-                normalized_file = normalized_file[:-4]
-            normalized_file = re.sub(r'_\d{4}-\d{2}-\d{2}$', '', normalized_file)
-            
-            # Match against key or normalized filename
-            if requested == key or requested == normalized_file:
-                match_key = key
+        requested = self._lookup_key(self.extension)
+        match = None
+        for extension_type, schema in EXTENSION_SCHEMAS.items():
+            candidates = {
+                self._lookup_key(extension_type.value),
+                self._lookup_key(schema.key),
+                self._lookup_key(schema.title),
+                self._lookup_key(schema.local_filename),
+            }
+            if requested in candidates:
+                match = (extension_type, schema)
                 break
-        if match_key is None:
+        if match is None:
             return (
                 f"Extension '{self.extension}' not recognised. "
-                f"Available keys: {', '.join(sorted(extensions.keys()))}. "
-                "You can use the key name (e.g. 'distribution'), filename with or without .xml extension, or filename with or without date suffix."
+                "Available keys: "
+                + ", ".join(sorted(extension_type.value for extension_type in EXTENSION_SCHEMAS))
+                + "."
             )
 
-        filename = extensions[match_key]['file']
-        path = os.path.join(base_dir, filename)
-        if not os.path.exists(path):
-            return (
-                f"Extension file '{filename}' not found in '{base_dir}'. "
-                "Ensure the XML has been downloaded."
-            )
-
-        with open(path, 'r', encoding='utf-8') as handle:
-            return handle.read()
+        extension_type, schema = match
+        try:
+            xml_payload = Path(schema.spec_path).read_text(encoding="utf-8")
+        except Exception as exc:
+            return f"Extension schema '{schema.local_filename}' could not be loaded: {exc}"
+        lines = [
+            "Projection guidance:",
+            *self._guidance_lines(extension_type, schema),
+            "",
+            "Registered XML definition:",
+            xml_payload,
+        ]
+        return "\n".join(lines)
 
 
 class GetDwcDpTableInfo(OpenAIBaseModel):

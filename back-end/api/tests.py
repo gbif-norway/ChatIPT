@@ -68,7 +68,7 @@ from .dwc_dp_specs import (
     validate_dwc_dp_archive,
     validate_dwc_dp_resources,
 )
-from .dwc_specs import DarwinCoreCoreType, DarwinCoreExtensionType
+from .dwc_specs import EXTENSION_SCHEMAS, DarwinCoreCoreType, DarwinCoreExtensionType
 
 
 class DwcDpSpecTests(SimpleTestCase):
@@ -1223,12 +1223,40 @@ class GetDarwinCoreInfoTests(SimpleTestCase):
 
 
 class GetDwCExtensionInfoTests(SimpleTestCase):
+    def test_every_extension_has_selection_metadata(self):
+        for extension_type, schema in EXTENSION_SCHEMAS.items():
+            with self.subTest(extension=extension_type.value):
+                self.assertTrue(schema.compatible_cores)
+                self.assertTrue(schema.subject)
+                self.assertTrue(schema.typical_dwc_dp_resources)
+                self.assertTrue(schema.use_when)
+                self.assertTrue(schema.avoid_when)
+
     def test_lookup_includes_extensions_needed_for_rich_projections(self):
         relationship = GetDwCExtensionInfo(extension="resource_relationship").run()
         identification = GetDwCExtensionInfo(extension="identification_history").run()
 
         self.assertIn("ResourceRelationship", relationship)
         self.assertIn("Identification", identification)
+
+    def test_catalogue_exposes_core_compatibility_and_projection_guidance(self):
+        response = GetDwCExtensionInfo().run()
+
+        self.assertIn("Humboldt Ecological Inventory", response)
+        self.assertIn("Compatible cores: event", response)
+        self.assertIn("Typical DwC-DP sources: survey", response)
+        self.assertIn("Darwin Core Occurrence", response)
+        self.assertIn("Compatible cores: event, taxon", response)
+
+    def test_humboldt_lookup_returns_guidance_and_registered_terms(self):
+        response = GetDwCExtensionInfo(extension="humboldt_ecological_inventory").run()
+
+        self.assertIn("Projection guidance:", response)
+        self.assertIn("rowType=\"http://rs.tdwg.org/eco/terms/Event\"", response)
+        self.assertIn("name=\"samplingEffortValue\"", response)
+        self.assertIn("inferred from detected occurrences", EXTENSION_SCHEMAS[
+            DarwinCoreExtensionType.HUMBOLDT_ECOLOGICAL_INVENTORY
+        ].avoid_when)
 
 
 class EventDateNormalizationTests(SimpleTestCase):
@@ -1957,6 +1985,120 @@ class DwcaExportSanitizationTests(SimpleTestCase):
         self.assertEqual(coreid.attrib["index"], "0")
         self.assertTrue(any(field.attrib["index"] == "1" for field in fields))
 
+    def test_upload_dwca_rejects_extension_incompatible_with_core(self):
+        core = pd.DataFrame([
+            {"occurrenceID": "occ-1", "scientificName": "Apus apus"},
+        ])
+        humboldt = pd.DataFrame([
+            {"_coreid": "occ-1", "protocolNames": "Point count"},
+        ])
+
+        with self.assertRaisesRegex(ValueError, "not compatible with the 'occurrence' core"):
+            upload_dwca(
+                core,
+                "Test dataset",
+                "Test description",
+                core_type=DarwinCoreCoreType.OCCURRENCE,
+                extensions=[(
+                    humboldt,
+                    DarwinCoreExtensionType.HUMBOLDT_ECOLOGICAL_INVENTORY,
+                    "_coreid",
+                )],
+            )
+
+    @patch("api.helpers.publish.upload_file")
+    @patch("api.helpers.publish.Minio")
+    def test_event_core_exports_occurrence_and_humboldt_extensions(self, minio_mock, upload_mock):
+        captured = {}
+
+        def capture_archive(client, bucket, object_name, local_path):
+            with zipfile.ZipFile(local_path) as archive:
+                captured["names"] = archive.namelist()
+                captured["meta"] = archive.read("meta.xml")
+                captured["tables"] = {
+                    name: archive.read(name).decode("utf-8")
+                    for name in archive.namelist()
+                    if name.endswith(".txt")
+                }
+
+        upload_mock.side_effect = capture_archive
+        event = pd.DataFrame([
+            {
+                "eventID": "survey-2025",
+                "eventDate": "2025-04-01/2025-04-30",
+                "samplingProtocol": "Fixed-route point counts",
+            },
+            {
+                "eventID": "visit-1",
+                "parentEventID": "survey-2025",
+                "eventDate": "2025-04-12",
+                "samplingProtocol": "Ten-minute point count",
+            },
+        ])
+        occurrence = pd.DataFrame([
+            {
+                "_coreid": "visit-1",
+                "occurrenceID": "occ-1",
+                "basisOfRecord": "HumanObservation",
+                "scientificName": "Apus apus",
+                "occurrenceStatus": "present",
+            },
+        ])
+        humboldt = pd.DataFrame([
+            {
+                "_coreid": "visit-1",
+                "protocolNames": "Point count",
+                "isSamplingEffortReported": True,
+                "samplingEffortValue": 10,
+                "samplingEffortUnit": "minutes",
+            },
+        ])
+        env = {
+            "MINIO_URI": "storage.example.org",
+            "MINIO_ACCESS_KEY": "key",
+            "MINIO_SECRET_KEY": "secret",
+            "MINIO_BUCKET": "bucket",
+            "MINIO_BUCKET_FOLDER": "packages",
+        }
+
+        with patch.dict(os.environ, env):
+            upload_dwca(
+                event,
+                "Point count survey",
+                "Repeated bird point counts with explicit survey effort.",
+                core_type=DarwinCoreCoreType.EVENT,
+                extensions=[
+                    (
+                        occurrence,
+                        DarwinCoreExtensionType.OCCURRENCE,
+                        "_coreid",
+                    ),
+                    (
+                        humboldt,
+                        DarwinCoreExtensionType.HUMBOLDT_ECOLOGICAL_INVENTORY,
+                        "_coreid",
+                    ),
+                ],
+            )
+
+        meta_root = ET.fromstring(captured["meta"])
+        extensions = [
+            element
+            for element in meta_root
+            if element.tag.rsplit("}", 1)[-1] == "extension"
+        ]
+        self.assertEqual(
+            {extension.attrib["rowType"] for extension in extensions},
+            {
+                "http://rs.tdwg.org/dwc/terms/Occurrence",
+                "http://rs.tdwg.org/eco/terms/Event",
+            },
+        )
+        self.assertEqual(len(captured["tables"]), 3)
+        combined_tables = "\n".join(captured["tables"].values())
+        self.assertIn("Apus apus", combined_tables)
+        self.assertIn("Point count", combined_tables)
+
 
 class DatasetSummarySerializerTests(TestCase):
     def test_package_explorer_model_uses_current_schema_and_reports_link_coverage(self):
@@ -2637,7 +2779,16 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         text = self.task_text["Data transformation"]
 
         self.assertIn("EVENT AND IDENTIFICATION MODELLING", text)
+        self.assertIn("briefly sketch the Event structure supported by the source", text)
+        self.assertIn("test whether narrower activities repeat within a stable broader context", text)
+        self.assertIn("State why the final Event model is flat or hierarchical", text)
+        self.assertIn("A recurring place or label alone is not sufficient", text)
         self.assertIn("Do not manufacture one wrapper event plus one child event per occurrence", text)
+        self.assertIn("genuine broader and narrower activities or contexts", text)
+        self.assertIn("monitoring programme containing plots and dated surveys", text)
+        self.assertIn("expedition containing stations and collecting events", text)
+        self.assertIn("examples, not templates or trigger phrases", text)
+        self.assertIn("supported by source structure, identifiers, metadata", text)
         self.assertIn("One current scientificName per occurrence normally stays in occurrence", text)
         self.assertIn("Never create identification rows containing only identification_pk", text)
         self.assertIn("DATE PRECISION", text)
@@ -2652,6 +2803,9 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("unmatched and multiply matched rows", text)
         self.assertIn("examples of investigation, not fixed mappings", text)
         self.assertIn("Count that source row once for unique source-row coverage", text)
+        self.assertIn("populated-value count", text)
+        self.assertIn("Representing a source row does not by itself represent every useful fact", text)
+        self.assertIn("focused fact-group check", text)
 
     def test_transformation_prompt_asks_only_about_material_domain_ambiguity(self):
         text = self.task_text["Data transformation"]
@@ -2664,6 +2818,10 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("Do not ask the user to select a Darwin Core table", text)
         self.assertIn("Do not ask merely because a value is unusual", text)
         self.assertIn("If the user cannot answer, do not invent a resolution", text)
+        self.assertIn("Before omitting a material source group", text)
+        self.assertIn("an entire table, a substantive group of populated values", text)
+        self.assertIn("ask for confirmation in the same grouped question", text)
+        self.assertIn("blank rows, repeated headers, obvious totals, or formatting artifacts", text)
 
     def test_transformation_prompt_bounds_investigation_and_context_output(self):
         text = self.task_text["Data transformation"]
@@ -2701,18 +2859,35 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("ask one focused question about the underlying data", text)
         self.assertIn("never ask the user to choose a DwC-DP mapping", text)
         self.assertIn("Recheck source coverage only for groups changed", text)
+        self.assertIn("Important-fact preservation", text)
+        self.assertIn("representing their source rows did not mask loss", text)
+        self.assertIn("Missing Event hierarchy", text)
+        self.assertIn("several flat Events repeat within the same stable sampling unit", text)
+        self.assertIn("otherwise retain the flat structure and document why", text)
 
-    def test_final_prompt_requires_model_led_complete_dwca_projection(self):
+    def test_final_prompt_requires_minimum_sufficient_dwca_projection(self):
         text = self.task_text["Final Review & Publication"]
 
-        self.assertIn("most complete standards-compliant DwC-A projection possible", text)
+        self.assertIn("minimum sufficient standards-compliant DwC-A projection", text)
+        self.assertIn("Choose the focal core first", text)
+        self.assertIn("what the data are fundamentally about", text)
+        self.assertIn("Consider only extensions compatible with the chosen core", text)
+        self.assertIn("at least one meaningful non-key fact", text)
+        self.assertIn("Do not force data into an inexact core or extension term", text)
+        self.assertIn("With Event core, an Occurrence extension is often appropriate", text)
+        self.assertIn("Humboldt Ecological Inventory extension", text)
+        self.assertIn("An Event hierarchy is a reason to inspect those facts, not sufficient evidence", text)
+        self.assertIn("Lossless normalisation such as safe date formatting is allowed", text)
+        self.assertIn("Never infer survey properties from detected occurrences", text)
+        self.assertIn("review the saved coverage of semantically important fact groups", text)
         self.assertIn("Inspect every populated DwC-DP resource", text)
-        self.assertIn("Prefer the registered extension whenever it can express the facts cleanly", text)
         self.assertIn("`dynamicProperties` only as a fallback", text)
         self.assertIn("temporary non-DwC-DP projection tables", text)
         self.assertIn("dedicated `_coreid` column", text)
         self.assertIn("exactly matches the selected core table identifier", text)
         self.assertIn("Silent omission is an error", text)
+        self.assertIn("summarize every material source group omitted", text)
+        self.assertIn("whether the user confirmed it", text)
         self.assertIn("explicit extension assignments", text)
         self.assertNotIn("ExportDwcaFromDwcDp", text)
 
