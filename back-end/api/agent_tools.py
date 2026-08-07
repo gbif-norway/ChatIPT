@@ -24,6 +24,7 @@ import json
 import os
 import uuid
 from pathlib import Path
+from xml.etree import ElementTree as ET
 from requests.auth import HTTPBasicAuth
 import requests
 import yaml
@@ -411,7 +412,8 @@ class GetDwCExtensionInfo(OpenAIBaseModel):
 
     Call without parameters before choosing a DwC-A core or extensions. The catalogue includes
     core compatibility, subject, typical DwC-DP source resources, and use/avoid guidance.
-    Supply `extension` to receive that extension's guidance and full vendored XML definition.
+    Supply `extension` to receive that extension's guidance and registered term index. Supply
+    `terms` with an extension to retrieve exact vendored definitions for selected terms.
     """
 
     extension: Optional[str] = Field(
@@ -419,6 +421,13 @@ class GetDwCExtensionInfo(OpenAIBaseModel):
         description=(
             "Optional extension key, title, or filename, e.g. 'occurrence', "
             "'humboldt_ecological_inventory', 'distribution', or a vendored XML filename."
+        ),
+    )
+    terms: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Optional registered term names to inspect for the selected extension, e.g. "
+            "['measurementTypeID', 'measurementValueID']."
         ),
     )
 
@@ -479,16 +488,46 @@ class GetDwCExtensionInfo(OpenAIBaseModel):
 
         extension_type, schema = match
         try:
-            xml_payload = Path(schema.spec_path).read_text(encoding="utf-8")
+            root = ET.parse(schema.spec_path).getroot()
         except Exception as exc:
             return f"Extension schema '{schema.local_filename}' could not be loaded: {exc}"
+
+        properties = [
+            element
+            for element in root
+            if element.tag.rsplit("}", 1)[-1] == "property"
+        ]
         lines = [
             "Projection guidance:",
             *self._guidance_lines(extension_type, schema),
             "",
-            "Registered XML definition:",
-            xml_payload,
         ]
+        if not self.terms:
+            lines.extend([
+                f"Registered terms ({len(schema.terms)}):",
+                ", ".join(schema.terms),
+                "",
+                "Call again with `extension` and `terms` to inspect exact registered definitions before mapping fields.",
+            ])
+            return "\n".join(lines)
+
+        requested = {str(term).strip().casefold() for term in self.terms if str(term).strip()}
+        matched = [
+            property_element
+            for property_element in properties
+            if property_element.attrib.get("name", "").casefold() in requested
+        ]
+        matched_names = {
+            property_element.attrib.get("name", "").casefold()
+            for property_element in matched
+        }
+        missing = sorted(requested - matched_names)
+        lines.append("Registered term definitions:")
+        for property_element in matched:
+            compact = ET.Element(property_element.tag, property_element.attrib)
+            lines.append(ET.tostring(compact, encoding="unicode", short_empty_elements=True))
+        if missing:
+            lines.append(f"Unknown terms for this extension: {', '.join(missing)}")
         return "\n".join(lines)
 
 

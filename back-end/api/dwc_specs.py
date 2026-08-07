@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Dict, Iterable, Tuple
+from xml.etree import ElementTree as ET
 
 
 _BASE_DIR = Path(__file__).resolve().parent
@@ -60,7 +61,17 @@ class DarwinCoreExtensionType(str, Enum):
     OCCURRENCE = "occurrence"
     HUMBOLDT_ECOLOGICAL_INVENTORY = "humboldt_ecological_inventory"
     MEASUREMENT_OR_FACT = "measurement_or_fact"
+    EXTENDED_MEASUREMENT_OR_FACT = "extended_measurement_or_fact"
     DNA_DERIVED_DATA = "dna_derived_data"
+    AUDIOVISUAL = "audiovisual"
+    GGBN_MATERIAL_SAMPLE = "ggbn_material_sample"
+    GGBN_AMPLIFICATION = "ggbn_amplification"
+    GGBN_CLONING = "ggbn_cloning"
+    GGBN_GEL_IMAGE = "ggbn_gel_image"
+    GGBN_LOAN = "ggbn_loan"
+    GGBN_PERMIT = "ggbn_permit"
+    GGBN_PREPARATION = "ggbn_preparation"
+    GGBN_PRESERVATION = "ggbn_preservation"
     IDENTIFICATION = "identification"
     IDENTIFICATION_HISTORY = "identification_history"
     IDENTIFIER = "identifier"
@@ -78,6 +89,18 @@ class DarwinCoreExtensionType(str, Enum):
 
     def __str__(self) -> str:
         return self.value
+
+
+def _terms_from_spec(local_filename: str) -> Tuple[str, ...]:
+    """Load local term names from the vendored registry definition."""
+    spec_path = _TEMPLATES_ROOT / local_filename
+    root = ET.parse(spec_path).getroot()
+    names = (
+        element.attrib["name"]
+        for element in root
+        if element.tag.rsplit("}", 1)[-1] == "property" and element.attrib.get("name")
+    )
+    return tuple(dict.fromkeys(names))
 
 
 CORE_SCHEMAS: Dict[DarwinCoreCoreType, DarwinCoreSchema] = {
@@ -585,6 +608,33 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
         use_when="Repeated or qualified measurements or facts map exactly to registered terms.",
         avoid_when="A native core term expresses the fact without losing meaning.",
     ),
+    DarwinCoreExtensionType.EXTENDED_MEASUREMENT_OR_FACT: DarwinCoreSchema(
+        key="extended_measurement_or_fact_2023-08-28",
+        title="Extended Measurement or Fact",
+        spec_uri="https://rs.gbif.org/extension/obis/extended_measurement_or_fact_2023-08-28.xml",
+        local_filename="extensions/extended_measurement_or_fact_2023-08-28.xml",
+        row_type="http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact",
+        terms=_terms_from_spec("extensions/extended_measurement_or_fact_2023-08-28.xml"),
+        compatible_cores=("occurrence", "event", "taxon"),
+        subject=(
+            "A measurement or fact with vocabulary identifiers and, for Event core archives, "
+            "an optional link to a specific Occurrence extension record."
+        ),
+        typical_dwc_dp_resources=(
+            "occurrence-assertion",
+            "event-assertion",
+            "survey-assertion",
+            "material-assertion",
+        ),
+        use_when=(
+            "Measurements need measurementTypeID, measurementValueID, measurementUnitID, or an "
+            "occurrenceID link that the Darwin Core MeasurementOrFact extension cannot express."
+        ),
+        avoid_when=(
+            "The standard MeasurementOrFact extension preserves the facts completely, or an "
+            "occurrenceID link would be guessed rather than resolved."
+        ),
+    ),
     DarwinCoreExtensionType.DNA_DERIVED_DATA: DarwinCoreSchema(
         key="dna_derived_data_2024-07-11",
         title="DNA Derived Data",
@@ -721,6 +771,144 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
         typical_dwc_dp_resources=("nucleotide-analysis", "nucleotide-sequence", "molecular-protocol"),
         use_when="Explicit molecular data or methods can be linked to an Occurrence or Event core record.",
         avoid_when="The package has no molecular evidence, or rows cannot resolve to a core record.",
+    ),
+    DarwinCoreExtensionType.AUDIOVISUAL: DarwinCoreSchema(
+        key="audiovisual_2026-02-24",
+        title="Audiovisual Media Description",
+        spec_uri="https://rs.gbif.org/extension/ac/audiovisual_2026-02-24.xml",
+        local_filename="extensions/audiovisual_2026-02-24.xml",
+        row_type="http://rs.tdwg.org/ac/terms/Multimedia",
+        terms=_terms_from_spec("extensions/audiovisual_2026-02-24.xml"),
+        compatible_cores=("occurrence", "event", "taxon"),
+        subject="Rich Audiovisual Core metadata for media associated with a core record.",
+        typical_dwc_dp_resources=(
+            "media",
+            "occurrence-media",
+            "event-media",
+            "material-media",
+        ),
+        use_when=(
+            "Media have meaningful technical, spatial, temporal, taxonomic, rights, service, or "
+            "region-of-interest metadata beyond the Simple Multimedia fields."
+        ),
+        avoid_when=(
+            "A media identifier and basic Dublin Core metadata are all that are available; use "
+            "Simple Multimedia for that smaller projection."
+        ),
+    ),
+    DarwinCoreExtensionType.GGBN_MATERIAL_SAMPLE: DarwinCoreSchema(
+        key="ggbn_materialsample",
+        title="GGBN Material Sample",
+        spec_uri="https://rs.gbif.org/extension/ggbn/materialsample.xml",
+        local_filename="extensions/ggbn_materialsample.xml",
+        row_type="http://data.ggbn.org/schemas/ggbn/terms/MaterialSample",
+        terms=_terms_from_spec("extensions/ggbn_materialsample.xml"),
+        compatible_cores=("occurrence",),
+        subject="Physical sample properties for an Occurrence representing a material sample.",
+        typical_dwc_dp_resources=("material", "material-assertion"),
+        use_when=(
+            "An Occurrence represents a physical sample and explicit sample type, concentration, "
+            "quantity, quality, or preparation properties are available."
+        ),
+        avoid_when=(
+            "The Occurrence does not represent a material sample, or the values only describe the "
+            "organism from which a sample was taken."
+        ),
+    ),
+    DarwinCoreExtensionType.GGBN_AMPLIFICATION: DarwinCoreSchema(
+        key="ggbn_amplification",
+        title="GGBN Amplification",
+        spec_uri="https://rs.gbif.org/extension/ggbn/amplification.xml",
+        local_filename="extensions/ggbn_amplification.xml",
+        row_type="http://data.ggbn.org/schemas/ggbn/terms/Amplification",
+        terms=_terms_from_spec("extensions/ggbn_amplification.xml"),
+        compatible_cores=("occurrence",),
+        subject="DNA amplification and sequence-result metadata for a material sample occurrence.",
+        typical_dwc_dp_resources=(
+            "nucleotide-analysis",
+            "nucleotide-sequence",
+            "molecular-protocol",
+        ),
+        use_when="Explicit amplification, primer, marker, sequence, or accession facts are recorded.",
+        avoid_when="The molecular process cannot be linked to one material sample occurrence.",
+    ),
+    DarwinCoreExtensionType.GGBN_CLONING: DarwinCoreSchema(
+        key="ggbn_cloning",
+        title="GGBN DNA Cloning",
+        spec_uri="https://rs.gbif.org/extension/ggbn/cloning.xml",
+        local_filename="extensions/ggbn_cloning.xml",
+        row_type="http://data.ggbn.org/schemas/ggbn/terms/Cloning",
+        terms=_terms_from_spec("extensions/ggbn_cloning.xml"),
+        compatible_cores=("occurrence",),
+        subject="DNA cloning and library metadata for a material sample occurrence.",
+        typical_dwc_dp_resources=("nucleotide-analysis", "molecular-protocol"),
+        use_when="Explicit cloning, library, vector, plasmid, or primer facts are recorded.",
+        avoid_when="The data describe sequencing or amplification but not a cloning process.",
+    ),
+    DarwinCoreExtensionType.GGBN_GEL_IMAGE: DarwinCoreSchema(
+        key="ggbn_gelimage",
+        title="GGBN Gel Image",
+        spec_uri="https://rs.gbif.org/extension/ggbn/gelimage.xml",
+        local_filename="extensions/ggbn_gelimage.xml",
+        row_type="http://data.ggbn.org/schemas/ggbn/terms/GelImage",
+        terms=_terms_from_spec("extensions/ggbn_gelimage.xml"),
+        compatible_cores=("occurrence",),
+        subject="Gel image and electrophoresis metadata for a material sample occurrence.",
+        typical_dwc_dp_resources=("media", "nucleotide-analysis", "nucleotide-analysis-assertion"),
+        use_when="A gel image or explicit gel conditions and result measurements are available.",
+        avoid_when="There is no gel image identifier or gel-specific evidence.",
+    ),
+    DarwinCoreExtensionType.GGBN_LOAN: DarwinCoreSchema(
+        key="ggbn_loan",
+        title="GGBN Loan",
+        spec_uri="https://rs.gbif.org/extension/ggbn/loan.xml",
+        local_filename="extensions/ggbn_loan.xml",
+        row_type="http://data.ggbn.org/schemas/ggbn/terms/Loan",
+        terms=_terms_from_spec("extensions/ggbn_loan.xml"),
+        compatible_cores=("occurrence",),
+        subject="Loan and disposition information for a material sample occurrence.",
+        typical_dwc_dp_resources=("material", "material-assertion"),
+        use_when="Explicit loan destination, date, identifier, conditions, or blocking facts exist.",
+        avoid_when="The record has no material-sample loan transaction.",
+    ),
+    DarwinCoreExtensionType.GGBN_PERMIT: DarwinCoreSchema(
+        key="ggbn_permit_2022-08-08",
+        title="GGBN Permit",
+        spec_uri="https://rs.gbif.org/extension/ggbn/permit_2022-08-08.xml",
+        local_filename="extensions/ggbn_permit_2022-08-08.xml",
+        row_type="http://data.ggbn.org/schemas/ggbn/terms/Permit",
+        terms=_terms_from_spec("extensions/ggbn_permit_2022-08-08.xml"),
+        compatible_cores=("occurrence",),
+        subject="Permit metadata governing a material sample occurrence.",
+        typical_dwc_dp_resources=("material", "material-usage-policy", "usage-policy"),
+        use_when="Permit type, status, qualifier, URI, or text is explicitly supplied.",
+        avoid_when="Legal or permit status would have to be inferred.",
+    ),
+    DarwinCoreExtensionType.GGBN_PREPARATION: DarwinCoreSchema(
+        key="ggbn_preparation",
+        title="GGBN Preparation",
+        spec_uri="https://rs.gbif.org/extension/ggbn/preparation.xml",
+        local_filename="extensions/ggbn_preparation.xml",
+        row_type="http://data.ggbn.org/schemas/ggbn/terms/Preparation",
+        terms=_terms_from_spec("extensions/ggbn_preparation.xml"),
+        compatible_cores=("occurrence",),
+        subject="Preparation process metadata for a material sample occurrence.",
+        typical_dwc_dp_resources=("material", "material-protocol", "protocol"),
+        use_when="Preparation type, process, materials, agent, date, or references are recorded.",
+        avoid_when="Only a generic core preparations value is available and no repeated detail is gained.",
+    ),
+    DarwinCoreExtensionType.GGBN_PRESERVATION: DarwinCoreSchema(
+        key="ggbn_preservation",
+        title="GGBN Preservation",
+        spec_uri="https://rs.gbif.org/extension/ggbn/preservation.xml",
+        local_filename="extensions/ggbn_preservation.xml",
+        row_type="http://data.ggbn.org/schemas/ggbn/terms/Preservation",
+        terms=_terms_from_spec("extensions/ggbn_preservation.xml"),
+        compatible_cores=("occurrence",),
+        subject="Preservation method and conditions for a material sample occurrence.",
+        typical_dwc_dp_resources=("material", "material-assertion"),
+        use_when="Explicit preservation type, temperature, start date, or sequence is recorded.",
+        avoid_when="Preservation facts are absent or apply only at an unresolved aggregate level.",
     ),
     DarwinCoreExtensionType.IDENTIFICATION: DarwinCoreSchema(
         key="identification",
@@ -1035,32 +1223,12 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
         avoid_when="The values are observations of individuals rather than taxon-level traits.",
     ),
     DarwinCoreExtensionType.TYPES_AND_SPECIMEN: DarwinCoreSchema(
-        key="typesandspecimen",
+        key="typesandspecimen_2026-05-05",
         title="Types and Specimen",
-        spec_uri="https://rs.gbif.org/extension/gbif/1.0/typesandspecimen.xml",
-        local_filename="extensions/typesandspecimen.xml",
+        spec_uri="https://rs.gbif.org/extension/gbif/1.0/typesandspecimen_2026-05-05.xml",
+        local_filename="extensions/typesandspecimen_2026-05-05.xml",
         row_type="http://rs.gbif.org/terms/1.0/TypesAndSpecimen",
-        terms=(
-            "bibliographicCitation",
-            "catalogNumber",
-            "collectionCode",
-            "datasetID",
-            "institutionCode",
-            "locality",
-            "occurrenceID",
-            "recordedBy",
-            "scientificName",
-            "sex",
-            "source",
-            "taxonRank",
-            "typeDesignatedBy",
-            "typeDesignationType",
-            "typeStatus",
-            "verbatimEventDate",
-            "verbatimLabel",
-            "verbatimLatitude",
-            "verbatimLongitude",
-        ),
+        terms=_terms_from_spec("extensions/typesandspecimen_2026-05-05.xml"),
         compatible_cores=("taxon",),
         subject="Type designations and specimens associated with a taxon name.",
         typical_dwc_dp_resources=("material-entity", "nomenclatural-type"),
@@ -1098,7 +1266,7 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
     DarwinCoreExtensionType.RELEVE: DarwinCoreSchema(
         key="releve_2016-05-10",
         title="Relevé",
-        spec_uri=None,
+        spec_uri="https://rs.gbif.org/extension/gbif/1.0/releve_2016-05-10.xml",
         local_filename="extensions/releve_2016-05-10.xml",
         row_type="http://rs.gbif.org/terms/1.0/Releve",
         terms=(
@@ -1132,7 +1300,7 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
     DarwinCoreExtensionType.CHRONOMETRIC_AGE: DarwinCoreSchema(
         key="ChronometricAge_2024-03-11",
         title="Chronometric Age",
-        spec_uri=None,
+        spec_uri="https://rs.gbif.org/extension/dwc/ChronometricAge_2024-03-11.xml",
         local_filename="extensions/ChronometricAge_2024-03-11.xml",
         row_type="http://rs.tdwg.org/chrono/terms/ChronometricAge",
         terms=(

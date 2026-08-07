@@ -1235,9 +1235,42 @@ class GetDwCExtensionInfoTests(SimpleTestCase):
     def test_lookup_includes_extensions_needed_for_rich_projections(self):
         relationship = GetDwCExtensionInfo(extension="resource_relationship").run()
         identification = GetDwCExtensionInfo(extension="identification_history").run()
+        audiovisual = GetDwCExtensionInfo(extension="audiovisual").run()
+        extended_measurement = GetDwCExtensionInfo(extension="extended_measurement_or_fact").run()
+        material_sample = GetDwCExtensionInfo(extension="ggbn_material_sample").run()
 
-        self.assertIn("ResourceRelationship", relationship)
-        self.assertIn("Identification", identification)
+        self.assertIn("Darwin Core Resource Relationship", relationship)
+        self.assertIn("Darwin Core Identification History", identification)
+        self.assertIn("Audiovisual Media Description", audiovisual)
+        self.assertIn("PixelXDimension", audiovisual)
+        self.assertIn("measurementTypeID", extended_measurement)
+        self.assertIn("materialSampleType", material_sample)
+
+    def test_catalogue_terms_and_row_types_match_vendored_definitions(self):
+        for extension_type, schema in EXTENSION_SCHEMAS.items():
+            with self.subTest(extension=extension_type.value):
+                root = ET.parse(schema.spec_path).getroot()
+                registered_terms = {
+                    element.attrib["name"]
+                    for element in root
+                    if element.tag.rsplit("}", 1)[-1] == "property"
+                }
+                self.assertEqual(schema.row_type, root.attrib["rowType"])
+                self.assertEqual(set(schema.terms), registered_terms)
+
+    def test_all_registered_ggbn_extensions_are_available(self):
+        expected = {
+            "ggbn_material_sample",
+            "ggbn_amplification",
+            "ggbn_cloning",
+            "ggbn_gel_image",
+            "ggbn_loan",
+            "ggbn_permit",
+            "ggbn_preparation",
+            "ggbn_preservation",
+        }
+
+        self.assertTrue(expected.issubset({extension.value for extension in EXTENSION_SCHEMAS}))
 
     def test_catalogue_exposes_core_compatibility_and_projection_guidance(self):
         response = GetDwCExtensionInfo().run()
@@ -1250,10 +1283,15 @@ class GetDwCExtensionInfoTests(SimpleTestCase):
 
     def test_humboldt_lookup_returns_guidance_and_registered_terms(self):
         response = GetDwCExtensionInfo(extension="humboldt_ecological_inventory").run()
+        term_response = GetDwCExtensionInfo(
+            extension="humboldt_ecological_inventory",
+            terms=["samplingEffortValue"],
+        ).run()
 
         self.assertIn("Projection guidance:", response)
-        self.assertIn("rowType=\"http://rs.tdwg.org/eco/terms/Event\"", response)
-        self.assertIn("name=\"samplingEffortValue\"", response)
+        self.assertIn("samplingEffortValue", response)
+        self.assertIn("The numeric value for the sampling effort", term_response)
+        self.assertNotIn("<translation", term_response)
         self.assertIn("inferred from detected occurrences", EXTENSION_SCHEMAS[
             DarwinCoreExtensionType.HUMBOLDT_ECOLOGICAL_INVENTORY
         ].avoid_when)
@@ -1984,6 +2022,66 @@ class DwcaExportSanitizationTests(SimpleTestCase):
 
         self.assertEqual(coreid.attrib["index"], "0")
         self.assertTrue(any(field.attrib["index"] == "1" for field in fields))
+
+    @patch("api.helpers.publish.upload_file")
+    @patch("api.helpers.publish.Minio")
+    def test_occurrence_core_exports_audiovisual_emof_and_ggbn_extensions(
+        self, minio_mock, upload_mock
+    ):
+        captured = {}
+
+        def capture_archive(client, bucket, object_name, local_path):
+            with zipfile.ZipFile(local_path) as archive:
+                captured["meta"] = archive.read("meta.xml")
+
+        upload_mock.side_effect = capture_archive
+        env = {
+            "MINIO_URI": "storage.example.org",
+            "MINIO_ACCESS_KEY": "key",
+            "MINIO_SECRET_KEY": "secret",
+            "MINIO_BUCKET": "bucket",
+            "MINIO_BUCKET_FOLDER": "packages",
+        }
+        core = pd.DataFrame([{"occurrenceID": "occ-1", "scientificName": "Apus apus"}])
+        extension_values = {
+            DarwinCoreExtensionType.AUDIOVISUAL: {"identifier": "https://example.org/media/1"},
+            DarwinCoreExtensionType.EXTENDED_MEASUREMENT_OR_FACT: {
+                "measurementID": "measurement-1",
+                "measurementTypeID": "https://example.org/vocabulary/body-mass",
+            },
+            DarwinCoreExtensionType.GGBN_MATERIAL_SAMPLE: {"materialSampleType": "tissue"},
+            DarwinCoreExtensionType.GGBN_AMPLIFICATION: {"amplificationSuccess": "true"},
+            DarwinCoreExtensionType.GGBN_CLONING: {"cloningMethod": "plasmid cloning"},
+            DarwinCoreExtensionType.GGBN_GEL_IMAGE: {"identifier": "https://example.org/gel/1"},
+            DarwinCoreExtensionType.GGBN_LOAN: {"loanIdentifier": "loan-1"},
+            DarwinCoreExtensionType.GGBN_PERMIT: {"permitURI": "https://example.org/permit/1"},
+            DarwinCoreExtensionType.GGBN_PREPARATION: {"preparationType": "gDNA"},
+            DarwinCoreExtensionType.GGBN_PRESERVATION: {"preservationType": "frozen"},
+        }
+        extensions = [
+            (pd.DataFrame([{"_coreid": "occ-1", **values}]), extension_type, "_coreid")
+            for extension_type, values in extension_values.items()
+        ]
+
+        with patch.dict(os.environ, env):
+            upload_dwca(
+                core,
+                "Molecular media dataset",
+                "A material sample with media, measurements, and GGBN metadata.",
+                core_type=DarwinCoreCoreType.OCCURRENCE,
+                extensions=extensions,
+            )
+
+        meta_root = ET.fromstring(captured["meta"])
+        row_types = {
+            element.attrib["rowType"]
+            for element in meta_root
+            if element.tag.rsplit("}", 1)[-1] == "extension"
+        }
+        self.assertEqual(
+            row_types,
+            {EXTENSION_SCHEMAS[extension_type].row_type for extension_type in extension_values},
+        )
 
     def test_upload_dwca_rejects_extension_incompatible_with_core(self):
         core = pd.DataFrame([
