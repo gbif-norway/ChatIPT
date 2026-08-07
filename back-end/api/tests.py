@@ -14,6 +14,7 @@ import openpyxl
 import pandas as pd
 import yaml
 from .helpers.publish import (
+    DwcaExtensionLinkError,
     assert_case_insensitive_unique_identifier,
     make_eml,
     parse_newick_to_tree,
@@ -2104,6 +2105,40 @@ class DwcaExportSanitizationTests(SimpleTestCase):
                 )],
             )
 
+    def test_upload_dwca_reports_all_invalid_extension_links_together(self):
+        core = pd.DataFrame([
+            {"occurrenceID": "occ-1", "scientificName": "Apus apus"},
+        ])
+        identification = pd.DataFrame([
+            {"_coreid": "occurrence-pk-1", "identificationID": "identification-1"},
+        ])
+        multimedia = pd.DataFrame([
+            {"_coreid": "occurrence-pk-2", "identifier": "https://example.org/media/1"},
+            {"_coreid": "occurrence-pk-2", "identifier": "https://example.org/media/2"},
+        ])
+
+        with self.assertRaises(DwcaExtensionLinkError) as raised:
+            upload_dwca(
+                core,
+                "Test dataset",
+                "Test description",
+                core_type=DarwinCoreCoreType.OCCURRENCE,
+                extensions=[
+                    (identification, DarwinCoreExtensionType.IDENTIFICATION, "_coreid"),
+                    (multimedia, DarwinCoreExtensionType.MULTIMEDIA, "_coreid"),
+                ],
+            )
+
+        self.assertEqual(raised.exception.core_id_column, "occurrenceID")
+        self.assertEqual(
+            [issue["extension_type"] for issue in raised.exception.issues],
+            ["identification", "multimedia"],
+        )
+        self.assertEqual(
+            [issue["unresolved_count"] for issue in raised.exception.issues],
+            [1, 1],
+        )
+
     @patch("api.helpers.publish.upload_file")
     @patch("api.helpers.publish.Minio")
     def test_event_core_exports_occurrence_and_humboldt_extensions(self, minio_mock, upload_mock):
@@ -2196,6 +2231,63 @@ class DwcaExportSanitizationTests(SimpleTestCase):
         combined_tables = "\n".join(captured["tables"].values())
         self.assertIn("Apus apus", combined_tables)
         self.assertIn("Point count", combined_tables)
+
+
+class UploadDwcaCorrectionFeedbackTests(TestCase):
+    @patch("api.agent_tools.discord_bot.send_discord_message")
+    def test_invalid_extension_links_return_structured_feedback_without_alert(self, discord_mock):
+        task = Task.objects.create(name="DwC-A feedback test", text="Test", order=999)
+        dataset = Dataset.objects.create(title="Test dataset", description="Test description")
+        agent = Agent.objects.create(dataset=dataset, task=task)
+        core = Table.objects.create(
+            dataset=dataset,
+            title="occurrence_dwca",
+            df=pd.DataFrame([{"occurrenceID": "occ-1", "scientificName": "Apus apus"}]),
+        )
+        identification = Table.objects.create(
+            dataset=dataset,
+            title="identification_dwca",
+            df=pd.DataFrame([{
+                "_coreid": "occurrence-pk-1",
+                "identificationID": "identification-1",
+            }]),
+        )
+        multimedia = Table.objects.create(
+            dataset=dataset,
+            title="multimedia_dwca",
+            df=pd.DataFrame([{
+                "_coreid": "occurrence-pk-2",
+                "identifier": "https://example.org/media/1",
+            }]),
+        )
+
+        result = UploadDwCA(
+            agent_id=agent.id,
+            core_table_id=core.id,
+            core_type=DarwinCoreCoreType.OCCURRENCE,
+            extension_tables=[
+                {
+                    "table_id": identification.id,
+                    "extension_type": DarwinCoreExtensionType.IDENTIFICATION,
+                    "core_id_column": "_coreid",
+                },
+                {
+                    "table_id": multimedia.id,
+                    "extension_type": DarwinCoreExtensionType.MULTIMEDIA,
+                    "core_id_column": "_coreid",
+                },
+            ],
+        ).run()
+
+        feedback = json.loads(result)
+        self.assertEqual(feedback["status"], "correction_required")
+        self.assertEqual(feedback["core_identifier_column"], "occurrenceID")
+        self.assertEqual(
+            [issue["table_id"] for issue in feedback["extension_tables"]],
+            [identification.id, multimedia.id],
+        )
+        self.assertIn("Do not copy DwC-DP `_pk` or `_fk` values directly", feedback["required_action"])
+        discord_mock.assert_not_called()
 
 
 class DatasetSummarySerializerTests(TestCase):

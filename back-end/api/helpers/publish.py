@@ -51,6 +51,29 @@ GBIF_LICENSES = {
 DEFAULT_GBIF_LICENSE = "CC BY 4.0"
 
 
+class DwcaExtensionLinkError(ValueError):
+    """Expected projection error raised when extension rows cannot link to the core."""
+
+    def __init__(self, core_id_column: str | None, issues: list[dict]):
+        self.core_id_column = core_id_column
+        self.issues = issues
+        summaries = []
+        for issue in issues:
+            details = []
+            if issue.get("missing_column"):
+                details.append(f"missing core ID column '{issue['requested_column']}'")
+            if issue.get("blank_count"):
+                details.append(f"{issue['blank_count']} blank value(s)")
+            if issue.get("unresolved_count"):
+                details.append(f"{issue['unresolved_count']} unresolved distinct value(s)")
+            summaries.append(f"{issue['extension_type']}: {', '.join(details)}")
+        super().__init__(
+            "DwC-A extension link validation failed for "
+            f"{len(issues)} extension table(s) against core '{core_id_column}': "
+            + "; ".join(summaries)
+        )
+
+
 def normalize_gbif_license(value: str | None) -> tuple[str, dict]:
     """Return a supported GBIF license name and its canonical metadata."""
     name = (value or DEFAULT_GBIF_LICENSE).strip()
@@ -1467,7 +1490,9 @@ def upload_dwca(
     
     archive.core = core_table
 
-    for ext_df, ext_type, extension_core_id_column in extensions or []:
+    prepared_extensions = []
+    extension_link_issues = []
+    for extension_index, (ext_df, ext_type, extension_core_id_column) in enumerate(extensions or []):
         schema = EXTENSION_SCHEMAS[ext_type]
         if schema.compatible_cores and core_type.value not in schema.compatible_cores:
             compatible = ", ".join(schema.compatible_cores)
@@ -1483,10 +1508,16 @@ def upload_dwca(
             if str(column).casefold() == str(extension_core_id_column).casefold()
         ]
         if not matching_columns:
-            raise ValueError(
-                f"DwC-A extension '{ext_type}' has no core ID column "
-                f"'{extension_core_id_column}'."
-            )
+            extension_link_issues.append({
+                "extension_index": extension_index,
+                "extension_type": ext_type.value,
+                "requested_column": str(extension_core_id_column),
+                "missing_column": True,
+                "blank_count": 0,
+                "unresolved_count": 0,
+                "examples": [],
+            })
+            continue
         actual_core_id_column = matching_columns[0]
         if ext_df.columns.get_loc(actual_core_id_column) != 0:
             identifier_values = ext_df.pop(actual_core_id_column)
@@ -1495,20 +1526,30 @@ def upload_dwca(
             ext_df[actual_core_id_column].astype("string").fillna("").str.strip()
         )
         blank_links = int(ext_df[actual_core_id_column].eq("").sum())
-        if blank_links:
-            raise ValueError(
-                f"DwC-A extension '{ext_type}' contains {blank_links} blank core ID value(s) "
-                f"in '{actual_core_id_column}'."
-            )
         if core_id_index is None:
             raise ValueError("DwC-A extensions require a core table with an explicit identifier.")
-        unresolved = sorted(set(ext_df[actual_core_id_column]) - core_identifiers)
-        if unresolved:
-            examples = ", ".join(map(str, unresolved[:5]))
-            raise ValueError(
-                f"DwC-A extension '{ext_type}' contains {len(unresolved)} core ID value(s) "
-                f"that do not resolve to the core '{core_id_column}' column. Examples: {examples}."
-            )
+        nonblank_links = set(ext_df.loc[ext_df[actual_core_id_column].ne(""), actual_core_id_column])
+        unresolved = sorted(nonblank_links - core_identifiers)
+        if blank_links or unresolved:
+            extension_link_issues.append({
+                "extension_index": extension_index,
+                "extension_type": ext_type.value,
+                "requested_column": str(extension_core_id_column),
+                "actual_column": str(actual_core_id_column),
+                "missing_column": False,
+                "blank_count": blank_links,
+                "unresolved_count": len(unresolved),
+                "examples": list(map(str, unresolved[:5])),
+            })
+            continue
+
+        prepared_extensions.append((ext_df, ext_type, actual_core_id_column, schema))
+
+    if extension_link_issues:
+        raise DwcaExtensionLinkError(core_id_column, extension_link_issues)
+
+    for ext_df, ext_type, actual_core_id_column, schema in prepared_extensions:
+        ext_spec_path = schema.spec_path
         
         # Validate spec_path exists if it's a local file (not a URL)
         if not ext_spec_path.startswith(('http://', 'https://')):

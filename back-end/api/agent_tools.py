@@ -10,6 +10,7 @@ import numpy as np
 from api.helpers.openai_helpers import OpenAIBaseModel
 from typing import Optional, List, Dict, Tuple, ClassVar, Literal
 from api.helpers.publish import (
+    DwcaExtensionLinkError,
     upload_dwca, 
     register_dataset_and_endpoint,
 )
@@ -2608,6 +2609,35 @@ class UploadDwCA(OpenAIBaseModel):
             dataset.dwca_url = dwca_url
             dataset.save()
             return f'DwCA successfully created and uploaded: {dwca_url}'
+        except DwcaExtensionLinkError as e:
+            assignments = self.extension_tables or []
+            table_issues = []
+            for issue in e.issues:
+                issue_payload = dict(issue)
+                extension_index = issue_payload.pop("extension_index")
+                if extension_index < len(assignments):
+                    issue_payload["table_id"] = assignments[extension_index].table_id
+                table_issues.append(issue_payload)
+
+            return json.dumps({
+                "status": "correction_required",
+                "error_code": "dwca_extension_link_validation_failed",
+                "message": (
+                    "The DwC-A archive was not uploaded because one or more extension "
+                    "tables do not link to the selected core identifier. Rebuild every "
+                    "listed temporary projection table and retry UploadDwCA."
+                ),
+                "core_table_id": self.core_table_id,
+                "core_identifier_column": e.core_id_column,
+                "extension_tables": table_issues,
+                "required_action": (
+                    "Resolve each extension row through the validated DwC-DP graph: follow "
+                    "its foreign key to the referenced core primary key, then copy the selected "
+                    "core's public identifier into `_coreid`. Do not copy DwC-DP `_pk` or `_fk` "
+                    "values directly. Check join cardinality, unmatched rows, blank links, and "
+                    "row-count preservation for every listed table before retrying."
+                ),
+            }, indent=2)
         except Exception as e:
             import traceback
             error_msg = (
