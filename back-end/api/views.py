@@ -340,21 +340,22 @@ def orcid_callback(request):
         if 'person' in public_data and 'employments' in public_data['person']:
             logger.debug(f"Employment data structure: {public_data['person']['employments']}")
         
-        user, created = User.objects.get_or_create(
-            email=email,
-            defaults={
-                'username': email,
-                'orcid_id': orcid_id,
-                'orcid_access_token': access_token,
-                'orcid_refresh_token': token_info.get('refresh_token', ''),
-                'first_name': first_name or '',
-                'last_name': last_name or '',
-                'institution': institution or '',
-                'department': department or '',
-                'country': country or '',
-                'is_active': True,  # Ensure user is active
-            }
-        )
+        user = User.objects.filter(email__iexact=email).first()
+        created = user is None
+        if created:
+            user = User.objects.create(
+                email=email,
+                username=email,
+                orcid_id=orcid_id,
+                orcid_access_token=access_token,
+                orcid_refresh_token=token_info.get('refresh_token', ''),
+                first_name=first_name or '',
+                last_name=last_name or '',
+                institution=institution or '',
+                department=department or '',
+                country=country or '',
+                is_active=True,
+            )
         
         if not created:
             # Update existing user's ORCID info and profile data
