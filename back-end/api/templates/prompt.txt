@@ -126,20 +126,6 @@ EML metadata recorded so far:
 {% endif %}
 {% endwith %}
 
-{% if agent.task.name == "Data transformation" or agent.task.name == "Data validation and refinement" %}
-{% if agent.dataset.source_accounting_snapshot %}
-SOURCE INVENTORY (authoritative pre-transformation table counts):
-{{ agent.dataset.source_accounting_summary_json|safe }}
-Use this inventory as a completeness reminder, not as a second transformation
-project. Before completing, run one compact coverage check by source table:
-represented rows, explicitly omitted rows, and a short reason for every omission.
-Save material omissions and ambiguous routing decisions in SetStructureNotes.
-Do not build exhaustive per-cell or per-column accounting.
-{% else %}
-SOURCE INVENTORY: unavailable for this legacy run. Do not invent source counts.
-{% endif %}
-{% endif %}
-
 Your Task (#{{ agent.task.order }} of {{ all_tasks_count }}): 
 ///
 {{ agent.task.text }}

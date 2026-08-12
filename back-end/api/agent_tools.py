@@ -45,7 +45,6 @@ from api.dwc_dp_specs import (
     normalize_resource_name,
     validate_dwc_dp_resources,
 )
-from api.publication_validation import accounting_semantic_warnings
 
 
 _ISO_YEAR_RE = re.compile(r"^\d{4}$")
@@ -673,12 +672,25 @@ def _dwc_dp_resources_from_mapping(dataset, resource_tables: Optional[List[DwcDp
 
 
 def _validate_dwc_dp_for_dataset(dataset, resources):
-    validation = validate_dwc_dp_resources(resources)
-    validation["warnings"] = list(dict.fromkeys([
-        *validation["warnings"],
-        *accounting_semantic_warnings(dataset.dwc_dp_accounting),
-    ]))
-    return validation
+    return validate_dwc_dp_resources(resources)
+
+
+def _remove_empty_dwc_dp_resources(dataset) -> list[str]:
+    """Remove reserved package tables that contain no records."""
+    removed = []
+    for table in dataset.table_set.filter(title__in=DWC_DP_TABLE_NAMES).order_by("id"):
+        if table.df.empty:
+            removed.append(table.title)
+            table.delete()
+    return removed
+
+
+def _remove_final_staging_tables(dataset) -> list[str]:
+    """Remove non-package source and working tables after final validation."""
+    staging_tables = dataset.table_set.exclude(title__in=DWC_DP_TABLE_NAMES)
+    removed = list(staging_tables.values_list("title", flat=True))
+    staging_tables.delete()
+    return removed
 
 
 def _tree_additional_files(dataset) -> list[tuple[str, bytes]]:
@@ -719,148 +731,6 @@ class ValidateDwcDp(OpenAIBaseModel):
             dataset.dwc_dp_validation = validation
             dataset.save(update_fields=["dwc_dp_validation"])
             return json.dumps(validation, ensure_ascii=False, indent=2)
-        except Exception as exc:
-            return repr(exc)[:2000]
-
-
-class AccountingDisposition(BaseModel):
-    target_table: str = Field(description="Exact reserved DwC-DP target table title.")
-    operation: Literal["direct", "split", "deduplicated", "aggregated", "unpivoted", "joined", "derived", "other"]
-    source_rows_used: int = Field(ge=0, description="Unique source rows used in this transformation path.")
-    target_rows_contributed: int = Field(
-        ge=0,
-        description="Target rows attributable to this source table; may differ from source_rows_used.",
-    )
-    notes: Optional[str] = None
-
-
-AccountingMetadataField = Literal[
-    "title",
-    "description",
-    "orcid",
-    "eml.license",
-    "eml.temporal_scope",
-    "eml.geographic_scope",
-    "eml.geographic_bounds",
-    "eml.taxonomic_scope",
-    "eml.taxonomic_keywords",
-    "eml.methodology",
-    "eml.manuscript_doi",
-    "eml.manuscript_title",
-    "eml.journal",
-    "eml.publication_year",
-    "eml.dataset_citation",
-    "eml.project_title",
-    "eml.abstract_source",
-    "eml.methods_source",
-    "eml.creators_source",
-    "eml.users",
-]
-
-
-class AccountingResourceRoute(BaseModel):
-    target_table: str = Field(description="Exact reserved DwC-DP target table title.")
-    field_mappings: Dict[int, str] = Field(
-        description=(
-            "Map populated source column index to exact populated target field. "
-            "Use another route if one source column feeds a second field in the same table."
-        ),
-    )
-    source_values: Dict[int, int] = Field(
-        default_factory=dict,
-        description=(
-            "Optional partial coverage by source column index. Omit indexes whose route "
-            "covers every populated source value."
-        ),
-    )
-
-
-class AccountingMetadataRoute(BaseModel):
-    metadata_field: AccountingMetadataField
-    source_column_indexes: List[int] = Field(min_items=1)
-    source_values: Dict[int, int] = Field(
-        default_factory=dict,
-        description="Optional partial coverage by source column index.",
-    )
-
-
-class AccountingOmittedColumnRoute(BaseModel):
-    source_column_indexes: List[int] = Field(min_items=1)
-    reason: str = Field(min_length=1)
-    source_values: Dict[int, int] = Field(
-        default_factory=dict,
-        description="Optional partial omission count by source column index.",
-    )
-
-
-class AccountingRowOmission(BaseModel):
-    rows: int = Field(gt=0)
-    reason: str = Field(min_length=1)
-
-
-class SourceTableAccounting(BaseModel):
-    source_table_id: PositiveInt
-    rows_accounted: int = Field(
-        ge=0,
-        description="Unique source rows represented by at least one target, regardless of splits or repeated use.",
-    )
-    omissions: List[AccountingRowOmission] = Field(default_factory=list)
-    coverage_notes: str = Field(
-        description="How unique row coverage was calculated, especially when paths overlap or aggregate."
-    )
-    dispositions: List[AccountingDisposition]
-    resource_routes: List[AccountingResourceRoute] = Field(
-        default_factory=list,
-        description=(
-            "Group source-to-field mappings by target resource. The server supplies "
-            "source names, populated counts, and target table row totals."
-        ),
-    )
-    metadata_routes: List[AccountingMetadataRoute] = Field(
-        default_factory=list,
-        description="Group source column indexes by one accepted dataset/EML metadata field.",
-    )
-    omitted_column_routes: List[AccountingOmittedColumnRoute] = Field(
-        default_factory=list,
-        description="Group explicitly omitted populated source columns by reason.",
-    )
-
-
-class SubmitDwcDpAccounting(OpenAIBaseModel):
-    """
-    Submit compact source-to-DwC-DP semantic routing. The server expands source
-    names/counts, populated values, omissions, and target row totals into the
-    complete declaration, then stores a signed receipt tied to the current
-    source snapshot and resource tables. Re-submit after changing any DwC-DP
-    table.
-    """
-
-    agent_id: PositiveInt
-    sources: List[SourceTableAccounting]
-
-    def run(self):
-        from api.accounting import expand_compact_accounting, save_and_verify_accounting
-        from api.models import Agent
-
-        try:
-            agent = Agent.objects.get(id=self.agent_id)
-            declaration, expansion_errors = expand_compact_accounting(
-                agent.dataset,
-                [source.dict(exclude_none=True) for source in self.sources],
-            )
-            if expansion_errors:
-                return json.dumps(
-                    {
-                        "valid": False,
-                        "errors": expansion_errors,
-                        "warnings": [],
-                        "summary": {},
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            verification = save_and_verify_accounting(agent.dataset, declaration)
-            return json.dumps(verification, ensure_ascii=False, indent=2)
         except Exception as exc:
             return repr(exc)[:2000]
 
@@ -1337,7 +1207,6 @@ class Python(OpenAIBaseModel):
         from datetime import datetime
         ```
         So this SHOULD NOT BE INCLUDED. Just begin using (without importing) pd, np, uuid, re, utm, replace_table, create_or_replace, delete_tables, normalize_event_date, Table, Dataset and datetime as necessary.
-    - Do not create or edit `Dataset.dwc_dp_accounting` in Python.
     """
     code: str = Field(..., description="String containing valid python code to be executed in `exec()`")
 
@@ -2365,9 +2234,7 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
             agent = Agent.objects.get(id=self.agent_id)
             task_name = agent.task.name if agent.task else ""
             if task_name in self.TABLE_REQUIRED_TASK_NAMES:
-                from api.accounting import remove_empty_dwc_dp_resources
-
-                remove_empty_dwc_dp_resources(agent.dataset)
+                _remove_empty_dwc_dp_resources(agent.dataset)
             # Guardrail: Data content exploration must set basic metadata first.
             if (
                 agent.task
@@ -2414,9 +2281,7 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
                         f"tables validate. Resolve: {details}"
                     )
             if task_name in {"Data validation and refinement", "Final Review & Publication"}:
-                from api.accounting import remove_final_staging_tables
-
-                remove_final_staging_tables(agent.dataset)
+                _remove_final_staging_tables(agent.dataset)
             agent.completed_at = timezone.now()
             agent.save()
             print('Marking as complete...')

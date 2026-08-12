@@ -134,7 +134,6 @@ class DatasetSerializer(serializers.ModelSerializer):
             'dwca_url',
             'dwc_dp_url',
             'dwc_dp_validation',
-            'dwc_dp_accounting',
             'dwc_dp_standard',
             'gbif_url',
             'user_language',
@@ -157,7 +156,6 @@ class DatasetSerializer(serializers.ModelSerializer):
             'source_mode',
             'dwc_dp_url',
             'dwc_dp_validation',
-            'dwc_dp_accounting',
             'dwc_dp_standard',
         ]
     

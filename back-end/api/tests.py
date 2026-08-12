@@ -36,7 +36,6 @@ from .agent_tools import (
     SetBasicMetadata,
     SetAgentTaskToComplete,
     RequestUserInput,
-    SubmitDwcDpAccounting,
     ValidateDwcDp,
     PreviewDwcDpDescriptor,
     UploadDwCA,
@@ -56,7 +55,6 @@ from .helpers.openai_helpers import (
 )
 from .models import Agent, Dataset, Message, Table, Task, UserFile
 from .serializers import DatasetListSerializer, DatasetSerializer
-from .accounting import build_source_accounting_snapshot, current_accounting_status
 from .dwc_dp_specs import (
     DWC_DP_SCHEMA_REVISION,
     RESERVED_TABLE_NAMES,
@@ -70,7 +68,6 @@ from .dwc_dp_specs import (
     validate_dwc_dp_resources,
 )
 from .dwc_specs import EXTENSION_SCHEMAS, DarwinCoreCoreType, DarwinCoreExtensionType
-from .publication_validation import accounting_semantic_warnings
 
 
 class DwcDpSpecTests(SimpleTestCase):
@@ -235,70 +232,6 @@ class DwcDpSpecTests(SimpleTestCase):
         weak_fk = event['schema']['weakForeignKeys'][0]
         self.assertEqual(weak_fk['fields'], 'eventConductedByID')
         self.assertEqual(weak_fk['reference']['fields'], 'agentID')
-
-    def test_accounting_warns_when_supplied_higher_taxonomy_is_not_preserved(self):
-        accounting = {
-            "declaration": {
-                "sources": [{
-                    "source_table_title": "observations.csv",
-                    "columns": [{
-                        "source_column": "Identification.Kingdom",
-                        "source_populated_values": 12,
-                        "destinations": [{
-                            "kind": "omitted",
-                            "source_values": 12,
-                            "reason": "not mapped",
-                        }],
-                    }],
-                }],
-            },
-        }
-
-        warnings = accounting_semantic_warnings(accounting)
-
-        self.assertTrue(any("Higher-taxonomy preservation" in warning for warning in warnings))
-        self.assertTrue(any("observations.csv.Identification.Kingdom" in warning for warning in warnings))
-
-    def test_accounting_accepts_higher_taxonomy_routed_to_identification(self):
-        accounting = {
-            "declaration": {
-                "sources": [{
-                    "source_table_title": "observations.csv",
-                    "columns": [{
-                        "source_column": "Family",
-                        "source_populated_values": 12,
-                        "destinations": [{
-                            "kind": "resource",
-                            "source_values": 12,
-                            "target_table": "identification",
-                            "target_field": "family",
-                        }],
-                    }],
-                }],
-            },
-        }
-
-        warnings = accounting_semantic_warnings(accounting)
-
-        self.assertFalse(any("Higher-taxonomy preservation" in warning for warning in warnings))
-
-    def test_accounting_ignores_empty_higher_taxonomy_columns(self):
-        accounting = {
-            "declaration": {
-                "sources": [{
-                    "source_table_title": "observations.csv",
-                    "columns": [{
-                        "source_column": "phylum",
-                        "source_populated_values": 0,
-                        "destinations": [],
-                    }],
-                }],
-            },
-        }
-
-        warnings = accounting_semantic_warnings(accounting)
-
-        self.assertFalse(any("Higher-taxonomy preservation" in warning for warning in warnings))
 
     def test_creates_rooted_archive_with_plain_csv_resources(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2508,20 +2441,6 @@ class DatasetSummarySerializerTests(TestCase):
 
 
 class TaskFunctionTests(TestCase):
-    def test_accounting_tool_is_not_exposed_to_model(self):
-        for index, task_name in enumerate(
-            [
-                "Data transformation",
-                "Data validation and refinement",
-                "Final Review & Publication",
-                "Data maintenance",
-            ],
-            start=1,
-        ):
-            with self.subTest(task_name=task_name):
-                task = Task.objects.create(name=task_name, text=task_name, order=index)
-                self.assertNotIn(SubmitDwcDpAccounting, task.functions)
-
     def test_dwc_dp_tools_are_scoped_to_package_tasks(self):
         exploration = Task.objects.create(
             name="Data content exploration",
@@ -2555,436 +2474,6 @@ class TaskFunctionTests(TestCase):
 
         self.assertEqual(exploration.reasoning_effort, "low")
         self.assertEqual(transformation.reasoning_effort, "medium")
-
-
-class DwcDpAccountingTests(TestCase):
-    def _make_transformed_dataset(self):
-        dataset = Dataset.objects.create(title="Accounting test")
-        source = Table.objects.create(
-            dataset=dataset,
-            title="source.csv",
-            df=pd.DataFrame(
-                {
-                    "occurrenceID": ["occ-1", "occ-2", "occ-3"],
-                    "locality": ["Oslo", "Oslo", "Bergen"],
-                }
-            ),
-        )
-        dataset.source_accounting_snapshot = build_source_accounting_snapshot(dataset)
-        dataset.save(update_fields=["source_accounting_snapshot"])
-        source_id = source.id
-        source.delete()
-        Table.objects.create(
-            dataset=dataset,
-            title="event",
-            df=pd.DataFrame(
-                [
-                    {"event_pk": "event-1", "eventCategory": "occurrence", "locality": "Oslo"},
-                    {"event_pk": "event-2", "eventCategory": "occurrence", "locality": "Bergen"},
-                ]
-            ),
-        )
-        Table.objects.create(
-            dataset=dataset,
-            title="occurrence",
-            df=pd.DataFrame(
-                [
-                    {"occurrence_pk": "pk-1", "occurrenceID": "occ-1", "event_fk": "event-1", "occurrenceStatus": "present"},
-                    {"occurrence_pk": "pk-2", "occurrenceID": "occ-2", "event_fk": "event-1", "occurrenceStatus": "present"},
-                    {"occurrence_pk": "pk-3", "occurrenceID": "occ-3", "event_fk": "event-2", "occurrenceStatus": "present"},
-                ]
-            ),
-        )
-        return dataset, source_id
-
-    def _valid_sources(self, source_id):
-        return [
-            {
-                "source_table_id": source_id,
-                "rows_accounted": 3,
-                "omissions": [],
-                "coverage_notes": "All three source IDs occur once in occurrence; locality is deduplicated for event.",
-                "dispositions": [
-                    {
-                        "target_table": "occurrence",
-                        "operation": "direct",
-                        "source_rows_used": 3,
-                        "target_rows_contributed": 3,
-                    },
-                    {
-                        "target_table": "event",
-                        "operation": "deduplicated",
-                        "source_rows_used": 3,
-                        "target_rows_contributed": 2,
-                    },
-                ],
-                "resource_routes": [
-                    {
-                        "target_table": "occurrence",
-                        "field_mappings": {0: "occurrenceID"},
-                    },
-                    {
-                        "target_table": "event",
-                        "field_mappings": {1: "locality"},
-                    },
-                ],
-            }
-        ]
-
-    def test_transformation_agent_snapshots_source_counts_once(self):
-        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
-        dataset = Dataset.objects.create()
-        Table.objects.create(
-            dataset=dataset,
-            title="source.csv",
-            df=pd.DataFrame(
-                {
-                    "id": ["a", "b", "c"],
-                    "notes": [None, "", "kept"],
-                    "empty": [None, "", None],
-                }
-            ),
-        )
-
-        agent = task.create_agent_with_system_messages(dataset)
-        dataset.refresh_from_db()
-
-        snapshot = dataset.source_accounting_snapshot
-        self.assertEqual(snapshot["tables"][0]["row_count"], 3)
-        self.assertEqual(snapshot["tables"][0]["columns"][0]["populated_values"], 3)
-        self.assertEqual(snapshot["tables"][0]["columns"][1]["populated_values"], 1)
-        self.assertEqual(len(snapshot["tables"][0]["columns"]), 2)
-        system_content = agent.message_set.get(openai_obj__role="system").openai_obj["content"]
-        self.assertIn('"source_table_id"', system_content)
-        self.assertNotIn('"name": "empty"', system_content)
-        self.assertNotIn("&#x27;source_table_id&#x27;", system_content)
-        self.assertIn("completeness reminder, not as a second transformation", system_content)
-        self.assertIn("one compact coverage check by source table", system_content)
-        self.assertIn("Do not build exhaustive per-cell or per-column accounting", system_content)
-
-        Table.objects.create(dataset=dataset, title="later", df=pd.DataFrame({"x": [1]}))
-        task.create_agent_with_system_messages(dataset)
-        dataset.refresh_from_db()
-        self.assertEqual(len(dataset.source_accounting_snapshot["tables"]), 1)
-
-    def test_submit_accounting_accepts_split_and_deduplicated_paths(self):
-        dataset, source_id = self._make_transformed_dataset()
-        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
-        agent = Agent.objects.create(dataset=dataset, task=task)
-
-        result = json.loads(
-            SubmitDwcDpAccounting(agent_id=agent.id, sources=self._valid_sources(source_id)).run()
-        )
-
-        self.assertTrue(result["valid"], result)
-        self.assertEqual(result["summary"]["source_rows"], 3)
-        self.assertEqual(result["summary"]["dispositions"], 2)
-        dataset.refresh_from_db()
-        self.assertNotIn("verification", dataset.dwc_dp_accounting)
-        self.assertIn("signature", dataset.dwc_dp_accounting)
-        self.assertIn("resources", dataset.dwc_dp_accounting)
-        self.assertTrue(current_accounting_status(dataset)["valid"])
-
-    def test_submit_accounting_accepts_grouped_resource_field_mappings(self):
-        dataset, source_id = self._make_transformed_dataset()
-        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
-        agent = Agent.objects.create(dataset=dataset, task=task)
-        sources = self._valid_sources(source_id)
-        sources[0]["resource_routes"] = [
-            {
-                "target_table": "occurrence",
-                "field_mappings": {0: "occurrenceID", 1: "occurrenceID"},
-            }
-        ]
-
-        result = json.loads(
-            SubmitDwcDpAccounting(agent_id=agent.id, sources=sources).run()
-        )
-
-        self.assertTrue(result["valid"], result)
-        dataset.refresh_from_db()
-        columns = dataset.dwc_dp_accounting["declaration"]["sources"][0]["columns"]
-        self.assertEqual([column["source_column_index"] for column in columns], [0, 1])
-        self.assertEqual(
-            [column["destinations"][0]["source_values"] for column in columns],
-            [3, 3],
-        )
-
-    def test_submit_accounting_rejects_duplicate_or_unknown_column_routes(self):
-        dataset, source_id = self._make_transformed_dataset()
-        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
-        agent = Agent.objects.create(dataset=dataset, task=task)
-        sources = self._valid_sources(source_id)
-        sources[0]["resource_routes"].append(
-            {
-                "target_table": "occurrence",
-                "field_mappings": {0: "occurrenceID"},
-            }
-        )
-
-        duplicate_result = json.loads(
-            SubmitDwcDpAccounting(agent_id=agent.id, sources=sources).run()
-        )
-        sources = self._valid_sources(source_id)
-        sources[0]["resource_routes"][0]["field_mappings"] = {99: "occurrenceID"}
-        empty_result = json.loads(
-            SubmitDwcDpAccounting(agent_id=agent.id, sources=sources).run()
-        )
-
-        self.assertFalse(duplicate_result["valid"])
-        self.assertTrue(
-            any("repeats the same destination" in error for error in duplicate_result["errors"])
-        )
-        self.assertFalse(empty_result["valid"])
-        self.assertTrue(
-            any("unknown or has no populated" in error for error in empty_result["errors"])
-        )
-
-    def test_accounting_tool_schema_exposes_only_compact_server_expanded_fields(self):
-        schema_text = json.dumps(SubmitDwcDpAccounting.openai_schema())
-
-        self.assertIn("source_column_indexes", schema_text)
-        self.assertIn("field_mappings", schema_text)
-        self.assertIn("resource_routes", schema_text)
-        self.assertIn("metadata_routes", schema_text)
-        self.assertIn("omitted_column_routes", schema_text)
-        self.assertNotIn("source_table_title", schema_text)
-        self.assertNotIn("source_populated_values", schema_text)
-        self.assertNotIn("target_table_rows", schema_text)
-        self.assertIn("eml.geographic_scope", schema_text)
-
-    def test_submit_accounting_expands_server_owned_counts_and_rejects_missing_fields(self):
-        dataset, source_id = self._make_transformed_dataset()
-        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
-        agent = Agent.objects.create(dataset=dataset, task=task)
-        sources = self._valid_sources(source_id)
-        sources[0]["resource_routes"][0]["field_mappings"][0] = "catalogNumber"
-
-        result = json.loads(SubmitDwcDpAccounting(agent_id=agent.id, sources=sources).run())
-
-        self.assertFalse(result["valid"])
-        self.assertTrue(any("catalogNumber" in error for error in result["errors"]))
-
-        sources[0]["resource_routes"][0]["field_mappings"][0] = "occurrenceID"
-        valid_result = json.loads(
-            SubmitDwcDpAccounting(agent_id=agent.id, sources=sources).run()
-        )
-        dataset.refresh_from_db()
-
-        self.assertTrue(valid_result["valid"], valid_result)
-        declaration = dataset.dwc_dp_accounting["declaration"]["sources"][0]
-        self.assertEqual(declaration["source_table_title"], "source.csv")
-        self.assertEqual(declaration["source_rows"], 3)
-        self.assertEqual(
-            declaration["dispositions"][0]["target_table_rows"],
-            3,
-        )
-        self.assertEqual(declaration["columns"][0]["source_column"], "occurrenceID")
-        self.assertEqual(declaration["columns"][0]["source_populated_values"], 3)
-
-    def test_submit_accounting_rejects_declared_coverage_without_actual_paths(self):
-        dataset, source_id = self._make_transformed_dataset()
-        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
-        agent = Agent.objects.create(dataset=dataset, task=task)
-        sources = self._valid_sources(source_id)
-        for disposition in sources[0]["dispositions"]:
-            disposition["source_rows_used"] = 0
-            disposition["target_rows_contributed"] = 0
-        for route in sources[0]["resource_routes"]:
-            route["source_values"] = {
-                column_index: 0
-                for column_index in route["field_mappings"]
-            }
-
-        result = json.loads(SubmitDwcDpAccounting(agent_id=agent.id, sources=sources).run())
-
-        self.assertFalse(result["valid"])
-        self.assertTrue(any("cannot account for 3 unique rows" in error for error in result["errors"]))
-        self.assertTrue(any("snapshot has 3 populated values" in error for error in result["errors"]))
-
-    def test_metadata_destination_must_point_to_populated_dataset_metadata(self):
-        dataset, source_id = self._make_transformed_dataset()
-        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
-        agent = Agent.objects.create(dataset=dataset, task=task)
-        sources = self._valid_sources(source_id)
-        sources[0]["resource_routes"] = sources[0]["resource_routes"][:1]
-        sources[0]["metadata_routes"] = [
-            {
-                "metadata_field": "eml.license",
-                "source_column_indexes": [1],
-            }
-        ]
-
-        missing_result = json.loads(SubmitDwcDpAccounting(agent_id=agent.id, sources=sources).run())
-        dataset.eml = {"license": "CC BY 4.0"}
-        dataset.save(update_fields=["eml"])
-        populated_result = json.loads(SubmitDwcDpAccounting(agent_id=agent.id, sources=sources).run())
-
-        self.assertFalse(missing_result["valid"])
-        self.assertTrue(any("eml.license" in error for error in missing_result["errors"]))
-        self.assertTrue(populated_result["valid"], populated_result)
-
-    def test_measurements_can_be_accounted_to_event_assertion_without_occurrence_links(self):
-        dataset = Dataset.objects.create(title="Event measurements")
-        source = Table.objects.create(
-            dataset=dataset,
-            title="measurements.csv",
-            df=pd.DataFrame({"eventID": ["e1", "e2"], "measurementValue": [12.0, 14.0]}),
-        )
-        dataset.source_accounting_snapshot = build_source_accounting_snapshot(dataset)
-        dataset.save(update_fields=["source_accounting_snapshot"])
-        source_id = source.id
-        source.delete()
-        Table.objects.create(
-            dataset=dataset,
-            title="event-assertion",
-            df=pd.DataFrame(
-                {
-                    "eventAssertion_pk": ["a1", "a2"],
-                    "event_fk": ["e1", "e2"],
-                    "measurementValue": [12.0, 14.0],
-                }
-            ),
-        )
-        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
-        agent = Agent.objects.create(dataset=dataset, task=task)
-        sources = [{
-            "source_table_id": source_id,
-            "rows_accounted": 2,
-            "omissions": [],
-            "coverage_notes": "Both rows join directly to events; no occurrence link is present or needed.",
-            "dispositions": [{
-                "target_table": "event-assertion",
-                "operation": "direct",
-                "source_rows_used": 2,
-                "target_rows_contributed": 2,
-            }],
-            "resource_routes": [
-                {
-                    "target_table": "event-assertion",
-                    "field_mappings": {0: "event_fk", 1: "measurementValue"},
-                },
-            ],
-        }]
-
-        result = json.loads(SubmitDwcDpAccounting(agent_id=agent.id, sources=sources).run())
-
-        self.assertTrue(result["valid"], result)
-
-    def test_explicit_row_and_column_omissions_are_valid_warnings(self):
-        dataset, source_id = self._make_transformed_dataset()
-        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
-        agent = Agent.objects.create(dataset=dataset, task=task)
-        sources = self._valid_sources(source_id)
-        sources[0]["rows_accounted"] = 2
-        sources[0]["omissions"] = [{"rows": 1, "reason": "One row has no usable identifier."}]
-        for disposition in sources[0]["dispositions"]:
-            disposition["source_rows_used"] = 2
-            disposition["target_rows_contributed"] = 2
-        sources[0]["resource_routes"] = sources[0]["resource_routes"][:1]
-        sources[0]["omitted_column_routes"] = [
-            {
-                "source_column_indexes": [1],
-                "reason": "Locality is intentionally withheld.",
-            }
-        ]
-
-        result = json.loads(SubmitDwcDpAccounting(agent_id=agent.id, sources=sources).run())
-
-        self.assertTrue(result["valid"], result)
-        self.assertEqual(result["summary"]["explicitly_omitted_rows"], 1)
-        self.assertEqual(result["summary"]["explicitly_omitted_columns"], 1)
-        self.assertEqual(result["summary"]["explicitly_omitted_values"], 3)
-        self.assertEqual(len(result["warnings"]), 2)
-
-    def test_completion_rechecks_current_package_validation(self):
-        dataset, source_id = self._make_transformed_dataset()
-        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
-        agent = Agent.objects.create(dataset=dataset, task=task)
-        SubmitDwcDpAccounting(agent_id=agent.id, sources=self._valid_sources(source_id)).run()
-        occurrence = dataset.table_set.get(title="occurrence")
-        occurrence.df.loc[0, "event_fk"] = "missing-event"
-        occurrence.save()
-
-        result = SetAgentTaskToComplete(agent_id=agent.id).run()
-
-        agent.refresh_from_db()
-        self.assertIsNone(agent.completed_at)
-        self.assertIn("current DwC-DP tables validate", result)
-        self.assertIn("missing-event", result)
-
-    def test_forged_verification_flag_cannot_make_accounting_valid(self):
-        dataset, source_id = self._make_transformed_dataset()
-        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
-        agent = Agent.objects.create(dataset=dataset, task=task)
-        SubmitDwcDpAccounting(agent_id=agent.id, sources=self._valid_sources(source_id)).run()
-        dataset.refresh_from_db()
-        receipt = dataset.dwc_dp_accounting
-        receipt["verification"] = {"valid": True, "errors": []}
-        receipt["declaration"]["sources"][0]["dispositions"][0]["target_table_rows"] = 99
-        dataset.dwc_dp_accounting = receipt
-        dataset.save(update_fields=["dwc_dp_accounting"])
-
-        status = current_accounting_status(dataset)
-        result = SetAgentTaskToComplete(agent_id=agent.id).run()
-
-        self.assertFalse(status["valid"])
-        self.assertTrue(any("not authentic" in error for error in status["errors"]))
-        self.assertIn("table has 3", " ".join(status["errors"]))
-        self.assertIn("Task marked as complete", result)
-
-    @patch("api.agent_tools.export_dwc_dp_package")
-    def test_export_ignores_a_stale_accounting_receipt_when_package_is_valid(self, export_mock):
-        export_mock.return_value = "/tmp/package.zip"
-        dataset, source_id = self._make_transformed_dataset()
-        task = Task.objects.create(name="Final Review & Publication", text="Publish", order=1)
-        agent = Agent.objects.create(dataset=dataset, task=task)
-        SubmitDwcDpAccounting(agent_id=agent.id, sources=self._valid_sources(source_id)).run()
-        occurrence = dataset.table_set.get(title="occurrence")
-        occurrence.df.loc[0, "occurrenceID"] = "changed-after-accounting"
-        occurrence.save()
-
-        result = ExportDwcDp(agent_id=agent.id).run()
-
-        self.assertNotIn("accounting", result.lower())
-        export_mock.assert_called_once()
-
-    def test_completion_succeeds_without_accounting(self):
-        dataset, source_id = self._make_transformed_dataset()
-        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
-        agent = Agent.objects.create(dataset=dataset, task=task)
-
-        result = SetAgentTaskToComplete(agent_id=agent.id).run()
-
-        agent.refresh_from_db()
-        self.assertIsNotNone(agent.completed_at)
-        self.assertIn("Task marked as complete", result)
-
-    def test_transformation_completion_removes_empty_resources(self):
-        dataset, source_id = self._make_transformed_dataset()
-        Table.objects.create(dataset=dataset, title="material", df=pd.DataFrame(columns=["material_pk"]))
-        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
-        agent = Agent.objects.create(dataset=dataset, task=task)
-
-        result = SetAgentTaskToComplete(agent_id=agent.id).run()
-
-        self.assertIn("Task marked as complete", result)
-        self.assertFalse(dataset.table_set.filter(title="material").exists())
-
-    def test_refinement_completion_removes_non_package_staging_tables(self):
-        dataset, source_id = self._make_transformed_dataset()
-        Table.objects.create(dataset=dataset, title="join scratch", df=pd.DataFrame({"x": [1]}))
-        task = Task.objects.create(name="Data validation and refinement", text="Validate", order=1)
-        agent = Agent.objects.create(dataset=dataset, task=task)
-
-        result = SetAgentTaskToComplete(agent_id=agent.id).run()
-
-        self.assertIn("Task marked as complete", result)
-        self.assertFalse(dataset.table_set.filter(title="join scratch").exists())
-        self.assertEqual(
-            set(dataset.table_set.values_list("title", flat=True)),
-            {"event", "occurrence"},
-        )
 
 
 class PythonToolTests(SimpleTestCase):
@@ -3078,6 +2567,7 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("Usage Policy", text)
         self.assertIn("Provenance", text)
         self.assertIn("Assertions are not a generic overflow destination", text)
+        self.assertIn("Do not produce a ceremonial include/omit checklist", text)
 
     def test_transformation_prompt_requires_assertion_coverage_and_join_checks(self):
         text = self.task_text["Data transformation"]
@@ -3124,8 +2614,8 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("Do not fetch the same resource schema twice", text)
         self.assertIn("Do not inspect resources speculatively", text)
         self.assertIn("one bounded final check", text)
-        self.assertIn("do not construct exhaustive per-column accounting", text)
-        self.assertNotIn("SubmitDwcDpAccounting", text)
+        self.assertIn("avoid turning this into an exhaustive per-column exercise", text)
+        self.assertNotIn("required one-line include/omit justifications", text)
         self.assertNotIn(
             "inspect every source column, populated and missing identifier patterns",
             text,
@@ -3148,6 +2638,11 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("Missing Event hierarchy", text)
         self.assertIn("several flat Events repeat within the same stable sampling unit", text)
         self.assertIn("otherwise retain the flat structure and document why", text)
+        self.assertIn("RELATIONAL MODELLING CANDIDATES — REVIEWER ATTENTION", text)
+        self.assertIn("deterministic attention aid", text)
+        self.assertIn("not a modelling decision or completion gate", text)
+        self.assertIn("Possible candidates are context only", text)
+        self.assertIn("do not add a resource solely because a possible candidate was surfaced", text)
 
     def test_final_prompt_requires_maximally_faithful_dwca_projection(self):
         text = self.task_text["Final Review & Publication"]
@@ -3178,6 +2673,71 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
 
 
 class SetAgentTaskToCompleteTests(TestCase):
+    def test_transformation_completion_rechecks_current_package_validation(self):
+        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+        dataset = Dataset.objects.create()
+        Table.objects.create(
+            dataset=dataset,
+            title="event",
+            df=pd.DataFrame([{"event_pk": "event-1", "eventCategory": "occurrence"}]),
+        )
+        Table.objects.create(
+            dataset=dataset,
+            title="occurrence",
+            df=pd.DataFrame([
+                {
+                    "occurrence_pk": "occurrence-1",
+                    "occurrenceID": "occurrence-1",
+                    "event_fk": "missing-event",
+                    "occurrenceStatus": "present",
+                }
+            ]),
+        )
+        agent = Agent.objects.create(dataset=dataset, task=task)
+
+        result = SetAgentTaskToComplete(agent_id=agent.id).run()
+
+        agent.refresh_from_db()
+        self.assertIsNone(agent.completed_at)
+        self.assertIn("current DwC-DP tables validate", result)
+        self.assertIn("missing-event", result)
+
+    def test_refinement_completion_removes_non_package_staging_tables(self):
+        task = Task.objects.create(
+            name="Data validation and refinement",
+            text="Validate",
+            order=1,
+        )
+        dataset = Dataset.objects.create()
+        Table.objects.create(
+            dataset=dataset,
+            title="event",
+            df=pd.DataFrame([{"event_pk": "event-1", "eventCategory": "occurrence"}]),
+        )
+        Table.objects.create(
+            dataset=dataset,
+            title="occurrence",
+            df=pd.DataFrame([
+                {
+                    "occurrence_pk": "occurrence-1",
+                    "occurrenceID": "occurrence-1",
+                    "event_fk": "event-1",
+                    "occurrenceStatus": "present",
+                }
+            ]),
+        )
+        Table.objects.create(dataset=dataset, title="join scratch", df=pd.DataFrame({"x": [1]}))
+        agent = Agent.objects.create(dataset=dataset, task=task)
+
+        result = SetAgentTaskToComplete(agent_id=agent.id).run()
+
+        self.assertIn("Task marked as complete", result)
+        self.assertFalse(dataset.table_set.filter(title="join scratch").exists())
+        self.assertEqual(
+            set(dataset.table_set.values_list("title", flat=True)),
+            {"event", "occurrence"},
+        )
+
     def test_manuscript_task_can_complete_without_tables(self):
         task = Task.objects.create(
             name=Dataset.MANUSCRIPT_TASK_NAME,

@@ -6,6 +6,12 @@ than repeating broad exploration.
 
 Dataset title: {{ agent.dataset.title|default:"(not set)" }}
 Dataset description: {{ agent.dataset.description|default:"(not set)" }}
+{% if relational_candidate_report %}
+
+{{ relational_candidate_report }}
+
+Use strong candidates as priorities in the combined reviewer audit. Possible candidates are context only. The report is deliberately conservative and does not require a dedicated table or an include/omit declaration.
+{% endif %}
 {% if agent.dataset.dwc_dp_validation %}
 Latest DwC-DP validation: {{ agent.dataset.dwc_dp_validation }}
 {% endif %}

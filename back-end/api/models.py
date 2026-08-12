@@ -54,8 +54,6 @@ class Dataset(models.Model):
     dwca_url = models.CharField(max_length=2000, blank=True)
     dwc_dp_url = models.CharField(max_length=2000, blank=True)
     dwc_dp_validation = models.JSONField(null=True, blank=True)
-    source_accounting_snapshot = models.JSONField(null=True, blank=True)
-    dwc_dp_accounting = models.JSONField(null=True, blank=True)
     gbif_url = models.CharField(max_length=2000, blank=True)
     user_language = models.CharField(max_length=100, blank=True)
     class DWCCore(models.TextChoices):
@@ -89,43 +87,6 @@ class Dataset(models.Model):
             filtered_dfs = user_file.filter_dataframes(dfs)
             created_tables.extend(user_file.create_tables(filtered_dfs))
         return created_tables
-
-    def ensure_source_accounting_snapshot(self):
-        """Preserve lightweight source counts before DwC-DP transformation starts."""
-        if self.source_accounting_snapshot:
-            return self.source_accounting_snapshot
-
-        from api.accounting import build_source_accounting_snapshot
-
-        self.source_accounting_snapshot = build_source_accounting_snapshot(self)
-        self.dwc_dp_accounting = None
-        self.save(update_fields=['source_accounting_snapshot', 'dwc_dp_accounting'])
-        return self.source_accounting_snapshot
-
-    @property
-    def source_accounting_snapshot_json(self):
-        return json.dumps(self.source_accounting_snapshot, ensure_ascii=False, indent=2)
-
-    @property
-    def source_accounting_summary_json(self):
-        snapshot = self.source_accounting_snapshot or {}
-        summary = {
-            "version": snapshot.get("version"),
-            "tables": [
-                {
-                    "source_table_id": table.get("source_table_id"),
-                    "title": table.get("title"),
-                    "row_count": table.get("row_count"),
-                    "populated_column_count": len(table.get("columns", [])),
-                }
-                for table in snapshot.get("tables", [])
-            ],
-        }
-        return json.dumps(summary, ensure_ascii=False, indent=2)
-
-    @property
-    def dwc_dp_accounting_json(self):
-        return json.dumps(self.dwc_dp_accounting, ensure_ascii=False, indent=2)
 
     @property
     def compact_structure_notes(self):
@@ -697,8 +658,6 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
         return getattr(settings, "OPENAI_REASONING_EFFORT", "medium")
 
     def create_agent_with_system_messages(self, dataset:Dataset):
-        if self.name == "Data transformation":
-            dataset.ensure_source_accounting_snapshot()
         tables = Table.objects.filter(dataset=dataset)
         return Agent.create_with_system_message(dataset=dataset, task=self, tables=tables)
 
@@ -969,12 +928,18 @@ class Agent(models.Model):
                 for table in tables
                 if table.created_at > new_table_cutoff or table.updated_at > new_table_cutoff
             ]
+        relational_candidate_report = ""
+        if self.task.name == "Data validation and refinement":
+            from api.relational_candidates import render_relational_candidate_report
+
+            relational_candidate_report = render_relational_candidate_report(tables)
         return render_to_string(
             'state_update.txt',
             {
                 'agent': self,
                 'tables': tables,
                 'changed_tables': changed_tables,
+                'relational_candidate_report': relational_candidate_report,
             },
         )
 

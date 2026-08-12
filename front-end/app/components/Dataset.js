@@ -504,17 +504,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const datasetStatus = getDatasetStatus(currentDataset);
   const statusMeta = getStatusMeta(datasetStatus);
   const normalizedStructureNotes = String(currentDataset.structure_notes || '').replace(/\\n/g, '\n');
-  const accountingSources = Array.isArray(currentDataset?.dwc_dp_accounting?.declaration?.sources)
-    ? currentDataset.dwc_dp_accounting.declaration.sources
-    : [];
-  const provenanceSummary = accountingSources.reduce((summary, source) => ({
-    sourceRows: summary.sourceRows + Number(source.source_rows || 0),
-    accountedRows: summary.accountedRows + Number(source.rows_accounted || 0),
-    omittedRows: summary.omittedRows + Number(source.omitted_rows || 0),
-  }), { sourceRows: 0, accountedRows: 0, omittedRows: 0 });
-  const packageResources = Array.isArray(currentDataset?.dwc_dp_accounting?.resources)
-    ? currentDataset.dwc_dp_accounting.resources
-    : [];
 
   const getPdfStatusBadge = () => {
     return { label: 'Available to model', className: 'text-bg-success' };
@@ -1166,44 +1155,19 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                   <p className="text-muted">No uploaded files found for this dataset.</p>
                 )}
 
-                {(accountingSources.length > 0 || packageResources.length > 0) && (
+                {currentDataset.package_ready && (
                   <div className="card bg-body-tertiary mb-3">
                     <div className="card-body">
                       <h6 className="card-title">Summary</h6>
                       <dl className="row small mb-0">
-                        {accountingSources.length > 0 && (
-                          <>
-                            <dt className="col-sm-5">Input</dt>
-                            <dd className="col-sm-7">
-                              {pluralize(accountingSources.length, 'source table')} · {pluralize(provenanceSummary.sourceRows, 'source row')}
-                            </dd>
-                            <dt className="col-sm-5">Coverage</dt>
-                            <dd className="col-sm-7">
-                              {provenanceSummary.accountedRows.toLocaleString()} of {provenanceSummary.sourceRows.toLocaleString()} rows represented
-                              {provenanceSummary.omittedRows === 0
-                                ? ' · no source rows omitted'
-                                : ` · ${pluralize(provenanceSummary.omittedRows, 'row')} explicitly omitted`}
-                            </dd>
-                          </>
-                        )}
-                        {packageResources.length > 0 && (
-                          <>
-                            <dt className="col-sm-5">Result</dt>
-                            <dd className="col-sm-7">{pluralize(packageResources.length, 'linked DwC-DP table')}</dd>
-                          </>
-                        )}
-                        {currentDataset.package_ready && (
-                          <>
-                            <dt className="col-sm-5">Validation</dt>
-                            <dd className="col-sm-7 mb-0">
-                              Passed
-                              {Array.isArray(currentDataset.dwc_dp_validation?.warnings)
-                                && currentDataset.dwc_dp_validation.warnings.length > 0
-                                ? ` with ${pluralize(currentDataset.dwc_dp_validation.warnings.length, 'advisory warning')}`
-                                : ''}
-                            </dd>
-                          </>
-                        )}
+                        <dt className="col-sm-5">Validation</dt>
+                        <dd className="col-sm-7 mb-0">
+                          Passed
+                          {Array.isArray(currentDataset.dwc_dp_validation?.warnings)
+                            && currentDataset.dwc_dp_validation.warnings.length > 0
+                            ? ` with ${pluralize(currentDataset.dwc_dp_validation.warnings.length, 'advisory warning')}`
+                            : ''}
+                        </dd>
                       </dl>
                     </div>
                   </div>

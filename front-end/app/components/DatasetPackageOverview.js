@@ -34,43 +34,19 @@ const MAIN_RESOURCE_NAMES = [
   'usage-policy',
 ]
 
-const getAccountingSummary = (dataset) => {
-  const sources = dataset?.dwc_dp_accounting?.declaration?.sources
-  if (!Array.isArray(sources) || sources.length === 0) {
-    return null
-  }
-
-  return sources.reduce((summary, source) => ({
-    sourceTables: summary.sourceTables + 1,
-    sourceRows: summary.sourceRows + Number(source.source_rows || 0),
-    accountedRows: summary.accountedRows + Number(source.rows_accounted || 0),
-    omittedRows: summary.omittedRows + Number(source.omitted_rows || 0),
-  }), {
-    sourceTables: 0,
-    sourceRows: 0,
-    accountedRows: 0,
-    omittedRows: 0,
-  })
-}
-
 const getResourceRows = (dataset, tables) => {
   const validationResources = Array.isArray(dataset?.dwc_dp_validation?.resources)
     ? dataset.dwc_dp_validation.resources
     : []
-  const receiptResourceRows = Array.isArray(dataset?.dwc_dp_accounting?.resources)
-    ? dataset.dwc_dp_accounting.resources
-    : []
-  const receiptResources = receiptResourceRows.map((resource) => resource.title)
-  const resourceNames = [...new Set([...receiptResources, ...validationResources])]
+  const resourceNames = [...new Set(validationResources)]
 
   return resourceNames
     .map((name) => {
       const table = tables.find((candidate) => candidate.title === name)
-      const receipt = receiptResourceRows.find((candidate) => candidate.title === name)
       return {
         name,
-        tableId: table?.id ?? receipt?.table_id ?? null,
-        rowCount: table?.df?.length ?? receipt?.row_count ?? 0,
+        tableId: table?.id ?? null,
+        rowCount: table?.df?.length ?? 0,
       }
     })
     .sort((a, b) => {
@@ -115,10 +91,7 @@ const openPackageExplorer = async () => {
 export default function DatasetPackageOverview({ dataset, tables, tablesLoading = false }) {
   const files = Array.isArray(dataset?.user_files) ? dataset.user_files : []
   const resources = getResourceRows(dataset, tables)
-  const accounting = getAccountingSummary(dataset)
-  const hasReceiptResourceCounts = Array.isArray(dataset?.dwc_dp_accounting?.resources)
-    && dataset.dwc_dp_accounting.resources.length > 0
-  const resourceCountsLoading = tablesLoading && !hasReceiptResourceCounts
+  const resourceCountsLoading = tablesLoading
   const storyItems = getStoryItems(resources)
   const validation = dataset?.dwc_dp_validation || {}
   const ready = Boolean(dataset?.package_ready)
@@ -131,22 +104,9 @@ export default function DatasetPackageOverview({ dataset, tables, tablesLoading 
   const [emailNotificationError, setEmailNotificationError] = useState('')
   const [isSavingEmailNotification, setIsSavingEmailNotification] = useState(false)
   const emailNotificationArmed = ['pending', 'ready', 'sending'].includes(emailNotification.status)
-  const inputRows = accounting?.sourceRows ?? (
-    resources.length === 0
-      ? tables.reduce((sum, table) => sum + Number(table.df?.length || 0), 0)
-      : null
-  )
-
   const sourceSummary = files.length > 0
-    ? `${pluralize(files.length, 'uploaded file')}${inputRows !== null ? ` · ${pluralize(inputRows, 'source row')}` : ''}`
+    ? pluralize(files.length, 'uploaded file')
     : 'Waiting for source files'
-  const accountingTrustText = ready && accounting
-    ? (
-        accounting.omittedRows === 0
-          ? `All ${accounting.sourceRows.toLocaleString()} source rows were accounted for; none were omitted.`
-          : `${accounting.accountedRows.toLocaleString()} source rows were represented and ${accounting.omittedRows.toLocaleString()} were explicitly omitted.`
-      )
-    : ''
   const validationTrustText = ready
     ? `Package validation passed${
         Array.isArray(validation.warnings) && validation.warnings.length > 0
@@ -154,7 +114,7 @@ export default function DatasetPackageOverview({ dataset, tables, tablesLoading 
           : ''
       }.`
     : ''
-  const trustText = [accountingTrustText, validationTrustText].filter(Boolean).join(' ')
+  const trustText = validationTrustText
 
   useEffect(() => {
     if (!datasetId || !isWorking) return
@@ -430,7 +390,6 @@ export default function DatasetPackageOverview({ dataset, tables, tablesLoading 
           ) : (
             <p className="small mb-0">
               {ready ? 'ChatIPT organised' : 'ChatIPT is organising'}{' '}
-              {accounting ? `${pluralize(accounting.sourceRows, 'source row')} into ` : ''}
               {storyItems.length > 0 ? naturalList(storyItems) : pluralize(resources.length, 'linked table')}
               {storyItems.length > 0 ? ` across ${pluralize(resources.length, 'linked table')}.` : '.'}
             </p>
