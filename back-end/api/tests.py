@@ -1341,6 +1341,8 @@ class GetDwCExtensionInfoTests(SimpleTestCase):
     def test_catalogue_exposes_core_compatibility_and_projection_guidance(self):
         response = GetDwCExtensionInfo().run()
 
+        self.assertIn("Select every compatible extension needed to preserve meaningful source facts", response)
+        self.assertIn("Omit redundant or empty extensions", response)
         self.assertIn("Humboldt Ecological Inventory", response)
         self.assertIn("Compatible cores: event", response)
         self.assertIn("Typical DwC-DP sources: survey", response)
@@ -3014,16 +3016,16 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("save a concise version of the assertion-routing plan", text)
         self.assertIn("validation agent can independently reconstruct and challenge it", text)
 
-    def test_transformation_prompt_prefers_a_minimum_sufficient_package(self):
+    def test_transformation_prompt_requires_an_evidence_based_relational_package(self):
         text = self.task_text["Data transformation"]
 
-        self.assertIn("MINIMUM SUFFICIENT PACKAGE", text)
-        self.assertIn("smallest valid DwC-DP package", text)
-        self.assertIn("Do not create a resource merely because DwC-DP provides one", text)
+        self.assertIn("EVIDENCE-BASED RELATIONAL PACKAGE", text)
+        self.assertIn("complete relational DwC-DP package", text)
+        self.assertIn("do not create a resource merely because DwC-DP provides one", text)
         self.assertIn("one short evidence-based justification for every proposed resource", text)
         self.assertIn("ordinary bird observations", text)
-        self.assertIn("usually need only event and occurrence", text)
-        self.assertIn("not a hard resource-count rule", text)
+        self.assertIn("may need only event and occurrence", text)
+        self.assertIn("not a target resource count", text)
 
     def test_transformation_prompt_has_a_narrow_deterministic_fast_path(self):
         text = self.task_text["Data transformation"]
@@ -3033,13 +3035,15 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("not similar-looking names or semantic synonyms", text)
         self.assertIn("still require the model-led contextual review", text)
 
-    def test_refinement_prompt_challenges_unnecessary_complexity(self):
+    def test_refinement_prompt_challenges_under_and_over_modeling(self):
         text = self.task_text["Data validation and refinement"]
 
-        self.assertIn("Minimum sufficient package", text)
+        self.assertIn("Evidence-based relational package", text)
         self.assertIn("unnecessary wrapper entities", text)
         self.assertIn("duplicated one-per-row protocols/agents", text)
         self.assertIn("assertion rows that only repeat a native field", text)
+        self.assertIn("missing dedicated resources", text)
+        self.assertIn("Resource count is never the optimization target", text)
         self.assertIn("Collapse synthetic wrapper/child hierarchies", text)
         self.assertIn("remove identification rows that contain only keys", text)
 

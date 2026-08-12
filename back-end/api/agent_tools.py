@@ -457,7 +457,7 @@ class GetDwCExtensionInfo(OpenAIBaseModel):
         if not self.extension:
             lines = [
                 "Darwin Core extension projection catalogue:",
-                "Select the minimum sufficient set after choosing the focal core. Core compatibility is enforced during export.",
+                "Select every compatible extension needed to preserve meaningful source facts after choosing the focal core. Omit redundant or empty extensions. Core compatibility is enforced during export.",
             ]
             for extension_type, schema in EXTENSION_SCHEMAS.items():
                 lines.extend(self._guidance_lines(extension_type, schema))

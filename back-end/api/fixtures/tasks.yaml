@@ -67,7 +67,7 @@
   fields:
     name: Data transformation
     text: |-
-      Transform the explored and structured data into Darwin Core Data Package (DwC-DP) resources. DwC-DP is the canonical target. A simpler Darwin Core Archive will be derived later from the validated DwC-DP, so do not force the data into one DwC-A core plus extensions at this stage.
+      Transform the explored and structured data into Darwin Core Data Package (DwC-DP) resources. DwC-DP is the canonical target. A maximally faithful Darwin Core Archive projection will be derived later from the validated DwC-DP, so do not force the data into one DwC-A core plus extensions at this stage.
 
       Use Table.title to name tables with exact reserved DwC-DP resource names (e.g. "event", "occurrence", "material", "survey", "organism-interaction", "molecular-protocol", "nucleotide-sequence", "nucleotide-analysis", "identification"). Use hyphens, not underscores.
 
@@ -75,26 +75,26 @@
       - Your goal is to create a sensible package, not to exhaustively describe the source or investigate every possible model.
       - Begin by naming the small number of unresolved decisions that could change source-table authority, the resource graph, event grouping, assertion subjects, important joins, or the interpretation of overloaded fields.
       - Every exploratory Python call must resolve one or more of those named decisions. Do not repeat an inspection unless new evidence contradicts the earlier result.
-      - Before either asking the user or making the first package-table write, you have an exploration budget of at most three read-only Python calls in total. Combine related checks. There is no fourth read-only inspection call: after the third, call RequestUserInput if a material domain decision remains; otherwise start building the minimum package.
+      - Before either asking the user or making the first package-table write, you have an exploration budget of at most three read-only Python calls in total. Combine related checks. There is no fourth read-only inspection call: after the third, call RequestUserInput if a material domain decision remains; otherwise start building the evidence-based package.
       - Python output becomes part of future model context. Keep it compact: report shapes, aggregate counts, distinct-value summaries, and join cardinalities; show at most five representative records across the entire call, not five per table or group; never print a complete dataframe, wide row, or long list of records; and do not reprint columns already described adequately in structure notes.
       - After a bounded initial assessment, ask the user one grouped, plain-language question as soon as domain knowledge is needed to resolve decisions that would materially change the package. Do not attempt every possible inference first.
       - Make a concise source-authority and transformation plan. For each fact group, identify its authoritative source, target resource, grouping or join rule, and any unresolved question. Then execute it.
-      - Once the plan is sufficient, stop exploring representative records. Create the first complete minimum-sufficient package, validate it, and make only targeted corrections prompted by validation or genuinely contradictory new evidence.
+      - Once the plan is sufficient, stop exploring representative records. Create the first complete evidence-based relational package, validate it, and make only targeted corrections prompted by validation or genuinely contradictory new evidence.
       - Treat source coverage as one bounded final check, not a new exploration phase. Report represented and explicitly omitted source rows by source table, with a short reason for each omission. Also check the small number of semantically important fact groups identified during planning—especially repeated measurements, quantities, traits, and survey facts—and state where each group went or why it remains unresolved. Save material omissions in SetStructureNotes; do not construct exhaustive per-column accounting.
 
       LOOKUP-FIRST RULE (critical):
       - Do not rely on memory for DwC-DP details.
-      - First propose the minimum-sufficient resource graph from source meaning. During planning, inspect candidate resources with GetDwcDpTableInfo(include_fields=false); group these compact relationship summaries into the smallest practical number of assistant turns.
+      - First propose the complete evidence-based resource graph from source meaning. During planning, inspect candidate resources with GetDwcDpTableInfo(include_fields=false); group these compact relationship summaries into the smallest practical number of assistant turns.
       - Once the resource graph is selected, request the exact schemas for all selected resources together in one assistant turn, using parallel GetDwcDpTableInfo calls. Set max_fields no higher than 40.
       - A successful field-level lookup remains authoritative for the rest of this task. Do not fetch the same resource schema twice unless validation identifies a specific previously unknown field-level problem.
-      - After the batched schema lookup, create the complete minimum package in the smallest practical number of Python writes rather than alternating one schema call with one table write.
+      - After the batched schema lookup, create the complete evidence-based package in the smallest practical number of Python writes rather than alternating one schema call with one table write.
       - If you later need to reason about the derived DwC-A projection, call GetDarwinCoreInfo/GetDwCExtensionInfo then, not during primary DwC-DP mapping.
       - If a specific unresolved decision leaves two similar resources or fields genuinely plausible, call GetDwcDpTableInfo for those candidates and compare definitions. Do not inspect resources speculatively merely because they exist in the schema.
 
       DETERMINISTIC EXACT-MATCH FAST PATH:
       - When a source table is already a recognisable standard table and its headers exactly match fields confirmed by GetDwcDpTableInfo, preserve those fields with a direct, deterministic copy. Generate only the required package `_pk`/`_fk` structure and other values that are actually justified by the source.
       - This fast path applies only to exact confirmed fields, not similar-looking names or semantic synonyms. Resource identity, relationships, ambiguous fields, assertions, and any split or aggregation still require the model-led contextual review below.
-      - Record which fields used exact-copy handling and include them in source accounting. This is an optimisation, not permission to bypass validation or the minimum-sufficient-package review.
+      - Record which fields used exact-copy handling and include them in source accounting. This is an optimisation, not permission to bypass validation or the evidence-based-relational-package review.
 
       DwC-DP-critical structure:
       - Separate concepts only when the source actually represents them and the relationship matters. A flat source can contribute several resources, but it does not imply that every possible Event, Survey, Identification, Agent, Protocol, or assertion resource should be created.
@@ -104,12 +104,12 @@
       - Relationships must be explicit and resolvable. Examples: occurrence.event_fk -> event.event_pk; material.collectionEvent_fk -> event.event_pk; nucleotide-analysis links event/material/protocol/sequence using its schema's `_fk` fields; organism-interaction.subjectOccurrence_fk -> occurrence.occurrence_pk. Weak links such as relatedOccurrenceID must be preserved but are not enforced package keys.
       - Preserve source identifiers and dataset-level metadata whenever the source supplies them. Source identifiers belong in the matching weak ID, identifier resource, or documented assertion/remarks field; dataset title, description, licence, creators, contacts, citation, geographic/temporal/taxonomic scope, and methodology belong in dataset metadata rather than being silently discarded or copied into every record.
 
-      MINIMUM SUFFICIENT PACKAGE (critical):
-      - Build the smallest valid DwC-DP package that preserves the source meaning and useful provenance. Normalization is a means, not a goal. Do not create a resource merely because DwC-DP provides one.
+      EVIDENCE-BASED RELATIONAL PACKAGE (critical):
+      - Build the complete relational DwC-DP package supported by the source meaning and useful provenance. Represent each real entity, identifier, relationship, and one-to-many structure where its dedicated resource preserves meaning. Normalization is a means, not a goal, so do not create a resource merely because DwC-DP provides one.
       - Start with native fields on the resource they directly describe. Add another resource only when the schema requires it, the source gives that entity its own identifier, it is reused or linked by many records, it represents a real one-to-many relationship, it has its own properties/provenance, or flattening it would lose meaning.
       - Repeated, qualified, measured, or independently sourced facts may justify the matching assertion resource. A single unqualified native property normally does not.
-      - In the transformation plan, give one short evidence-based justification for every proposed resource and briefly name plausible resources you intentionally omitted. Challenge synthetic wrapper records, one-protocol-per-observation duplication, and assertion rows that merely repeat an already preserved native field.
-      - Example: ordinary bird observations with date/location and one current taxon per row will usually need only event and occurrence, using occurrence's native scientificName and related taxon fields. Shared sampling events may deduplicate into one event linked to several occurrences. A simple method value can remain a native event field. Identification becomes a separate resource only when the source represents a real taxonomic determination beyond those native fields. These are defaults to investigate, not a hard resource-count rule.
+      - In the transformation plan, give one short evidence-based justification for every proposed resource and briefly name plausible resources you intentionally omitted. Challenge synthetic wrapper records, one-protocol-per-observation duplication, and assertion rows that merely repeat an already preserved native field; equally, challenge flattening that would discard a supported entity or relationship.
+      - Example: ordinary bird observations with date/location and one current taxon per row may need only event and occurrence when no other entity evidence exists, using occurrence's native scientificName and related taxon fields. Shared sampling events may deduplicate into one event linked to several occurrences. A simple method value can remain a native event field. Identification becomes a separate resource when the source represents a real taxonomic determination or classification beyond those native fields. This is an evidence example, not a target resource count.
 
       EVENT AND IDENTIFICATION MODELLING (critical):
       - Before creating events, briefly sketch the Event structure supported by the source. Identify the distinct real sampling or observation contexts and any recurring sampling units—such as plots, sites, stations, transects, expeditions, projects, campaigns, visits, samples, or subsamples—and test whether narrower activities repeat within a stable broader context. State why the final Event model is flat or hierarchical.
@@ -168,7 +168,7 @@
       - A wide source row may contribute native event fields, an occurrence, a material entity, and several assertion rows. Count that source row once for unique source-row coverage while documenting every transformation path separately.
 
       **Your Process:**
-      1. Write a concise source-authority and transformation plan with the unresolved decisions, authoritative source for each fact group, proposed DwC-DP resources, relationship graph, and the required one-line include/omit justifications from the minimum-sufficient-package rule. Include the assertion-routing groups described above whenever the source contains measurement, fact, trait, or assertion-like data.
+      1. Write a concise source-authority and transformation plan with the unresolved decisions, authoritative source for each fact group, proposed DwC-DP resources, relationship graph, and the required one-line include/omit justifications from the evidence-based-relational-package rule. Include the assertion-routing groups described above whenever the source contains measurement, fact, trait, or assertion-like data.
       2. Perform the required GetDwcDpTableInfo lookups before mapping fields.
       3. If a domain ambiguity materially affects the plan, ask the user one grouped question now. Otherwise execute the transformation immediately in a small number of testable Python calls. Do not return to broad exploration after execution begins. Remember to:
           *   Rename columns to exact DwC-DP field names.
@@ -207,7 +207,7 @@
       If your understanding of the dataset changes significantly, use SetBasicMetadata to update the Title/Description and SetStructureNotes to update the structure_notes.
 
       Validation priorities:
-      - Minimum sufficient package: challenge every generated resource against the source evidence. Remove unnecessary wrapper entities, duplicated one-per-row protocols/agents, and assertion rows that only repeat a native field. Do not remove a resource merely to reduce the count when it preserves a real entity, identifier, relationship, provenance, or one-to-many structure.
+      - Evidence-based relational package: challenge every generated resource against the source evidence. Remove unnecessary wrapper entities, duplicated one-per-row protocols/agents, and assertion rows that only repeat a native field. Also detect missing dedicated resources where flattening has lost a real entity, identifier, relationship, provenance, reuse, or one-to-many structure. Resource count is never the optimization target.
       - Event cardinality: check whether events represent distinct source sampling contexts. Collapse synthetic wrapper/child hierarchies and share events across occurrences when place, time, and sampling context are genuinely shared. Keep parent hierarchies and survey resources only when source semantics justify them.
       - Missing Event hierarchy: also check the reverse failure. When several flat Events repeat within the same stable sampling unit or broader activity, determine whether a supported parent Event has been omitted. Add it when the relationship is unambiguous and materially improves the representation; otherwise retain the flat structure and document why.
       - Important-fact preservation: use the saved transformation plan to check the small number of semantically important measurement, quantity, trait, and survey-fact groups. Confirm that representing their source rows did not mask loss of their populated values. A material unresolved group must remain explicitly documented or be corrected; do not require exhaustive per-column bookkeeping.
@@ -298,7 +298,7 @@
           *   Never add DwC-A-only fields such as basisOfRecord directly to a DwC-DP resource when GetDwcDpTableInfo does not list them. The authoritative DwC-DP tables must remain schema-valid after projection and validation.
           *   Fix the issues, asking the user any questions if necessary
           *   Add to the structure_notes noting the issues and fixes
-      3.  **Initiate Publication:** If the user approves:
+      4.  **Initiate Publication:** If the user approves:
           *   Tell the user clearly that the default publication license is CC BY 4.0 (`http://creativecommons.org/licenses/by/4.0/legalcode`) and that they can ask you to change it before publication.
           *   Call the PublishToGBIF tool to register the DwC-A projection with GBIF (this will go to the sandbox GBIF). Also report the DwC-DP URL to the user when available.
       5.  **Report Outcome:**
