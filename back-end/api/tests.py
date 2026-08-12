@@ -2356,28 +2356,17 @@ class UploadDwcaCorrectionFeedbackTests(TestCase):
 
 
 class DatasetSummarySerializerTests(TestCase):
-    def test_serializers_expose_rich_modeling_mode(self):
-        dataset = Dataset.objects.create(
-            title="Rich package",
-            dwc_dp_modeling_mode=Dataset.DwcDpModelingMode.RICH,
-        )
-
-        self.assertEqual(DatasetSerializer(dataset).data["dwc_dp_modeling_mode"], "rich")
-        self.assertEqual(DatasetListSerializer(dataset).data["dwc_dp_modeling_mode"], "rich")
-
-    def test_rich_modeling_mode_is_included_in_agent_prompt(self):
+    def test_relational_modeling_is_included_in_every_agent_prompt(self):
         dataset = Dataset.objects.create(
             title="Rich package",
             description="Test",
-            dwc_dp_modeling_mode=Dataset.DwcDpModelingMode.RICH,
         )
         task = Task.objects.create(name="Data transformation", text="Transform", order=1)
 
         agent = Agent.create_with_system_message(dataset=dataset, task=task, tables=[])
         prompt = agent.message_set.get(openai_obj__role="system").openai_obj["content"]
 
-        self.assertIn("Package modelling preference: rich", prompt)
-        self.assertIn("RICH RELATIONAL MODE", prompt)
+        self.assertIn("Build a rich relational DwC-DP", prompt)
         self.assertIn("Usage Policy", prompt)
 
     def test_package_explorer_model_uses_current_schema_and_reports_link_coverage(self):
@@ -3156,10 +3145,11 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("several flat Events repeat within the same stable sampling unit", text)
         self.assertIn("otherwise retain the flat structure and document why", text)
 
-    def test_final_prompt_requires_minimum_sufficient_dwca_projection(self):
+    def test_final_prompt_requires_maximally_faithful_dwca_projection(self):
         text = self.task_text["Final Review & Publication"]
 
-        self.assertIn("minimum sufficient standards-compliant DwC-A projection", text)
+        self.assertIn("most faithful standards-compliant DwC-A projection", text)
+        self.assertIn("Preserve every useful DwC-DP fact", text)
         self.assertIn("Choose the focal core first", text)
         self.assertIn("what the data are fundamentally about", text)
         self.assertIn("Consider only extensions compatible with the chosen core", text)
