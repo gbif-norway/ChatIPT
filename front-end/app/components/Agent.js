@@ -226,12 +226,6 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
     };
   }, [isLoading, isUserSending, agent.busy_thinking, agent.message_set, agent.completed_at]);
 
-  const formatTableIDs = (ids) => {
-    if (!ids || !ids.length) return "[Deleted table(s)]";
-    const prefix = ids.length === 1 ? "(Table ID " : "(Table IDs ";
-    return prefix + ids.join(", ") + ")";
-  }
-
   const resetFileInput = () => {
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -474,10 +468,12 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
 
   return (
     <>
-      <Accordion.Item eventKey={agent.id}>
+      <Accordion.Item
+        eventKey={agent.id}
+        data-table-ids={agent.tables?.length ? agent.tables.join(',') : undefined}
+      >
         <Accordion.Header>
           Task: {agent.task.name.replace(/^[-_]*(.)/, (_, c) => c.toUpperCase()).replace(/[-_]+(.)/g, (_, c) => ' ' + c.toUpperCase())}
-          &nbsp;-&nbsp;<small>{formatTableIDs(agent.tables)}</small>
           {agent.completed_at != null && (
             <span className={`agent-id-${agent.id}-message`}>&nbsp;<Badge bg="secondary">complete <i className="bi-check-square"></i></Badge></span>
           )}
