@@ -63,9 +63,9 @@
       "examples": "",
       "type": "string",
       "format": "default",
-      "namespace": "ac",
-      "dcterms:isVersionOf": "http://rs.tdwg.org/ac/terms/CVterm",
-      "dcterms:references": "pending",
+      "namespace": "Iptc4xmpExt",
+      "dcterms:isVersionOf": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/CVterm",
+      "dcterms:references": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/CVterm",
       "rdfs:comment": "A term to describe the content of the image by a value from a Controlled Vocabulary."
     },
     {

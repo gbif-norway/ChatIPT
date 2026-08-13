@@ -110,6 +110,19 @@
       }
     },
     {
+      "name": "recordNumber",
+      "title": "Record Number",
+      "description": "An identifier given to the dwc:Occurrence at the time it was recorded.",
+      "comments": "Often serves as a link between field notes and a dwc:MaterialEntity, such as a specimen collector's number.",
+      "examples": "`OPP 7101`",
+      "type": "string",
+      "format": "default",
+      "namespace": "dwc",
+      "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/recordNumber",
+      "dcterms:references": "http://rs.tdwg.org/dwc/terms/version/recordNumber-2023-06-28",
+      "rdfs:comment": "An identifier for an eco:SurveyTarget."
+    },
+    {
       "name": "recordedBy",
       "title": "Recorded By",
       "description": "A name for a dcterms:Agent responsible for recording a dwc:Occurrence.",

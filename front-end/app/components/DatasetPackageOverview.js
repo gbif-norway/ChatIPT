@@ -77,9 +77,9 @@ const getStoryItems = (resources) => {
   return items
 }
 
-const profileVersion = (profileUrl) => {
+const profileVersion = (profileUrl, schemaVersion) => {
   const match = String(profileUrl || '').match(/dwc-dp\/([^/]+)\/dwc-dp-profile/)
-  return match?.[1] || 'Unknown'
+  return match?.[1] || schemaVersion || 'Unknown'
 }
 
 const openPackageExplorer = async () => {
@@ -423,7 +423,7 @@ export function PublicationPackageCards({ dataset, tables }) {
               Complete linked dataset · {pluralize(resources.length, 'linked table')} · Validated
             </p>
             <p className="small text-muted mb-3">
-              DwC-DP profile {profileVersion(standard.profile)} ·{' '}
+              DwC-DP profile {profileVersion(standard.profile, schema.version)} ·{' '}
               {schema.source ? (
                 <a href={schema.source} target="_blank" rel="noopener noreferrer">
                   schema snapshot {schema.version || 'Unknown'}{schema.issued ? ` (${schema.issued})` : ''}

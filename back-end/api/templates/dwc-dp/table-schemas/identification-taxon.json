@@ -29,9 +29,9 @@
     {
       "name": "taxonSortOrder",
       "title": "Taxon Sort Order",
-      "description": "A numerical position of a dwc:Taxon in a taxonFormula.",
+      "description": "A numerical position of a dwc:Taxon in a dwc:taxonFormula.",
       "comments": "",
-      "examples": "",
+      "examples": "`1`; `2`",
       "type": "integer",
       "format": "default",
       "namespace": "dwc",

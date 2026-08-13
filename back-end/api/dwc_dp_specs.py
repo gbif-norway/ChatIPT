@@ -31,12 +31,16 @@ _BASE_DIR = Path(__file__).resolve().parent
 _DWC_DP_ROOT = _BASE_DIR / "templates" / "dwc-dp"
 _TABLE_SCHEMA_ROOT = _DWC_DP_ROOT / "table-schemas"
 
-# This is the versioned profile URI required by the ratified DwC-DP guide. It is
-# not currently deployed by TDWG, so runtime validation uses the vendored profile
-# and Frictionless' built-in Data Package profile rather than fetching this URL.
-DWC_DP_PROFILE_URL = "http://rs.tdwg.org/dwc-dp/1.0/dwc-dp-profile.json"
-DWC_DP_SCHEMA_REVISION = "46bc94f5d7f7e44d4d3a116248c8bff3033e13a5"
+DWC_DP_SCHEMA_REVISION = "cbb6c887043876351eec1bed01c3dfc2e05c4eb4"
 DWC_DP_SCHEMA_REPOSITORY = "https://github.com/gbif/dwc-dp"
+
+# TDWG's versioned profile URI is not deployed yet. Pin the live upstream file
+# to the same immutable revision as the vendored snapshot so exported package
+# descriptors remain resolvable and reproducible.
+DWC_DP_PROFILE_URL = (
+    "https://raw.githubusercontent.com/gbif/dwc-dp/"
+    f"{DWC_DP_SCHEMA_REVISION}/dwc-dp/dwc-dp-profile.json"
+)
 
 
 def _load_json(path: Path) -> Dict[str, Any]:

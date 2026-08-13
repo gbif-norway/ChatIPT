@@ -96,10 +96,9 @@
       "examples": "`leaf`; `stomach`; `stamen`; `leg`",
       "type": "string",
       "format": "default",
-      "namespace": "ac",
-      "dcterms:isVersionOf": "http://rs.tdwg.org/ac/terms/subjectPart",
-      "dcterms:references": "http://rs.tdwg.org/ac/terms/version/subjectPart-2023-09-05",
-      "rdfs:comment": "The portion or product of organism morphology, behaviour, environment, etc. that is either predominantly shown or particularly well exemplified by the media resource, denoted by an IRI."
+      "namespace": "dwc",
+      "dcterms:isVersionOf": "pending",
+      "rdfs:comment": "An anatomical part of a dwc:Organism."
     },
     {
       "name": "organismInteractionType",
@@ -164,10 +163,9 @@
       "examples": "`leaf`; `stomach`; `stamen`; `leg`",
       "type": "string",
       "format": "default",
-      "namespace": "ac",
-      "dcterms:isVersionOf": "http://rs.tdwg.org/ac/terms/subjectPart",
-      "dcterms:references": "http://rs.tdwg.org/ac/terms/version/subjectPart-2023-09-05",
-      "rdfs:comment": "The portion or product of organism morphology, behaviour, environment, etc. that is either predominantly shown or particularly well exemplified by the media resource, denoted by an IRI."
+      "namespace": "dwc",
+      "dcterms:isVersionOf": "pending",
+      "rdfs:comment": "An anatomical part of a dwc:Organism."
     },
     {
       "name": "feedbackURL",

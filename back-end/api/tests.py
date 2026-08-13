@@ -107,7 +107,9 @@ class DwcDpSpecTests(SimpleTestCase):
         )
         self.assertEqual(
             descriptor['profile'],
-            'http://rs.tdwg.org/dwc-dp/1.0/dwc-dp-profile.json',
+            'https://raw.githubusercontent.com/gbif/dwc-dp/'
+            'cbb6c887043876351eec1bed01c3dfc2e05c4eb4/'
+            'dwc-dp/dwc-dp-profile.json',
         )
         self.assertEqual(descriptor['dwcDpSchema']['revision'], DWC_DP_SCHEMA_REVISION)
         self.assertEqual(len(descriptor['dwcDpSchema']['sha256']), 64)
@@ -2399,7 +2401,9 @@ class DatasetSummarySerializerTests(TestCase):
         self.assertTrue(detail_data["package_ready"])
         self.assertEqual(
             detail_data["dwc_dp_standard"]["profile"],
-            "http://rs.tdwg.org/dwc-dp/1.0/dwc-dp-profile.json",
+            "https://raw.githubusercontent.com/gbif/dwc-dp/"
+            "cbb6c887043876351eec1bed01c3dfc2e05c4eb4/"
+            "dwc-dp/dwc-dp-profile.json",
         )
         self.assertEqual(detail_data["dwc_dp_standard"]["schema"]["version"], "0.1")
 

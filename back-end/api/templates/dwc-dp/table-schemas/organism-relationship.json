@@ -122,22 +122,6 @@
       "rdfs:comment": "A related resource from which the described resource is derived."
     },
     {
-      "name": "relationshipOrder",
-      "title": "Relationship Order",
-      "description": "A numerical position of a dwc:ResourceRelationship in a set of dwc:ResourceRelationships that have the same combination of dwc:organismID, dwc:relatedOrganismID, dwc:relationshipType, dwc:relationshipTypeIRI, and dwc:relationshipTypeSource.",
-      "comments": "One could use relationshipOrder to create an ordered list of authors for a Reference, for example. The first would have relationshipOrder=1, the second would have relationshipOrder=2.",
-      "examples": "",
-      "type": "integer",
-      "format": "default",
-      "namespace": "dwc",
-      "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/relationshipOrder",
-      "dcterms:references": "pending",
-      "rdfs:comment": "A numerical position of a dwc:ResourceRelationship in a set of dwc:ResourceRelationships that have the same combination of dwc:organismID, dwc:relatedOrganismID, dwc:relationshipType, dwc:relationshipTypeIRI, and dwc:relationshipTypeSource.",
-      "constraints": {
-        "minimum": 1
-      }
-    },
-    {
       "name": "relationshipAccordingTo",
       "title": "Relationship According To",
       "description": "A name of a dcterms:Agent responsible for asserting a dwc:ResourceRelationship.",

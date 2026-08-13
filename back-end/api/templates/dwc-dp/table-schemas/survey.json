@@ -85,7 +85,7 @@
       "namespace": "eco",
       "dcterms:isVersionOf": "http://rs.tdwg.org/eco/terms/siteNestingDescription",
       "dcterms:references": "http://rs.tdwg.org/eco/terms/version/siteNestingDescription-2024-02-28",
-      "rdfs:comment": "A unit associated with the value in dwc:assertionValue."
+      "rdfs:comment": "Textual description of the hierarchical sampling design."
     },
     {
       "name": "verbatimSiteDescriptions",

@@ -55,7 +55,9 @@ Local URLs:
 ChatIPT vendors the complete DwC-DP profile and table schemas under
 `back-end/api/templates/dwc-dp`. The current snapshot is version 0.1, issued
 2026-06-26 from GBIF's `gbif/dwc-dp` commit
-`46bc94f5d7f7e44d4d3a116248c8bff3033e13a5`. Package descriptors record this
+`cbb6c887043876351eec1bed01c3dfc2e05c4eb4`. Package descriptors reference the
+profile at that immutable GitHub revision because the profile URL documented by
+the ratified guide currently returns 404. They also record the snapshot
 revision and a content hash so exported datasets remain reproducible even while
 the specification is evolving.
 
