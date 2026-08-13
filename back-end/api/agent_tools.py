@@ -2537,11 +2537,24 @@ class PublishToGBIF(OpenAIBaseModel):
                 discord_bot.send_discord_message(f"⚠️ Publishing Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
                 return error_msg
 
+            core_type_map = {
+                Dataset.DWCCore.OCCURRENCE: DarwinCoreCoreType.OCCURRENCE,
+                Dataset.DWCCore.EVENT: DarwinCoreCoreType.EVENT,
+                Dataset.DWCCore.TAXONOMY: DarwinCoreCoreType.TAXON,
+            }
+            core_type = core_type_map.get(dataset.dwc_core)
+            if core_type is None:
+                raise ValueError(
+                    "Dataset has no supported Darwin Core archive core. "
+                    "Create the DwC-A again before publishing to GBIF."
+                )
+
             gbif_url = register_dataset_and_endpoint(
                 dataset.title,
                 dataset.description,
                 dataset.dwca_url,
                 (dataset.eml or {}).get("license", "CC BY 4.0"),
+                core_type=core_type,
             )
             dataset.gbif_url = gbif_url
             dataset.published_at = timezone.now()

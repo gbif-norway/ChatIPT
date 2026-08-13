@@ -16,6 +16,7 @@ import yaml
 from .helpers.publish import (
     DwcaExtensionLinkError,
     assert_case_insensitive_unique_identifier,
+    gbif_dataset_type_for_core,
     make_eml,
     parse_newick_to_tree,
     parse_nexus_to_tree,
@@ -536,6 +537,38 @@ class EmlGenerationTests(SimpleTestCase):
         self.assertEqual(
             dataset_payload["license"],
             "http://creativecommons.org/licenses/by-nc/4.0/legalcode",
+        )
+
+    def test_gbif_dataset_type_matches_archive_core(self):
+        expected = {
+            DarwinCoreCoreType.OCCURRENCE: "OCCURRENCE",
+            DarwinCoreCoreType.EVENT: "SAMPLING_EVENT",
+            DarwinCoreCoreType.TAXON: "CHECKLIST",
+        }
+
+        for core_type, dataset_type in expected.items():
+            with self.subTest(core_type=core_type):
+                self.assertEqual(gbif_dataset_type_for_core(core_type), dataset_type)
+
+    @patch("api.helpers.publish.requests.post")
+    def test_gbif_registration_uses_sampling_event_type_for_event_core(self, post_mock):
+        post_mock.side_effect = [
+            SimpleNamespace(status_code=201, json=lambda: "dataset-key"),
+            SimpleNamespace(status_code=201, json=lambda: {}),
+        ]
+
+        gbif_url = register_dataset_and_endpoint(
+            "Event data",
+            "Description",
+            "https://example.org/archive.zip",
+            core_type=DarwinCoreCoreType.EVENT,
+        )
+
+        dataset_payload = post_mock.call_args_list[0].kwargs["json"]
+        self.assertEqual(dataset_payload["type"], "SAMPLING_EVENT")
+        self.assertEqual(
+            gbif_url,
+            "https://www.gbif-test.org/dataset/dataset-key",
         )
 
     def test_make_eml_maps_manuscript_fields_and_creators(self):

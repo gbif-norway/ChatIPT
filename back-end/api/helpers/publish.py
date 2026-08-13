@@ -50,6 +50,12 @@ GBIF_LICENSES = {
 }
 DEFAULT_GBIF_LICENSE = "CC BY 4.0"
 
+GBIF_DATASET_TYPES = {
+    DarwinCoreCoreType.OCCURRENCE: "OCCURRENCE",
+    DarwinCoreCoreType.EVENT: "SAMPLING_EVENT",
+    DarwinCoreCoreType.TAXON: "CHECKLIST",
+}
+
 
 class DwcaExtensionLinkError(ValueError):
     """Expected projection error raised when extension rows cannot link to the core."""
@@ -81,6 +87,18 @@ def normalize_gbif_license(value: str | None) -> tuple[str, dict]:
         supported = ", ".join(GBIF_LICENSES)
         raise ValueError(f"Unsupported GBIF license '{name}'. Choose one of: {supported}.")
     return name, GBIF_LICENSES[name]
+
+
+def gbif_dataset_type_for_core(core_type: DarwinCoreCoreType | str) -> str:
+    """Return the GBIF Registry dataset class for a Darwin Core archive core."""
+    try:
+        normalized_core_type = DarwinCoreCoreType(core_type)
+    except ValueError as exc:
+        supported = ", ".join(core.value for core in GBIF_DATASET_TYPES)
+        raise ValueError(
+            f"Unsupported Darwin Core type '{core_type}'. Choose one of: {supported}."
+        ) from exc
+    return GBIF_DATASET_TYPES[normalized_core_type]
 
 
 class LocalSpecTable(DwcaWriterTable):
@@ -1628,7 +1646,13 @@ def upload_dwca(
         discord_bot.send_discord_message(error_msg)
         raise
 
-def register_dataset_and_endpoint(title, description, url, license_name=DEFAULT_GBIF_LICENSE):
+def register_dataset_and_endpoint(
+    title,
+    description,
+    url,
+    license_name=DEFAULT_GBIF_LICENSE,
+    core_type: DarwinCoreCoreType | str = DarwinCoreCoreType.OCCURRENCE,
+):
     print('registering dataset')
     _, license_metadata = normalize_gbif_license(license_name)
     payload = {
@@ -1637,7 +1661,7 @@ def register_dataset_and_endpoint(title, description, url, license_name=DEFAULT_
         'publishingOrganizationKey': os.getenv('GBIF_PUBLISHING_ORGANIZATION_KEY'),
         'installationKey': os.getenv('GBIF_INSTALLATION_KEY'),
         'language': 'en',
-        'type': 'OCCURRENCE',
+        'type': gbif_dataset_type_for_core(core_type),
         'license': license_metadata['url'],
     }
     response = requests.post(
@@ -1654,7 +1678,8 @@ def register_dataset_and_endpoint(title, description, url, license_name=DEFAULT_
 
     print(dataset_key)
     register_endpoint(dataset_key, url)
-    return f'https://gbif-uat.org/dataset/{dataset_key}'
+    dataset_url = os.getenv('GBIF_DATASET_URL', 'https://www.gbif-test.org/dataset').rstrip('/')
+    return f'{dataset_url}/{dataset_key}'
 
 
 def register_endpoint(dataset_key, url):
