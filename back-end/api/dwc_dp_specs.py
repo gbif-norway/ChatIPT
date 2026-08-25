@@ -31,15 +31,14 @@ _BASE_DIR = Path(__file__).resolve().parent
 _DWC_DP_ROOT = _BASE_DIR / "templates" / "dwc-dp"
 _TABLE_SCHEMA_ROOT = _DWC_DP_ROOT / "table-schemas"
 
-DWC_DP_SCHEMA_REVISION = "cbb6c887043876351eec1bed01c3dfc2e05c4eb4"
-DWC_DP_SCHEMA_REPOSITORY = "https://github.com/gbif/dwc-dp"
+DWC_DP_SCHEMA_REVISION = "76898192fd298c2aa170a7059e1bdadf3ee2a828"
+DWC_DP_SCHEMA_REPOSITORY = "https://github.com/tdwg/rs.tdwg.org"
 
-# TDWG's versioned profile URI is not deployed yet. Pin the live upstream file
-# to the same immutable revision as the vendored snapshot so exported package
-# descriptors remain resolvable and reproducible.
+# DwC-DP 1.0 is still under public review. Use TDWG's deployed prerelease
+# profile in descriptors, while recording the immutable source revision and
+# vendored content hash separately for reproducibility.
 DWC_DP_PROFILE_URL = (
-    "https://raw.githubusercontent.com/gbif/dwc-dp/"
-    f"{DWC_DP_SCHEMA_REVISION}/dwc-dp/dwc-dp-profile.json"
+    "https://dwc-prerelease.rs.tdwg.org/dwc-dp/1.0_DEV/dwc-dp-profile.json"
 )
 
 
@@ -79,7 +78,10 @@ def dwc_dp_schema_snapshot() -> Dict[str, str]:
         "issued": DWC_DP_SCHEMA_ISSUED,
         "revision": DWC_DP_SCHEMA_REVISION,
         "sha256": DWC_DP_SCHEMA_SHA256,
-        "source": f"{DWC_DP_SCHEMA_REPOSITORY}/tree/{DWC_DP_SCHEMA_REVISION}/dwc-dp",
+        "source": (
+            f"{DWC_DP_SCHEMA_REPOSITORY}/tree/{DWC_DP_SCHEMA_REVISION}/"
+            "dwc-dp/1.0_DEV"
+        ),
     }
 
 

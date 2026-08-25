@@ -53,17 +53,19 @@ Local URLs:
 ## DwC-DP schema snapshot
 
 ChatIPT vendors the complete DwC-DP profile and table schemas under
-`back-end/api/templates/dwc-dp`. The current snapshot is version 0.1, issued
-2026-06-26 from GBIF's `gbif/dwc-dp` commit
-`cbb6c887043876351eec1bed01c3dfc2e05c4eb4`. Package descriptors reference the
-profile at that immutable GitHub revision because the profile URL documented by
-the ratified guide currently returns 404. They also record the snapshot
-revision and a content hash so exported datasets remain reproducible even while
-the specification is evolving.
+`back-end/api/templates/dwc-dp`. The current snapshot is the DwC-DP 1.0
+prerelease (`1.0_DEV`) from TDWG's `rs.tdwg.org` `dwc` branch at commit
+`76898192fd298c2aa170a7059e1bdadf3ee2a828`. Package descriptors reference
+TDWG's deployed prerelease profile at
+`https://dwc-prerelease.rs.tdwg.org/dwc-dp/1.0_DEV/dwc-dp-profile.json` and
+record the immutable source revision and a content hash so exported datasets
+remain reproducible while the schemas are under public review.
 
-When updating the snapshot, replace the profile, index, version, and complete
-`table-schemas` directory together, then update `DWC_DP_SCHEMA_REVISION` in
-`back-end/api/dwc_dp_specs.py` and run the backend tests in Docker.
+When updating the snapshot, replace the profile and complete `table-schemas`
+directory together, update the local index/version metadata and
+`DWC_DP_SCHEMA_REVISION` in `back-end/api/dwc_dp_specs.py`, then run the backend
+tests in Docker. Once DwC-DP 1.0 is ratified, update the snapshot and profile URL
+atomically from `1.0_DEV` to the final versioned release.
 
 ## Deployment docs
 

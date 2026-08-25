@@ -584,11 +584,17 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         )
 
     # Primary user as creator and metadataProvider
+    primary_email = (getattr(user, 'email', None) or '') if user else ''
+    # ORCID-only accounts use a synthetic address as their login identifier.
+    # It is not a deliverable contact address and must not be published in EML.
+    if primary_email.lower().endswith('@orcid.org'):
+        primary_email = ''
+
     primary_person = {
         'first_name': (getattr(user, 'first_name', None) or 'Test') if user else 'Test',
         'last_name': (getattr(user, 'last_name', None) or 'User') if user else 'User',
         'orcid': (getattr(user, 'orcid_id', None) or '0000-0000-0000-0000') if user else '0000-0002-1825-0097',
-        'email': (getattr(user, 'email', None) or '') if user else '',
+        'email': primary_email,
     }
 
     creator_node = get_or_create(dataset_node, 'creator')

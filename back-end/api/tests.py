@@ -108,9 +108,8 @@ class DwcDpSpecTests(SimpleTestCase):
         )
         self.assertEqual(
             descriptor['profile'],
-            'https://raw.githubusercontent.com/gbif/dwc-dp/'
-            'cbb6c887043876351eec1bed01c3dfc2e05c4eb4/'
-            'dwc-dp/dwc-dp-profile.json',
+            'https://dwc-prerelease.rs.tdwg.org/'
+            'dwc-dp/1.0_DEV/dwc-dp-profile.json',
         )
         self.assertEqual(descriptor['dwcDpSchema']['revision'], DWC_DP_SCHEMA_REVISION)
         self.assertEqual(len(descriptor['dwcDpSchema']['sha256']), 64)
@@ -518,6 +517,26 @@ class EmlGenerationTests(SimpleTestCase):
                 self.assertIsNotNone(link)
                 self.assertEqual(link.attrib["url"], license_url)
                 self.assertTrue(link.findtext("citetitle"))
+
+    def test_make_eml_does_not_publish_synthetic_orcid_login_email(self):
+        class OrcidUser:
+            first_name = 'Maud'
+            last_name = 'Ødegaard Sundt'
+            orcid_id = '0009-0008-7939-4511'
+            email = '0009-0008-7939-4511@orcid.org'
+
+        root = ET.fromstring(
+            make_eml('ORCID dataset', 'Description', user=OrcidUser())
+        )
+        dataset = root.find('dataset')
+
+        self.assertIsNone(dataset.find('creator/electronicMailAddress'))
+        self.assertIsNone(dataset.find('metadataProvider/electronicMailAddress'))
+        self.assertIsNone(dataset.find('contact/electronicMailAddress'))
+        self.assertEqual(
+            dataset.find('contact/userId').text,
+            '0009-0008-7939-4511',
+        )
 
     @patch("api.helpers.publish.requests.post")
     def test_gbif_registration_uses_canonical_license_url(self, post_mock):
@@ -2339,6 +2358,20 @@ class DatasetSummarySerializerTests(TestCase):
         self.assertIn("Build a rich relational DwC-DP", prompt)
         self.assertIn("Usage Policy", prompt)
 
+    def test_phylogenetic_prompt_routes_material_collector_fields_through_dwc_dp(self):
+        dataset = Dataset.objects.create(
+            title="Phylogenetic package",
+            description="Test",
+        )
+        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+
+        agent = Agent.create_with_system_message(dataset=dataset, task=task, tables=[])
+        prompt = agent.message_set.get(openai_obj__role="system").openai_obj["content"]
+
+        self.assertIn("material.collectedBy", prompt)
+        self.assertIn("material.collectorNumber", prompt)
+        self.assertIn("do not create `occurrence.recordNumber`", prompt)
+
     def test_package_explorer_model_uses_current_schema_and_reports_link_coverage(self):
         dataset = Dataset.objects.create(title="Explorer")
         Table.objects.create(
@@ -2434,11 +2467,10 @@ class DatasetSummarySerializerTests(TestCase):
         self.assertTrue(detail_data["package_ready"])
         self.assertEqual(
             detail_data["dwc_dp_standard"]["profile"],
-            "https://raw.githubusercontent.com/gbif/dwc-dp/"
-            "cbb6c887043876351eec1bed01c3dfc2e05c4eb4/"
-            "dwc-dp/dwc-dp-profile.json",
+            "https://dwc-prerelease.rs.tdwg.org/"
+            "dwc-dp/1.0_DEV/dwc-dp-profile.json",
         )
-        self.assertEqual(detail_data["dwc_dp_standard"]["schema"]["version"], "0.1")
+        self.assertEqual(detail_data["dwc_dp_standard"]["schema"]["version"], "1.0_DEV")
 
     def test_status_distinguishes_preparing_from_needs_input(self):
         task = Task.objects.create(name="Data exploration", text="Explore", order=1)
