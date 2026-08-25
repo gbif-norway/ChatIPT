@@ -501,6 +501,20 @@ class EmlGenerationTests(SimpleTestCase):
         # methods description present
         self.assertIsNotNone(dataset.find('methods/methodStep/description/para'))
 
+    def test_make_eml_uses_stored_package_identifier(self):
+        root = ET.fromstring(
+            make_eml(
+                'Identified dataset',
+                'Description',
+                eml_extra={'package_id': 'b13c5da2-d21a-4d25-af44-2f6a732c06a1'},
+            )
+        )
+
+        self.assertEqual(
+            root.attrib['packageId'],
+            'b13c5da2-d21a-4d25-af44-2f6a732c06a1',
+        )
+
     def test_make_eml_uses_each_supported_gbif_license(self):
         expected = {
             "CC0 1.0": "http://creativecommons.org/publicdomain/zero/1.0/legalcode",

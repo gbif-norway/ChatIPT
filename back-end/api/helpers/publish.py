@@ -206,6 +206,7 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         raise FileNotFoundError(f"EML template not found at: {eml_path}")
     tree = ET.parse(str(eml_path))
     root = tree.getroot()
+    eml_extra = eml_extra or {}
 
     # EML 2.2.0: the root is namespaced (eml:eml) but children are unqualified.
     # Work with unqualified child elements throughout.
@@ -251,6 +252,10 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
             return None
         text = str(value).strip()
         return text or None
+
+    package_id = clean_text(eml_extra.get('package_id'))
+    if package_id:
+        root.set('packageId', package_id)
 
     def normalize_orcid_identifier(value: str | None) -> str | None:
         """Normalize ORCID input to the identifier token expected in EML userId."""
@@ -604,8 +609,6 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     set_person(metadata_provider_node, primary_person)
 
     # Optional additional metadata
-    eml_extra = eml_extra or {}
-
     # GBIF accepts one of three dataset licenses. Keep the license in EML and
     # registration metadata instead of requiring a DwC-DP usage-policy table.
     _, license_metadata = normalize_gbif_license(eml_extra.get("license"))
