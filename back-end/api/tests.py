@@ -39,6 +39,7 @@ from .agent_tools import (
     RequestUserInput,
     ValidateDwcDp,
     PreviewDwcDpDescriptor,
+    PublishToGBIF,
     UploadDwCA,
     Python,
     normalize_event_date,
@@ -2356,6 +2357,42 @@ class UploadDwcaCorrectionFeedbackTests(TestCase):
         )
         self.assertIn("Do not copy DwC-DP `_pk` or `_fk` values directly", feedback["required_action"])
         discord_mock.assert_not_called()
+
+
+class PublishToGbifTests(TestCase):
+    @patch("api.agent_tools.register_dataset_and_endpoint")
+    def test_run_registers_dataset_using_saved_archive_core(self, register_mock):
+        register_mock.return_value = "https://www.gbif-test.org/dataset/dataset-key"
+        task = Task.objects.create(name="GBIF publication test", text="Test", order=999)
+        dataset = Dataset.objects.create(
+            title="ROV Marine Video Observations",
+            description="Marine observations",
+            eml={"license": "CC BY 4.0"},
+            dwca_url="https://example.org/archive.zip",
+            dwc_core=Dataset.DWCCore.EVENT,
+        )
+        agent = Agent.objects.create(dataset=dataset, task=task)
+
+        result = PublishToGBIF(agent_id=agent.id).run()
+
+        self.assertEqual(
+            result,
+            "Successfully registered dataset with GBIF. URL: "
+            "https://www.gbif-test.org/dataset/dataset-key",
+        )
+        register_mock.assert_called_once_with(
+            dataset.title,
+            dataset.description,
+            dataset.dwca_url,
+            "CC BY 4.0",
+            core_type=DarwinCoreCoreType.EVENT,
+        )
+        dataset.refresh_from_db()
+        self.assertEqual(
+            dataset.gbif_url,
+            "https://www.gbif-test.org/dataset/dataset-key",
+        )
+        self.assertIsNotNone(dataset.published_at)
 
 
 class DatasetSummarySerializerTests(TestCase):
