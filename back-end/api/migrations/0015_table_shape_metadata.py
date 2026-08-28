@@ -9,6 +9,7 @@ def display_columns(raw_columns):
         except (TypeError, ValueError):
             missing = False
         label = '' if missing else str(raw_column)
+        label = label.encode('utf-8', 'replace').decode('utf-8')
         return label or 'Unnamed column'
 
     labels = []

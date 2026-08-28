@@ -681,6 +681,7 @@ class Table(models.Model):
             except (TypeError, ValueError):
                 missing = False
             label = '' if missing else str(raw_column)
+            label = label.encode('utf-8', 'replace').decode('utf-8')
             return label or 'Unnamed column'
 
         labels = []
@@ -712,6 +713,11 @@ class Table(models.Model):
         page = self.df.iloc[offset:offset + limit].copy()
         page.columns = self.columns or self.display_columns(page.columns)
         page = page.replace([np.inf, -np.inf], np.nan)
+        for column in page.select_dtypes(include=['object']).columns:
+            page[column] = page[column].map(
+                lambda value: value.encode('utf-8', 'replace').decode('utf-8')
+                if isinstance(value, str) else value
+            )
         try:
             return json.loads(
                 page.to_json(

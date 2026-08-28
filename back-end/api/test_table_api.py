@@ -41,6 +41,16 @@ class TableApiTests(TestCase):
         self.assertEqual(self.table.row_count, 1)
         self.assertEqual(self.table.columns, ['id (1)', 'id (2)', 'Unnamed column'])
 
+    def test_invalid_unicode_is_replaced_in_columns_and_rows(self):
+        table = Table.objects.create(
+            dataset=self.dataset,
+            title='unicode',
+            df=pd.DataFrame([['bad\udcf3value']], columns=['bad\udcf3column']),
+        )
+
+        self.assertEqual(table.columns, ['bad?column'])
+        self.assertEqual(table.row_page(0, 1), [{'bad?column': 'bad?value'}])
+
     def test_list_returns_metadata_without_loading_dataframe(self):
         Table.objects.create(
             dataset=self.dataset,
