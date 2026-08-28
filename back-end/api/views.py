@@ -1,6 +1,6 @@
 from rest_framework import serializers, viewsets, status
 from rest_framework.exceptions import ValidationError
-from api.serializers import DatasetSerializer, DatasetListSerializer, TableSerializer, MessageSerializer, AgentSerializer, TaskSerializer, UserFileSerializer
+from api.serializers import DatasetSerializer, DatasetListSerializer, TablePageQuerySerializer, TableSerializer, MessageSerializer, AgentSerializer, TaskSerializer, UserFileSerializer
 from api.models import Dataset, Table, Message, Agent, Task, UserFile
 from rest_framework.response import Response
 from rest_framework.decorators import action, api_view, permission_classes
@@ -766,20 +766,35 @@ class DatasetViewSet(viewsets.ModelViewSet):
         return Response({'occurrences': matching_rows})
 
 
-class TableViewSet(viewsets.ModelViewSet):
+class TableViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = TableSerializer
     permission_classes = [IsAuthenticatedOrSuperuser]
     filterset_fields = ['dataset', 'title']
     ordering = ['-updated_at']
+    http_method_names = ['get', 'head', 'options']
 
     def get_queryset(self):
-        """Filter tables to only show those belonging to the authenticated user's datasets, unless user is superuser"""
-        # Superusers can see all tables
+        """Return lightweight, user-visible table records without loading DataFrames."""
+        queryset = Table.objects.exclude(title__endswith='_tmp').defer('df').order_by('-updated_at', '-id')
         if self.request.user.is_superuser:
-            return Table.objects.all().order_by('-updated_at', '-id')
-        
-        # Regular users only see their own tables
-        return Table.objects.filter(dataset__user=self.request.user).order_by('-updated_at', '-id')
+            return queryset
+        return queryset.filter(dataset__user=self.request.user)
+
+    @action(detail=True, methods=['get'])
+    def rows(self, request, *args, **kwargs):
+        """Return one bounded row page for a table."""
+        query = TablePageQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        table = self.get_object()
+        offset = query.validated_data['offset']
+        limit = query.validated_data['limit']
+        return Response({
+            'count': table.row_count,
+            'offset': offset,
+            'limit': limit,
+            'columns': table.columns,
+            'results': table.row_page(offset, limit),
+        })
 
 
 class UserFileViewSet(viewsets.ModelViewSet):

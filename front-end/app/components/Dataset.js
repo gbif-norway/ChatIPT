@@ -16,15 +16,29 @@ import Tabs from 'react-bootstrap/Tabs';
 import Tab from 'react-bootstrap/Tab';
 import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
+import {
+  DEFAULT_TABLE_PAGE_SIZE,
+  normalizeTableList,
+  normalizeTablePage,
+  TABLE_PAGE_SIZE_OPTIONS,
+  tableRowsUrl,
+} from '../utils/tableApi.mjs';
 
 const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const { currentDataset, currentDatasetId, loading, error, refreshDataset, queueNextUserMessagePrefix } = useDataset();
   const { user } = useAuth();
   const [tables, setTables] = useState([]);
   const [tablesLoading, setTablesLoading] = useState(true);
+  const [tablesError, setTablesError] = useState('');
   const [activeTableId, setActiveTableId] = useState(null);
+  const [tablePage, setTablePage] = useState(1);
+  const [tablePageSize, setTablePageSize] = useState(DEFAULT_TABLE_PAGE_SIZE);
+  const [tableRows, setTableRows] = useState([]);
+  const [tableRowsLoading, setTableRowsLoading] = useState(false);
+  const [tableRowsError, setTableRowsError] = useState('');
   const [showTableTabOverflowCue, setShowTableTabOverflowCue] = useState(false);
   const tableTabsRef = useRef(null);
+  const tableRowsControllerRef = useRef(null);
   const [activeAgentKey, setActiveAgentKey] = useState(null);
   const [isEditingMetadata, setIsEditingMetadata] = useState(false);
   const [isSavingMetadata, setIsSavingMetadata] = useState(false);
@@ -113,19 +127,18 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const loadTablesForDataset = useCallback(async (datasetId) => {
     console.log('loading tables for dataset', datasetId);
     setTablesLoading(true);
+    setTablesError('');
     try {
-      const tables = await fetchData(`${config.baseUrl}/api/tables?dataset=${datasetId}`);
-      const updatedTables = tables.map(item => {
-        const df = JSON.parse(item.df_json);
-        delete item.df_json;
-        return { ...item, df };
-      });
-      console.log(updatedTables);
-      setTables(updatedTables);
-      const sortedTables = tables.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
-      setActiveTableId(sortedTables[0]?.id);
+      const payload = await fetchData(`${config.baseUrl}/api/tables?dataset=${datasetId}`);
+      const nextTables = normalizeTableList(payload);
+      setTables(nextTables);
+      setActiveTableId(nextTables[0]?.id ?? null);
+      setTablePage(1);
     } catch (error) {
       console.error('Error loading tables:', error);
+      setTables([]);
+      setActiveTableId(null);
+      setTablesError('Tables could not be loaded. Please retry.');
     } finally {
       setTablesLoading(false);
     }
@@ -134,23 +147,58 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const refreshTables = useCallback(async () => {
     console.log('refreshing tables');
     setTablesLoading(true);
+    setTablesError('');
     try {
-      const tables = await fetchData(`${config.baseUrl}/api/tables?dataset=${currentDatasetId}`);
-      const updatedTables = tables.map(item => {
-        const df = JSON.parse(item.df_json);
-        delete item.df_json;
-        return { ...item, df };
-      });
-      console.log(updatedTables);
-      setTables(updatedTables);
-      const sortedTables = tables.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
-      setActiveTableId(sortedTables[0]?.id);
+      const payload = await fetchData(`${config.baseUrl}/api/tables?dataset=${currentDatasetId}`);
+      const nextTables = normalizeTableList(payload);
+      setTables(nextTables);
+      setActiveTableId((currentId) => (
+        nextTables.some((table) => String(table.id) === String(currentId))
+          ? currentId
+          : (nextTables[0]?.id ?? null)
+      ));
+      setTablePage(1);
     } catch (error) {
       console.error('Error refreshing tables:', error);
+      setTablesError('Tables could not be refreshed. Please retry.');
     } finally {
       setTablesLoading(false);
     }
   }, [currentDatasetId]);
+
+  const loadActiveTableRows = useCallback(async () => {
+    tableRowsControllerRef.current?.abort();
+    if (!activeTableId) {
+      setTableRows([]);
+      return;
+    }
+    const controller = new AbortController();
+    tableRowsControllerRef.current = controller;
+    setTableRowsLoading(true);
+    setTableRowsError('');
+    setTableRows([]);
+    try {
+      const response = await fetch(
+        tableRowsUrl(config.baseUrl, activeTableId, tablePage, tablePageSize), {
+          credentials: 'include',
+          signal: controller.signal,
+        },
+      );
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.detail || `HTTP error! status: ${response.status}`);
+      setTableRows(normalizeTablePage(payload).results);
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+      console.error('Error loading table rows:', error);
+      setTableRows([]);
+      setTableRowsError('This table page could not be loaded. Please retry.');
+    } finally {
+      if (tableRowsControllerRef.current === controller) {
+        tableRowsControllerRef.current = null;
+        setTableRowsLoading(false);
+      }
+    }
+  }, [activeTableId, tablePage, tablePageSize]);
 
   const handleVisualizeTreeClick = () => {
     // Bootstrap modal will be shown via data-bs-toggle
@@ -171,9 +219,15 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       // Reset tables state when dataset is cleared
       setTables([]);
       setTablesLoading(false);
+      setTablesError('');
       setActiveTableId(null);
     }
   }, [currentDatasetId, loadTablesForDataset]);
+
+  useEffect(() => {
+    loadActiveTableRows();
+    return () => tableRowsControllerRef.current?.abort();
+  }, [loadActiveTableRows]);
 
   // Set active agent when dataset changes
   useEffect(() => {
@@ -222,6 +276,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
 
   const handleOpenPackageTable = useCallback((tableId) => {
     setActiveTableId(tableId);
+    setTablePage(1);
     window.setTimeout(() => {
       document.querySelector('.dataset-table-panel')?.scrollIntoView({
         behavior: 'smooth',
@@ -229,6 +284,8 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       });
     }, 250);
   }, []);
+
+  const activeTable = tables.find((table) => String(table.id) === String(activeTableId));
 
   // Dataset.js should only be shown when there's a currentDatasetId
   // The upload flow is now handled in page.js
@@ -673,34 +730,76 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                   <span className="visually-hidden">Loading tables...</span>
                 </div>
               </div>
+            ) : tablesError ? (
+              <div className="alert alert-danger" role="alert">
+                <strong>{tablesError}</strong>
+                <div className="mt-2">
+                  <button type="button" className="btn btn-sm btn-outline-danger" onClick={refreshTables}>
+                    Retry
+                  </button>
+                </div>
+              </div>
             ) : tables.length > 0 ? (
               <div
                 ref={tableTabsRef}
                 className={`dataset-table-tabs ${showTableTabOverflowCue ? 'has-more-tabs' : ''}`}
               >
-                <Tabs activeKey={activeTableId} onSelect={(k) => setActiveTableId(k)} className="mb-3">
+                <Tabs
+                  activeKey={activeTableId}
+                  onSelect={(tableId) => {
+                    setActiveTableId(tableId);
+                    setTablePage(1);
+                  }}
+                  className="mb-3"
+                >
                   {tables.map((table) => (
                     <Tab
                       eventKey={table.id}
                       title={(
                         <span>
                           {table.title}
-                          <small className="ms-1">({pluralize(table.df?.length || 0, 'row')})</small>
+                          <small className="ms-1">({pluralize(table.row_count, 'row')})</small>
                         </span>
                       )}
                       key={table.id}
                     >
                       <div data-table-id={table.id}>
-                        <DataTable
-                          columns={table.df[0] ? Object.keys(table.df[0]).map(column => ({
-                            name: column,
-                            selector: row => row[column],
-                            sortable: true,
-                          })) : []}
-                          data={table.df}
-                          pagination
-                          dense
-                        />
+                        {String(table.id) === String(activeTableId) && (
+                          <>
+                            {tableRowsError && (
+                              <div className="alert alert-danger mx-2" role="alert">
+                                {tableRowsError}{' '}
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline-danger ms-2"
+                                  onClick={loadActiveTableRows}
+                                >
+                                  Retry
+                                </button>
+                              </div>
+                            )}
+                            <DataTable
+                              columns={(activeTable?.columns || []).map((column) => ({
+                                name: column,
+                                selector: (row) => row[column],
+                              }))}
+                              data={tableRows}
+                              progressPending={tableRowsLoading}
+                              pagination
+                              paginationServer
+                              paginationTotalRows={activeTable?.row_count || 0}
+                              paginationDefaultPage={tablePage}
+                              paginationPerPage={tablePageSize}
+                              paginationRowsPerPageOptions={TABLE_PAGE_SIZE_OPTIONS}
+                              onChangePage={setTablePage}
+                              onChangeRowsPerPage={(nextPageSize) => {
+                                setTablePageSize(nextPageSize);
+                                setTablePage(1);
+                              }}
+                              dense
+                            />
+                          </>
+                        )}
                       </div>
                     </Tab>
                   ))}
@@ -725,7 +824,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       {/* Dataset Metadata Modal */}
       <PackageExplorer
         datasetId={currentDatasetId}
-        tables={tables}
         onOpenTable={handleOpenPackageTable}
       />
 

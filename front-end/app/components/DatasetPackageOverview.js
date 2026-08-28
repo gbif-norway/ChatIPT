@@ -46,7 +46,7 @@ const getResourceRows = (dataset, tables) => {
       return {
         name,
         tableId: table?.id ?? null,
-        rowCount: table?.df?.length ?? 0,
+        rowCount: table?.row_count ?? 0,
       }
     })
     .sort((a, b) => {

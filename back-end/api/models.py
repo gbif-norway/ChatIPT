@@ -669,24 +669,60 @@ class Table(models.Model):
     title = models.CharField(max_length=200, blank=True)
     df = PickledObjectField()
     description = models.CharField(max_length=2000, blank=True)
+    row_count = models.PositiveBigIntegerField(default=0, editable=False)
+    columns = models.JSONField(default=list, editable=False)
 
-    @property
-    def df_json(self):
-        df = self.make_columns_unique(self.df)
-        # return df.to_json(orient='records', date_format='iso')
-        df = df.replace([np.inf, -np.inf], np.nan)
-        df = df.where(pd.notnull(df), None)
-        def clean_strings_in_df(df):
-            for col in df.select_dtypes(include=['object']).columns:
-                df[col] = df[col].astype(str).apply(
-                    lambda x: x.encode('utf-8', 'replace').decode('utf-8')
-                )
-            return df
-        df = clean_strings_in_df(df)
+    @staticmethod
+    def display_columns(raw_columns):
+        """Return stable string labels, suffixing duplicate and blank columns."""
+        def display_label(raw_column):
+            try:
+                missing = bool(pd.isna(raw_column))
+            except (TypeError, ValueError):
+                missing = False
+            label = '' if missing else str(raw_column)
+            return label or 'Unnamed column'
+
+        labels = []
+        totals = {}
+        for raw_column in raw_columns:
+            label = display_label(raw_column)
+            totals[label] = totals.get(label, 0) + 1
+
+        seen = {}
+        for raw_column in raw_columns:
+            label = display_label(raw_column)
+            seen[label] = seen.get(label, 0) + 1
+            if totals[label] > 1:
+                label = f"{label} ({seen[label]})"
+            labels.append(label)
+        return labels
+
+    def save(self, *args, **kwargs):
+        if 'df' not in self.get_deferred_fields() and self.df is not None:
+            self.row_count = int(len(self.df.index))
+            self.columns = self.display_columns(self.df.columns)
+            update_fields = kwargs.get('update_fields')
+            if update_fields and 'df' in update_fields:
+                kwargs['update_fields'] = set(update_fields) | {'row_count', 'columns'}
+        return super().save(*args, **kwargs)
+
+    def row_page(self, offset, limit):
+        """Serialize one bounded DataFrame slice without copying the full table."""
+        page = self.df.iloc[offset:offset + limit].copy()
+        page.columns = self.columns or self.display_columns(page.columns)
+        page = page.replace([np.inf, -np.inf], np.nan)
         try:
-            return df.to_json(orient='records', date_format='iso', force_ascii=False)
-        except Exception as e:
-            raise Exception(f"Serialization failed after cleaning data: {e}")
+            return json.loads(
+                page.to_json(
+                    orient='records',
+                    date_format='iso',
+                    force_ascii=False,
+                    default_handler=str,
+                )
+            )
+        except Exception as exc:
+            raise ValueError(f"Unable to serialize table page: {exc}") from exc
 
     def _snapshot_df(self, df_obj):
         max_rows, max_columns, max_str_len = 10, 10, 70

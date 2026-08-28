@@ -10,17 +10,24 @@ class TaskSerializer(serializers.ModelSerializer):
 
 
 class TableSerializer(serializers.ModelSerializer):
-    df_str = serializers.CharField(source='df', read_only=True)
-
     class Meta:
         model = Table
-        fields = ['id', 'created_at', 'updated_at', 'dataset', 'title', 'df_str', 'description', 'df_json']
+        fields = [
+            'id',
+            'created_at',
+            'updated_at',
+            'dataset',
+            'title',
+            'description',
+            'row_count',
+            'columns',
+        ]
+        read_only_fields = fields
 
 
-class TableShortSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Table
-        fields = ['id', 'title', 'updated_at']
+class TablePageQuerySerializer(serializers.Serializer):
+    offset = serializers.IntegerField(default=0, min_value=0)
+    limit = serializers.IntegerField(default=50, min_value=1, max_value=200)
 
 
 class MessageSerializer(serializers.ModelSerializer):
@@ -37,11 +44,18 @@ class MessageSerializer(serializers.ModelSerializer):
 class AgentSerializer(serializers.ModelSerializer):
     message_set = MessageSerializer(many=True, read_only=True)
     task = TaskSerializer(read_only=True)
-    table_set = TableShortSerializer(many=True, read_only=True)
+    table_set = serializers.SerializerMethodField()
 
     class Meta:
         model = Agent
         fields = '__all__'
+
+    def get_table_set(self, agent):
+        return list(
+            agent.tables.order_by('id').values(
+                'id', 'title', 'updated_at', 'row_count', 'columns'
+            )
+        )
 
 
 class UserFileSerializer(serializers.ModelSerializer):
@@ -296,12 +310,11 @@ class DatasetListSerializer(serializers.ModelSerializer):
 
         resources = {}
         source_rows = 0
-        for table in obj.table_set.all():
-            row_count = int(getattr(table.df, 'shape', [0])[0])
+        for table in obj.table_set.only('title', 'row_count'):
             if table.title in RESERVED_TABLE_NAMES:
-                resources[table.title] = resources.get(table.title, 0) + row_count
+                resources[table.title] = resources.get(table.title, 0) + table.row_count
             else:
-                source_rows += row_count
+                source_rows += table.row_count
         return {
             'resources': dict(sorted(resources.items())),
             'package_rows': sum(resources.values()),
@@ -309,8 +322,8 @@ class DatasetListSerializer(serializers.ModelSerializer):
         }
 
     def get_last_updated(self, obj):
-        ts = [t.updated_at for t in obj.table_set.all()]
-        return max(ts) if ts else obj.created_at
+        last_table = obj.table_set.only('updated_at').order_by('-updated_at').first()
+        return last_table.updated_at if last_table else obj.created_at
 
     def get_status(self, obj):
         if obj.published_at: 

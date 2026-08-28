@@ -258,17 +258,19 @@ def _explorer_join_keys(df: pd.DataFrame, fields: list[str]) -> list[tuple[str, 
 def build_dwc_dp_explorer_model(dataset: Any) -> Dict[str, Any]:
     """Build a compact, schema-accurate model for the interactive package explorer."""
     resource_tables = {
-        table.title: table
-        for table in dataset.table_set.filter(title__in=RESERVED_TABLE_NAMES).order_by("title", "id")
+        table["title"]: table
+        for table in dataset.table_set.filter(title__in=RESERVED_TABLE_NAMES)
+        .order_by("title", "id")
+        .values("id", "title", "row_count", "columns")
     }
     nodes: list[Dict[str, Any]] = []
     edges: list[Dict[str, Any]] = []
 
     for name, table in resource_tables.items():
         spec = TABLE_SPECS[name]
-        available_fields = {str(field) for field in table.df.columns}
+        available_fields = set(table["columns"])
         fields = []
-        for field_name in table.df.columns:
+        for field_name in table["columns"]:
             normalized_name = str(field_name)
             descriptor = spec.field_descriptors.get(normalized_name, {})
             fields.append(
@@ -284,12 +286,12 @@ def build_dwc_dp_explorer_model(dataset: Any) -> Dict[str, Any]:
         nodes.append(
             {
                 "id": name,
-                "tableId": table.id,
+                "tableId": table["id"],
                 "title": spec.title,
                 "description": spec.description,
                 "comments": spec.schema.get("comments") or "",
                 "examples": spec.schema.get("examples") or "",
-                "rowCount": int(len(table.df)),
+                "rowCount": table["row_count"],
                 "columnCount": len(available_fields),
                 "primaryKey": spec.primary_key,
                 "weakPrimaryKey": spec.weak_primary_key,
@@ -315,8 +317,12 @@ def build_dwc_dp_explorer_model(dataset: Any) -> Dict[str, Any]:
 
             source_fields = _as_field_list(relationship.get("fields"))
             target_fields = _as_field_list(reference.get("fields"))
-            source_keys = _explorer_join_keys(source_table.df, source_fields)
-            target_keys = _explorer_join_keys(target_table.df, target_fields)
+            source_df = dataset.table_set.only("df").get(id=source_table["id"]).df
+            source_keys = _explorer_join_keys(source_df, source_fields)
+            del source_df
+            target_df = dataset.table_set.only("df").get(id=target_table["id"]).df
+            target_keys = _explorer_join_keys(target_df, target_fields)
+            del target_df
             if not source_keys or not target_keys:
                 continue
 
@@ -338,11 +344,11 @@ def build_dwc_dp_explorer_model(dataset: Any) -> Dict[str, Any]:
                     "kind": kind,
                     "sourceFields": source_fields,
                     "targetFields": target_fields,
-                    "sourceRows": int(len(source_table.df)),
+                    "sourceRows": source_table["row_count"],
                     "populatedRows": len(populated_keys),
                     "linkedRows": linked_rows,
                     "unmatchedRows": len(populated_keys) - linked_rows,
-                    "blankRows": int(len(source_table.df)) - len(populated_keys),
+                    "blankRows": source_table["row_count"] - len(populated_keys),
                 }
             )
 

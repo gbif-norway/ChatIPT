@@ -5,6 +5,7 @@ import cytoscape from 'cytoscape'
 import config from '../config.js'
 import { useTheme } from '../contexts/ThemeContext'
 import { pluralize } from '../utils/datasetPresentation'
+import { normalizeTablePage, tableRowsUrl } from '../utils/tableApi.mjs'
 
 const NODE_PRIORITY = [
   'event',
@@ -83,7 +84,7 @@ const graphPalette = (isDark) => ({
   selected: isDark ? '#ffffff' : '#15251d',
 })
 
-export default function PackageExplorer({ datasetId, tables, onOpenTable }) {
+export default function PackageExplorer({ datasetId, onOpenTable }) {
   const graphRef = useRef(null)
   const cyRef = useRef(null)
   const loadControllerRef = useRef(null)
@@ -94,16 +95,15 @@ export default function PackageExplorer({ datasetId, tables, onOpenTable }) {
   const [visible, setVisible] = useState(false)
   const [selection, setSelection] = useState(null)
   const [hoveredNodeId, setHoveredNodeId] = useState(null)
-  const [trace, setTrace] = useState(null)
+  const [previewRows, setPreviewRows] = useState([])
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState('')
 
-  const tableMap = useMemo(
-    () => new Map((tables || []).map((table) => [table.title, table])),
-    [tables]
-  )
   const nodeMap = useMemo(
     () => new Map((model?.nodes || []).map((node) => [node.id, node])),
     [model]
   )
+  const selectedNode = selection?.type === 'node' ? nodeMap.get(selection.id) : null
 
   const loadModel = useCallback(() => {
     if (!datasetId) return
@@ -136,7 +136,6 @@ export default function PackageExplorer({ datasetId, tables, onOpenTable }) {
           return aIndex - bIndex
         })[0]
         setSelection(firstNode ? { type: 'node', id: firstNode.id } : null)
-        setTrace(null)
       } catch (loadError) {
         if (loadError.name !== 'AbortError' && loadControllerRef.current === controller) {
           setError(loadError.message)
@@ -157,6 +156,7 @@ export default function PackageExplorer({ datasetId, tables, onOpenTable }) {
     const onHidden = () => {
       setVisible(false)
       setHoveredNodeId(null)
+      setPreviewRows([])
     }
     modal.addEventListener('show.bs.modal', onShow)
     modal.addEventListener('shown.bs.modal', onShown)
@@ -169,29 +169,36 @@ export default function PackageExplorer({ datasetId, tables, onOpenTable }) {
     }
   }, [loadModel])
 
-  const relationshipIndexes = useMemo(() => {
-    const indexes = new Map()
-    for (const edge of model?.edges || []) {
-      const sourceRows = tableMap.get(edge.source)?.df || []
-      const targetRows = tableMap.get(edge.target)?.df || []
-      const sourceIndex = new Map()
-      const targetIndex = new Map()
-      sourceRows.forEach((row, rowIndex) => {
-        const key = joinKey(row, edge.sourceFields)
-        if (!key) return
-        if (!sourceIndex.has(key)) sourceIndex.set(key, [])
-        sourceIndex.get(key).push({ row, rowIndex })
-      })
-      targetRows.forEach((row, rowIndex) => {
-        const key = joinKey(row, edge.targetFields)
-        if (!key) return
-        if (!targetIndex.has(key)) targetIndex.set(key, [])
-        targetIndex.get(key).push({ row, rowIndex })
-      })
-      indexes.set(edge.id, { sourceIndex, targetIndex })
+  useEffect(() => {
+    if (!visible || !selectedNode?.tableId) {
+      setPreviewRows([])
+      return undefined
     }
-    return indexes
-  }, [model, tableMap])
+
+    const controller = new AbortController()
+    const loadPreview = async () => {
+      setPreviewLoading(true)
+      setPreviewError('')
+      try {
+        const response = await fetch(
+          tableRowsUrl(config.baseUrl, selectedNode.tableId, 1, 6),
+          { credentials: 'include', signal: controller.signal },
+        )
+        const data = await response.json()
+        if (!response.ok) throw new Error(data?.detail || 'The table preview could not be loaded.')
+        setPreviewRows(normalizeTablePage(data).results)
+      } catch (loadError) {
+        if (loadError.name !== 'AbortError') {
+          setPreviewRows([])
+          setPreviewError(loadError.message)
+        }
+      } finally {
+        if (!controller.signal.aborted) setPreviewLoading(false)
+      }
+    }
+    loadPreview()
+    return () => controller.abort()
+  }, [selectedNode?.tableId, visible])
 
   useEffect(() => {
     if (!visible || !graphRef.current || !model?.nodes?.length) return undefined
@@ -337,11 +344,7 @@ export default function PackageExplorer({ datasetId, tables, onOpenTable }) {
     if (!cy) return
     cy.elements().removeClass('is-muted is-path')
 
-    if (trace) {
-      cy.elements().addClass('is-muted')
-      trace.nodeIds.forEach((id) => cy.getElementById(id).removeClass('is-muted').addClass('is-path'))
-      trace.edgeIds.forEach((id) => cy.getElementById(id).removeClass('is-muted').addClass('is-path'))
-    } else if (selection?.type === 'node') {
+    if (selection?.type === 'node') {
       const node = cy.getElementById(selection.id)
       cy.elements().addClass('is-muted')
       node.closedNeighborhood().removeClass('is-muted')
@@ -353,86 +356,18 @@ export default function PackageExplorer({ datasetId, tables, onOpenTable }) {
       edge.connectedNodes().removeClass('is-muted')
       edge.select()
     }
-  }, [selection, trace])
-
-  const followRecord = useCallback((originNodeId, originRow, originRowIndex) => {
-    const visited = new Map()
-    const queue = []
-    const traversedEdges = new Set()
-
-    const addRecord = (nodeId, row, rowIndex, depth) => {
-      const node = nodeMap.get(nodeId)
-      if (!node) return false
-      const signature = recordSignature(node, row, rowIndex)
-      if (!visited.has(nodeId)) visited.set(nodeId, new Map())
-      const nodeRecords = visited.get(nodeId)
-      if (nodeRecords.has(signature) || nodeRecords.size >= 8) return false
-      const entry = { row, rowIndex, depth, signature }
-      nodeRecords.set(signature, entry)
-      queue.push({ nodeId, ...entry })
-      return true
-    }
-
-    addRecord(originNodeId, originRow, originRowIndex, 0)
-    while (queue.length > 0 && [...visited.values()].reduce((sum, rows) => sum + rows.size, 0) < 40) {
-      const current = queue.shift()
-      if (current.depth >= 2) continue
-      for (const edge of model?.edges || []) {
-        const indexes = relationshipIndexes.get(edge.id)
-        if (!indexes) continue
-
-        if (edge.source === current.nodeId) {
-          const key = joinKey(current.row, edge.sourceFields)
-          const matches = key ? (indexes.targetIndex.get(key) || []) : []
-          matches.forEach((match) => addRecord(edge.target, match.row, match.rowIndex, current.depth + 1))
-          if (matches.length > 0) traversedEdges.add(edge.id)
-        }
-        if (edge.target === current.nodeId) {
-          const key = joinKey(current.row, edge.targetFields)
-          const matches = key ? (indexes.sourceIndex.get(key) || []) : []
-          matches.forEach((match) => addRecord(edge.source, match.row, match.rowIndex, current.depth + 1))
-          if (matches.length > 0) traversedEdges.add(edge.id)
-        }
-      }
-    }
-
-    const groups = [...visited.entries()]
-      .map(([nodeId, records]) => ({
-        node: nodeMap.get(nodeId),
-        records: [...records.values()],
-        minimumDepth: Math.min(...[...records.values()].map((record) => record.depth)),
-      }))
-      .sort((a, b) => a.minimumDepth - b.minimumDepth || a.node.title.localeCompare(b.node.title))
-    setTrace({
-      originNodeId,
-      originSignature: recordSignature(nodeMap.get(originNodeId), originRow, originRowIndex),
-      groups,
-      nodeIds: groups.map((group) => group.node.id),
-      edgeIds: [...traversedEdges],
-    })
-    setSelection({ type: 'node', id: originNodeId })
-  }, [model, nodeMap, relationshipIndexes])
-
-  const resetTrace = useCallback(() => {
-    setTrace(null)
-  }, [])
+  }, [selection])
 
   const fitGraph = useCallback(() => {
     const cy = cyRef.current
     if (cy) cy.animate({ fit: { eles: cy.elements(':visible'), padding: 55 }, duration: 250 })
   }, [])
 
-  const selectedNode = selection?.type === 'node' ? nodeMap.get(selection.id) : null
   const selectedEdge = selection?.type === 'edge'
     ? model?.edges?.find((edge) => edge.id === selection.id)
     : null
   const hoveredNode = hoveredNodeId ? nodeMap.get(hoveredNodeId) : null
-  const selectedTraceGroup = selectedNode && trace
-    ? trace.groups.find((group) => group.node.id === selectedNode.id)
-    : null
-  const selectedRows = selectedNode
-    ? (selectedTraceGroup?.records || (tableMap.get(selectedNode.id)?.df || []).slice(0, 6).map((row, rowIndex) => ({ row, rowIndex })))
-    : []
+  const selectedRows = previewRows.map((row, rowIndex) => ({ row, rowIndex }))
   const totalRows = (model?.nodes || []).reduce((sum, node) => sum + node.rowCount, 0)
   const examples = selectedNode ? parseExamples(selectedNode.examples).slice(0, 2) : []
 
@@ -487,19 +422,6 @@ export default function PackageExplorer({ datasetId, tables, onOpenTable }) {
                     Current package
                   </span>
                 </div>
-
-                {trace && (
-                  <div className="package-explorer-journey" role="status">
-                    <div>
-                      <i className="bi bi-signpost-split me-2" aria-hidden="true"></i>
-                      <strong>Record journey:</strong>{' '}
-                      {pluralize(trace.groups.length, 'connected table')} highlighted
-                    </div>
-                    <button type="button" className="btn btn-sm btn-outline-secondary" onClick={resetTrace}>
-                      Clear journey
-                    </button>
-                  </div>
-                )}
 
                 <div className="package-explorer-workspace">
                   <section className="package-graph-panel" aria-label="Interactive package relationship map">
@@ -567,27 +489,9 @@ export default function PackageExplorer({ datasetId, tables, onOpenTable }) {
                           </div>
                         )}
 
-                        {trace && (
-                          <div className="package-trace-groups">
-                            {trace.groups.map((group) => (
-                              <button
-                                type="button"
-                                key={group.node.id}
-                                className={group.node.id === selectedNode.id ? 'active' : ''}
-                                onClick={() => setSelection({ type: 'node', id: group.node.id })}
-                              >
-                                <span>{group.node.title}</span>
-                                <small>{pluralize(group.records.length, 'connected record')}</small>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-
                         <div className="package-inspector-section">
                           <div className="package-inspector-section-title">
-                            <strong>
-                              {trace ? 'Connected records (up to 6 shown)' : 'Data preview (first 6 rows)'}
-                            </strong>
+                            <strong>Data preview (first 6 rows)</strong>
                             <button
                               type="button"
                               className="btn btn-sm btn-link"
@@ -597,12 +501,18 @@ export default function PackageExplorer({ datasetId, tables, onOpenTable }) {
                               Open full table
                             </button>
                           </div>
-                          {selectedRows.length > 0 ? (
+                          {previewLoading ? (
+                            <div className="d-flex align-items-center gap-2 text-muted small">
+                              <span className="spinner-border spinner-border-sm" aria-hidden="true"></span>
+                              Loading preview…
+                            </div>
+                          ) : previewError ? (
+                            <p className="text-danger small mb-0" role="alert">{previewError}</p>
+                          ) : selectedRows.length > 0 ? (
                             <div className="table-responsive package-preview-table">
                               <table className="table table-sm align-middle mb-0">
                                 <thead>
                                   <tr>
-                                    <th scope="col" className="package-follow-cell"><span className="visually-hidden">Follow</span></th>
                                     {selectedNode.fields.map((field) => (
                                       <th scope="col" key={field.name}>
                                         <span>{field.name}</span>
@@ -620,17 +530,6 @@ export default function PackageExplorer({ datasetId, tables, onOpenTable }) {
                                 <tbody>
                                   {selectedRows.slice(0, 6).map((entry) => (
                                     <tr key={recordSignature(selectedNode, entry.row, entry.rowIndex)}>
-                                      <td className="package-follow-cell">
-                                        <button
-                                          type="button"
-                                          className="btn btn-sm btn-outline-success"
-                                          title="Follow this record through connected tables"
-                                          aria-label="Follow this record through connected tables"
-                                          onClick={() => followRecord(selectedNode.id, entry.row, entry.rowIndex)}
-                                        >
-                                          <i className="bi bi-signpost-split" aria-hidden="true"></i>
-                                        </button>
-                                      </td>
                                       {selectedNode.fields.map((field) => (
                                         <td key={field.name} title={formatValue(entry.row[field.name])}>
                                           {formatValue(entry.row[field.name])}
@@ -644,10 +543,6 @@ export default function PackageExplorer({ datasetId, tables, onOpenTable }) {
                           ) : (
                             <p className="text-muted small mb-0">This table has no rows to preview.</p>
                           )}
-                          <p className="package-preview-hint">
-                            <i className="bi bi-signpost-split me-1" aria-hidden="true"></i>
-                            Use the signpost to follow a record through its connected tables.
-                          </p>
                         </div>
 
                         <details className="package-field-guide">
