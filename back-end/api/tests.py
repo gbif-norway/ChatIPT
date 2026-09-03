@@ -41,6 +41,7 @@ from .agent_tools import (
     PreviewDwcDpDescriptor,
     PublishToGBIF,
     UploadDwCA,
+    ValidateDwCA,
     Python,
     normalize_event_date,
     _dwc_dp_resources_from_mapping,
@@ -811,6 +812,27 @@ class EmlGenerationTests(SimpleTestCase):
         self.assertEqual(classifications[0].find('taxonRankValue').text, 'Plantae')
         self.assertEqual(classifications[1].find('commonName').text, 'nightshades')
 
+    def test_make_eml_omits_missing_taxonomic_keyword_strings(self):
+        xml_text = make_eml(
+            title='Structured taxonomy',
+            description='Abstract text',
+            eml_extra={
+                'taxonomic_keywords': [
+                    {'rank': 'phylum', 'scientificName': 'nan'},
+                    {'rank': 'class', 'scientificName': 'NaT'},
+                    {'rank': 'order', 'scientificName': '<NA>'},
+                    {'rank': 'family', 'scientificName': 'Felidae'},
+                ],
+            },
+        )
+        root = ET.fromstring(xml_text.encode('utf-8'))
+        classifications = root.findall(
+            'dataset/coverage/taxonomicCoverage/taxonomicClassification'
+        )
+
+        self.assertEqual(len(classifications), 1)
+        self.assertEqual(classifications[0].find('taxonRankValue').text, 'Felidae')
+
     def test_make_eml_does_not_turn_taxonomic_prose_into_classifications(self):
         class DummyUser:
             first_name = 'Alice'
@@ -1575,8 +1597,8 @@ class SetEMLTemporalInferenceTests(SimpleTestCase):
                 DummyTable(
                     pd.DataFrame(
                         {
-                            "kingdom": ["Animalia", "Animalia"],
-                            "family": ["Felidae", "Canidae"],
+                            "kingdom": ["Animalia", "Animalia", pd.NA, float("nan")],
+                            "family": ["Felidae", "Canidae", "nan", "<NA>"],
                         }
                     )
                 )
@@ -1588,6 +1610,8 @@ class SetEMLTemporalInferenceTests(SimpleTestCase):
         self.assertIn({"rank": "kingdom", "scientificName": "Animalia"}, inferred)
         self.assertIn({"rank": "family", "scientificName": "Felidae"}, inferred)
         self.assertIn({"rank": "family", "scientificName": "Canidae"}, inferred)
+        self.assertNotIn({"rank": "family", "scientificName": "nan"}, inferred)
+        self.assertNotIn({"rank": "family", "scientificName": "<NA>"}, inferred)
 
     def test_infer_methodology_from_sampling_protocol(self):
         class DummyTable:
@@ -2363,13 +2387,32 @@ class PublishToGbifTests(TestCase):
     @patch("api.agent_tools.register_dataset_and_endpoint")
     def test_run_registers_dataset_using_saved_archive_core(self, register_mock):
         register_mock.return_value = "https://www.gbif-test.org/dataset/dataset-key"
-        task = Task.objects.create(name="GBIF publication test", text="Test", order=999)
+        quality_task = Task.objects.create(
+            name=Task.PREPUBLICATION_QUALITY_TASK,
+            text="Quality gate",
+            order=1,
+        )
+        task = Task.objects.create(
+            name=Task.FINAL_PUBLICATION_TASK,
+            text="Publish",
+            order=2,
+        )
         dataset = Dataset.objects.create(
             title="ROV Marine Video Observations",
             description="Marine observations",
             eml={"license": "CC BY 4.0"},
             dwca_url="https://example.org/archive.zip",
+            dwca_validation={
+                "url": "https://example.org/archive.zip",
+                "status": "FINISHED",
+                "metrics": {"indexeable": True},
+            },
             dwc_core=Dataset.DWCCore.EVENT,
+        )
+        Agent.objects.create(
+            dataset=dataset,
+            task=quality_task,
+            completed_at=datetime.datetime.now(datetime.timezone.utc),
         )
         agent = Agent.objects.create(dataset=dataset, task=task)
 
@@ -2393,6 +2436,177 @@ class PublishToGbifTests(TestCase):
             "https://www.gbif-test.org/dataset/dataset-key",
         )
         self.assertIsNotNone(dataset.published_at)
+
+    @patch("api.agent_tools.register_dataset_and_endpoint")
+    def test_run_refuses_to_publish_before_quality_gate(self, register_mock):
+        task = Task.objects.create(
+            name=Task.FINAL_PUBLICATION_TASK,
+            text="Publish",
+            order=1,
+        )
+        dataset = Dataset.objects.create(
+            title="Not ready",
+            description="Missing quality review",
+            dwca_url="https://example.org/archive.zip",
+            dwc_core=Dataset.DWCCore.EVENT,
+        )
+        agent = Agent.objects.create(dataset=dataset, task=task)
+
+        result = PublishToGBIF(agent_id=agent.id).run()
+
+        self.assertIn("pre-publication quality gate", result)
+        register_mock.assert_not_called()
+
+    @patch("api.agent_tools.register_dataset_and_endpoint")
+    def test_run_refuses_validation_for_replaced_archive(self, register_mock):
+        quality_task = Task.objects.create(
+            name=Task.PREPUBLICATION_QUALITY_TASK,
+            text="Quality gate",
+            order=1,
+        )
+        task = Task.objects.create(
+            name=Task.FINAL_PUBLICATION_TASK,
+            text="Publish",
+            order=2,
+        )
+        dataset = Dataset.objects.create(
+            dwca_url="https://example.org/current.zip",
+            dwca_validation={
+                "url": "https://example.org/old.zip",
+                "status": "FINISHED",
+                "metrics": {"indexeable": True},
+            },
+            dwc_core=Dataset.DWCCore.EVENT,
+        )
+        Agent.objects.create(
+            dataset=dataset,
+            task=quality_task,
+            completed_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+        agent = Agent.objects.create(dataset=dataset, task=task)
+
+        result = PublishToGBIF(agent_id=agent.id).run()
+
+        self.assertIn("current DwC-A has not passed GBIF validation", result)
+        register_mock.assert_not_called()
+
+    @patch("api.agent_tools.register_dataset_and_endpoint")
+    def test_maintenance_can_publish_current_validated_archive(self, register_mock):
+        register_mock.return_value = "https://www.gbif-test.org/dataset/dataset-key"
+        quality_task = Task.objects.create(
+            name=Task.PREPUBLICATION_QUALITY_TASK,
+            text="Quality gate",
+            order=1,
+        )
+        maintenance_task = Task.objects.create(
+            name=Task.MAINTENANCE_TASK,
+            text="Maintain",
+            order=2,
+        )
+        dataset = Dataset.objects.create(
+            title="Updated dataset",
+            description="Updated archive",
+            dwca_url="https://example.org/replacement.zip",
+            dwca_validation={
+                "url": "https://example.org/replacement.zip",
+                "status": "FINISHED",
+                "metrics": {"indexeable": True},
+            },
+            dwc_core=Dataset.DWCCore.OCCURRENCE,
+        )
+        Agent.objects.create(
+            dataset=dataset,
+            task=quality_task,
+            completed_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+        agent = Agent.objects.create(dataset=dataset, task=maintenance_task)
+
+        result = PublishToGBIF(agent_id=agent.id).run()
+
+        self.assertIn("Successfully registered dataset with GBIF", result)
+        register_mock.assert_called_once()
+
+
+class DwcaArtifactValidationTests(TestCase):
+    def setUp(self):
+        self.task = Task.objects.create(
+            name=Task.PREPUBLICATION_QUALITY_TASK,
+            text="Check",
+            order=1,
+        )
+        self.dataset = Dataset.objects.create(
+            title="Test dataset",
+            description="Test description",
+            dwca_url="https://example.org/current.zip",
+        )
+        self.agent = Agent.objects.create(dataset=self.dataset, task=self.task)
+
+    @patch("api.agent_tools.requests.get")
+    @patch("api.agent_tools.requests.post")
+    def test_validation_records_the_reviewed_archive_url(self, post_mock, get_mock):
+        post_mock.return_value.status_code = 202
+        post_mock.return_value.json.return_value = {"key": "validation-key"}
+        get_mock.return_value.status_code = 200
+        get_mock.return_value.json.return_value = {
+            "status": "FINISHED",
+            "metrics": {"indexeable": True},
+        }
+
+        result = json.loads(ValidateDwCA(
+            agent_id=self.agent.id,
+            poll_interval_seconds=1,
+            max_poll_attempts=1,
+        ).run())
+
+        self.dataset.refresh_from_db()
+        self.assertEqual(result["url"], self.dataset.dwca_url)
+        self.assertEqual(result["key"], "validation-key")
+        self.assertTrue(self.dataset.has_current_dwca_validation)
+
+    @patch("api.agent_tools.requests.get")
+    def test_resume_rejects_key_for_replaced_archive(self, get_mock):
+        self.dataset.dwca_validation = {
+            "url": "https://example.org/old.zip",
+            "key": "old-key",
+            "status": "RUNNING",
+        }
+        self.dataset.save(update_fields=["dwca_validation"])
+
+        result = ValidateDwCA(
+            agent_id=self.agent.id,
+            validation_key="old-key",
+            poll_interval_seconds=1,
+            max_poll_attempts=1,
+        ).run()
+
+        self.assertIn("does not belong to the current DwC-A", result)
+        get_mock.assert_not_called()
+
+    @patch("api.agent_tools.upload_dwca")
+    def test_uploading_replacement_archive_clears_validation(self, upload_mock):
+        upload_mock.return_value = "https://example.org/replacement.zip"
+        self.dataset.dwca_validation = {
+            "url": self.dataset.dwca_url,
+            "key": "old-key",
+            "status": "FINISHED",
+            "metrics": {"indexeable": True},
+        }
+        self.dataset.save(update_fields=["dwca_validation"])
+        core = Table.objects.create(
+            dataset=self.dataset,
+            title="occurrence_dwca",
+            df=pd.DataFrame([{"occurrenceID": "occ-1"}]),
+        )
+
+        UploadDwCA(
+            agent_id=self.agent.id,
+            core_table_id=core.id,
+            core_type=DarwinCoreCoreType.OCCURRENCE,
+        ).run()
+
+        self.dataset.refresh_from_db()
+        self.assertEqual(self.dataset.dwca_url, "https://example.org/replacement.zip")
+        self.assertIsNone(self.dataset.dwca_validation)
 
 
 class DatasetSummarySerializerTests(TestCase):
@@ -2500,12 +2714,32 @@ class DatasetSummarySerializerTests(TestCase):
         Task.objects.create(name=Dataset.MANUSCRIPT_TASK_NAME, text="PDF", order=1)
         Task.objects.create(name="Data transformation", text="Transform", order=2)
         Task.objects.create(name="Phylogenetic tree linking", text="Tree", order=3)
-        Task.objects.create(name="Final Review & Publication", text="Publish", order=4)
-        Task.objects.create(name="Data maintenance", text="Maintain", order=5)
+        Task.objects.create(
+            name=Task.PACKAGE_PREPARATION_TASK,
+            text="Prepare",
+            order=4,
+        )
+        quality_task = Task.objects.create(
+            name=Task.PREPUBLICATION_QUALITY_TASK,
+            text="Check",
+            order=5,
+        )
+        Task.objects.create(name=Task.FINAL_PUBLICATION_TASK, text="Publish", order=6)
+        Task.objects.create(name=Task.MAINTENANCE_TASK, text="Maintain", order=7)
         dataset = Dataset.objects.create(
             dwc_dp_url="https://example.org/package.tar.gz",
             dwca_url="https://example.org/archive.zip",
             dwc_dp_validation={"valid": True},
+            dwca_validation={
+                "url": "https://example.org/archive.zip",
+                "status": "FINISHED",
+                "metrics": {"indexeable": True},
+            },
+        )
+        Agent.objects.create(
+            dataset=dataset,
+            task=quality_task,
+            completed_at=datetime.datetime.now(datetime.timezone.utc),
         )
 
         list_data = DatasetListSerializer(dataset).data
@@ -2513,7 +2747,7 @@ class DatasetSummarySerializerTests(TestCase):
 
         self.assertTrue(dataset.package_ready)
         self.assertEqual(list_data["status"], "ready")
-        self.assertEqual(list_data["progress"], {"done": 2, "total": 2})
+        self.assertEqual(list_data["progress"], {"done": 4, "total": 4})
         self.assertTrue(list_data["package_ready"])
         self.assertTrue(detail_data["package_ready"])
         self.assertEqual(
@@ -2559,6 +2793,30 @@ class DatasetSummarySerializerTests(TestCase):
         self.assertNotEqual(data["status"], "ready")
         self.assertFalse(data["package_ready"])
 
+    def test_validation_for_replaced_archive_prevents_package_ready_status(self):
+        quality_task = Task.objects.create(
+            name=Task.PREPUBLICATION_QUALITY_TASK,
+            text="Check",
+            order=1,
+        )
+        dataset = Dataset.objects.create(
+            dwc_dp_url="https://example.org/package.tar.gz",
+            dwca_url="https://example.org/current.zip",
+            dwc_dp_validation={"valid": True},
+            dwca_validation={
+                "url": "https://example.org/old.zip",
+                "status": "FINISHED",
+                "metrics": {"indexeable": True},
+            },
+        )
+        Agent.objects.create(
+            dataset=dataset,
+            task=quality_task,
+            completed_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+
+        self.assertFalse(dataset.package_ready)
+
 
 class TaskFunctionTests(TestCase):
     def test_dwc_dp_tools_are_scoped_to_package_tasks(self):
@@ -2575,6 +2833,40 @@ class TaskFunctionTests(TestCase):
 
         self.assertNotIn(ValidateDwcDp, exploration.functions)
         self.assertIn(ValidateDwcDp, transformation.functions)
+
+    def test_publication_tools_are_scoped_to_the_three_publication_tasks(self):
+        preparation = Task.objects.create(
+            name=Task.PACKAGE_PREPARATION_TASK,
+            text="Prepare",
+            order=1,
+        )
+        quality_gate = Task.objects.create(
+            name=Task.PREPUBLICATION_QUALITY_TASK,
+            text="Check",
+            order=2,
+        )
+        publication = Task.objects.create(
+            name=Task.FINAL_PUBLICATION_TASK,
+            text="Publish",
+            order=3,
+        )
+
+        self.assertIn(UploadDwCA, preparation.functions)
+        self.assertNotIn(ValidateDwCA, preparation.functions)
+        self.assertNotIn(PublishToGBIF, preparation.functions)
+
+        self.assertIn(UploadDwCA, quality_gate.functions)
+        self.assertIn(ValidateDwCA, quality_gate.functions)
+        self.assertNotIn(PublishToGBIF, quality_gate.functions)
+
+        self.assertEqual(
+            [tool for tool in publication.functions if tool in {
+                UploadDwCA,
+                ValidateDwCA,
+                PublishToGBIF,
+            }],
+            [PublishToGBIF],
+        )
 
     @override_settings(
         OPENAI_REASONING_EFFORT="medium",
@@ -2609,10 +2901,21 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         super().setUpClass()
         fixture_path = Path(__file__).resolve().parent / "fixtures" / "tasks.yaml"
         fixture = yaml.safe_load(fixture_path.read_text(encoding="utf-8"))
+        cls.task_names = [item["fields"]["name"] for item in fixture]
         cls.task_text = {
             item["fields"]["name"]: item["fields"]["text"]
             for item in fixture
         }
+
+    def test_publication_tasks_are_consecutive_and_in_order(self):
+        publication_tasks = [
+            Task.PACKAGE_PREPARATION_TASK,
+            Task.PREPUBLICATION_QUALITY_TASK,
+            Task.FINAL_PUBLICATION_TASK,
+        ]
+        start = self.task_names.index(Task.PACKAGE_PREPARATION_TASK)
+
+        self.assertEqual(self.task_names[start:start + 3], publication_tasks)
 
     def test_transformation_prompt_delegates_semantic_routing_to_model(self):
         text = self.task_text["Data transformation"]
@@ -2764,8 +3067,8 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("Possible candidates are context only", text)
         self.assertIn("do not add a resource solely because a possible candidate was surfaced", text)
 
-    def test_final_prompt_requires_maximally_faithful_dwca_projection(self):
-        text = self.task_text["Final Review & Publication"]
+    def test_package_preparation_prompt_requires_maximally_faithful_dwca_projection(self):
+        text = self.task_text[Task.PACKAGE_PREPARATION_TASK]
 
         self.assertIn("most faithful standards-compliant DwC-A projection", text)
         self.assertIn("Preserve every useful DwC-DP fact", text)
@@ -2790,6 +3093,33 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("whether the user confirmed it", text)
         self.assertIn("explicit extension assignments", text)
         self.assertNotIn("ExportDwcaFromDwcDp", text)
+
+    def test_quality_gate_audits_the_exported_artifacts_and_blocks_unresolved_issues(self):
+        text = self.task_text[Task.PREPUBLICATION_QUALITY_TASK]
+
+        self.assertIn("Compare the original uploaded tables/files", text)
+        self.assertIn("Identical payloads, a shared locality", text)
+        self.assertIn("authoritative definition of the destination term", text)
+        self.assertIn("Keep table descriptions consistent", text)
+        self.assertIn("Inspect the actual exported archive", text)
+        self.assertIn("month-only and year-only dates must remain at that precision", text)
+        self.assertLess(
+            text.index("Perform one combined source-to-publication audit"),
+            text.index("Run the final external check"),
+        )
+        self.assertIn("this exact current archive is indexable", text)
+        self.assertIn("coordinate signs/hemispheres", text)
+        self.assertIn("placeholders such as `unknown@example.org`", text)
+        self.assertIn("Do not equate \"indexable\" with publication-ready", text)
+        self.assertIn("no unresolved blockers", text)
+        self.assertIn("start a new validation for the replacement archive", text)
+
+    def test_final_publication_prompt_only_requests_approval_and_publishes(self):
+        text = self.task_text[Task.FINAL_PUBLICATION_TASK]
+
+        self.assertIn("Do not transform data, rebuild packages, or repeat technical review", text)
+        self.assertIn("Ask one consolidated question for final publication approval", text)
+        self.assertIn("Only after explicit approval, call PublishToGBIF", text)
 
 
 class SetAgentTaskToCompleteTests(TestCase):
@@ -2877,7 +3207,8 @@ class SetAgentTaskToCompleteTests(TestCase):
         task_names = [
             "Data transformation",
             "Data validation and refinement",
-            "Final Review & Publication",
+            Task.PACKAGE_PREPARATION_TASK,
+            Task.PREPUBLICATION_QUALITY_TASK,
         ]
 
         for index, task_name in enumerate(task_names, start=1):
@@ -2893,9 +3224,21 @@ class SetAgentTaskToCompleteTests(TestCase):
                 self.assertIn(f"Cannot complete '{task_name}' while this dataset has no tables", result)
 
     def test_table_dependent_task_can_complete_with_tables(self):
-        task = Task.objects.create(name="Final Review & Publication", text="Review data", order=1)
-        dataset = Dataset.objects.create(source_mode=Dataset.SourceMode.PDF_ONLY)
-        Table.objects.create(dataset=dataset, title="occurrence", df=pd.DataFrame([{"scientificName": "Acer"}]))
+        task = Task.objects.create(
+            name=Task.PACKAGE_PREPARATION_TASK,
+            text="Prepare packages",
+            order=1,
+        )
+        dataset = Dataset.objects.create(
+            source_mode=Dataset.SourceMode.PDF_ONLY,
+            dwc_dp_url="https://example.org/package.tar.gz",
+            dwca_url="https://example.org/archive.zip",
+        )
+        Table.objects.create(
+            dataset=dataset,
+            title="event",
+            df=pd.DataFrame([{"event_pk": "event-1", "eventCategory": "occurrence"}]),
+        )
         agent = Agent.objects.create(dataset=dataset, task=task)
 
         result = SetAgentTaskToComplete(agent_id=agent.id).run()
@@ -2905,7 +3248,11 @@ class SetAgentTaskToCompleteTests(TestCase):
         self.assertIn("Task marked as complete", result)
 
     def test_empty_reserved_resource_is_removed_and_cannot_complete(self):
-        task = Task.objects.create(name="Final Review & Publication", text="Review data", order=1)
+        task = Task.objects.create(
+            name=Task.PACKAGE_PREPARATION_TASK,
+            text="Prepare packages",
+            order=1,
+        )
         dataset = Dataset.objects.create(source_mode=Dataset.SourceMode.PDF_ONLY)
         Table.objects.create(dataset=dataset, title="occurrence", df=pd.DataFrame(columns=["occurrence_pk"]))
         agent = Agent.objects.create(dataset=dataset, task=task)
@@ -2916,6 +3263,74 @@ class SetAgentTaskToCompleteTests(TestCase):
         self.assertIsNone(agent.completed_at)
         self.assertFalse(dataset.table_set.exists())
         self.assertIn("while this dataset has no tables", result)
+
+    def test_quality_gate_requires_a_finished_indexable_gbif_validation(self):
+        task = Task.objects.create(
+            name=Task.PREPUBLICATION_QUALITY_TASK,
+            text="Check package",
+            order=1,
+        )
+        dataset = Dataset.objects.create(
+            dwc_dp_url="https://example.org/package.tar.gz",
+            dwca_url="https://example.org/archive.zip",
+        )
+        Table.objects.create(
+            dataset=dataset,
+            title="event",
+            df=pd.DataFrame([{"event_pk": "event-1", "eventCategory": "occurrence"}]),
+        )
+        agent = Agent.objects.create(dataset=dataset, task=task)
+
+        no_validation_result = SetAgentTaskToComplete(agent_id=agent.id).run()
+        self.assertIn("submitted to the GBIF validator", no_validation_result)
+
+        dataset.dwca_validation = {
+            "url": dataset.dwca_url,
+            "status": "FINISHED",
+            "metrics": {"indexeable": False},
+        }
+        dataset.save(update_fields=["dwca_validation"])
+        non_indexable_result = SetAgentTaskToComplete(agent_id=agent.id).run()
+        self.assertIn("did not mark the archive as indexable", non_indexable_result)
+
+        dataset.dwca_validation = {
+            "url": dataset.dwca_url,
+            "status": "FINISHED",
+            "metrics": {"indexeable": True},
+        }
+        dataset.save(update_fields=["dwca_validation"])
+        completed_result = SetAgentTaskToComplete(agent_id=agent.id).run()
+
+        agent.refresh_from_db()
+        self.assertIsNotNone(agent.completed_at)
+        self.assertIn("Task marked as complete", completed_result)
+
+    def test_quality_gate_rejects_validation_for_replaced_archive(self):
+        task = Task.objects.create(
+            name=Task.PREPUBLICATION_QUALITY_TASK,
+            text="Check package",
+            order=1,
+        )
+        dataset = Dataset.objects.create(
+            dwca_url="https://example.org/current.zip",
+            dwca_validation={
+                "url": "https://example.org/old.zip",
+                "status": "FINISHED",
+                "metrics": {"indexeable": True},
+            },
+        )
+        Table.objects.create(
+            dataset=dataset,
+            title="event",
+            df=pd.DataFrame([{"event_pk": "event-1", "eventCategory": "occurrence"}]),
+        )
+        agent = Agent.objects.create(dataset=dataset, task=task)
+
+        result = SetAgentTaskToComplete(agent_id=agent.id).run()
+
+        self.assertIn("current DwC-A has been submitted", result)
+        agent.refresh_from_db()
+        self.assertIsNone(agent.completed_at)
 
 
 class DwcDpDescriptorPreviewTests(TestCase):
@@ -2937,7 +3352,11 @@ class DwcDpDescriptorPreviewTests(TestCase):
                 }
             ]),
         )
-        task = Task.objects.create(name="Final Review & Publication", text="Review", order=1)
+        task = Task.objects.create(
+            name=Task.PACKAGE_PREPARATION_TASK,
+            text="Prepare",
+            order=1,
+        )
         agent = Agent.objects.create(dataset=dataset, task=task)
 
         result = json.loads(PreviewDwcDpDescriptor(agent_id=agent.id).run())

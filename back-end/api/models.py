@@ -52,6 +52,7 @@ class Dataset(models.Model):
     eml = models.JSONField(null=True, blank=True)
     published_at = models.DateTimeField(null=True, blank=True)
     dwca_url = models.CharField(max_length=2000, blank=True)
+    dwca_validation = models.JSONField(null=True, blank=True)
     dwc_dp_url = models.CharField(max_length=2000, blank=True)
     dwc_dp_validation = models.JSONField(null=True, blank=True)
     gbif_url = models.CharField(max_length=2000, blank=True)
@@ -99,7 +100,27 @@ class Dataset(models.Model):
     @property
     def package_ready(self):
         validation = self.dwc_dp_validation or {}
-        return bool(self.dwc_dp_url and self.dwca_url and validation.get('valid'))
+        quality_gate_complete = self.agent_set.filter(
+            task__name=Task.PREPUBLICATION_QUALITY_TASK,
+            completed_at__isnull=False,
+        ).exists()
+        return bool(
+            self.dwc_dp_url
+            and self.dwca_url
+            and validation.get('valid')
+            and self.has_current_dwca_validation
+            and quality_gate_complete
+        )
+
+    @property
+    def has_current_dwca_validation(self):
+        validation = self.dwca_validation or {}
+        return bool(
+            self.dwca_url
+            and validation.get('url') == self.dwca_url
+            and validation.get('status') in {'FINISHED', 'SUCCEEDED'}
+            and validation.get('metrics', {}).get('indexeable')
+        )
 
     def next_agent(self):
         self.refresh_from_db()
@@ -589,6 +610,11 @@ class UserFile(models.Model):
 
 
 class Task(models.Model):  # See tasks.yaml for the only objects this model is populated with
+    PACKAGE_PREPARATION_TASK = "Publication package preparation"
+    PREPUBLICATION_QUALITY_TASK = "Pre-publication quality gate"
+    FINAL_PUBLICATION_TASK = "Final Review & Publication"
+    MAINTENANCE_TASK = "Data maintenance"
+
     name = models.CharField(max_length=300, unique=True)
     text = models.TextField()
     order = models.IntegerField(default=0, help_text='Order in which tasks should be executed (from tasks.yaml)')
@@ -617,13 +643,15 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
             agent_tools.ValidateDwcDp.__name__,
             agent_tools.PreviewDwcDpDescriptor.__name__,
         ]
-        publication_functions = [
+        package_preparation_functions = [
             agent_tools.BasicValidationForSomeDwCTerms.__name__,
             agent_tools.GetDarwinCoreInfo.__name__,
             agent_tools.GetDwCExtensionInfo.__name__,
             agent_tools.ExportDwcDp.__name__,
             agent_tools.UploadDwCA.__name__,
-            agent_tools.PublishToGBIF.__name__,
+        ]
+        quality_gate_functions = [
+            *package_preparation_functions,
             agent_tools.ValidateDwCA.__name__,
         ]
 
@@ -634,9 +662,18 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
             "Phylogenetic tree linking",
         }:
             functions.extend(dwc_dp_functions)
-        if self.name in {"Final Review & Publication", "Data maintenance"}:
+        if self.name == self.PACKAGE_PREPARATION_TASK:
             functions.extend(dwc_dp_functions)
-            functions.extend(publication_functions)
+            functions.extend(package_preparation_functions)
+        if self.name == self.PREPUBLICATION_QUALITY_TASK:
+            functions.extend(dwc_dp_functions)
+            functions.extend(quality_gate_functions)
+        if self.name == self.FINAL_PUBLICATION_TASK:
+            functions.append(agent_tools.PublishToGBIF.__name__)
+        if self.name == self.MAINTENANCE_TASK:
+            functions.extend(dwc_dp_functions)
+            functions.extend(quality_gate_functions)
+            functions.append(agent_tools.PublishToGBIF.__name__)
 
         # Exclude the completion tool for the final task (Data maintenance),
         # so it remains indefinitely open to conversation with the user.
@@ -932,8 +969,10 @@ class Agent(models.Model):
         package_focused_tasks = {
             "Data validation and refinement",
             "Phylogenetic tree linking",
-            "Final Review & Publication",
-            "Data maintenance",
+            Task.PACKAGE_PREPARATION_TASK,
+            Task.PREPUBLICATION_QUALITY_TASK,
+            Task.FINAL_PUBLICATION_TASK,
+            Task.MAINTENANCE_TASK,
         }
         snapshot_table_ids = {table.id for table in tables}
         if self.task.name in package_focused_tasks:

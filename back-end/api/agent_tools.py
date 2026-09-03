@@ -11,6 +11,7 @@ from api.helpers.openai_helpers import OpenAIBaseModel
 from typing import Optional, List, Dict, Tuple, ClassVar, Literal
 from api.helpers.publish import (
     DwcaExtensionLinkError,
+    clean_text,
     upload_dwca, 
     register_dataset_and_endpoint,
 )
@@ -1463,10 +1464,7 @@ class SetEML(OpenAIBaseModel):
 
     @classmethod
     def _clean_text_value(cls, value) -> Optional[str]:
-        if value is None:
-            return None
-        text = str(value).strip()
-        return text or None
+        return clean_text(value)
 
     @staticmethod
     def _coerce_float(value) -> Optional[float]:
@@ -2226,10 +2224,12 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
     TABLE_REQUIRED_TASK_NAMES: ClassVar[set[str]] = {
         "Data transformation",
         "Data validation and refinement",
-        "Final Review & Publication",
+        "Publication package preparation",
+        "Pre-publication quality gate",
     }
+
     def run(self):
-        from api.models import Agent
+        from api.models import Agent, Task
         try:
             agent = Agent.objects.get(id=self.agent_id)
             task_name = agent.task.name if agent.task else ""
@@ -2264,7 +2264,12 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
                     f"Error: Cannot complete '{task_name}' without at least one non-empty "
                     "DwC-DP resource table."
                 )
-            if task_name in {"Data transformation", "Data validation and refinement"}:
+            if task_name in {
+                "Data transformation",
+                "Data validation and refinement",
+                Task.PACKAGE_PREPARATION_TASK,
+                Task.PREPUBLICATION_QUALITY_TASK,
+            }:
                 resources, mapping_errors = _dwc_dp_resources_from_mapping(agent.dataset, None)
                 if mapping_errors:
                     return (
@@ -2280,7 +2285,34 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
                         f"Error: Cannot complete '{task_name}' until the current DwC-DP "
                         f"tables validate. Resolve: {details}"
                     )
-            if task_name in {"Data validation and refinement", "Final Review & Publication"}:
+            if task_name == Task.PACKAGE_PREPARATION_TASK and not (
+                agent.dataset.dwc_dp_url and agent.dataset.dwca_url
+            ):
+                return (
+                    "Error: Cannot complete publication package preparation until both the "
+                    "DwC-DP package and DwC-A archive have been exported."
+                )
+            if task_name == Task.PREPUBLICATION_QUALITY_TASK:
+                validation = agent.dataset.dwca_validation or {}
+                if validation.get("url") != agent.dataset.dwca_url:
+                    return (
+                        "Error: Cannot complete the pre-publication quality gate until the "
+                        "current DwC-A has been submitted to the GBIF validator."
+                    )
+                if validation.get("status") not in {"FINISHED", "SUCCEEDED"}:
+                    return (
+                        "Error: Cannot complete the pre-publication quality gate until the "
+                        "current DwC-A has a finished GBIF validator result."
+                    )
+                if not agent.dataset.has_current_dwca_validation:
+                    return (
+                        "Error: Cannot complete the pre-publication quality gate because the "
+                        "GBIF validator did not mark the archive as indexable."
+                    )
+            if task_name in {
+                "Data validation and refinement",
+                Task.PREPUBLICATION_QUALITY_TASK,
+            }:
                 _remove_final_staging_tables(agent.dataset)
             agent.completed_at = timezone.now()
             agent.save()
@@ -2472,7 +2504,8 @@ class UploadDwCA(OpenAIBaseModel):
             }
             dataset.dwc_core = core_choice_map.get(self.core_type, '')
             dataset.dwca_url = dwca_url
-            dataset.save()
+            dataset.dwca_validation = None
+            dataset.save(update_fields=["dwc_core", "dwca_url", "dwca_validation"])
             return f'DwCA successfully created and uploaded: {dwca_url}'
         except DwcaExtensionLinkError as e:
             assignments = self.extension_tables or []
@@ -2531,6 +2564,25 @@ class PublishToGBIF(OpenAIBaseModel):
         try:
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
+            if agent.task.name not in {
+                Task.FINAL_PUBLICATION_TASK,
+                Task.MAINTENANCE_TASK,
+            }:
+                return (
+                    "Error: GBIF publication is available only in the final publication task."
+                )
+            quality_gate_complete = dataset.agent_set.filter(
+                task__name=Task.PREPUBLICATION_QUALITY_TASK,
+                completed_at__isnull=False,
+            ).exists()
+            if not quality_gate_complete:
+                return (
+                    "Error: Cannot publish until the pre-publication quality gate has completed."
+                )
+            if not dataset.has_current_dwca_validation:
+                return (
+                    "Error: Cannot publish because the current DwC-A has not passed GBIF validation."
+                )
             if not dataset.dwca_url:
                 error_msg = 'Error: Dataset has no DwCA URL. Please run UploadDwCA first.'
                 # Notify developers of missing DwCA URL for publishing
@@ -2609,10 +2661,21 @@ class ValidateDwCA(OpenAIBaseModel):
             auth = HTTPBasicAuth(os.getenv('GBIF_USER'), os.getenv('GBIF_PASSWORD'))
 
             key = self.validation_key
-            if not key:
+            validation_url = dataset.dwca_url
+            if key:
+                saved_validation = dataset.dwca_validation or {}
+                if (
+                    saved_validation.get('key') != key
+                    or saved_validation.get('url') != validation_url
+                ):
+                    return (
+                        'Error: This validator key does not belong to the current DwC-A. '
+                        'Start a new validation without validation_key.'
+                    )
+            else:
                 # Align with GBIF Validator API: send the DwCA URL as multipart/form-data field "fileUrl".
                 headers = {'Accept': 'application/json'}
-                files = {'fileUrl': (None, dataset.dwca_url)}  # send as simple form field, not a local file upload
+                files = {'fileUrl': (None, validation_url)}  # send as simple form field, not a local file upload
                 submit_resp = requests.post(
                     'https://api.gbif.org/v1/validation/url',
                     auth=auth,
@@ -2630,6 +2693,12 @@ class ValidateDwCA(OpenAIBaseModel):
                     error_msg = f'Validator response did not contain a key: {submit_resp.text}'
                     discord_bot.send_discord_message(f"⚠️ GBIF Validator Key Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
                     return error_msg
+                dataset.dwca_validation = {
+                    'url': validation_url,
+                    'key': key,
+                    'status': 'RUNNING',
+                }
+                dataset.save(update_fields=['dwca_validation'])
 
             last_status = None
             last_payload = None
@@ -2640,8 +2709,15 @@ class ValidateDwCA(OpenAIBaseModel):
                 data = resp.json()
                 last_payload = data
                 last_status = data.get('status')
+                validation = {
+                    **data,
+                    'url': validation_url,
+                    'key': key,
+                }
+                dataset.dwca_validation = validation
+                dataset.save(update_fields=['dwca_validation'])
                 if last_status in ('SUCCEEDED', 'FAILED', 'FINISHED'):
-                    return resp.text
+                    return json.dumps(validation)
                 if attempt < self.max_poll_attempts - 1:
                     time.sleep(self.poll_interval_seconds)
 
@@ -2649,6 +2725,7 @@ class ValidateDwCA(OpenAIBaseModel):
                 'status': 'RUNNING',
                 'message': 'Validation is still running. Call ValidateDwCA again with validation_key to continue polling.',
                 'validation_key': key,
+                'url': validation_url,
                 'last_seen_status': last_status,
                 'last_seen_payload': last_payload,
             }

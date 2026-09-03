@@ -57,6 +57,18 @@ GBIF_DATASET_TYPES = {
 }
 
 
+def clean_text(value) -> str | None:
+    """Return meaningful scalar text, excluding common serialized missing values."""
+    if value is None:
+        return None
+    if pd.api.types.is_scalar(value) and pd.isna(value):
+        return None
+    text = str(value).strip()
+    if text.lower() in {'nan', 'nat', '<na>'}:
+        return None
+    return text or None
+
+
 class DwcaExtensionLinkError(ValueError):
     """Expected projection error raised when extension rows cannot link to the core."""
 
@@ -246,12 +258,6 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     def set_text(elem, text: str | None):
         if elem is not None and text not in (None, ''):
             elem.text = str(text)
-
-    def clean_text(value) -> str | None:
-        if value in (None, ''):
-            return None
-        text = str(value).strip()
-        return text or None
 
     package_id = clean_text(eml_extra.get('package_id'))
     if package_id:
@@ -1618,7 +1624,7 @@ def upload_dwca(
             discord_bot.send_discord_message(error_msg)
             raise
 
-    file_name = datetime.now().strftime('output-%Y-%m-%d-%H%M%S') + '.zip'
+    file_name = datetime.now().strftime('output-%Y-%m-%d-%H%M%S-%f') + '.zip'
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
             local_path = os.path.join(temp_dir, file_name)

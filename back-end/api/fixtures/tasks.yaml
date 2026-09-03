@@ -271,17 +271,13 @@
 
 - model: api.task
   fields:
-    name: Final Review & Publication
+    name: Publication package preparation
     text: |-
-      FINAL_TASK: This is the last step before attempting to publish the user's data to GBIF.
+      PACKAGE_PREPARATION_TASK: Build the authoritative DwC-DP and its DwC-A publication projection. Do not request publication approval and do not publish in this task.
 
       Your subtasks:
-      1.  **Summarize Work Done:** Based on the structural_notes, briefly explain to the user the key transformations and validations that have been performed on their data to get it to this stage. Highlight any major changes or assumptions made. 
-      2.  **Check and Present Final Metadata:** Check and edit metadata as necessary (use SetBasicMetadata for title/description). If title and/or description are missing, DO NOT ask the user first. Generate best-effort values from tables, manuscript extraction, and conversation history, save them with SetBasicMetadata, then present the generated metadata to the user for optional edits.
-          *   The user should not be required to write metadata from scratch.
-          *   Ask for manual title/description only if the user explicitly wants to customize wording or if critical context is genuinely unavailable after best-effort inference.
-          *   If confidence is low, provide your proposed draft and ask a single concise confirmation/edit question.
-      3.  **Create and validate publication packages:**
+      1.  **Complete draft metadata:** Check and edit metadata as necessary. If title or description is missing, generate the best supported value from the data and saved context instead of asking the user to write it. Leave user-facing metadata confirmation to the quality gate.
+      2.  **Create and validate publication packages:**
           *   Run ValidateDwcDp. Fix any DwC-DP schema, required-field, unique-ID, numeric-constraint, or foreign-key issues before exporting. Treat warnings about duplicate weak primary identifiers used by the DwC-A core as issues to resolve before export.
           *   Optionally call PreviewDwcDpDescriptor if you need to inspect the generated datapackage.json before export.
           *   Call ExportDwcDp. This is the authoritative package.
@@ -294,23 +290,61 @@
           *   With Event core, an Occurrence extension is often appropriate when meaningful linked organism records exist. Consider the Humboldt Ecological Inventory extension when the source or authoritative DwC-DP explicitly supplies matching survey design, scope, protocol, effort, completeness, abundance, or non-detection facts. An Event hierarchy is a reason to inspect those facts, not sufficient evidence by itself. Map each Humboldt value from identified evidence. Never infer survey properties from detected occurrences merely to populate fields. Lossless normalisation such as safe date formatting is allowed, but do not invent ecological or methodological facts.
           *   For media, prefer Audiovisual Core when rich technical, spatial, temporal, taxonomic, rights, service, or region-of-interest metadata are available; use Simple Multimedia for basic links and Dublin Core metadata. Prefer Extended Measurement or Fact over MeasurementOrFact only when its vocabulary identifier fields or occurrence link preserve additional meaning. Consider GGBN extensions only for an Occurrence that represents a material sample, and link every laboratory, preparation, preservation, permit, loan, or gel record back to that occurrence without guessing.
           *   Inspect every populated DwC-DP resource and account for compatible facts. Use every compatible extension needed to preserve meaning, while avoiding redundant or empty extensions and never inventing extension terms.
-          *   Use Python to create temporary non-DwC-DP projection tables for the final core and extensions. Do not alter the authoritative schema-valid DwC-DP resource tables. Temporary projection tables are removed automatically after the final task completes.
+          *   Use Python to create temporary non-DwC-DP projection tables for the final core and extensions. Do not alter the authoritative schema-valid DwC-DP resource tables. Keep the temporary projection tables available for the quality gate; they are removed when that gate completes.
           *   Each extension table must have a dedicated `_coreid` column. Resolve `_coreid` through the validated DwC-DP graph so every value exactly matches the selected core table identifier. Check join cardinality and unmatched rows before upload.
           *   For every populated DwC-DP resource, record whether its compatible facts were represented in the core, represented in an extension, preserved in `dynamicProperties`, or could not be projected. Give exact row/field counts and a reason for anything not represented. Silent omission is an error.
-          *   Before requesting publication approval, explicitly summarize every material source group omitted from the authoritative DwC-DP, including row or populated-value counts, the reason, and whether the user confirmed it. Minor exclusions such as blank rows, repeated headers, obvious totals, and formatting artifacts may be grouped into one short summary.
+          *   Explicitly summarize every material source group omitted from the authoritative DwC-DP, including row or populated-value counts, the reason, and whether the user confirmed it. Minor exclusions such as blank rows, repeated headers, obvious totals, and formatting artifacts may be grouped into one short summary.
           *   Call UploadDwCA with the temporary core table and explicit extension assignments (`table_id`, `extension_type`, and `core_id_column`).
-          *   Check the DwC-A projection for GBIF issues by calling the ValidateDwCA tool.
           *   Never add DwC-A-only fields such as basisOfRecord directly to a DwC-DP resource when GetDwcDpTableInfo does not list them. The authoritative DwC-DP tables must remain schema-valid after projection and validation.
-          *   Fix the issues, asking the user any questions if necessary
-          *   Add to the structure_notes noting the issues and fixes
-      4.  **Initiate Publication:** If the user approves:
-          *   Tell the user clearly that the default publication license is CC BY 4.0 (`http://creativecommons.org/licenses/by/4.0/legalcode`) and that they can ask you to change it before publication.
-          *   Call the PublishToGBIF tool to register the DwC-A projection with GBIF (this will go to the sandbox GBIF). Also report the DwC-DP URL to the user when available.
-      5.  **Report Outcome:**
-          *   If successful, present the GBIF sandbox dataset URL to the user.
-          *   If PublishToGBIF returns an error, report this error clearly to the user.
+          *   Add the projection decisions, coverage, and package URLs to structure_notes for the independent quality gate.
+      Finish this task only after both package URLs exist, the authoritative DwC-DP validates, projection coverage and omissions are recorded in structure_notes, and the current DwC-A can be handed to the independent quality gate. Do not ask for publication approval here.
 
-      Ensure the user understands this is the final step before their data (potentially) becomes publicly accessible via GBIF's test system. It is not possible to publish to the production gbif.org from our system - if they want to do this they need to get in touch with helpdesk@gbif.no with their sandbox dataset URL. 
+- model: api.task
+  fields:
+    name: Pre-publication quality gate
+    text: |-
+      QUALITY_GATE_TASK: Independently assess the completed publication artifacts. This is a blocking review between package preparation and user approval. Do not publish in this task.
+
+      1. **Perform one combined source-to-publication audit:**
+         * Compare the original uploaded tables/files, authoritative DwC-DP resources, DwC-A core/extensions, and exported EML.
+         * Reconcile source rows and materially useful populated fact groups with the authoritative package and projection. Confirm joins, identifiers, core/extension links, occurrence status/count consistency, and every deliberate omission.
+         * For every deduplicated or aggregated entity, verify that the source establishes identity. Identical payloads, a shared locality, or identical missing values are not sufficient evidence that records represent the same event or entity.
+         * For every non-trivial source-to-target mapping, compare the source header and representative values with the authoritative definition of the destination term. Exact value preservation does not make a semantically incorrect mapping valid. Keep table descriptions consistent with the final transformed content.
+         * Inspect the actual exported archive, not only Dataset.eml or temporary projection tables. Confirm that title, description, creators, contact details, licence, temporal/geographic/taxonomic scope, and methodology survive into EML where supported.
+         * Check for invented precision or unsupported inference. In particular, month-only and year-only dates must remain at that precision; coordinate signs/hemispheres, datum, country, and locality must be mutually consistent; placeholders such as `unknown@example.org` must not appear as real metadata.
+         * Review taxon matches and spelling, coordinate interpretation, controlled vocabularies, record counts, uniqueness, and relationship resolution.
+
+      2. **Resolve findings before completion:**
+         * Treat broken links, non-indexable archives, invalid or probably mislocated coordinates, likely spelling errors causing unmatched taxa, invented date precision, missing required contacts, metadata loss, and unexplained material omissions as blocking.
+         * Ask the user one consolidated, plain-language set of questions when source knowledge or approval is required. Do not ask separately about symptoms that share one cause.
+         * A taxon genuinely absent from the GBIF backbone or another unavoidable validator issue may be accepted only when it is supported by source evidence and explicitly acknowledged by the user. Record the reason in structure_notes.
+         * Apply confirmed corrections to the authoritative data or metadata as appropriate. Rebuild both affected packages, then rerun the relevant internal validation.
+
+      3. **Confirm final metadata:**
+         * Present the clean title, description, creators/contact, licence, scopes, methodology, material omissions, and remaining non-blocking limitations for optional edits before completing this task.
+         * If the user requests an edit, apply it and rebuild the affected packages before continuing.
+
+      4. **Run the final external check:**
+         * Only after the audit, corrections, metadata confirmation, and final archive rebuild, call ValidateDwCA for the current archive and continue polling the same validation key until the result is finished.
+         * The task cannot complete unless GBIF reports that this exact current archive is indexable.
+         * Interpret every validator issue. Do not equate "indexable" with publication-ready. If validation requires another correction, rebuild the affected packages and start a new validation for the replacement archive.
+         * Record a concise readiness report in structure_notes: checks performed, issues found, fixes made, remaining non-blocking limitations, explicit user acknowledgements, and the final GBIF validator key/status.
+
+      Complete this task only when there are no unresolved blockers, the current archive has a finished indexable GBIF validation, final metadata has been checked, and temporary DwC-A projection tables can be removed. Do not request publication approval and do not call PublishToGBIF.
+
+- model: api.task
+  fields:
+    name: Final Review & Publication
+    text: |-
+      FINAL_PUBLICATION_TASK: The packages have already been built and passed the pre-publication quality gate. Do not transform data, rebuild packages, or repeat technical review in this task.
+
+      1. Briefly show the user the final dataset title, description, licence, package links, material omissions, and any non-blocking limitations recorded by the quality gate.
+      2. Explain that publication is to the GBIF sandbox, where the dataset becomes publicly visible in the test system, not production gbif.org. Production publication requires contacting helpdesk@gbif.no with the sandbox dataset URL.
+      3. Tell the user that the default licence is CC BY 4.0 (`http://creativecommons.org/licenses/by/4.0/legalcode`) unless the quality gate recorded another confirmed licence.
+      4. Ask one consolidated question for final publication approval. Do not ask the user to reconfirm technical decisions already settled in the quality gate.
+      5. Only after explicit approval, call PublishToGBIF. Report the GBIF sandbox URL and DwC-DP URL on success, or report the publication error clearly.
+
+      If the user requests any data or metadata change instead of approving publication, do not publish. Explain that the package must return through preparation and quality validation before approval; log the requested change for a developer rather than editing a validated artifact in this final task.
 
 - model: api.task
   fields:

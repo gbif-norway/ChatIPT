@@ -1,6 +1,7 @@
 from django.core import mail
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient
 from unittest.mock import patch
 
@@ -140,8 +141,23 @@ class AttentionNotificationDispatchTests(TestCase):
 
     def test_ready_package_is_an_attention_event(self):
         arm_notification(self.dataset, 'notify@example.org')
+        quality_task = Task.objects.create(
+            name=Task.PREPUBLICATION_QUALITY_TASK,
+            text='Check the package',
+            order=2,
+        )
+        Agent.objects.create(
+            dataset=self.dataset,
+            task=quality_task,
+            completed_at=timezone.now(),
+        )
         self.dataset.dwc_dp_url = 'https://example.org/package.tar.gz'
         self.dataset.dwca_url = 'https://example.org/archive.zip'
+        self.dataset.dwca_validation = {
+            'url': self.dataset.dwca_url,
+            'status': 'FINISHED',
+            'metrics': {'indexeable': True},
+        }
         self.dataset.dwc_dp_validation = {'valid': True}
         self.dataset.save()
 
