@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from django.test import SimpleTestCase, TestCase, override_settings
+from rest_framework.exceptions import ValidationError
 import openpyxl
 import pandas as pd
 import yaml
@@ -57,7 +58,7 @@ from .helpers.openai_helpers import (
     create_response_message,
 )
 from .models import Agent, Dataset, Message, Table, Task, UserFile
-from .serializers import DatasetListSerializer, DatasetSerializer
+from .serializers import DatasetListSerializer, DatasetSerializer, UserFileSerializer
 from .dwc_dp_specs import (
     DWC_DP_SCHEMA_REVISION,
     RESERVED_TABLE_NAMES,
@@ -2527,6 +2528,316 @@ class PublishToGbifTests(TestCase):
         register_mock.assert_called_once()
 
 
+class PublicationArtifactInvalidationTests(TestCase):
+    def setUp(self):
+        self.dataset = Dataset.objects.create(
+            title="Current dataset",
+            description="Current description",
+            eml={"license": "CC BY 4.0"},
+        )
+        self.occurrence = Table.objects.create(
+            dataset=self.dataset,
+            title="occurrence",
+            df=pd.DataFrame([{"occurrence_pk": "occ-1", "occurrenceID": "occ-1"}]),
+        )
+
+    def mark_artifacts_current(self):
+        Dataset.objects.filter(pk=self.dataset.pk).update(
+            dwc_dp_url="https://example.org/package.tar.gz",
+            dwc_dp_validation={"valid": True},
+            dwca_url="https://example.org/archive.zip",
+            dwca_validation={
+                "url": "https://example.org/archive.zip",
+                "status": "FINISHED",
+                "metrics": {"indexeable": True},
+            },
+            dwc_core=Dataset.DWCCore.OCCURRENCE,
+        )
+        self.dataset.refresh_from_db()
+
+    def assert_artifacts_invalidated(self):
+        self.dataset.refresh_from_db()
+        self.assertEqual(self.dataset.dwc_dp_url, "")
+        self.assertIsNone(self.dataset.dwc_dp_validation)
+        self.assertEqual(self.dataset.dwca_url, "")
+        self.assertIsNone(self.dataset.dwca_validation)
+        self.assertEqual(self.dataset.dwc_core, "")
+        self.assertFalse(self.dataset.package_ready)
+
+    def test_editing_authoritative_table_invalidates_artifacts(self):
+        self.mark_artifacts_current()
+        self.occurrence.df["scientificName"] = "Apus apus"
+
+        self.occurrence.save()
+
+        self.assert_artifacts_invalidated()
+
+    def test_deleting_authoritative_table_invalidates_artifacts(self):
+        self.mark_artifacts_current()
+
+        Table.objects.filter(pk=self.occurrence.pk).delete()
+
+        self.assert_artifacts_invalidated()
+
+    def test_editing_projection_table_invalidates_only_dwca_artifacts(self):
+        projection = Table.objects.create(
+            dataset=self.dataset,
+            title="occurrence_dwca",
+            df=pd.DataFrame([{"occurrenceID": "occ-1"}]),
+        )
+        self.mark_artifacts_current()
+        projection.df["scientificName"] = "Apus apus"
+
+        projection.save()
+
+        self.dataset.refresh_from_db()
+        self.assertEqual(self.dataset.dwc_dp_url, "https://example.org/package.tar.gz")
+        self.assertEqual(self.dataset.dwc_dp_validation, {"valid": True})
+        self.assertEqual(self.dataset.dwca_url, "")
+        self.assertIsNone(self.dataset.dwca_validation)
+        self.assertEqual(self.dataset.dwc_core, "")
+
+    def test_deleting_projection_table_invalidates_only_dwca_artifacts(self):
+        projection = Table.objects.create(
+            dataset=self.dataset,
+            title="occurrence_dwca",
+            df=pd.DataFrame([{"occurrenceID": "occ-1"}]),
+        )
+        self.mark_artifacts_current()
+
+        projection.delete()
+
+        self.dataset.refresh_from_db()
+        self.assertEqual(self.dataset.dwc_dp_url, "https://example.org/package.tar.gz")
+        self.assertEqual(self.dataset.dwca_url, "")
+        self.assertIsNone(self.dataset.dwca_validation)
+
+    def test_editing_package_metadata_invalidates_artifacts(self):
+        self.mark_artifacts_current()
+        self.dataset.title = "Revised dataset"
+
+        self.dataset.save(update_fields=["title"])
+
+        self.assert_artifacts_invalidated()
+
+    @patch.object(UserFile, "extract_data")
+    def test_successful_new_upload_invalidates_artifacts(self, extract_mock):
+        extract_mock.return_value = (
+            UserFile.FileType.TABULAR,
+            {
+                "records": pd.DataFrame({"scientificName": ["Apus apus", "Pica pica"]}),
+                "metadata": pd.DataFrame({"licence": ["CC BY 4.0"]}),
+            },
+        )
+        self.dataset.structure_notes = "Earlier coverage\nSOURCE COVERAGE: COMPLETE"
+        self.dataset.save(update_fields=["structure_notes"])
+        self.mark_artifacts_current()
+        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+        agent = Agent.create_with_system_message(
+            dataset=self.dataset,
+            task=task,
+            tables=[self.occurrence],
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            UserFileSerializer().create({
+                "dataset": self.dataset,
+                "file": "user_files/new-source.csv",
+            })
+
+        self.assert_artifacts_invalidated()
+        self.assertNotIn("SOURCE COVERAGE: COMPLETE", self.dataset.structure_notes)
+        prompt = agent.message_set.get(
+            openai_obj__role=Message.Role.SYSTEM,
+        ).openai_obj["content"]
+        self.assertIn('Sheet "metadata"', prompt)
+        self.assertIn('- [1] "licence": 1/1 populated', prompt)
+
+    def test_deleting_upload_invalidates_artifacts(self):
+        from .views import UserFileViewSet
+
+        user_file = UserFile.objects.create(
+            dataset=self.dataset,
+            file="user_files/source.csv",
+        )
+        self.mark_artifacts_current()
+
+        UserFileViewSet().perform_destroy(user_file)
+
+        self.assert_artifacts_invalidated()
+
+    def test_deleting_tabular_upload_rebuilds_tables_from_remaining_sources(self):
+        from .views import UserFileViewSet
+
+        removed_file = UserFile.objects.create(
+            dataset=self.dataset,
+            file="user_files/removed.csv",
+        )
+        UserFile.objects.create(
+            dataset=self.dataset,
+            file="user_files/remaining.csv",
+        )
+        self.occurrence.df = pd.DataFrame([
+            {"occurrence_pk": "removed-1", "occurrenceID": "removed-1"},
+        ])
+        self.occurrence.save()
+
+        remaining_data = {
+            "remaining.csv": pd.DataFrame({
+                "occurrenceID": ["remaining-1", "remaining-2"],
+            }),
+        }
+        storage = removed_file.file.storage
+        with (
+            patch.object(
+                UserFile,
+                "extract_data",
+                return_value=(UserFile.FileType.TABULAR, remaining_data),
+            ),
+            patch.object(storage, "delete") as delete_mock,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            UserFileViewSet().perform_destroy(removed_file)
+
+        rebuilt = self.dataset.table_set.get()
+        self.assertEqual(rebuilt.title, "remaining.csv")
+        self.assertEqual(rebuilt.df["occurrenceID"].tolist(), ["remaining-1", "remaining-2"])
+        self.assertNotIn("removed-1", rebuilt.df.to_string())
+        delete_mock.assert_called_once_with("user_files/removed.csv")
+
+    @patch("api.agent_tools.export_dwc_dp_package", return_value="https://example.org/new-package.tar.gz")
+    def test_export_removes_empty_resources_before_building_package(self, export_mock):
+        self.occurrence.title = "source"
+        self.occurrence.save(update_fields=["title"])
+        Table.objects.create(
+            dataset=self.dataset,
+            title="event",
+            df=pd.DataFrame([{"event_pk": "event-1", "eventCategory": "occurrence"}]),
+        )
+        Table.objects.create(
+            dataset=self.dataset,
+            title="occurrence",
+            df=pd.DataFrame(columns=["event_pk", "eventCategory"]),
+        )
+        self.mark_artifacts_current()
+        task = Task.objects.create(
+            name=Task.PACKAGE_PREPARATION_TASK,
+            text="Prepare packages",
+            order=1,
+        )
+        agent = Agent.objects.create(dataset=self.dataset, task=task)
+
+        result = ExportDwcDp(agent_id=agent.id).run()
+
+        self.assertIn("new-package.tar.gz", result)
+        self.assertFalse(self.dataset.table_set.filter(title="occurrence").exists())
+        self.dataset.refresh_from_db()
+        self.assertEqual(self.dataset.dwc_dp_url, "https://example.org/new-package.tar.gz")
+        self.assertEqual(self.dataset.dwca_url, "")
+        export_mock.assert_called_once()
+
+        self.dataset.dwca_url = "https://example.org/new-archive.zip"
+        self.dataset.save(update_fields=["dwca_url"])
+        completion = SetAgentTaskToComplete(agent_id=agent.id).run()
+        self.assertIn("Task marked as complete", completion)
+
+    @patch.object(UserFile, "create_tables", side_effect=RuntimeError("table write failed"))
+    @patch.object(UserFile, "extract_data")
+    def test_failed_table_creation_rolls_back_upload_state(self, extract_mock, create_mock):
+        extract_mock.return_value = (
+            UserFile.FileType.TABULAR,
+            {"records": pd.DataFrame({"name": ["one", "two"]})},
+        )
+
+        with patch.object(UserFileSerializer, "_delete_stored_file") as cleanup_mock:
+            with self.assertRaisesMessage(ValidationError, "table write failed"):
+                UserFileSerializer().create({
+                    "dataset": self.dataset,
+                    "file": "user_files/rejected.csv",
+                })
+
+        self.assertFalse(self.dataset.user_files.filter(file="user_files/rejected.csv").exists())
+        cleanup_mock.assert_called_once()
+
+    @patch.object(UserFile, "save", side_effect=RuntimeError("database write failed"))
+    def test_failed_initial_upload_save_retains_file_for_cleanup(self, save_mock):
+        with patch.object(UserFileSerializer, "_delete_stored_file") as cleanup_mock:
+            with self.assertRaisesMessage(ValidationError, "database write failed"):
+                UserFileSerializer().create({
+                    "dataset": self.dataset,
+                    "file": "user_files/rejected.csv",
+                })
+
+        rejected_file = cleanup_mock.call_args.args[0]
+        self.assertIsInstance(rejected_file, UserFile)
+        self.assertEqual(rejected_file.file.name, "user_files/rejected.csv")
+
+    @patch("api.agent_tools.register_dataset_and_endpoint")
+    def test_publish_is_blocked_after_authoritative_table_edit(self, register_mock):
+        quality_task = Task.objects.create(
+            name=Task.PREPUBLICATION_QUALITY_TASK,
+            text="Quality gate",
+            order=1,
+        )
+        publication_task = Task.objects.create(
+            name=Task.FINAL_PUBLICATION_TASK,
+            text="Publish",
+            order=2,
+        )
+        Agent.objects.create(
+            dataset=self.dataset,
+            task=quality_task,
+            completed_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+        publication_agent = Agent.objects.create(
+            dataset=self.dataset,
+            task=publication_task,
+        )
+        self.mark_artifacts_current()
+        self.occurrence.df["scientificName"] = "Apus apus"
+        self.occurrence.save()
+
+        result = PublishToGBIF(agent_id=publication_agent.id).run()
+
+        self.assertIn("current DwC-A has not passed GBIF validation", result)
+        register_mock.assert_not_called()
+
+    @patch("api.agent_tools.register_dataset_and_endpoint")
+    def test_publish_is_blocked_when_source_coverage_is_stale(self, register_mock):
+        quality_task = Task.objects.create(
+            name=Task.PREPUBLICATION_QUALITY_TASK,
+            text="Quality gate",
+            order=1,
+        )
+        publication_task = Task.objects.create(
+            name=Task.FINAL_PUBLICATION_TASK,
+            text="Publish",
+            order=2,
+        )
+        Agent.objects.create(
+            dataset=self.dataset,
+            task=quality_task,
+            completed_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+        publication_agent = Agent.objects.create(
+            dataset=self.dataset,
+            task=publication_task,
+        )
+        UserFile.objects.create(
+            dataset=self.dataset,
+            file="user_files/late-source.csv",
+            source_manifest=UserFile.build_source_manifest({
+                "late-source.csv": pd.DataFrame({"scientificName": ["Apus apus"]}),
+            }),
+        )
+        self.mark_artifacts_current()
+
+        result = PublishToGBIF(agent_id=publication_agent.id).run()
+
+        self.assertIn("current source coverage", result)
+        register_mock.assert_not_called()
+
+
 class DwcaArtifactValidationTests(TestCase):
     def setUp(self):
         self.task = Task.objects.create(
@@ -2609,8 +2920,235 @@ class DwcaArtifactValidationTests(TestCase):
         self.assertIsNone(self.dataset.dwca_validation)
 
 
+class TableColumnManifestTests(TestCase):
+    @patch.object(UserFile, "extract_data")
+    def test_tabular_upload_persists_its_original_manifest(self, extract_mock):
+        extract_mock.return_value = (
+            UserFile.FileType.TABULAR,
+            {
+                "records": pd.DataFrame({
+                    "occurrenceID": ["occ-1", "occ-2"],
+                    "associatedMedia": ["https://example.org/one.jpg", None],
+                }),
+                "metadata": pd.DataFrame({"licence": ["CC BY 4.0"]}),
+            },
+        )
+        dataset = Dataset.objects.create(title="Upload manifest")
+
+        user_file = UserFileSerializer().create({
+            "dataset": dataset,
+            "file": "user_files/source.csv",
+        })
+
+        media = user_file.source_manifest["tables"][0]["columns"][1]
+        self.assertEqual(media, {
+            "position": 2,
+            "name": "associatedMedia",
+            "populated": 1,
+            "unique": 1,
+            "examples": ["https://example.org/one.jpg"],
+            "value_counts": [
+                {"value": "https://example.org/one.jpg", "count": 1},
+            ],
+        })
+        self.assertEqual(
+            user_file.source_manifest["tables"][1]["name"],
+            "metadata",
+        )
+        self.assertFalse(dataset.table_set.filter(title="metadata").exists())
+
+    def test_snapshot_manifest_lists_every_column_with_counts_and_examples(self):
+        dataset = Dataset.objects.create(title="Manifest")
+        columns = {
+            f"column_{index}": [f"value-{index}-a", f"value-{index}-b", None]
+            for index in range(80)
+        }
+        columns.update({
+            "associatedMedia": [
+                "https://commons.wikimedia.org/wiki/File:First.jpg",
+                None,
+                "https://commons.wikimedia.org/wiki/File:Second.jpg",
+            ],
+            "type": ["StillImage", "StillImage", "StillImage"],
+            "blank_column": [None, "", "   "],
+        })
+        table = Table.objects.create(
+            dataset=dataset,
+            title="source.csv",
+            df=pd.DataFrame(columns),
+        )
+
+        snapshot = table.str_snapshot
+        manifest_lines = snapshot.split(
+            "COMPLETE COLUMN MANIFEST (machine-generated; every column is listed once):\n",
+            1,
+        )[1].splitlines()
+
+        self.assertEqual(len(manifest_lines), len(columns))
+        self.assertIn('- [80] "column_79": 2/3 populated; 2 unique', snapshot)
+        self.assertIn('- [81] "associatedMedia": 2/3 populated; 2 unique', snapshot)
+        self.assertIn(
+            'example: "https://commons.wikimedia.org/wiki/File:First.jpg"',
+            snapshot,
+        )
+        self.assertIn(
+            '- [82] "type": 3/3 populated; 1 unique; example: "StillImage"',
+            snapshot,
+        )
+        self.assertIn('- [83] "blank_column": 0/3 populated; 0 unique', snapshot)
+        self.assertNotIn("truncated due to length", snapshot)
+
+    def test_low_cardinality_values_include_compact_counts(self):
+        manifest = Table._column_manifest_data(pd.DataFrame({
+            "occurrenceStatus": ["present", "present", "absent", "doubtful"],
+        }))
+
+        rendered = Table._render_column_manifest(manifest)
+
+        self.assertIn(
+            'values: "present" (2), "absent" (1), "doubtful" (1)',
+            rendered,
+        )
+
+    def test_long_column_names_are_preserved_but_bounded_when_rendered(self):
+        long_name = "measurement meaning and method " * 20
+        manifest = UserFile.build_source_manifest({
+            "records": pd.DataFrame({long_name: ["one", "two"]}),
+        })
+
+        column = manifest["tables"][0]["columns"][0]
+        rendered = Table._render_column_manifest(manifest["tables"][0])
+
+        self.assertEqual(column["name"], long_name)
+        self.assertIn("[truncated]", rendered)
+        self.assertNotIn(long_name, rendered)
+
+    def test_current_state_and_snapshot_bound_long_column_names(self):
+        long_name = "measurement meaning and method " * 20
+        dataset = Dataset.objects.create(title="Bounded state")
+        table = Table.objects.create(
+            dataset=dataset,
+            title="records",
+            df=pd.DataFrame({long_name: ["one", "two"]}),
+        )
+        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+        agent = Agent.create_with_system_message(dataset=dataset, task=task, tables=[table])
+
+        state = agent.current_state_update()
+
+        self.assertIn("[truncated]", state)
+        self.assertNotIn(long_name, state)
+        self.assertNotIn(long_name, table.str_snapshot)
+
+    def test_source_manifest_shares_value_summary_budget_across_sheets(self):
+        dataset = Dataset.objects.create(title="Workbook budget")
+        source_manifest = UserFile.build_source_manifest({
+            "first": pd.DataFrame({"status": ["alpha", "beta"]}),
+            "second": pd.DataFrame({"status": ["gamma", "delta"]}),
+        })
+        user_file = UserFile.objects.create(
+            dataset=dataset,
+            file="user_files/source.xlsx",
+            source_manifest=source_manifest,
+        )
+
+        with patch.object(Table, "MANIFEST_VALUE_SUMMARY_BUDGET", 30):
+            rendered = user_file.source_manifest_text
+
+        self.assertEqual(rendered.count("; values:"), 1)
+        self.assertIn('; example: "gamma"', rendered)
+
+    def test_more_than_supported_columns_is_rejected(self):
+        too_wide = pd.DataFrame({
+            f"column_{index}": ["one", "two"]
+            for index in range(UserFile.MAX_TABULAR_COLUMNS + 1)
+        })
+
+        with self.assertRaisesMessage(ValueError, "supports up to 500 columns"):
+            UserFile.build_source_manifest({"too-wide": too_wide})
+
+    def test_transformation_prompt_uses_manifest_instead_of_a_second_column_list(self):
+        dataset = Dataset.objects.create(title="Manifest prompt", description="Test")
+        table = Table.objects.create(
+            dataset=dataset,
+            title="source.csv",
+            df=pd.DataFrame({
+                "occurrenceID": ["occ-1"],
+                "associatedMedia": ["https://example.org/image.jpg"],
+            }),
+        )
+        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+
+        agent = Agent.create_with_system_message(
+            dataset=dataset,
+            task=task,
+            tables=[table],
+        )
+        prompt = agent.message_set.get(
+            openai_obj__role=Message.Role.SYSTEM,
+        ).openai_obj["content"]
+
+        self.assertIn("COMPLETE COLUMN MANIFEST", prompt)
+        self.assertIn('- [2] "associatedMedia": 1/1 populated; 1 unique', prompt)
+        self.assertIn('values: "https://example.org/image.jpg" (1)', prompt)
+        self.assertNotIn("&quot;", prompt)
+        self.assertNotIn("Full list of columns", prompt)
+
+    def test_original_upload_manifest_survives_working_table_replacement(self):
+        dataset = Dataset.objects.create(title="Original manifest", description="Test")
+        source_manifest = UserFile.build_source_manifest({
+            "source.csv": pd.DataFrame({
+                "occurrenceID": ["occ-1", "occ-2"],
+                "associatedMedia": ["https://example.org/one.jpg", None],
+            }),
+        })
+        UserFile.objects.create(
+            dataset=dataset,
+            file="user_files/source.csv",
+            source_manifest=source_manifest,
+        )
+        event = Table.objects.create(
+            dataset=dataset,
+            title="event",
+            df=pd.DataFrame({
+                "event_pk": ["event-1"],
+                "eventCategory": ["occurrence"],
+            }),
+        )
+        task = Task.objects.create(
+            name="Data validation and refinement",
+            text="Validate",
+            order=1,
+        )
+
+        agent = Agent.create_with_system_message(
+            dataset=dataset,
+            task=task,
+            tables=[event],
+        )
+        prompt = agent.message_set.get(
+            openai_obj__role=Message.Role.SYSTEM,
+        ).openai_obj["content"]
+
+        self.assertIn("ORIGINAL UPLOAD MANIFEST: source.csv", prompt)
+        self.assertIn('- [2] "associatedMedia": 1/2 populated; 1 unique', prompt)
+        self.assertIn("https://example.org/one.jpg", prompt)
+        self.assertIn('- [1] "event_pk": 1/1 populated; 1 unique', prompt)
+
+    def test_legacy_upload_is_identified_without_an_empty_manifest_heading(self):
+        dataset = Dataset.objects.create(title="Legacy", description="Test")
+        UserFile.objects.create(dataset=dataset, file="user_files/legacy.csv")
+        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+
+        agent = Agent.create_with_system_message(dataset=dataset, task=task, tables=[])
+        prompt = agent.message_set.get(openai_obj__role=Message.Role.SYSTEM).openai_obj["content"]
+
+        self.assertIn("Original manifests are unavailable for these older uploads: legacy.csv", prompt)
+        self.assertNotIn("Immutable manifests generated from the original uploads", prompt)
+
+
 class DatasetSummarySerializerTests(TestCase):
-    def test_relational_modeling_is_included_in_every_agent_prompt(self):
+    def test_shared_prompt_stays_task_agnostic(self):
         dataset = Dataset.objects.create(
             title="Rich package",
             description="Test",
@@ -2620,22 +3158,34 @@ class DatasetSummarySerializerTests(TestCase):
         agent = Agent.create_with_system_message(dataset=dataset, task=task, tables=[])
         prompt = agent.message_set.get(openai_obj__role="system").openai_obj["content"]
 
-        self.assertIn("Build a rich relational DwC-DP", prompt)
-        self.assertIn("Usage Policy", prompt)
+        self.assertIn("Working rules", prompt)
+        self.assertNotIn("Helpful examples", prompt)
+        self.assertNotIn("Build a rich relational DwC-DP", prompt)
+        self.assertNotIn("Congratulate the user", prompt)
 
     def test_phylogenetic_prompt_routes_material_collector_fields_through_dwc_dp(self):
         dataset = Dataset.objects.create(
             title="Phylogenetic package",
             description="Test",
         )
-        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+        fixture_path = Path(__file__).resolve().parent / "fixtures" / "tasks.yaml"
+        task_text = next(
+            item["fields"]["text"]
+            for item in yaml.safe_load(fixture_path.read_text(encoding="utf-8"))
+            if item["fields"]["name"] == "Phylogenetic tree linking"
+        )
+        task = Task.objects.create(
+            name="Phylogenetic tree linking",
+            text=task_text,
+            order=1,
+        )
 
         agent = Agent.create_with_system_message(dataset=dataset, task=task, tables=[])
         prompt = agent.message_set.get(openai_obj__role="system").openai_obj["content"]
 
         self.assertIn("material.collectedBy", prompt)
         self.assertIn("material.collectorNumber", prompt)
-        self.assertIn("do not create `occurrence.recordNumber`", prompt)
+        self.assertIn("not `occurrence.recordNumber`", prompt)
 
     def test_package_explorer_model_uses_current_schema_and_reports_link_coverage(self):
         dataset = Dataset.objects.create(title="Explorer")
@@ -2920,32 +3470,24 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
     def test_transformation_prompt_delegates_semantic_routing_to_model(self):
         text = self.task_text["Data transformation"]
 
-        self.assertIn("MODEL-LED ASSERTION ROUTING", text)
-        self.assertIn("complete dataset context", text)
-        self.assertIn("Do not use or invent a hard-coded keyword/term classifier", text)
-        self.assertIn("exact source-to-target join", text)
-        self.assertIn("explicit, structurally inferred, or unresolved", text)
-        self.assertIn("save a concise version of the assertion-routing plan", text)
-        self.assertIn("validation agent can independently reconstruct and challenge it", text)
+        self.assertIn("Decide assertion subjects from the complete dataset context", text)
+        self.assertIn("never a keyword classifier", text)
+        self.assertIn("subject, destination, exact join, link confidence, and evidence", text)
+        self.assertIn("Test join cardinality before creating foreign keys", text)
 
     def test_transformation_prompt_requires_an_evidence_based_relational_package(self):
         text = self.task_text["Data transformation"]
 
-        self.assertIn("EVIDENCE-BASED RELATIONAL PACKAGE", text)
-        self.assertIn("complete relational DwC-DP package", text)
-        self.assertIn("do not create a resource merely because DwC-DP provides one", text)
-        self.assertIn("one short evidence-based justification for every proposed resource", text)
-        self.assertIn("ordinary bird observations", text)
-        self.assertIn("may need only event and occurrence", text)
-        self.assertIn("not a target resource count", text)
+        self.assertIn("Build the complete package", text)
+        self.assertIn("short evidence-based reason for every proposed resource", text)
+        self.assertIn("real entity, identifier, reuse, one-to-many relationship", text)
+        self.assertIn("Do not create placeholder entities", text)
 
     def test_transformation_prompt_has_a_narrow_deterministic_fast_path(self):
         text = self.task_text["Data transformation"]
 
-        self.assertIn("DETERMINISTIC EXACT-MATCH FAST PATH", text)
-        self.assertIn("headers exactly match fields confirmed by GetDwcDpTableInfo", text)
-        self.assertIn("not similar-looking names or semantic synonyms", text)
-        self.assertIn("still require the model-led contextual review", text)
+        self.assertIn("Exact confirmed source fields may be copied deterministically", text)
+        self.assertIn("resource identity, relationships, splits, aggregations, and assertions", text)
 
     def test_refinement_prompt_challenges_under_and_over_modeling(self):
         text = self.task_text["Data validation and refinement"]
@@ -2962,87 +3504,64 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
     def test_transformation_prompt_preserves_date_precision_and_avoids_empty_identifications(self):
         text = self.task_text["Data transformation"]
 
-        self.assertIn("EVENT AND IDENTIFICATION MODELLING", text)
-        self.assertIn("briefly sketch the Event structure supported by the source", text)
-        self.assertIn("test whether narrower activities repeat within a stable broader context", text)
-        self.assertIn("State why the final Event model is flat or hierarchical", text)
-        self.assertIn("A recurring place or label alone is not sufficient", text)
-        self.assertIn("Do not manufacture one wrapper event plus one child event per occurrence", text)
-        self.assertIn("genuine broader and narrower activities or contexts", text)
-        self.assertIn("monitoring programme containing plots and dated surveys", text)
-        self.assertIn("expedition containing stations and collecting events", text)
-        self.assertIn("examples, not templates or trigger phrases", text)
-        self.assertIn("supported by source structure, identifiers, metadata", text)
-        self.assertIn("One current scientificName per occurrence normally stays in occurrence", text)
-        self.assertIn("Never create identification rows containing only identification_pk", text)
-        self.assertIn("Higher-taxonomy preservation is mandatory", text)
-        self.assertIn("Never reduce such a row to scientificName alone", text)
-        self.assertIn("DATE PRECISION", text)
-        self.assertIn("Never use today's month or day as a parser default", text)
+        self.assertIn("Events represent real sampling or observation contexts", text)
+        self.assertIn("recurring locality text alone is insufficient", text)
+        self.assertIn("One current scientificName normally remains on occurrence", text)
+        self.assertIn("Preserve every supplied taxonomy rank", text)
+        self.assertIn("never create key-only or blank identification rows", text)
+        self.assertIn("Never fill missing date components from today's date", text)
         self.assertIn("normalize_event_date", text)
 
     def test_transformation_prompt_reviews_dedicated_resource_candidates(self):
         text = self.task_text["Data transformation"]
 
-        self.assertIn("DEDICATED RESOURCE CANDIDATE REVIEW", text)
-        self.assertIn("Agent/Agent Role", text)
-        self.assertIn("Bibliographic Resource/Reference", text)
+        self.assertIn("Agent is justified by stable identity", text)
+        self.assertIn("Bibliographic resources require structured or reusable references", text)
         self.assertIn("Usage Policy", text)
         self.assertIn("Provenance", text)
-        self.assertIn("Assertions are not a generic overflow destination", text)
-        self.assertIn("Do not produce a ceremonial include/omit checklist", text)
+        self.assertIn("Do not produce an include/omit checklist when no evidence exists", text)
 
     def test_transformation_prompt_requires_assertion_coverage_and_join_checks(self):
         text = self.task_text["Data transformation"]
 
-        self.assertIn("Never discard a row because `occurrenceID`", text)
+        self.assertIn("A blank occurrenceID does not make a row irrelevant", text)
         self.assertIn("temporary source-row key", text)
-        self.assertIn("unmatched and multiply matched rows", text)
-        self.assertIn("examples of investigation, not fixed mappings", text)
-        self.assertIn("Count that source row once for unique source-row coverage", text)
-        self.assertIn("populated-value count", text)
-        self.assertIn("Representing a source row does not by itself represent every useful fact", text)
-        self.assertIn("focused fact-group check", text)
+        self.assertIn("unmatched and multiply matched joins", text)
+        self.assertIn("populated source-value counts", text)
+        self.assertIn("Every populated source column must be mapped", text)
+        self.assertIn("none may disappear through grouping", text)
 
     def test_transformation_prompt_asks_only_about_material_domain_ambiguity(self):
         text = self.task_text["Data transformation"]
 
-        self.assertIn("WHEN TO ASK THE USER ABOUT AMBIGUOUS DATA", text)
-        self.assertIn("Perform a bounded initial assessment first", text)
-        self.assertIn("materially change the package", text)
-        self.assertIn("concrete row counts and representative examples", text)
-        self.assertIn("current best interpretation", text)
-        self.assertIn("Do not ask the user to select a Darwin Core table", text)
-        self.assertIn("Do not ask merely because a value is unusual", text)
-        self.assertIn("If the user cannot answer, do not invent a resolution", text)
-        self.assertIn("Before omitting a material source group", text)
-        self.assertIn("an entire table, a substantive group of populated values", text)
-        self.assertIn("ask for confirmation in the same grouped question", text)
-        self.assertIn("blank rows, repeated headers, obvious totals, or formatting artifacts", text)
+        self.assertIn("source-domain knowledge would materially change the graph or mapping", text)
+        self.assertIn("one grouped plain-language question", text)
+        self.assertIn("evidence, counts, best interpretation, and missing domain fact", text)
+        self.assertIn("Never ask the user to choose a Darwin Core table or field", text)
+        self.assertIn("preserve and document the evidence rather than guessing", text)
 
     def test_transformation_prompt_bounds_investigation_and_context_output(self):
         text = self.task_text["Data transformation"]
 
-        self.assertIn("DECISION-FIRST AND CONTEXT DISCIPLINE", text)
-        self.assertIn("Every exploratory Python call must resolve", text)
-        self.assertIn("exploration budget of at most three read-only Python calls", text)
-        self.assertIn("There is no fourth read-only inspection call", text)
-        self.assertIn("show at most five representative records across the entire call", text)
-        self.assertIn("never print a complete dataframe, wide row, or long list of records", text)
-        self.assertIn("Do not attempt every possible inference first", text)
-        self.assertIn("stop exploring representative records", text)
+        self.assertIn("at most three read-only Python calls", text)
+        self.assertIn("Each call must resolve a named decision", text)
+        self.assertIn("show at most five representative records total", text)
+        self.assertIn("never print a complete dataframe or wide row", text)
         self.assertIn("GetDwcDpTableInfo(include_fields=false)", text)
-        self.assertIn("exact schemas for all selected resources together", text)
-        self.assertIn("parallel GetDwcDpTableInfo calls", text)
-        self.assertIn("Do not fetch the same resource schema twice", text)
-        self.assertIn("Do not inspect resources speculatively", text)
-        self.assertIn("one bounded final check", text)
-        self.assertIn("avoid turning this into an exhaustive per-column exercise", text)
-        self.assertNotIn("required one-line include/omit justifications", text)
-        self.assertNotIn(
-            "inspect every source column, populated and missing identifier patterns",
-            text,
-        )
+        self.assertIn("fetch exact schemas for all selected resources together", text)
+        self.assertIn("Do not repeat a successful lookup", text)
+        self.assertIn("Avoid repeating broad profiles", text)
+        self.assertIn("value distribution, full header, or source context", text)
+        self.assertIn("ORIGINAL UPLOAD MANIFEST", text)
+        self.assertIn("COMPLETE COLUMN MANIFEST", text)
+        self.assertIn("Do not append more structure notes after this marker", text)
+
+    def test_structure_prompt_shortens_only_working_headers_and_records_mapping(self):
+        text = self.task_text["Data structure exploration"]
+
+        self.assertIn("column heading is excessively long", text)
+        self.assertIn("rename the working-table column", text)
+        self.assertIn("exact original-to-new mapping", text)
 
     def test_refinement_prompt_rechecks_semantics_and_mechanical_coverage(self):
         text = self.task_text["Data validation and refinement"]
@@ -3056,8 +3575,9 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("ask one focused question about the underlying data", text)
         self.assertIn("never ask the user to choose a DwC-DP mapping", text)
         self.assertIn("Recheck source coverage only for groups changed", text)
-        self.assertIn("Important-fact preservation", text)
-        self.assertIn("representing their source rows did not mask loss", text)
+        self.assertIn("Complete source-column preservation", text)
+        self.assertIn("every populated source column", text)
+        self.assertIn("representing a source row does not prove", text)
         self.assertIn("Missing Event hierarchy", text)
         self.assertIn("several flat Events repeat within the same stable sampling unit", text)
         self.assertIn("otherwise retain the flat structure and document why", text)
@@ -3082,7 +3602,8 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("An Event hierarchy is a reason to inspect those facts, not sufficient evidence", text)
         self.assertIn("Lossless normalisation such as safe date formatting is allowed", text)
         self.assertIn("Never infer survey properties from detected occurrences", text)
-        self.assertIn("review the saved coverage of semantically important fact groups", text)
+        self.assertIn("review the saved COMPLETE COLUMN MANIFEST coverage", text)
+        self.assertIn("Every populated source column", text)
         self.assertIn("Inspect every populated DwC-DP resource", text)
         self.assertIn("`dynamicProperties` only as a fallback", text)
         self.assertIn("temporary non-DwC-DP projection tables", text)
@@ -3120,9 +3641,85 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("Do not transform data, rebuild packages, or repeat technical review", text)
         self.assertIn("Ask one consolidated question for final publication approval", text)
         self.assertIn("Only after explicit approval, call PublishToGBIF", text)
+        self.assertIn("complete this task so Data maintenance can apply the change", text)
+        self.assertIn("Do not report an expected change request as a software bug", text)
+
+    def test_maintenance_rebuilds_and_revalidates_after_changes(self):
+        text = self.task_text[Task.MAINTENANCE_TASK]
+
+        self.assertIn("apply a handed-off request without asking the user to confirm it again", text)
+        self.assertIn("automatically invalidates the old package URLs and validation results", text)
+        self.assertIn("Call ExportDwcDp", text)
+        self.assertIn("call ValidateDwCA for the rebuilt archive", text)
+        self.assertIn("Call PublishToGBIF only after the rebuilt current archive", text)
 
 
 class SetAgentTaskToCompleteTests(TestCase):
+    def test_transformation_with_manifest_requires_coverage_marker(self):
+        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+        dataset = Dataset.objects.create()
+        UserFile.objects.create(
+            dataset=dataset,
+            file="user_files/source.csv",
+            source_manifest=UserFile.build_source_manifest({
+                "source.csv": pd.DataFrame({"scientificName": ["Apus apus"]}),
+            }),
+        )
+        Table.objects.create(
+            dataset=dataset,
+            title="event",
+            df=pd.DataFrame([{"event_pk": "event-1", "eventCategory": "occurrence"}]),
+        )
+        agent = Agent.objects.create(dataset=dataset, task=task)
+
+        missing_result = SetAgentTaskToComplete(agent_id=agent.id).run()
+
+        self.assertIn("SOURCE COVERAGE: COMPLETE", missing_result)
+        agent.refresh_from_db()
+        self.assertIsNone(agent.completed_at)
+
+        dataset.structure_notes = "SOURCE COVERAGE: COMPLETE\nStill unresolved: associatedMedia"
+        dataset.save(update_fields=["structure_notes"])
+        misplaced_result = SetAgentTaskToComplete(agent_id=agent.id).run()
+
+        self.assertIn("SOURCE COVERAGE: COMPLETE", misplaced_result)
+        agent.refresh_from_db()
+        self.assertIsNone(agent.completed_at)
+
+        dataset.structure_notes = "Coverage report\nSOURCE COVERAGE: COMPLETE"
+        dataset.save(update_fields=["structure_notes"])
+        completed_result = SetAgentTaskToComplete(agent_id=agent.id).run()
+
+        self.assertIn("Task marked as complete", completed_result)
+
+    def test_refinement_with_new_manifest_requires_current_coverage_marker(self):
+        task = Task.objects.create(
+            name="Data validation and refinement",
+            text="Validate",
+            order=1,
+        )
+        dataset = Dataset.objects.create(structure_notes="Earlier coverage")
+        UserFile.objects.create(
+            dataset=dataset,
+            file="user_files/late-source.csv",
+            source_manifest=UserFile.build_source_manifest({
+                "late-source.csv": pd.DataFrame({"scientificName": ["Apus apus"]}),
+            }),
+        )
+        Table.objects.create(
+            dataset=dataset,
+            title="event",
+            df=pd.DataFrame([{"event_pk": "event-1", "eventCategory": "occurrence"}]),
+        )
+        agent = Agent.objects.create(dataset=dataset, task=task)
+
+        result = SetAgentTaskToComplete(agent_id=agent.id).run()
+
+        agent.refresh_from_db()
+        self.assertIsNone(agent.completed_at)
+        self.assertIn("current source coverage", result)
+        self.assertIn("SOURCE COVERAGE: COMPLETE", result)
+
     def test_transformation_completion_rechecks_current_package_validation(self):
         task = Task.objects.create(name="Data transformation", text="Transform", order=1)
         dataset = Dataset.objects.create()
@@ -3229,16 +3826,15 @@ class SetAgentTaskToCompleteTests(TestCase):
             text="Prepare packages",
             order=1,
         )
-        dataset = Dataset.objects.create(
-            source_mode=Dataset.SourceMode.PDF_ONLY,
-            dwc_dp_url="https://example.org/package.tar.gz",
-            dwca_url="https://example.org/archive.zip",
-        )
+        dataset = Dataset.objects.create(source_mode=Dataset.SourceMode.PDF_ONLY)
         Table.objects.create(
             dataset=dataset,
             title="event",
             df=pd.DataFrame([{"event_pk": "event-1", "eventCategory": "occurrence"}]),
         )
+        dataset.dwc_dp_url = "https://example.org/package.tar.gz"
+        dataset.dwca_url = "https://example.org/archive.zip"
+        dataset.save(update_fields=["dwc_dp_url", "dwca_url"])
         agent = Agent.objects.create(dataset=dataset, task=task)
 
         result = SetAgentTaskToComplete(agent_id=agent.id).run()
@@ -3270,15 +3866,20 @@ class SetAgentTaskToCompleteTests(TestCase):
             text="Check package",
             order=1,
         )
-        dataset = Dataset.objects.create(
-            dwc_dp_url="https://example.org/package.tar.gz",
-            dwca_url="https://example.org/archive.zip",
-        )
+        dataset = Dataset.objects.create()
         Table.objects.create(
             dataset=dataset,
             title="event",
             df=pd.DataFrame([{"event_pk": "event-1", "eventCategory": "occurrence"}]),
         )
+        projection = Table.objects.create(
+            dataset=dataset,
+            title="event_dwca",
+            df=pd.DataFrame([{"eventID": "event-1"}]),
+        )
+        dataset.dwc_dp_url = "https://example.org/package.tar.gz"
+        dataset.dwca_url = "https://example.org/archive.zip"
+        dataset.save(update_fields=["dwc_dp_url", "dwca_url"])
         agent = Agent.objects.create(dataset=dataset, task=task)
 
         no_validation_result = SetAgentTaskToComplete(agent_id=agent.id).run()
@@ -3302,8 +3903,12 @@ class SetAgentTaskToCompleteTests(TestCase):
         completed_result = SetAgentTaskToComplete(agent_id=agent.id).run()
 
         agent.refresh_from_db()
+        dataset.refresh_from_db()
         self.assertIsNotNone(agent.completed_at)
         self.assertIn("Task marked as complete", completed_result)
+        self.assertFalse(Table.objects.filter(pk=projection.pk).exists())
+        self.assertEqual(dataset.dwca_url, "https://example.org/archive.zip")
+        self.assertTrue(dataset.has_current_dwca_validation)
 
     def test_quality_gate_rejects_validation_for_replaced_archive(self):
         task = Task.objects.create(
@@ -3609,7 +4214,7 @@ class AgentWorkflowActionTests(TestCase):
         self.assertIn("older tool output compacted", tool_outputs[0]["content"])
         self.assertEqual(tool_outputs[-1]["content"], "y" * 5000)
 
-    def test_validation_system_prompt_snapshots_only_package_tables(self):
+    def test_validation_prompt_keeps_source_manifests_and_snapshots_package_tables(self):
         task = Task.objects.create(
             name="Data validation and refinement",
             text="Validate",
@@ -3640,6 +4245,6 @@ class AgentWorkflowActionTests(TestCase):
         ).openai_obj["content"]
 
         self.assertIn("source_column", prompt)
-        self.assertNotIn("SOURCE-ONLY-VALUE", prompt)
+        self.assertIn("SOURCE-ONLY-VALUE", prompt)
         self.assertIn("event-1", prompt)
         self.assertIn("Snapshot omitted in this package-focused task", prompt)

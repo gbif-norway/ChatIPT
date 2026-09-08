@@ -1,6 +1,11 @@
 from api.models import Dataset, Table, Agent, Message, Task, UserFile
+from django.db import transaction
 from rest_framework import serializers
 from api.helpers import discord_bot
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 class TaskSerializer(serializers.ModelSerializer):
@@ -97,30 +102,49 @@ class UserFileSerializer(serializers.ModelSerializer):
     def get_file_type(self, obj):
         return obj.file_type_label
 
-    def create(self, validated_data):
+    @staticmethod
+    def _delete_stored_file(user_file):
+        if not user_file or not user_file.file:
+            return
         try:
-            user_file = UserFile.objects.create(**validated_data)
-            file_type, dfs = user_file.extract_data()
+            user_file.file.delete(save=False)
+        except Exception:
+            logger.exception("Failed to clean up rejected upload %s", user_file.file.name)
+
+    def create(self, validated_data):
+        user_file = None
+        try:
+            with transaction.atomic():
+                user_file = UserFile(**validated_data)
+                user_file.save()
+                file_type, dfs = user_file.extract_data()
+
+                if file_type == UserFile.FileType.UNKNOWN:
+                    raise serializers.ValidationError(
+                        "Unsupported file type. Please upload a spreadsheet/delimited file, "
+                        "a phylogenetic tree file, or a PDF manuscript."
+                    )
+
+                if file_type == UserFile.FileType.TABULAR:
+                    try:
+                        source_manifest = UserFile.build_source_manifest(dfs)
+                        filtered_dfs = UserFile.filter_dataframes(dfs)
+                    except ValueError as exc:
+                        raise serializers.ValidationError(str(exc)) from exc
+                    user_file.source_manifest = source_manifest
+                    user_file.save(update_fields=["source_manifest"])
+                    user_file.create_tables(filtered_dfs)
+
+                dataset = user_file.dataset
+                dataset.handle_source_change()
+        except serializers.ValidationError:
+            self._delete_stored_file(user_file)
+            raise
         except Exception as exc:
-            if 'user_file' in locals():
-                user_file.delete()
-            raise serializers.ValidationError(f"An error was encountered when loading your data. Error details: {exc}.")
-
-        if file_type == UserFile.FileType.UNKNOWN:
-            user_file.delete()
+            self._delete_stored_file(user_file)
             raise serializers.ValidationError(
-                "Unsupported file type. Please upload a spreadsheet/delimited file, a phylogenetic tree file, or a PDF manuscript."
-            )
-
-        if file_type == UserFile.FileType.TABULAR:
-            try:
-                filtered_dfs = UserFile.filter_dataframes(dfs)
-            except ValueError as exc:
-                user_file.delete()
-                raise serializers.ValidationError(str(exc))
-            user_file.create_tables(filtered_dfs)
-
-        user_file.dataset.refresh_source_mode(save=True)
+                f"An error was encountered when loading your data. Error details: {exc}."
+            ) from exc
 
         return user_file
 

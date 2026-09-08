@@ -688,9 +688,11 @@ def _remove_empty_dwc_dp_resources(dataset) -> list[str]:
 
 def _remove_final_staging_tables(dataset) -> list[str]:
     """Remove non-package source and working tables after final validation."""
-    staging_tables = dataset.table_set.exclude(title__in=DWC_DP_TABLE_NAMES)
-    removed = list(staging_tables.values_list("title", flat=True))
-    staging_tables.delete()
+    staging_tables = list(dataset.table_set.exclude(title__in=DWC_DP_TABLE_NAMES))
+    removed = [table.title for table in staging_tables]
+    for table in staging_tables:
+        table._preserve_dwca_artifacts_on_delete = True
+        table.delete()
     return removed
 
 
@@ -753,6 +755,7 @@ class ExportDwcDp(OpenAIBaseModel):
         try:
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
+            _remove_empty_dwc_dp_resources(dataset)
             resources, mapping_errors = _dwc_dp_resources_from_mapping(dataset, self.resource_tables)
             if mapping_errors:
                 return "Error: " + "; ".join(mapping_errors)
@@ -1396,8 +1399,9 @@ class CreateNewTables(OpenAIBaseModel):
 
 class RollBack(OpenAIBaseModel):
     """
-    USE WITH EXTREME CAUTION! RESETS TABLES COMPLETELY to the original dataframes loaded into pandas from the Excel sheet uploaded by the user. 
-    ALL CHANGES WILL BE UNDONE. Use as a last resort if data columns have been accidentally deleted or lost.
+    Destructively reset every current table from the original uploaded files.
+    Use only to restart the workflow after data loss, not to inspect or audit source data.
+    Source files can be read non-destructively with UserFile.extract_data().
     Returns: 
      - the IDs of the new, reloaded Tables (note the old Tables will be deleted)
      - a list of all Python code snippets which have been run on the old deleted Tables up till now, and the results given after running them. NOTE: code may not always have executed fully due to errors, so check the results as well. 
@@ -2264,6 +2268,16 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
                     f"Error: Cannot complete '{task_name}' without at least one non-empty "
                     "DwC-DP resource table."
                 )
+            if (
+                task_name in self.TABLE_REQUIRED_TASK_NAMES
+                and not agent.dataset.has_complete_source_coverage
+            ):
+                return (
+                    f"Error: Cannot complete '{task_name}' until the current source coverage "
+                    f"report ends with `{agent.dataset.SOURCE_COVERAGE_MARKER}`. Reconcile every populated "
+                    "source column as mapped, deliberately omitted, or unresolved, save the report "
+                    "with SetStructureNotes, then try again."
+                )
             if task_name in {
                 "Data transformation",
                 "Data validation and refinement",
@@ -2578,6 +2592,11 @@ class PublishToGBIF(OpenAIBaseModel):
             if not quality_gate_complete:
                 return (
                     "Error: Cannot publish until the pre-publication quality gate has completed."
+                )
+            if not dataset.has_complete_source_coverage:
+                return (
+                    "Error: Cannot publish until the current source coverage report ends with "
+                    f"`{dataset.SOURCE_COVERAGE_MARKER}`."
                 )
             if not dataset.has_current_dwca_validation:
                 return (

@@ -23,6 +23,9 @@ import copy
 from pathlib import Path
 from types import SimpleNamespace
 from django.conf import settings
+from django.db import transaction
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 
 
 class CustomUser(AbstractUser):
@@ -43,6 +46,16 @@ class CustomUser(AbstractUser):
 
 
 class Dataset(models.Model):
+    SOURCE_COVERAGE_MARKER = "SOURCE COVERAGE: COMPLETE"
+    PUBLICATION_INPUT_FIELDS = frozenset({"title", "description", "eml"})
+    PUBLICATION_ARTIFACT_FIELDS = frozenset({
+        "dwc_dp_url",
+        "dwc_dp_validation",
+        "dwca_url",
+        "dwca_validation",
+        "dwc_core",
+    })
+
     created_at = models.DateTimeField(auto_now_add=True)
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='datasets', null=True, blank=True)
     orcid = models.CharField(max_length=2000, blank=True)
@@ -74,6 +87,111 @@ class Dataset(models.Model):
     )
 
     MANUSCRIPT_TASK_NAME = "Manuscript extraction and dataset scoping"
+
+    @staticmethod
+    def empty_dwca_artifacts():
+        return {
+            "dwca_url": "",
+            "dwca_validation": None,
+            "dwc_core": "",
+        }
+
+    @classmethod
+    def empty_publication_artifacts(cls):
+        return {
+            "dwc_dp_url": "",
+            "dwc_dp_validation": None,
+            **cls.empty_dwca_artifacts(),
+        }
+
+    @classmethod
+    def invalidate_dwca_artifacts_for(cls, dataset_id):
+        cls.objects.filter(pk=dataset_id).update(**cls.empty_dwca_artifacts())
+
+    @classmethod
+    def invalidate_publication_artifacts_for(cls, dataset_id):
+        cls.objects.filter(pk=dataset_id).update(**cls.empty_publication_artifacts())
+
+    def invalidate_dwca_artifacts(self):
+        """Discard a DwC-A derived from a superseded projection table."""
+        if not self.pk:
+            return
+        values = self.empty_dwca_artifacts()
+        type(self).invalidate_dwca_artifacts_for(self.pk)
+        for field, value in values.items():
+            setattr(self, field, value)
+
+    def invalidate_publication_artifacts(self):
+        """Discard packages and validations derived from superseded inputs."""
+        if not self.pk:
+            return
+        values = self.empty_publication_artifacts()
+        type(self).invalidate_publication_artifacts_for(self.pk)
+        for field, value in values.items():
+            setattr(self, field, value)
+
+    def invalidate_source_coverage(self):
+        """Remove the completion marker when the set of source files changes."""
+        if not self.pk or not self.structure_notes:
+            return
+        retained_lines = [
+            line
+            for line in self.structure_notes.splitlines()
+            if line.strip() != self.SOURCE_COVERAGE_MARKER
+        ]
+        updated_notes = "\n".join(retained_lines).strip()
+        if updated_notes != self.structure_notes:
+            self.structure_notes = updated_notes
+            self.save(update_fields=["structure_notes"])
+
+    @property
+    def has_complete_source_coverage(self):
+        has_manifests = any(
+            (manifest or {}).get("tables")
+            for manifest in self.user_files.values_list("source_manifest", flat=True)
+        )
+        if not has_manifests:
+            return True
+        note_lines = [line.strip() for line in (self.structure_notes or "").splitlines() if line.strip()]
+        return bool(note_lines and note_lines[-1] == self.SOURCE_COVERAGE_MARKER)
+
+    def refresh_active_agent_prompt(self):
+        """Refresh immutable source context after an upload or deletion."""
+        active_agent = self.agent_set.filter(completed_at__isnull=True).first()
+        if active_agent:
+            active_agent.regenerate_system_message()
+
+    def handle_source_change(self):
+        """Invalidate derived state and refresh the active prompt after commit."""
+        self.refresh_source_mode(save=True)
+        self.invalidate_source_coverage()
+        self.invalidate_publication_artifacts()
+        transaction.on_commit(self.refresh_active_agent_prompt, robust=True)
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        checked_fields = self.PUBLICATION_INPUT_FIELDS
+        if update_fields is not None:
+            checked_fields &= set(update_fields)
+
+        publication_inputs_changed = False
+        if self.pk and checked_fields:
+            previous = type(self).objects.filter(pk=self.pk).values(*checked_fields).first()
+            publication_inputs_changed = bool(
+                previous
+                and any(previous[field] != getattr(self, field) for field in checked_fields)
+            )
+
+        if publication_inputs_changed:
+            self.dwc_dp_url = ""
+            self.dwc_dp_validation = None
+            self.dwca_url = ""
+            self.dwca_validation = None
+            self.dwc_core = ""
+            if update_fields is not None:
+                kwargs["update_fields"] = set(update_fields) | self.PUBLICATION_ARTIFACT_FIELDS
+
+        return super().save(*args, **kwargs)
 
     def rebuild_tables_from_user_files(self):
         """
@@ -311,12 +429,14 @@ class UserFile(models.Model):
     TABULAR_EXCEL_EXTENSIONS = {'.xlsx', '.xls', '.xlsm', '.xlsb', '.ods'}
     TREE_EXTENSIONS = {'.newick', '.nwk', '.nex', '.nexus', '.tre', '.tree'}
     PDF_EXTENSIONS = {'.pdf'}
+    MAX_TABULAR_COLUMNS = 500
 
     dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, related_name='user_files')
     uploaded_at = models.DateTimeField(auto_now_add=True)
     file = models.FileField(upload_to='user_files')
     openai_file_id = models.CharField(max_length=200, blank=True)
     openai_file_fingerprint = models.CharField(max_length=128, blank=True)
+    source_manifest = models.JSONField(default=dict, editable=False)
 
     def __str__(self):
         label = self.file_type_label or 'unknown'
@@ -579,6 +699,8 @@ class UserFile(models.Model):
         if not isinstance(dfs, dict):
             return dfs
 
+        UserFile.validate_dataframe_widths(dfs)
+
         original_sheet_count = len(dfs)
         if original_sheet_count > 1:
             filtered_dfs = {name: df for name, df in dfs.items() if len(df) >= 2}
@@ -598,12 +720,55 @@ class UserFile(models.Model):
                 )
         return dfs
 
+    @classmethod
+    def validate_dataframe_widths(cls, dfs):
+        for sheet_name, df in dfs.items():
+            column_count = len(df.columns)
+            if column_count > cls.MAX_TABULAR_COLUMNS:
+                raise ValueError(
+                    f"Your sheet {sheet_name} has {column_count} columns. ChatIPT supports up to "
+                    f"{cls.MAX_TABULAR_COLUMNS} columns per sheet. Please simplify the sheet and "
+                    "upload it again."
+                )
+
     def create_tables(self, dfs):
         tables = []
         for sheet_name, df in dfs.items():
             if hasattr(df, 'empty') and not df.empty:
                 tables.append(Table.objects.create(dataset=self.dataset, title=sheet_name, df=df))
         return tables
+
+    @staticmethod
+    def build_source_manifest(dfs):
+        UserFile.validate_dataframe_widths(dfs)
+        return {
+            "tables": [
+                {
+                    "name": str(sheet_name),
+                    **Table._column_manifest_data(df),
+                }
+                for sheet_name, df in dfs.items()
+            ]
+        }
+
+    @property
+    def source_manifest_text(self):
+        tables = self.source_manifest.get("tables", [])
+        if not tables:
+            return ""
+
+        sections = [f"ORIGINAL UPLOAD MANIFEST: {self.filename}"]
+        value_summary_budget = Table.MANIFEST_VALUE_SUMMARY_BUDGET
+        for table in tables:
+            rendered_manifest, value_summary_budget = Table._render_column_manifest_with_budget(
+                table,
+                value_summary_budget,
+            )
+            sections.append(
+                f"Sheet {Table._bounded_manifest_text(table['name'])}:\n"
+                + rendered_manifest
+            )
+        return "\n".join(sections)
 
     class Meta:
         ordering = ['uploaded_at', 'id']
@@ -700,6 +865,11 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
 
 
 class Table(models.Model):
+    MANIFEST_NAME_CHARS = 160
+    MANIFEST_EXAMPLE_CHARS = 50
+    MANIFEST_LOW_CARDINALITY_LIMIT = 10
+    MANIFEST_VALUE_SUMMARY_BUDGET = 2000
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE)
@@ -737,13 +907,25 @@ class Table(models.Model):
         return labels
 
     def save(self, *args, **kwargs):
+        from api.dwc_dp_specs import RESERVED_TABLE_NAMES
+
+        previous_title = None
+        if self.pk:
+            previous_title = type(self).objects.filter(pk=self.pk).values_list("title", flat=True).first()
+        is_authoritative = self.title in RESERVED_TABLE_NAMES or previous_title in RESERVED_TABLE_NAMES
+
         if 'df' not in self.get_deferred_fields() and self.df is not None:
             self.row_count = int(len(self.df.index))
             self.columns = self.display_columns(self.df.columns)
             update_fields = kwargs.get('update_fields')
             if update_fields and 'df' in update_fields:
                 kwargs['update_fields'] = set(update_fields) | {'row_count', 'columns'}
-        return super().save(*args, **kwargs)
+        result = super().save(*args, **kwargs)
+        if is_authoritative:
+            self.dataset.invalidate_publication_artifacts()
+        else:
+            self.dataset.invalidate_dwca_artifacts()
+        return result
 
     def row_page(self, offset, limit):
         """Serialize one bounded DataFrame slice without copying the full table."""
@@ -772,6 +954,10 @@ class Table(models.Model):
 
         # Truncate long strings in cells
         df = df_obj.apply(lambda col: col.astype(str).map(lambda x: (x[:max_str_len - 3] + '...') if len(x) > max_str_len else x))
+        df.columns = [
+            f"[{position}] {self._bounded_manifest_label(column)}"
+            for position, column in enumerate(df.columns, start=1)
+        ]
 
         # Truncate columns
         if len(df.columns) > max_columns:
@@ -788,137 +974,137 @@ class Table(models.Model):
             bottom = df.tail(max_rows // 2)
             middle = pd.DataFrame({col: ['...'] for col in df.columns}, index=[0])  # Use a temporary numeric index for middle
             df = pd.concat([top, middle, bottom], ignore_index=True)
-            # df = '\n'.join([top, middle, bottom])
 
         return df
 
     @property
     def str_snapshot(self):
-        df = self.make_columns_unique(self.df)
+        df = self.make_columns_unique(self.df.copy())
         original_rows, original_cols = self.df.shape
         snapshot = self._snapshot_df(df).to_string() + f"\n\n[{original_rows} rows x {original_cols} columns]"
-        
-        # Add value counts for each column with intelligent truncation
-        value_counts_summary = self._generate_value_counts_summary(df)
-        if value_counts_summary:
-            snapshot += "\n\n" + value_counts_summary
-            
-        return snapshot
 
-    def _generate_value_counts_summary(self, df, max_words=600):
-        """Generate a summary of value counts for each column with intelligent truncation."""
-        import re
-        
-        summary_parts = []
-        word_count = 0
-        
-        # Calculate basic stats for each column
-        column_stats = []
-        for col in df.columns:
-            # Handle different data types and null values
-            non_null_series = df[col].dropna()
-            if len(non_null_series) == 0:
-                unique_count = 0
-                value_counts = pd.Series(dtype=object)
-            else:
-                # Convert to string to handle mixed types consistently
-                string_series = non_null_series.astype(str)
-                value_counts = string_series.value_counts()
-                unique_count = len(value_counts)
-            
-            null_count = df[col].isna().sum()
-            column_stats.append({
-                'column': col,
-                'unique_count': unique_count,
-                'null_count': null_count,
-                'value_counts': value_counts,
-                'total_count': len(df[col])
-            })
-        
-        # Sort columns by complexity (fewer unique values first, as they're often more informative)
-        column_stats.sort(key=lambda x: (x['unique_count'], str(x['column'])))
-        
-        # Add header
-        summary_parts.append("VALUE COUNTS BY COLUMN:")
-        word_count += 4
-        
-        for col_stat in column_stats:
-            if word_count >= max_words:
-                summary_parts.append("... (truncated due to length)")
-                break
-                
-            col = col_stat['column']
-            unique_count = col_stat['unique_count']
-            null_count = col_stat['null_count']
-            value_counts = col_stat['value_counts']
-            total_count = col_stat['total_count']
-            
-            # Column header with basic stats
-            header = f"\n{col}: {unique_count} unique values"
-            if null_count > 0:
-                header += f", {null_count} nulls"
-            header += f" (of {total_count} total)"
-            
-            summary_parts.append(header)
-            word_count += len(header.split())
-            
-            if word_count >= max_words:
-                break
-                
-            # Determine how many values to show based on remaining space and column complexity
-            remaining_words = max_words - word_count
-            if unique_count == 0:
-                summary_parts.append("  (all null)")
-                word_count += 2
-            elif unique_count <= 10:
-                # Show all values for simple columns
-                for value, count in value_counts.items():
-                    value_str = str(value)[:50]  # Truncate very long values
-                    if len(str(value)) > 50:
-                        value_str += "..."
-                    line = f"  {value_str}: {count}"
-                    line_words = len(line.split())
-                    if word_count + line_words >= max_words:
-                        break
-                    summary_parts.append(line)
-                    word_count += line_words
-            else:
-                # For complex columns, show top values and maybe bottom values
-                top_n = min(5, max(2, remaining_words // 10))  # Adaptive based on remaining space
-                
-                # Show top values
-                for i, (value, count) in enumerate(value_counts.head(top_n).items()):
-                    value_str = str(value)[:50]
-                    if len(str(value)) > 50:
-                        value_str += "..."
-                    line = f"  {value_str}: {count}"
-                    line_words = len(line.split())
-                    if word_count + line_words >= max_words:
-                        break
-                    summary_parts.append(line)
-                    word_count += line_words
-                
-                # If there's space and many unique values, show bottom values too
-                if unique_count > top_n + 2 and word_count < max_words - 20:
-                    bottom_n = min(2, max(1, (max_words - word_count) // 15))
-                    if bottom_n > 0:
-                        summary_parts.append("  ...")
-                        word_count += 1
-                        
-                        for value, count in value_counts.tail(bottom_n).items():
-                            value_str = str(value)[:50]
-                            if len(str(value)) > 50:
-                                value_str += "..."
-                            line = f"  {value_str}: {count}"
-                            line_words = len(line.split())
-                            if word_count + line_words >= max_words:
-                                break
-                            summary_parts.append(line)
-                            word_count += line_words
-        
-        return "\n".join(summary_parts) if summary_parts and len(summary_parts) > 1 else ""
+        return snapshot + "\n\n" + self._generate_column_manifest(df)
 
-    def make_columns_unique(self, df):
+    @property
+    def column_manifest(self):
+        return self._generate_column_manifest(self.df)
+
+    @staticmethod
+    def _column_manifest_data(
+        df,
+        max_examples=1,
+        max_example_chars=MANIFEST_EXAMPLE_CHARS,
+    ):
+        df = Table.make_columns_unique(df.copy())
+        columns = []
+        total_rows = len(df.index)
+
+        for position, column in enumerate(df.columns, start=1):
+            values = df[column].dropna().astype(str).map(str.strip)
+            values = values[values.ne("")]
+            unique_values = values.drop_duplicates()
+            examples = []
+            for value in unique_values.head(max_examples):
+                compact = " ".join(value.split())
+                if len(compact) > max_example_chars:
+                    compact = compact[:max_example_chars - 3] + "..."
+                examples.append(compact)
+            column_data = {
+                "position": position,
+                "name": str(column),
+                "populated": len(values),
+                "unique": len(unique_values),
+                "examples": examples,
+            }
+            if len(unique_values) <= Table.MANIFEST_LOW_CARDINALITY_LIMIT:
+                column_data["value_counts"] = [
+                    {
+                        "value": Table._compact_manifest_text(
+                            value,
+                            max_chars=Table.MANIFEST_EXAMPLE_CHARS,
+                        ),
+                        "count": int(count),
+                    }
+                    for value, count in values.value_counts().items()
+                ]
+            columns.append(column_data)
+
+        return {
+            "row_count": total_rows,
+            "column_count": len(columns),
+            "columns": columns,
+        }
+
+    @staticmethod
+    def _compact_manifest_text(value, max_chars):
+        compact = " ".join(str(value).split())
+        if len(compact) <= max_chars:
+            return compact
+        return compact[:max_chars - 3] + "..."
+
+    @staticmethod
+    def _bounded_manifest_text(value, max_chars=None):
+        max_chars = max_chars or Table.MANIFEST_NAME_CHARS
+        compact = " ".join(str(value).split())
+        if len(compact) <= max_chars:
+            return json.dumps(compact, ensure_ascii=False)
+        preview = compact[:max_chars - 3] + "..."
+        return f"{json.dumps(preview, ensure_ascii=False)} [truncated]"
+
+    @staticmethod
+    def _bounded_manifest_label(value, max_chars=None):
+        max_chars = max_chars or Table.MANIFEST_NAME_CHARS
+        compact = " ".join(str(value).split())
+        if len(compact) <= max_chars:
+            return compact
+        return compact[:max_chars - 3] + "... [truncated]"
+
+    @staticmethod
+    def _render_column_manifest_with_budget(manifest, value_summary_budget):
+        lines = [
+            "COMPLETE COLUMN MANIFEST (machine-generated; every column is listed once):"
+        ]
+        total_rows = manifest["row_count"]
+
+        for fallback_position, column in enumerate(manifest["columns"], start=1):
+            position = column.get("position", fallback_position)
+            line = (
+                f"- [{position}] {Table._bounded_manifest_text(column['name'])}: "
+                f"{column['populated']}/{total_rows} populated; "
+                f"{column['unique']} unique"
+            )
+            value_counts = column.get("value_counts") or []
+            value_summary = ", ".join(
+                f"{json.dumps(item['value'], ensure_ascii=False)} ({item['count']})"
+                for item in value_counts
+            )
+            if value_summary and len(value_summary) <= value_summary_budget:
+                line += "; values: " + value_summary
+                value_summary_budget -= len(value_summary)
+            elif column.get("examples"):
+                line += "; example: " + Table._bounded_manifest_text(
+                    column["examples"][0],
+                    max_chars=Table.MANIFEST_EXAMPLE_CHARS,
+                )
+            lines.append(line)
+
+        return "\n".join(lines), value_summary_budget
+
+    @staticmethod
+    def _render_column_manifest(manifest):
+        rendered, _ = Table._render_column_manifest_with_budget(
+            manifest,
+            Table.MANIFEST_VALUE_SUMMARY_BUDGET,
+        )
+        return rendered
+
+    @staticmethod
+    def _generate_column_manifest(df):
+        """Describe every column without allowing high-cardinality fields to disappear."""
+        return Table._render_column_manifest(Table._column_manifest_data(df))
+
+    @staticmethod
+    def make_columns_unique(df):
         cols = pd.Series(df.columns)
         nan_count = 0
         for i, col in enumerate(cols):
@@ -935,7 +1121,26 @@ class Table(models.Model):
         return df
 
 
+@receiver(post_delete, sender=Table)
+def invalidate_publication_artifacts_after_table_delete(sender, instance, **kwargs):
+    from api.dwc_dp_specs import RESERVED_TABLE_NAMES
+
+    if instance.title in RESERVED_TABLE_NAMES:
+        Dataset.invalidate_publication_artifacts_for(instance.dataset_id)
+    elif not getattr(instance, "_preserve_dwca_artifacts_on_delete", False):
+        Dataset.invalidate_dwca_artifacts_for(instance.dataset_id)
+
+
 class Agent(models.Model):
+    SOURCE_MANIFEST_TASKS = {
+        "Data transformation",
+        "Data validation and refinement",
+        "Phylogenetic tree linking",
+        Task.PACKAGE_PREPARATION_TASK,
+        Task.PREPUBLICATION_QUALITY_TASK,
+        Task.MAINTENANCE_TASK,
+    }
+
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE)
@@ -965,6 +1170,18 @@ class Agent(models.Model):
 
     def regenerate_system_message(self, new_table_cutoff=None):
         tables = list(Table.objects.filter(dataset_id=self.dataset_id).order_by('created_at', 'id'))
+        user_files = list(self.dataset.user_files.all())
+        source_manifest_files = [
+            user_file
+            for user_file in user_files
+            if (user_file.source_manifest or {}).get("tables")
+        ]
+        legacy_tabular_files = [
+            user_file
+            for user_file in user_files
+            if user_file.file_type == user_file.FileType.TABULAR
+            and not (user_file.source_manifest or {}).get("tables")
+        ]
         self.tables.set([t.id for t in tables])
         package_focused_tasks = {
             "Data validation and refinement",
@@ -986,6 +1203,10 @@ class Agent(models.Model):
             'all_tasks_count': Task.objects.count(),
             'new_table_cutoff': new_table_cutoff,
             'snapshot_table_ids': snapshot_table_ids,
+            'include_source_manifests': self.task.name in self.SOURCE_MANIFEST_TASKS,
+            'prompt_user_files': user_files,
+            'source_manifest_files': source_manifest_files,
+            'legacy_tabular_files': legacy_tabular_files,
         }
         system_message_text = render_to_string('prompt.txt', context=context)
         system_message = self.message_set.filter(openai_obj__role=Message.Role.SYSTEM).order_by('created_at').first()

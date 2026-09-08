@@ -10,7 +10,9 @@ from django.shortcuts import get_object_or_404, redirect
 from django.contrib.auth import get_user_model
 from rest_framework.serializers import ModelSerializer
 from django.conf import settings
+from django.db import transaction
 import requests
+from pathlib import Path
 from urllib.parse import urlencode
 import logging
 from math import isfinite
@@ -514,7 +516,6 @@ class DatasetViewSet(viewsets.ModelViewSet):
         Returns tree data with occurrence counts based on phylogeny linking done by the agent.
         """
         import json
-        from pathlib import Path
         from api.helpers.publish import parse_newick_to_tree, parse_nexus_to_tree
         
         dataset = self.get_object()
@@ -831,6 +832,20 @@ class UserFileViewSet(viewsets.ModelViewSet):
         if hasattr(serializer, 'validated_data'):
             serializer.validated_data.pop('dataset', None)
         serializer.save(dataset=dataset)
+
+    def perform_destroy(self, instance):
+        dataset = instance.dataset
+        file_type = instance.file_type
+        file_name = instance.file.name
+        storage = instance.file.storage
+        with transaction.atomic():
+            instance.delete()
+            if file_type == UserFile.FileType.TABULAR:
+                dataset.table_set.all().delete()
+                dataset.rebuild_tables_from_user_files()
+            dataset.handle_source_change()
+            transaction.on_commit(lambda: storage.delete(file_name), robust=True)
+
 
 class TaskViewSet(viewsets.ModelViewSet):
     serializer_class = TaskSerializer

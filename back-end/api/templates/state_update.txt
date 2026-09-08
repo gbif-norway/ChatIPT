@@ -18,7 +18,8 @@ Latest DwC-DP validation: {{ agent.dataset.dwc_dp_validation }}
 
 Current table manifest:
 {% for table in tables %}
-- Table {{ table.id }} `{{ table.title|default:"(untitled)" }}`: {{ table.df.shape.0 }} rows x {{ table.df.shape.1 }} columns. Columns: {% for col in table.df.columns %}{{ col }}{% if not forloop.last %}, {% endif %}{% endfor %}
+- Table {{ table.id }} `{{ table.title|default:"(untitled)" }}`: {{ table.df.shape.0 }} rows x {{ table.df.shape.1 }} columns.
+{{ table.column_manifest|safe }}
 {% endfor %}
 
 {% if changed_tables %}
