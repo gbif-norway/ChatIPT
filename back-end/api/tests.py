@@ -1669,6 +1669,45 @@ class SetEMLProjectTitleTests(TestCase):
         self.assertEqual(result, "EML has been successfully set.")
         self.assertEqual(self.dataset.eml["project_title"], "Existing project")
 
+    def test_explicit_geographic_bounds_are_stored_for_export(self):
+        result = SetEML(
+            agent_id=self.agent.id,
+            geographic_scope="Gibraltar, United Kingdom",
+            geographic_bounds={
+                "west": -5.37,
+                "east": -5.33,
+                "north": 36.16,
+                "south": 36.10,
+            },
+        ).run()
+        self.dataset.refresh_from_db()
+
+        self.assertEqual(result, "EML has been successfully set.")
+        self.assertEqual(
+            self.dataset.eml["geographic_bounds"],
+            {"west": -5.37, "east": -5.33, "north": 36.16, "south": 36.10},
+        )
+        xml_text = make_eml(
+            self.dataset.title,
+            self.dataset.description,
+            eml_extra=self.dataset.eml,
+        )
+        dataset_node = ET.fromstring(xml_text.encode("utf-8")).find("dataset")
+        bounds = dataset_node.find("coverage/geographicCoverage/boundingCoordinates")
+        self.assertIsNotNone(bounds)
+        self.assertEqual(bounds.find("westBoundingCoordinate").text, "-5.37")
+
+    def test_geographic_scope_without_bounds_returns_export_warning(self):
+        result = SetEML(
+            agent_id=self.agent.id,
+            geographic_scope="Gibraltar, United Kingdom",
+        ).run()
+        self.dataset.refresh_from_db()
+
+        self.assertEqual(self.dataset.eml["geographic_scope"], "Gibraltar, United Kingdom")
+        self.assertIn("cannot be exported as geographicCoverage", result)
+        self.assertIn("geographic_bounds", result)
+
 
 class ExcelWorkbookRepairTests(SimpleTestCase):
     @staticmethod

@@ -1435,6 +1435,13 @@ class RollBack(OpenAIBaseModel):
         discord_bot.send_discord_message(f"Dataset tables rolled back for Dataset id {agent.dataset.id}.")
         return json.dumps({'new_table_ids': [t.id for t in tables], 'code_snippets': code_snippets})
 
+class EMLGeographicBounds(BaseModel):
+    west: float = Field(..., ge=-180, le=180)
+    east: float = Field(..., ge=-180, le=180)
+    north: float = Field(..., ge=-90, le=90)
+    south: float = Field(..., ge=-90, le=90)
+
+
 class SetEML(OpenAIBaseModel):
     """Sets the EML (Metdata) for a Dataset via an Agent, returns a success or error message. Note that SetBasicMetadata should be used to set the dataset Title and Description."""
     agent_id: PositiveInt = Field(...)
@@ -1447,6 +1454,14 @@ class SetEML(OpenAIBaseModel):
     )
     temporal_scope: Optional[str] = Field(None, description="Optional temporal coverage of the dataset (e.g. 1990-2020)")
     geographic_scope: Optional[str] = Field(None, description="Optional geographic coverage of the dataset (e.g. Amazon Basin, Brazil)")
+    geographic_bounds: Optional[EMLGeographicBounds] = Field(
+        None,
+        description=(
+            "Optional geographic bounding box with west, east, north, and south decimal-degree "
+            "coordinates. Supply all four when the tables do not contain decimalLatitude and "
+            "decimalLongitude; the GBIF EML profile requires them to export geographicCoverage."
+        ),
+    )
     taxonomic_scope: Optional[str] = Field(None, description="Optional taxonomic coverage (e.g. Lepidoptera, Aves)")
     methodology: Optional[str] = Field(None, description="Optional description of the sampling / data collection methodology")
     manuscript_doi: Optional[str] = Field(None, description="Optional manuscript DOI (without or with DOI URL).")
@@ -1965,7 +1980,12 @@ class SetEML(OpenAIBaseModel):
             )
             if geographic_scope_to_set is not None:
                 eml["geographic_scope"] = geographic_scope_to_set
-            if inferred_geographic_bounds is not None:
+            if "geographic_bounds" in self.model_fields_set:
+                if self.geographic_bounds is None:
+                    eml.pop("geographic_bounds", None)
+                else:
+                    eml["geographic_bounds"] = self.geographic_bounds.model_dump()
+            elif inferred_geographic_bounds is not None:
                 eml["geographic_bounds"] = inferred_geographic_bounds
 
             inferred_taxonomic_scope = self._infer_taxonomic_scope_from_dataset(dataset)
@@ -2036,7 +2056,23 @@ class SetEML(OpenAIBaseModel):
             dataset.eml = eml
             dataset.save()
 
-            notes = [note for note in (temporal_note, geographic_note, taxonomic_note, methodology_note) if note]
+            geographic_export_note = None
+            if eml.get("geographic_scope") and not eml.get("geographic_bounds"):
+                geographic_export_note = (
+                    "Geographic scope was saved but cannot be exported as geographicCoverage until "
+                    "west, east, north, and south geographic_bounds are supplied."
+                )
+            notes = [
+                note
+                for note in (
+                    temporal_note,
+                    geographic_note,
+                    geographic_export_note,
+                    taxonomic_note,
+                    methodology_note,
+                )
+                if note
+            ]
             if notes:
                 return f"EML has been successfully set. {' '.join(notes)}"
             return 'EML has been successfully set.'
