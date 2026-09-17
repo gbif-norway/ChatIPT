@@ -127,7 +127,10 @@ class UserFileSerializer(serializers.ModelSerializer):
 
                 if file_type == UserFile.FileType.TABULAR:
                     try:
-                        source_manifest = UserFile.build_source_manifest(dfs)
+                        source_manifest = UserFile.build_source_manifest(
+                            dfs,
+                            excel_visibility=getattr(user_file, "_excel_visibility", None),
+                        )
                         filtered_dfs = UserFile.filter_dataframes(dfs)
                     except ValueError as exc:
                         raise serializers.ValidationError(str(exc)) from exc

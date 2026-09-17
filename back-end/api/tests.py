@@ -1011,6 +1011,36 @@ class EmlGenerationTests(SimpleTestCase):
         self.assertEqual(begin.text, '2025-10-17')
         self.assertEqual(end.text, '2025-10-22')
 
+    def test_make_eml_preserves_year_only_start_of_temporal_range(self):
+        class DummyUser:
+            first_name = 'Alice'
+            last_name = 'Smith'
+            orcid_id = ''
+            email = 'alice@example.org'
+
+        xml_text = make_eml(
+            title='Historical specimens',
+            description='Specimens with mixed date precision',
+            user=DummyUser(),
+            eml_extra={'temporal_scope': '1837/1984-07-28'},
+        )
+        dataset = ET.fromstring(xml_text.encode('utf-8')).find('dataset')
+        range_node = dataset.find('coverage/temporalCoverage/rangeOfDates')
+        self.assertIsNotNone(range_node)
+        self.assertEqual(range_node.find('beginDate/calendarDate').text, '1837')
+        self.assertEqual(range_node.find('endDate/calendarDate').text, '1984-07-28')
+        self.assertIsNone(dataset.find('coverage/temporalCoverage/singleDateTime'))
+
+        month_scope = make_eml(
+            title='Historical specimens',
+            description='Specimens with mixed date precision',
+            user=DummyUser(),
+            eml_extra={'temporal_scope': '1837-05/1984-07-28'},
+        )
+        month_dataset = ET.fromstring(month_scope.encode('utf-8')).find('dataset')
+        month_begin = month_dataset.find('coverage/temporalCoverage/rangeOfDates/beginDate/calendarDate')
+        self.assertEqual(month_begin.text, '1837')
+
     def test_make_eml_extracts_iso_dates_from_free_text_temporal_scope(self):
         class DummyUser:
             first_name = 'Alice'
@@ -1760,6 +1790,44 @@ class ExcelWorkbookRepairTests(SimpleTestCase):
 
         self.assertFalse(modified)
         self.assertEqual(workbook_bytes, sanitized_bytes)
+
+    def test_excel_manifest_records_hidden_source_locations(self):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "Imágenes"
+        sheet.append(["url", "creator"])
+        sheet.append(["https://example.org/1.jpg", "Diana Muñiz"])
+        sheet.append(["https://example.org/2.jpg", "Diana Muñiz"])
+        sheet.column_dimensions["B"].hidden = True
+        sheet.row_dimensions[2].hidden = True
+        workbook.create_sheet("metadata").sheet_state = "hidden"
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+
+        class WorkbookFile:
+            def open(self, mode):
+                pass
+
+            def read(self):
+                return buffer.getvalue()
+
+            def close(self):
+                pass
+
+        source = SimpleNamespace(
+            file=WorkbookFile(),
+            _load_workbook_with_xml_repair=UserFile._load_workbook_with_xml_repair,
+        )
+        dfs = UserFile._load_excel_workbook(source)
+        manifest = UserFile.build_source_manifest(dfs, source._excel_visibility)
+
+        self.assertEqual(dfs["Imágenes"]["creator"].tolist(), ["Diana Muñiz"] * 2)
+        self.assertEqual(manifest["tables"][0]["excel_visibility"], {
+            "sheet_state": "visible",
+            "hidden_columns": ["B"],
+            "hidden_rows": [2],
+        })
+        self.assertEqual(manifest["tables"][1]["excel_visibility"]["sheet_state"], "hidden")
 
 
 class LogBugWithDeveloperTests(SimpleTestCase):
@@ -2643,6 +2711,8 @@ class PublicationArtifactInvalidationTests(TestCase):
             df=pd.DataFrame([{"occurrenceID": "occ-1"}]),
         )
         self.mark_artifacts_current()
+        self.dataset.dwca_validation = None
+        self.dataset.save(update_fields=["dwca_validation"])
 
         projection.delete()
 
@@ -2650,6 +2720,28 @@ class PublicationArtifactInvalidationTests(TestCase):
         self.assertEqual(self.dataset.dwc_dp_url, "https://example.org/package.tar.gz")
         self.assertEqual(self.dataset.dwca_url, "")
         self.assertIsNone(self.dataset.dwca_validation)
+
+    def test_deleting_projection_after_validation_keeps_current_archive(self):
+        projection = Table.objects.create(
+            dataset=self.dataset,
+            title="occurrence_dwca",
+            df=pd.DataFrame([{"occurrenceID": "occ-1"}]),
+        )
+        self.mark_artifacts_current()
+        self.dataset.dwca_validation = {
+            "url": self.dataset.dwca_url,
+            "key": "validated-key",
+            "status": "FINISHED",
+            "metrics": {"indexeable": True},
+        }
+        self.dataset.save(update_fields=["dwca_validation"])
+
+        projection.delete()
+
+        self.dataset.refresh_from_db()
+        self.assertEqual(self.dataset.dwca_url, "https://example.org/archive.zip")
+        self.assertEqual(self.dataset.dwca_validation["key"], "validated-key")
+        self.assertTrue(self.dataset.has_current_dwca_validation)
 
     def test_editing_package_metadata_invalidates_artifacts(self):
         self.mark_artifacts_current()
@@ -2912,6 +3004,53 @@ class DwcaArtifactValidationTests(TestCase):
         self.assertEqual(result["url"], self.dataset.dwca_url)
         self.assertEqual(result["key"], "validation-key")
         self.assertTrue(self.dataset.has_current_dwca_validation)
+
+    @patch.dict(os.environ, {
+        "MINIO_URI": "storage.example.org",
+        "MINIO_BUCKET": "bucket",
+        "MINIO_BUCKET_FOLDER": "packages",
+    })
+    @patch("api.agent_tools.requests.get")
+    @patch("api.agent_tools.requests.post")
+    def test_recovery_revalidates_existing_archive_without_projection_tables(self, post_mock, get_mock):
+        archive_url = "https://storage.example.org/bucket/packages/output-2026-09-17-134836-431742.zip"
+        self.dataset.dwca_url = ""
+        self.dataset.dwca_validation = None
+        self.dataset.dwc_core = ""
+        self.dataset.save(update_fields=["dwca_url", "dwca_validation", "dwc_core"])
+        post_mock.return_value.status_code = 202
+        post_mock.return_value.json.return_value = {"key": "fresh-key"}
+        get_mock.return_value.status_code = 200
+        get_mock.return_value.json.return_value = {
+            "status": "FINISHED",
+            "metrics": {"indexeable": True},
+        }
+
+        result = json.loads(ValidateDwCA(
+            agent_id=self.agent.id,
+            archive_url=archive_url,
+            core_type=DarwinCoreCoreType.OCCURRENCE,
+            poll_interval_seconds=1,
+            max_poll_attempts=1,
+        ).run())
+
+        self.dataset.refresh_from_db()
+        self.assertEqual(self.dataset.dwca_url, archive_url)
+        self.assertEqual(self.dataset.dwc_core, Dataset.DWCCore.OCCURRENCE)
+        self.assertEqual(result["key"], "fresh-key")
+        self.assertTrue(self.dataset.has_current_dwca_validation)
+        self.assertEqual(post_mock.call_args.kwargs["files"]["fileUrl"], (None, archive_url))
+
+    @patch("api.agent_tools.requests.post")
+    def test_recovery_does_not_replace_a_saved_current_archive(self, post_mock):
+        result = ValidateDwCA(
+            agent_id=self.agent.id,
+            archive_url="https://example.org/different.zip",
+            core_type=DarwinCoreCoreType.OCCURRENCE,
+        ).run()
+
+        self.assertIn("cannot be replaced", result)
+        post_mock.assert_not_called()
 
     @patch("api.agent_tools.requests.get")
     def test_resume_rejects_key_for_replaced_archive(self, get_mock):
@@ -3968,6 +4107,7 @@ class SetAgentTaskToCompleteTests(TestCase):
             "metrics": {"indexeable": True},
         }
         dataset.save(update_fields=["dwca_validation"])
+        projection.delete()
         completed_result = SetAgentTaskToComplete(agent_id=agent.id).run()
 
         agent.refresh_from_db()
@@ -3997,6 +4137,13 @@ class SetAgentTaskToCompleteTests(TestCase):
             title="event",
             df=pd.DataFrame([{"event_pk": "event-1", "eventCategory": "occurrence"}]),
         )
+        dataset.dwca_url = "https://example.org/current.zip"
+        dataset.dwca_validation = {
+            "url": "https://example.org/old.zip",
+            "status": "FINISHED",
+            "metrics": {"indexeable": True},
+        }
+        dataset.save(update_fields=["dwca_url", "dwca_validation"])
         agent = Agent.objects.create(dataset=dataset, task=task)
 
         result = SetAgentTaskToComplete(agent_id=agent.id).run()

@@ -316,13 +316,13 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
             year = int(year_month.group(1))
             month = int(year_month.group(2))
             if 1 <= month <= 12:
-                day = calendar.monthrange(year, month)[1] if is_end else 1
-                return datetime(year, month, day).date().isoformat()
+                # EML calendarDate accepts a year or a full date, but not a
+                # year-month. Retain the known year without inventing a day.
+                return str(year)
 
         year_only = re.fullmatch(r"\d{4}", token)
         if year_only:
-            year = int(token)
-            return f"{year}-12-31" if is_end else f"{year}-01-01"
+            return token
 
         day_only = re.fullmatch(r"\d{1,2}", token)
         if day_only and context is not None:
@@ -338,11 +338,9 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         if not temporal_value_str:
             return None
 
-        iso_dates = re.findall(r"\b\d{4}-\d{2}-\d{2}\b", temporal_value_str)
-        if len(iso_dates) >= 2:
-            return ("range", iso_dates[0], iso_dates[-1])
-        if len(iso_dates) == 1:
-            return ("single", iso_dates[0])
+        single_iso = _to_iso_date(temporal_value_str)
+        if single_iso:
+            return ("single", single_iso)
 
         range_parts = None
         for sep in ("/", " to ", " - ", " – "):
@@ -355,14 +353,20 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         if range_parts is not None:
             left, right = range_parts
             right_iso = _to_iso_date(right, is_end=True)
-            right_context = datetime.strptime(right_iso, "%Y-%m-%d").date() if right_iso else None
+            right_context = (
+                datetime.strptime(right_iso, "%Y-%m-%d").date()
+                if right_iso and re.fullmatch(r"\d{4}-\d{2}-\d{2}", right_iso)
+                else None
+            )
             left_iso = _to_iso_date(left, is_end=False, context=right_context)
             if left_iso and right_iso:
                 return ("range", left_iso, right_iso)
 
-        single_iso = _to_iso_date(temporal_value_str)
-        if single_iso:
-            return ("single", single_iso)
+        iso_dates = re.findall(r"\b\d{4}-\d{2}-\d{2}\b", temporal_value_str)
+        if len(iso_dates) >= 2:
+            return ("range", iso_dates[0], iso_dates[-1])
+        if len(iso_dates) == 1:
+            return ("single", iso_dates[0])
 
         return None
 

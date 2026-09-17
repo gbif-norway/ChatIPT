@@ -2347,6 +2347,13 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
                 )
             if task_name == Task.PREPUBLICATION_QUALITY_TASK:
                 validation = agent.dataset.dwca_validation or {}
+                if not agent.dataset.dwca_url:
+                    return (
+                        "Error: The current DwC-A URL is missing. If an already uploaded archive "
+                        "was validated before temporary projection tables were deleted, call "
+                        "ValidateDwCA with its exact archive_url and core_type to restore the "
+                        "archive link through a fresh GBIF validation."
+                    )
                 if validation.get("url") != agent.dataset.dwca_url:
                     return (
                         "Error: Cannot complete the pre-publication quality gate until the "
@@ -2705,6 +2712,17 @@ class ValidateDwCA(OpenAIBaseModel):
         None,
         description="Optional existing GBIF validator key to resume polling instead of creating a new job.",
     )
+    archive_url: Optional[str] = Field(
+        None,
+        description=(
+            "Exact URL of an already uploaded ChatIPT DwC-A when the dataset's saved DwC-A URL "
+            "was lost during temporary-table cleanup. This starts a fresh validation of that archive."
+        ),
+    )
+    core_type: Optional[DarwinCoreCoreType] = Field(
+        None,
+        description="Required with archive_url to restore the archive's known core type.",
+    )
 
     def run(self):
         from api.models import Agent
@@ -2714,12 +2732,40 @@ class ValidateDwCA(OpenAIBaseModel):
         try:
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
+            recovering_archive = bool(self.archive_url and not dataset.dwca_url)
+            if self.archive_url and dataset.dwca_url and self.archive_url != dataset.dwca_url:
+                return 'Error: An existing current DwC-A URL cannot be replaced by validation.'
+            if recovering_archive:
+                from api.models import Dataset, Task
+                from urllib.parse import urlparse
+
+                if agent.task.name != Task.PREPUBLICATION_QUALITY_TASK:
+                    return 'Error: Archive URL recovery is available only in the quality gate.'
+                if self.validation_key:
+                    return 'Error: Recover the archive with a fresh validation, without validation_key.'
+                if self.core_type is None:
+                    return 'Error: core_type is required to recover an existing archive.'
+                prefix = (
+                    f"https://{os.getenv('MINIO_URI')}/{os.getenv('MINIO_BUCKET')}/"
+                    f"{os.getenv('MINIO_BUCKET_FOLDER')}/"
+                )
+                parsed = urlparse(self.archive_url)
+                if (
+                    not self.archive_url.startswith(prefix)
+                    or not re.fullmatch(
+                        r'output-\d{4}-\d{2}-\d{2}-\d{6}-\d{6}\.zip',
+                        parsed.path.rsplit('/', 1)[-1],
+                    )
+                    or parsed.query or parsed.fragment
+                ):
+                    return 'Error: archive_url must be a ChatIPT DwC-A ZIP in configured storage.'
             if not dataset.dwca_url:
-                return 'Error: No DwCA URL found. Run UploadDwCA first.'
+                if not recovering_archive:
+                    return 'Error: No DwCA URL found. Run UploadDwCA first or recover an existing archive.'
             auth = HTTPBasicAuth(os.getenv('GBIF_USER'), os.getenv('GBIF_PASSWORD'))
 
             key = self.validation_key
-            validation_url = dataset.dwca_url
+            validation_url = self.archive_url if recovering_archive else dataset.dwca_url
             if key:
                 saved_validation = dataset.dwca_validation or {}
                 if (
@@ -2756,7 +2802,17 @@ class ValidateDwCA(OpenAIBaseModel):
                     'key': key,
                     'status': 'RUNNING',
                 }
-                dataset.save(update_fields=['dwca_validation'])
+                update_fields = ['dwca_validation']
+                if recovering_archive:
+                    core_choice_map = {
+                        DarwinCoreCoreType.OCCURRENCE: Dataset.DWCCore.OCCURRENCE,
+                        DarwinCoreCoreType.EVENT: Dataset.DWCCore.EVENT,
+                        DarwinCoreCoreType.TAXON: Dataset.DWCCore.TAXONOMY,
+                    }
+                    dataset.dwca_url = validation_url
+                    dataset.dwc_core = core_choice_map[self.core_type]
+                    update_fields.extend(['dwca_url', 'dwc_core'])
+                dataset.save(update_fields=update_fields)
 
             last_status = None
             last_payload = None

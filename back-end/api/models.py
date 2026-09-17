@@ -666,6 +666,29 @@ class UserFile(models.Model):
 
         try:
             workbook = self._load_workbook_with_xml_repair(file_bytes)
+            self._excel_visibility = {
+                sheet.title: {
+                    "sheet_state": sheet.sheet_state,
+                    "hidden_columns": [
+                        openpyxl.utils.get_column_letter(index)
+                        for letter, dimension in sheet.column_dimensions.items()
+                        if dimension.hidden
+                        for index in range(
+                            dimension.min or openpyxl.utils.column_index_from_string(letter),
+                            (dimension.max or dimension.min or openpyxl.utils.column_index_from_string(letter)) + 1,
+                        )
+                    ],
+                    "hidden_rows": [
+                        number
+                        for number, dimension in sheet.row_dimensions.items()
+                        if dimension.hidden
+                    ],
+                }
+                for sheet in workbook.worksheets
+                if sheet.sheet_state != "visible"
+                or any(dimension.hidden for dimension in sheet.column_dimensions.values())
+                or any(dimension.hidden for dimension in sheet.row_dimensions.values())
+            }
             for sheet in workbook.worksheets:
                 for row in sheet.iter_rows():
                     for cell in row:
@@ -739,13 +762,17 @@ class UserFile(models.Model):
         return tables
 
     @staticmethod
-    def build_source_manifest(dfs):
+    def build_source_manifest(dfs, excel_visibility=None):
         UserFile.validate_dataframe_widths(dfs)
         return {
             "tables": [
                 {
                     "name": str(sheet_name),
                     **Table._column_manifest_data(df),
+                    **(
+                        {"excel_visibility": excel_visibility[sheet_name]}
+                        if excel_visibility and sheet_name in excel_visibility else {}
+                    ),
                 }
                 for sheet_name, df in dfs.items()
             ]
@@ -764,8 +791,15 @@ class UserFile(models.Model):
                 table,
                 value_summary_budget,
             )
+            visibility = table.get("excel_visibility")
+            visibility_text = (
+                "Excel visibility (hidden cells are included in extraction): "
+                f"{json.dumps(visibility, ensure_ascii=False)}\n"
+                if visibility else ""
+            )
             sections.append(
                 f"Sheet {Table._bounded_manifest_text(table['name'])}:\n"
+                + visibility_text
                 + rendered_manifest
             )
         return "\n".join(sections)
@@ -1128,7 +1162,12 @@ def invalidate_publication_artifacts_after_table_delete(sender, instance, **kwar
     if instance.title in RESERVED_TABLE_NAMES:
         Dataset.invalidate_publication_artifacts_for(instance.dataset_id)
     elif not getattr(instance, "_preserve_dwca_artifacts_on_delete", False):
-        Dataset.invalidate_dwca_artifacts_for(instance.dataset_id)
+        # The uploaded archive is immutable. Quality-gate cleanup may delete
+        # its temporary projection tables after GBIF validation; that must not
+        # erase the archive URL and the validator result needed for completion.
+        dataset = Dataset.objects.filter(pk=instance.dataset_id).first()
+        if dataset and not dataset.has_current_dwca_validation:
+            Dataset.invalidate_dwca_artifacts_for(instance.dataset_id)
 
 
 class Agent(models.Model):
