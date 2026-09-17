@@ -3595,6 +3595,15 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
         self.assertIn("COMPLETE COLUMN MANIFEST", text)
         self.assertIn("Do not append more structure notes after this marker", text)
 
+    def test_documentation_only_sources_pause_before_transformation(self):
+        suitability = self.task_text["Data suitability assessment"]
+        transformation = self.task_text["Data transformation"]
+
+        self.assertIn("field inventory, data dictionary, or blank template", suitability)
+        self.assertIn("use RequestUserInput to pause", suitability)
+        self.assertIn("Keep this task open", transformation)
+        self.assertIn("Do not create placeholder resource rows", transformation)
+
     def test_structure_prompt_shortens_only_working_headers_and_records_mapping(self):
         text = self.task_text["Data structure exploration"]
 
@@ -3694,6 +3703,26 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
 
 
 class SetAgentTaskToCompleteTests(TestCase):
+    def test_documentation_only_source_cannot_complete_transformation(self):
+        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+        dataset = Dataset.objects.create(
+            structure_notes="44 field names, no biodiversity records\nSOURCE COVERAGE: COMPLETE",
+        )
+        Table.objects.create(
+            dataset=dataset,
+            title="georeferencing_field_inventory",
+            df=pd.DataFrame({"field_name": ["decimalLatitude", "decimalLongitude"]}),
+        )
+        agent = Agent.objects.create(dataset=dataset, task=task)
+
+        result = SetAgentTaskToComplete(agent_id=agent.id).run()
+
+        agent.refresh_from_db()
+        self.assertIsNone(agent.completed_at)
+        self.assertIn("without at least one non-empty DwC-DP resource table", result)
+        self.assertIn("use RequestUserInput", result)
+        self.assertIn("do not create placeholder rows", result)
+
     def test_transformation_with_manifest_requires_coverage_marker(self):
         task = Task.objects.create(name="Data transformation", text="Transform", order=1)
         dataset = Dataset.objects.create()

@@ -61,6 +61,7 @@
       *   Is the data primarily biological (species occurrences, species lists, ecological survey data)?
       *   If the data appears to be non-biological (e.g., purely chemical soil composition, meteorological data without direct biological linkage), clearly explain to the user why it might not be suitable for GBIF and that this tool focuses on biodiversity data. Give the user a chance to respond or upload better source data. Do not mark the dataset as rejected or terminal.
       *   Prompt the user to upload a new file with additional data if necessary. They have access to a paper clip button in the chat interface to do this.
+      *   A field inventory, data dictionary, or blank template without biodiversity records is documentation, not a publishable dataset. Record that finding in structure_notes and use RequestUserInput to pause for actual record-level data, even if the user confirms that none exists yet. Keep this task open; do not advance to transformation.
       *   Leave all data transformation and cleaning to the next agent.
       *   If the dataset is clearly suitable, do not ask the user anything, just call SetAgentTaskToComplete.
 
@@ -76,6 +77,7 @@
       - Every populated source column must be mapped, deliberately omitted with a reason, or explicitly unresolved. Related columns may be reported as concise fact groups, but none may disappear through grouping. Blank-only columns may be summarized together.
       - Working tables may be replaced as resources are created because the uploaded files remain recoverable. Do not use RollBack for coverage checking: it deletes the current package. Remove temporary tables only after their values are accounted for.
       - Never invent facts, identifiers, relationships, or schema terms.
+      - If the uploaded source is only a field inventory, data dictionary, or blank template and the user confirms that no record-level biodiversity data exists yet, record the source coverage and missing-data finding in structure_notes if they are not already recorded. Explain that a DwC-DP cannot be built from field names alone, then use RequestUserInput to ask the user to upload record-level data when available. Keep this task open. Do not create placeholder resource rows, repeatedly call SetAgentTaskToComplete, or advance to validation and publication.
 
       PROCESS:
       1. Read both manifests and write a concise plan covering source authority, proposed resources, relationship graph, event grouping, important joins, assertion subjects, and unresolved domain questions. Give a short evidence-based reason for every proposed resource; do not enumerate resource families without material evidence.

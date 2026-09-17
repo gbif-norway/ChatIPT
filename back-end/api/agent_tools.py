@@ -2302,7 +2302,10 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
             ):
                 return (
                     f"Error: Cannot complete '{task_name}' without at least one non-empty "
-                    "DwC-DP resource table."
+                    "DwC-DP resource table. If the upload is only documentation, such as a "
+                    "field inventory with no biodiversity records, do not create placeholder "
+                    "rows or bypass validation. Keep this task open and use RequestUserInput "
+                    "to ask for a file with actual record-level data when it is available."
                 )
             if (
                 task_name in self.TABLE_REQUIRED_TASK_NAMES
