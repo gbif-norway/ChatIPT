@@ -629,16 +629,41 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     rights_link.set("url", license_metadata["url"])
     set_text(get_or_create(rights_link, "citetitle"), license_metadata["title"])
 
-    # Contact (required by IPT): copy primary user by default, allow explicit override
+    users_list = eml_extra.get('users') or []
+
+    # Contact (required by IPT): copy primary user by default, allow explicit override.
+    # An ORCID login may only have a synthetic profile email. In that case, use
+    # the email supplied for the same person in SetEML's creator list.
     contact_person = dict(primary_person)
     contact_email = eml_extra.get('contact_email')
     if isinstance(contact_email, str) and contact_email.strip():
         contact_person['email'] = contact_email.strip()
+    elif not primary_email and user:
+        primary_orcid = normalize_orcid_identifier(primary_person['orcid'])
+        primary_name = (
+            primary_person['first_name'].strip().casefold(),
+            primary_person['last_name'].strip().casefold(),
+        )
+        for person in users_list:
+            person_email = clean_text(person.get('email'))
+            if not person_email or person_email.lower().endswith('@orcid.org'):
+                continue
+            person_orcid = normalize_orcid_identifier(person.get('orcid'))
+            same_orcid = bool(primary_orcid and person_orcid and primary_orcid == person_orcid)
+            same_name = (
+                not person_orcid
+                and primary_name == (
+                    (person.get('first_name') or '').strip().casefold(),
+                    (person.get('last_name') or '').strip().casefold(),
+                )
+            )
+            if same_orcid or same_name:
+                contact_person['email'] = person_email
+                break
     contact_node = get_or_create(dataset_node, 'contact')
     set_person(contact_node, contact_person)
 
     # Users array: add additional creators and (optionally) project personnel
-    users_list = eml_extra.get('users') or []
     if users_list:
         for existing_creator in list(findall(dataset_node, 'creator')):
             dataset_node.remove(existing_creator)

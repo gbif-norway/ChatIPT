@@ -555,6 +555,51 @@ class EmlGenerationTests(SimpleTestCase):
             '0009-0008-7939-4511',
         )
 
+    def test_make_eml_uses_matching_creator_email_for_contact(self):
+        class OrcidUser:
+            first_name = 'Ana Cecilia'
+            last_name = 'Escobar-Solares'
+            orcid_id = '0009-0008-7939-4511'
+            email = '0009-0008-7939-4511@orcid.org'
+
+        root = ET.fromstring(make_eml(
+            'Contact email dataset',
+            'Description',
+            user=OrcidUser(),
+            eml_extra={'users': [
+                {'first_name': 'Other', 'last_name': 'Creator', 'email': 'other@example.org'},
+                {'first_name': 'Ana Cecilia', 'last_name': 'Escobar-Solares',
+                 'email': 'aescobar@wcs.org'},
+            ]},
+        ))
+        dataset = root.find('dataset')
+
+        self.assertEqual(
+            dataset.findtext('contact/electronicMailAddress'), 'aescobar@wcs.org'
+        )
+        self.assertEqual(
+            dataset.findall('creator')[1].findtext('electronicMailAddress'),
+            'aescobar@wcs.org',
+        )
+
+    def test_make_eml_does_not_use_unrelated_creator_email_for_contact(self):
+        class OrcidUser:
+            first_name = 'Ana Cecilia'
+            last_name = 'Escobar-Solares'
+            orcid_id = '0009-0008-7939-4511'
+            email = '0009-0008-7939-4511@orcid.org'
+
+        root = ET.fromstring(make_eml(
+            'Contact email dataset',
+            'Description',
+            user=OrcidUser(),
+            eml_extra={'users': [
+                {'first_name': 'Other', 'last_name': 'Creator', 'email': 'other@example.org'},
+            ]},
+        ))
+
+        self.assertIsNone(root.find('dataset/contact/electronicMailAddress'))
+
     @patch("api.helpers.publish.requests.post")
     def test_gbif_registration_uses_canonical_license_url(self, post_mock):
         post_mock.side_effect = [
