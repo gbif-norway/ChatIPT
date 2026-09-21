@@ -138,6 +138,7 @@ export const DatasetProvider = ({ children }) => {
           const hasMessages = lastAgent?.message_set && lastAgent.message_set.length > 0;
           const lastMessage = hasMessages ? lastAgent.message_set.at(-1) : null;
           const assistantHasToolCalls = lastMessage?.role === 'assistant' && Array.isArray(lastMessage?.openai_obj?.tool_calls) && lastMessage.openai_obj.tool_calls.length > 0;
+          const validationStillRunning = refreshedDataset.dwca_validation?.status === 'RUNNING';
           
           console.log(`[${timestamp}] 🔍 Checking refresh conditions:`, {
             hasAgents,
@@ -146,6 +147,7 @@ export const DatasetProvider = ({ children }) => {
             lastMessageRole: lastMessage?.role,
             assistantHasToolCalls,
             agentBusyThinking: !!lastAgent?.busy_thinking,
+            validationStillRunning,
             shouldContinue: (
               // Continue if agent still running/thinking
               (!!lastAgent && lastAgent.completed_at == null && !!lastAgent.busy_thinking) ||
@@ -166,8 +168,11 @@ export const DatasetProvider = ({ children }) => {
             assistantHasToolCalls
           ) {
             console.log(`[${timestamp}] 🔄 Need to continue refreshing - last message role: ${lastMessage.role}`);
-            // Increased delay to reduce server load and give processing more time
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            // GBIF validation runs asynchronously. Polling the workflow every two
+            // seconds while it is still running creates a new model/tool turn each
+            // time, which can turn one validator job into a costly tight loop.
+            const refreshDelay = validationStillRunning ? 15000 : 2000;
+            await new Promise(resolve => setTimeout(resolve, refreshDelay));
             console.log(`[${timestamp}] ⏰ Finished waiting, scheduling next refresh...`);
             if (datasetId === currentDatasetId) {
               refreshDataset(datasetId);
