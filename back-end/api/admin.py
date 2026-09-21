@@ -6,6 +6,7 @@ from .models import (
     Dataset,
     DatasetAttentionNotification,
     Message,
+    OpenAIUsage,
     Table,
     Task,
     UserFile,
@@ -97,3 +98,24 @@ class MessageAdmin(admin.ModelAdmin):
     list_filter = ('created_at',)  # Removed 'role' since it's a property
     search_fields = ('agent__dataset__title',)
     readonly_fields = ('created_at',) 
+
+
+@admin.register(OpenAIUsage)
+class OpenAIUsageAdmin(admin.ModelAdmin):
+    list_display = (
+        'response_id',
+        'dataset',
+        'task_name',
+        'retry_reason',
+        'model',
+        'input_tokens',
+        'cached_input_tokens',
+        'output_tokens',
+        'long_context',
+        'estimated_cost_usd',
+        'created_at',
+    )
+    list_filter = ('model', 'task_name', 'retry_reason', 'long_context', 'service_tier', 'created_at')
+    search_fields = ('response_id', 'dataset__title', '=dataset__id', '=agent__id')
+    readonly_fields = tuple(field.name for field in OpenAIUsage._meta.fields)
+    date_hierarchy = 'created_at'

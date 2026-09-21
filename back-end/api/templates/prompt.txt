@@ -50,7 +50,13 @@ Currently, you are working on preprocessing (dataset.id {{ agent.dataset.id }}) 
 {% for table in agent.tables.all %}
 Table id {{ table.id }} - sheet name {{ table.title|default:"(untitled)" }} (created {{ table.created_at|date:"Y-m-d H:i" }} UTC{% if table.updated_at %}, last updated {{ table.updated_at|date:"Y-m-d H:i" }} UTC{% endif %}{% if not new_table_cutoff or table.created_at > new_table_cutoff %} (NEWLY CREATED){% endif %}).
 {% if table.id in snapshot_table_ids %}Snapshot of `Table.objects.get(id={{ table.id }}).df`:
-{{ table.str_snapshot|safe }}
+{{ table.str_preview|safe }}
+{% if table.id not in source_manifest_covered_table_ids %}
+{{ table.column_manifest|safe }}
+{% else %}
+Complete column evidence for this unchanged source table is provided once in its ORIGINAL UPLOAD MANIFEST above.
+{% endif %}
+{% elif table.id in source_manifest_covered_table_ids %}Snapshot and duplicate column manifest omitted in this package-focused task; this unchanged source table is covered by its ORIGINAL UPLOAD MANIFEST above.
 {% else %}Snapshot omitted in this package-focused task; use Python for a targeted source check if the saved notes and manifest are insufficient.
 {{ table.column_manifest|safe }}
 {% endif %}

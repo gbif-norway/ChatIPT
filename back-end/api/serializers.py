@@ -1,4 +1,4 @@
-from api.models import Dataset, Table, Agent, Message, Task, UserFile
+from api.models import Dataset, Table, Agent, Message, OpenAIUsage, Task, UserFile
 from django.db import transaction
 from rest_framework import serializers
 from api.helpers import discord_bot
@@ -61,6 +61,39 @@ class AgentSerializer(serializers.ModelSerializer):
                 'id', 'title', 'updated_at', 'row_count', 'columns'
             )
         )
+
+
+class OpenAIUsageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OpenAIUsage
+        fields = [
+            'id',
+            'created_at',
+            'dataset',
+            'agent',
+            'task_name',
+            'response_id',
+            'response_status',
+            'retry_reason',
+            'model',
+            'reasoning_effort',
+            'service_tier',
+            'input_tokens',
+            'cached_input_tokens',
+            'cache_write_input_tokens',
+            'output_tokens',
+            'reasoning_tokens',
+            'total_tokens',
+            'long_context',
+            'input_price_per_million',
+            'cached_input_price_per_million',
+            'output_price_per_million',
+            'input_price_multiplier',
+            'output_price_multiplier',
+            'estimated_cost_usd',
+            'pricing_source',
+        ]
+        read_only_fields = fields
 
 
 class UserFileSerializer(serializers.ModelSerializer):

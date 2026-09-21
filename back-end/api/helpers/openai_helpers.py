@@ -1,5 +1,6 @@
 import json
 import hashlib
+import logging
 import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
@@ -8,6 +9,9 @@ from django.conf import settings
 from pydantic import BaseModel
 from openai import OpenAI, InternalServerError
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -73,6 +77,8 @@ def create_response_message(
     reasoning_effort=None,
     pdf_user_files=None,
     additional_input_items=None,
+    usage_agent_id=None,
+    usage_retry_reason="",
 ):
     model = model or getattr(settings, "OPENAI_MODEL", "gpt-5.4")
     reasoning_effort = reasoning_effort or getattr(settings, "OPENAI_REASONING_EFFORT", "medium")
@@ -94,6 +100,25 @@ def create_response_message(
         openai_args['temperature'] = temperature
     openai_args['tools'] = _functions_to_responses_tools(functions)
     response = query_responses_api(openai_args)
+    if usage_agent_id is not None:
+        try:
+            from api.openai_usage import record_response_usage
+
+            record_response_usage(
+                response,
+                agent_id=usage_agent_id,
+                requested_model=model,
+                reasoning_effort=reasoning_effort,
+                retry_reason=usage_retry_reason,
+            )
+        except Exception:
+            # Accounting must never turn a successful model response into a failed
+            # workflow turn. Log loudly so operators can repair the missing row.
+            logger.exception(
+                "Failed to record OpenAI usage for response %s and agent %s",
+                getattr(response, "id", "-"),
+                usage_agent_id,
+            )
     print(
         '---Response'
         f' id={getattr(response, "id", "-")}'

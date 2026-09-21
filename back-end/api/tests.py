@@ -6,6 +6,7 @@ import tarfile
 import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -57,7 +58,8 @@ from .helpers.openai_helpers import (
     _response_to_compat_message,
     create_response_message,
 )
-from .models import Agent, Dataset, Message, Table, Task, UserFile
+from .models import Agent, CustomUser, Dataset, Message, OpenAIUsage, Table, Task, UserFile
+from .openai_usage import record_response_usage, response_usage_defaults, usage_summary
 from .serializers import DatasetListSerializer, DatasetSerializer, UserFileSerializer
 from .dwc_dp_specs import (
     DWC_DP_SCHEMA_REVISION,
@@ -1932,6 +1934,7 @@ class ResponsesAdapterCompatibilityTests(SimpleTestCase):
         self.assertEqual(request["reasoning"], {"effort": "high"})
         self.assertNotIn("temperature", request)
 
+
     def test_messages_are_mapped_to_responses_input_with_tool_history(self):
         messages = [
             self._Message({"role": "system", "content": "You are a helper."}),
@@ -2123,6 +2126,146 @@ class ResponsesAdapterCompatibilityTests(SimpleTestCase):
             {"table_id", "extension_type", "core_id_column"},
         )
         self.assertIn("DarwinCoreExtensionType", schema["parameters"]["$defs"])
+
+
+class OpenAIUsageAccountingTests(TestCase):
+    @staticmethod
+    def _response(
+        response_id="resp_usage_1",
+        model="gpt-5.4",
+        input_tokens=100_000,
+        cached_tokens=80_000,
+        output_tokens=1_000,
+        reasoning_tokens=600,
+    ):
+        return SimpleNamespace(
+            id=response_id,
+            model=model,
+            status="completed",
+            service_tier="default",
+            output=[],
+            output_text="Done.",
+            usage=SimpleNamespace(
+                input_tokens=input_tokens,
+                input_tokens_details=SimpleNamespace(
+                    cached_tokens=cached_tokens,
+                    cache_write_tokens=0,
+                ),
+                output_tokens=output_tokens,
+                output_tokens_details=SimpleNamespace(reasoning_tokens=reasoning_tokens),
+                total_tokens=input_tokens + output_tokens,
+            ),
+        )
+
+    def setUp(self):
+        self.dataset = Dataset.objects.create(title="Usage accounting")
+        self.task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+        self.agent = Agent.objects.create(dataset=self.dataset, task=self.task)
+
+    def test_standard_cost_separates_cached_input_from_uncached_input(self):
+        values = response_usage_defaults(self._response())
+
+        self.assertEqual(values["estimated_cost_usd"], Decimal("0.085000"))
+        self.assertEqual(values["cached_input_tokens"], 80_000)
+        self.assertFalse(values["long_context"])
+
+    def test_long_context_multipliers_are_applied(self):
+        response = self._response(
+            input_tokens=300_000,
+            cached_tokens=200_000,
+            output_tokens=2_000,
+        )
+
+        values = response_usage_defaults(response)
+
+        self.assertTrue(values["long_context"])
+        self.assertEqual(values["input_price_multiplier"], Decimal("2"))
+        self.assertEqual(values["output_price_multiplier"], Decimal("1.5"))
+        self.assertEqual(values["estimated_cost_usd"], Decimal("0.645000"))
+
+    def test_unknown_model_records_tokens_without_inventing_a_price(self):
+        values = response_usage_defaults(self._response(model="future-model"))
+
+        self.assertIsNone(values["estimated_cost_usd"])
+        self.assertEqual(values["total_tokens"], 101_000)
+
+    def test_nonstandard_service_tier_is_not_priced_at_standard_rates(self):
+        response = self._response()
+        response.service_tier = "priority"
+
+        values = response_usage_defaults(response)
+
+        self.assertIsNone(values["estimated_cost_usd"])
+
+    def test_recording_is_idempotent_and_summary_is_serializable(self):
+        response = self._response()
+        record_response_usage(
+            response,
+            self.agent.id,
+            reasoning_effort="high",
+            retry_reason="no_tool_call",
+        )
+        record_response_usage(
+            response,
+            self.agent.id,
+            reasoning_effort="high",
+            retry_reason="no_tool_call",
+        )
+
+        self.assertEqual(OpenAIUsage.objects.count(), 1)
+        record = OpenAIUsage.objects.get()
+        self.assertEqual(record.dataset, self.dataset)
+        self.assertEqual(record.task_name, "Data transformation")
+        self.assertEqual(record.reasoning_effort, "high")
+        self.assertEqual(record.retry_reason, "no_tool_call")
+        self.assertEqual(
+            usage_summary(OpenAIUsage.objects.all())["estimated_cost_usd"],
+            "0.085000",
+        )
+
+    @patch("api.helpers.openai_helpers.query_responses_api")
+    def test_response_helper_records_usage_for_the_agent(self, query_mock):
+        query_mock.return_value = self._response(response_id="resp_from_helper")
+
+        create_response_message([], [], usage_agent_id=self.agent.id)
+
+        self.assertTrue(
+            OpenAIUsage.objects.filter(
+                response_id="resp_from_helper",
+                agent=self.agent,
+            ).exists()
+        )
+
+    def test_admin_can_read_dataset_usage_breakdown(self):
+        record_response_usage(self._response(), self.agent.id)
+        admin = CustomUser.objects.create_superuser(
+            username="usage-admin",
+            email="usage-admin@example.org",
+            password="test-password",
+        )
+        self.client.force_login(admin)
+
+        response = self.client.get(f"/api/datasets/{self.dataset.id}/openai-usage/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["summary"]["recorded_calls"], 1)
+        self.assertEqual(response.json()["summary"]["estimated_cost_usd"], "0.085000")
+        self.assertEqual(response.json()["by_stage"][0]["task_name"], "Data transformation")
+        self.assertEqual(response.json()["requests"][0]["response_id"], "resp_usage_1")
+
+    def test_dataset_owner_cannot_read_internal_costs(self):
+        owner = CustomUser.objects.create_user(
+            username="dataset-owner",
+            email="owner@example.org",
+            password="test-password",
+        )
+        self.dataset.user = owner
+        self.dataset.save(update_fields=["user"])
+        self.client.force_login(owner)
+
+        response = self.client.get(f"/api/datasets/{self.dataset.id}/openai-usage/")
+
+        self.assertEqual(response.status_code, 403)
 
 
 class DwcaExportSanitizationTests(SimpleTestCase):
@@ -3259,9 +3402,38 @@ class TableColumnManifestTests(TestCase):
 
         state = agent.current_state_update()
 
-        self.assertIn("[truncated]", state)
+        self.assertIn("Current table revisions", state)
         self.assertNotIn(long_name, state)
         self.assertNotIn(long_name, table.str_snapshot)
+
+    def test_current_state_includes_full_manifest_only_for_changed_tables(self):
+        dataset = Dataset.objects.create(title="Revisioned state")
+        unchanged = Table.objects.create(
+            dataset=dataset,
+            title="unchanged",
+            df=pd.DataFrame({"unchanged_secret": ["one"]}),
+        )
+        changed = Table.objects.create(
+            dataset=dataset,
+            title="changed",
+            df=pd.DataFrame({"changed_value": ["before"]}),
+        )
+        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+        agent = Agent.create_with_system_message(
+            dataset=dataset,
+            task=task,
+            tables=[unchanged, changed],
+        )
+        cutoff = datetime.datetime.now(datetime.timezone.utc)
+        changed.df = pd.DataFrame({"changed_value": ["after"]})
+        changed.save()
+
+        state = agent.current_state_update(new_table_cutoff=cutoff)
+
+        self.assertEqual(state.count("COMPLETE COLUMN MANIFEST"), 1)
+        self.assertIn('"changed_value"', state)
+        self.assertNotIn('"unchanged_secret"', state)
+        self.assertIn(f"Table {unchanged.id} `unchanged`", state)
 
     def test_source_manifest_shares_value_summary_budget_across_sheets(self):
         dataset = Dataset.objects.create(title="Workbook budget")
@@ -3316,6 +3488,89 @@ class TableColumnManifestTests(TestCase):
         self.assertIn('values: "https://example.org/image.jpg" (1)', prompt)
         self.assertNotIn("&quot;", prompt)
         self.assertNotIn("Full list of columns", prompt)
+
+    def test_original_manifest_replaces_duplicate_working_table_manifest(self):
+        dataset = Dataset.objects.create(title="Deduplicated manifest", description="Test")
+        source_df = pd.DataFrame({
+            "occurrenceID": ["occ-1", "occ-2"],
+            "associatedMedia": ["https://example.org/one.jpg", None],
+        })
+        UserFile.objects.create(
+            dataset=dataset,
+            file="user_files/source.csv",
+            source_manifest=UserFile.build_source_manifest({"source.csv": source_df}),
+        )
+        Table.objects.create(dataset=dataset, title="source.csv", df=source_df)
+        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+
+        agent = Agent.create_with_system_message(
+            dataset=dataset,
+            task=task,
+            tables=list(dataset.table_set.all()),
+        )
+        prompt = agent.message_set.get(
+            openai_obj__role=Message.Role.SYSTEM,
+        ).openai_obj["content"]
+
+        self.assertEqual(prompt.count("COMPLETE COLUMN MANIFEST"), 1)
+        self.assertIn("ORIGINAL UPLOAD MANIFEST: source.csv", prompt)
+        self.assertIn("Complete column evidence for this unchanged source table", prompt)
+
+    def test_modified_working_table_keeps_its_current_manifest(self):
+        dataset = Dataset.objects.create(title="Changed source", description="Test")
+        original_df = pd.DataFrame({"old_column": ["one", "two"]})
+        UserFile.objects.create(
+            dataset=dataset,
+            file="user_files/source.csv",
+            source_manifest=UserFile.build_source_manifest({"source.csv": original_df}),
+        )
+        Table.objects.create(
+            dataset=dataset,
+            title="source.csv",
+            df=pd.DataFrame({"new_column": ["one", "two"]}),
+        )
+        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+
+        agent = Agent.create_with_system_message(
+            dataset=dataset,
+            task=task,
+            tables=list(dataset.table_set.all()),
+        )
+        prompt = agent.message_set.get(
+            openai_obj__role=Message.Role.SYSTEM,
+        ).openai_obj["content"]
+
+        self.assertEqual(prompt.count("COMPLETE COLUMN MANIFEST"), 2)
+        self.assertIn('"old_column"', prompt)
+        self.assertIn('"new_column"', prompt)
+
+    def test_value_only_change_keeps_current_working_table_manifest(self):
+        dataset = Dataset.objects.create(title="Changed values", description="Test")
+        source_df = pd.DataFrame({"status": ["draft", "draft"]})
+        UserFile.objects.create(
+            dataset=dataset,
+            file="user_files/source.csv",
+            source_manifest=UserFile.build_source_manifest({"source.csv": source_df}),
+        )
+        Table.objects.create(
+            dataset=dataset,
+            title="source.csv",
+            df=pd.DataFrame({"status": ["published", "published"]}),
+        )
+        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+
+        agent = Agent.create_with_system_message(
+            dataset=dataset,
+            task=task,
+            tables=list(dataset.table_set.all()),
+        )
+        prompt = agent.message_set.get(
+            openai_obj__role=Message.Role.SYSTEM,
+        ).openai_obj["content"]
+
+        self.assertEqual(prompt.count("COMPLETE COLUMN MANIFEST"), 2)
+        self.assertIn('values: "draft" (2)', prompt)
+        self.assertIn('values: "published" (2)', prompt)
 
     def test_original_upload_manifest_survives_working_table_replacement(self):
         dataset = Dataset.objects.create(title="Original manifest", description="Test")
@@ -4324,6 +4579,10 @@ class AgentWorkflowActionTests(TestCase):
         self.assertEqual(create_response_message_mock.call_count, 2)
         self.assertIsNotNone(agent.completed_at)
         retry_items = create_response_message_mock.call_args.kwargs["additional_input_items"]
+        self.assertEqual(
+            create_response_message_mock.call_args.kwargs["usage_retry_reason"],
+            "no_tool_call",
+        )
         self.assertIn("took no action", retry_items[-1]["content"])
         self.assertFalse(
             Message.objects.filter(

@@ -1,5 +1,6 @@
 import traceback
 import csv
+import hashlib
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.contrib.postgres.fields import ArrayField
@@ -769,6 +770,7 @@ class UserFile(models.Model):
                 {
                     "name": str(sheet_name),
                     **Table._column_manifest_data(df),
+                    "content_fingerprint": Table.calculate_content_fingerprint(df),
                     **(
                         {"excel_visibility": excel_visibility[sheet_name]}
                         if excel_visibility and sheet_name in excel_visibility else {}
@@ -1011,13 +1013,32 @@ class Table(models.Model):
 
         return df
 
+    @staticmethod
+    def calculate_content_fingerprint(df):
+        """Return a stable digest for a table's ordered columns and cell values."""
+        canonical_df = Table.make_columns_unique(df.copy())
+        serialized = canonical_df.to_json(
+            orient='split',
+            date_format='iso',
+            date_unit='ns',
+            force_ascii=True,
+            default_handler=str,
+        )
+        return hashlib.sha256(serialized.encode('utf-8')).hexdigest()
+
     @property
-    def str_snapshot(self):
+    def content_fingerprint(self):
+        return self.calculate_content_fingerprint(self.df)
+
+    @property
+    def str_preview(self):
         df = self.make_columns_unique(self.df.copy())
         original_rows, original_cols = self.df.shape
-        snapshot = self._snapshot_df(df).to_string() + f"\n\n[{original_rows} rows x {original_cols} columns]"
+        return self._snapshot_df(df).to_string() + f"\n\n[{original_rows} rows x {original_cols} columns]"
 
-        return snapshot + "\n\n" + self._generate_column_manifest(df)
+    @property
+    def str_snapshot(self):
+        return self.str_preview + "\n\n" + self.column_manifest
 
     @property
     def column_manifest(self):
@@ -1237,12 +1258,39 @@ class Agent(models.Model):
             snapshot_table_ids = {
                 table.id for table in tables if table.title in RESERVED_TABLE_NAMES
             }
+        include_source_manifests = self.task.name in self.SOURCE_MANIFEST_TASKS
+        source_manifest_covered_table_ids = set()
+        if include_source_manifests:
+            source_table_signatures = {
+                (
+                    str(source_table.get('name', '')),
+                    int(source_table.get('row_count', 0)),
+                    tuple(
+                        str(column.get('name', ''))
+                        for column in source_table.get('columns', [])
+                    ),
+                    source_table.get('content_fingerprint'),
+                )
+                for user_file in source_manifest_files
+                for source_table in (user_file.source_manifest or {}).get('tables', [])
+            }
+            source_manifest_covered_table_ids = {
+                table.id
+                for table in tables
+                if (
+                    str(table.title),
+                    table.row_count,
+                    tuple(table.columns or []),
+                    table.content_fingerprint,
+                ) in source_table_signatures
+            }
         context = {
             'agent': self,
             'all_tasks_count': Task.objects.count(),
             'new_table_cutoff': new_table_cutoff,
             'snapshot_table_ids': snapshot_table_ids,
-            'include_source_manifests': self.task.name in self.SOURCE_MANIFEST_TASKS,
+            'include_source_manifests': include_source_manifests,
+            'source_manifest_covered_table_ids': source_manifest_covered_table_ids,
             'prompt_user_files': user_files,
             'source_manifest_files': source_manifest_files,
             'legacy_tabular_files': legacy_tabular_files,
@@ -1430,6 +1478,7 @@ class Agent(models.Model):
                 reasoning_effort=self.task.reasoning_effort,
                 pdf_user_files=new_pdf_files_qs,
                 additional_input_items=state_items,
+                usage_agent_id=self.id,
             )
 
             # A non-final workflow task must either act, ask through the structured
@@ -1463,6 +1512,8 @@ class Agent(models.Model):
                             ),
                         },
                     ],
+                    usage_agent_id=self.id,
+                    usage_retry_reason="no_tool_call",
                 )
                 asks_for_user_input = any(
                     tool_call.function.name == agent_tools.RequestUserInput.__name__
@@ -1606,6 +1657,83 @@ class Message(models.Model):
     class Meta:
         get_latest_by = 'created_at'
         ordering = ['created_at']
+
+
+class OpenAIUsage(models.Model):
+    """Token usage and the contemporaneous cost estimate for one API response."""
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    dataset = models.ForeignKey(
+        Dataset,
+        on_delete=models.CASCADE,
+        related_name='openai_usage_records',
+    )
+    agent = models.ForeignKey(
+        Agent,
+        on_delete=models.CASCADE,
+        related_name='openai_usage_records',
+    )
+    task_name = models.CharField(max_length=300, blank=True)
+    response_id = models.CharField(max_length=200, unique=True)
+    response_status = models.CharField(max_length=40, blank=True)
+    retry_reason = models.CharField(max_length=100, blank=True)
+    model = models.CharField(max_length=100, blank=True)
+    reasoning_effort = models.CharField(max_length=30, blank=True)
+    service_tier = models.CharField(max_length=30, blank=True)
+    input_tokens = models.PositiveBigIntegerField(default=0)
+    cached_input_tokens = models.PositiveBigIntegerField(default=0)
+    cache_write_input_tokens = models.PositiveBigIntegerField(default=0)
+    output_tokens = models.PositiveBigIntegerField(default=0)
+    reasoning_tokens = models.PositiveBigIntegerField(default=0)
+    total_tokens = models.PositiveBigIntegerField(default=0)
+    long_context = models.BooleanField(default=False)
+    input_price_per_million = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        null=True,
+        blank=True,
+    )
+    cached_input_price_per_million = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        null=True,
+        blank=True,
+    )
+    output_price_per_million = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        null=True,
+        blank=True,
+    )
+    input_price_multiplier = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    output_price_multiplier = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    estimated_cost_usd = models.DecimalField(
+        max_digits=16,
+        decimal_places=6,
+        null=True,
+        blank=True,
+    )
+    pricing_source = models.URLField(max_length=500, blank=True)
+
+    class Meta:
+        ordering = ['created_at', 'id']
+        indexes = [
+            models.Index(fields=['dataset', 'created_at']),
+            models.Index(fields=['agent', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.response_id}: {self.input_tokens} in / {self.output_tokens} out'
 
 
 class DatasetAttentionNotification(models.Model):

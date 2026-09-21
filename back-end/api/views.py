@@ -1,6 +1,6 @@
 from rest_framework import serializers, viewsets, status
 from rest_framework.exceptions import ValidationError
-from api.serializers import DatasetSerializer, DatasetListSerializer, TablePageQuerySerializer, TableSerializer, MessageSerializer, AgentSerializer, TaskSerializer, UserFileSerializer
+from api.serializers import DatasetSerializer, DatasetListSerializer, OpenAIUsageSerializer, TablePageQuerySerializer, TableSerializer, MessageSerializer, AgentSerializer, TaskSerializer, UserFileSerializer
 from api.models import Dataset, Table, Message, Agent, Task, UserFile
 from rest_framework.response import Response
 from rest_framework.decorators import action, api_view, permission_classes
@@ -442,6 +442,33 @@ class DatasetViewSet(viewsets.ModelViewSet):
         """Automatically assign the current user to the dataset"""
         logger.info(f"DatasetViewSet.perform_create - User ID: {self.request.user.id}")
         serializer.save(user=self.request.user)
+
+    @action(detail=True, methods=['get'], url_path='openai-usage')
+    def openai_usage(self, request, *args, **kwargs):
+        """Return internal per-call token and cost accounting for a dataset."""
+        if not request.user.is_superuser:
+            return Response(
+                {'detail': 'OpenAI cost accounting is only available to administrators.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        from api.openai_usage import usage_summary
+
+        dataset = self.get_object()
+        records = dataset.openai_usage_records.select_related('agent').all()
+        by_stage = []
+        for task_name in records.order_by().values_list('task_name', flat=True).distinct():
+            stage_records = records.filter(task_name=task_name)
+            by_stage.append({
+                'task_name': task_name,
+                **usage_summary(stage_records),
+            })
+        return Response({
+            'dataset_id': dataset.id,
+            'summary': usage_summary(records),
+            'by_stage': by_stage,
+            'requests': OpenAIUsageSerializer(records, many=True).data,
+        })
 
     @action(
         detail=True,

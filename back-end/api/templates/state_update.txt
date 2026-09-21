@@ -16,10 +16,9 @@ Use strong candidates as priorities in the combined reviewer audit. Possible can
 Latest DwC-DP validation: {{ agent.dataset.dwc_dp_validation }}
 {% endif %}
 
-Current table manifest:
+Current table revisions (full evidence follows only for tables changed this turn):
 {% for table in tables %}
-- Table {{ table.id }} `{{ table.title|default:"(untitled)" }}`: {{ table.df.shape.0 }} rows x {{ table.df.shape.1 }} columns.
-{{ table.column_manifest|safe }}
+- Table {{ table.id }} `{{ table.title|default:"(untitled)" }}`: {{ table.row_count }} rows x {{ table.columns|length }} columns; revision {{ table.updated_at|date:"c" }}.
 {% endfor %}
 
 {% if changed_tables %}
@@ -27,7 +26,7 @@ Tables created or changed since the previous model turn:
 {% for table in changed_tables %}
 ---
 Table {{ table.id }} `{{ table.title|default:"(untitled)" }}`:
-{{ table.str_snapshot }}
+{{ table.str_snapshot|safe }}
 ---
 {% endfor %}
 {% endif %}
