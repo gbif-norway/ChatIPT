@@ -268,6 +268,9 @@ OPENAI_COMPACT_TOOL_CHARS = int(os.environ.get("OPENAI_COMPACT_TOOL_CHARS", "250
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.4")
 OPENAI_REASONING_EFFORT = os.environ.get("OPENAI_REASONING_EFFORT", "medium")
 OPENAI_SIMPLE_REASONING_EFFORT = os.environ.get("OPENAI_SIMPLE_REASONING_EFFORT", "low")
+# Soft, ignorable nudge only -- shown to the model in state_update.txt once a task
+# stage has made this many tool calls. Not an enforced limit.
+AGENT_CALL_COUNT_NUDGE_THRESHOLD = int(os.environ.get("AGENT_CALL_COUNT_NUDGE_THRESHOLD", "20"))
 
 # CORS settings for React frontend
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")

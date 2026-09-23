@@ -16,6 +16,19 @@ Use strong candidates as priorities in the combined reviewer audit. Possible can
 Latest DwC-DP validation: {{ agent.dataset.dwc_dp_validation }}
 {% endif %}
 
+Publication artifact status (authoritative -- trust this instead of re-running a tool to check):
+- DwC-DP package: {% if agent.dataset.dwc_dp_url %}exported at {{ agent.dataset.dwc_dp_url }}{% else %}not yet exported{% endif %}
+- DwC-A archive: {% if agent.dataset.dwca_url %}uploaded at {{ agent.dataset.dwca_url }}{% else %}not yet uploaded{% endif %}
+{% if agent.dataset.dwca_validation %}
+- GBIF validator: status {{ agent.dataset.dwca_validation.status|default:"UNKNOWN" }} for {{ agent.dataset.dwca_validation.url|default:"(no url recorded)" }}{% if agent.dataset.dwca_validation.url != agent.dataset.dwca_url %} -- STALE: does not match the current DwC-A URL above; the current archive still needs a fresh GBIF validation{% endif %}{% if agent.dataset.dwca_validation.key %}, resumable with validation_key {{ agent.dataset.dwca_validation.key }}{% endif %}
+{% else %}
+- GBIF validator: not yet run for the current archive
+{% endif %}
+
+{% if tool_call_count and tool_call_count > call_count_nudge_threshold %}
+Note: this task stage has made {{ tool_call_count }} tool calls so far. If the package above is already exported, uploaded, and valid, prefer calling SetAgentTaskToComplete over re-checking it again. If you're stuck on something specific, use RequestUserInput.
+{% endif %}
+
 Current table revisions (full evidence follows only for tables changed this turn):
 {% for table in tables %}
 - Table {{ table.id }} `{{ table.title|default:"(untitled)" }}`: {{ table.row_count }} rows x {{ table.columns|length }} columns; revision {{ table.updated_at|date:"c" }}.

@@ -1,6 +1,7 @@
 import sys
 from io import StringIO
 import calendar
+import hashlib
 from pydantic import Field, PositiveInt, BaseModel, EmailStr
 import re
 from functools import lru_cache
@@ -39,6 +40,7 @@ from api.dwc_specs import (
     DarwinCoreExtensionType,
 )
 from api.dwc_dp_specs import (
+    DWC_DP_SCHEMA_VERSION,
     RESERVED_TABLE_NAMES as DWC_DP_TABLE_NAMES,
     build_datapackage_descriptor,
     export_dwc_dp_package,
@@ -639,21 +641,24 @@ class DwcDpResourceTable(BaseModel):
     resource_name: str = Field(..., description="Reserved DwC-DP table name, e.g. occurrence, event, material.")
 
 
-def _dwc_dp_resources_from_mapping(dataset, resource_tables: Optional[List[DwcDpResourceTable]]):
+def _dwc_dp_resource_selection(dataset, resource_tables: Optional[List[DwcDpResourceTable]]):
+    """Resolve which DwC-DP resource name maps to which Table, without touching any
+    DataFrame. Shared by resource-building and fingerprinting so both stay in sync:
+    the fingerprint must fail closed (return None) on exactly the same mapping errors
+    that resource-building would raise, or a stale/invalid mapping could be trusted."""
     tables_by_id = {table.id: table for table in dataset.table_set.all()}
-    resources = {}
-    resource_sources = {}
+    selection = []  # list of (resource_name, table) pairs, in mapping order
     errors = []
 
-    def add_resource(resource_name, table):
-        if resource_name in resources:
+    def add(resource_name, table):
+        if any(name == resource_name for name, _ in selection):
+            existing_id = next(t.id for name, t in selection if name == resource_name)
             errors.append(
                 f"DwC-DP resource '{resource_name}' is mapped more than once "
-                f"(table ids {resource_sources[resource_name]} and {table.id})."
+                f"(table ids {existing_id} and {table.id})."
             )
             return
-        resources[resource_name] = table.df.copy()
-        resource_sources[resource_name] = table.id
+        selection.append((resource_name, table))
 
     if resource_tables:
         for item in resource_tables:
@@ -661,15 +666,110 @@ def _dwc_dp_resources_from_mapping(dataset, resource_tables: Optional[List[DwcDp
             if not table:
                 errors.append(f"Table id {item.table_id} does not belong to this dataset.")
                 continue
-            resource_name = normalize_resource_name(item.resource_name)
-            add_resource(resource_name, table)
+            add(normalize_resource_name(item.resource_name), table)
     else:
         for table in tables_by_id.values():
             resource_name = normalize_resource_name(table.title)
             if resource_name in DWC_DP_TABLE_NAMES:
-                add_resource(resource_name, table)
+                add(resource_name, table)
 
+    return selection, errors
+
+
+def _dwc_dp_resources_from_mapping(dataset, resource_tables: Optional[List[DwcDpResourceTable]]):
+    selection, errors = _dwc_dp_resource_selection(dataset, resource_tables)
+    resources = {resource_name: table.df.copy() for resource_name, table in selection}
     return resources, errors
+
+
+# Bump this whenever validate_dwc_dp_resources, export_dwc_dp_package, or the
+# resource-mapping/normalisation logic they depend on changes in a way that could
+# change a previously "valid" or "exported" result. It's folded into every
+# fingerprint below, so bumping it invalidates every cached validate/export result
+# across every dataset on the next deploy -- even ones whose tables never changed.
+# Without this, a validator bug fix or schema tightening would silently leave old
+# "valid" results trusted forever.
+_FINGERPRINT_CACHE_VERSION = 1
+
+
+def _dwc_dp_resource_fingerprint(dataset, resource_tables: Optional[List[DwcDpResourceTable]]) -> Optional[str]:
+    """
+    Cheap signature of exactly which tables are mapped to which DwC-DP resources and
+    their current content -- built from Table metadata only (id, row_count, columns,
+    updated_at), never from the DataFrame itself, so computing it costs nothing like a
+    real validation does. Also bakes in the DwC-DP standard's own schema version and
+    _FINGERPRINT_CACHE_VERSION, so a spec update or a change to our validation logic
+    invalidates every cached result rather than leaving stale "valid" answers trusted.
+
+    Two calls returning the same fingerprint mean the resource mapping, every mapped
+    table's content, and the validation logic itself are all unchanged (Table.save()
+    always refreshes row_count, columns, and updated_at when its data changes), so a
+    cached "valid" result from the last fingerprint match is still correct. Returns
+    None when the mapping itself is invalid; callers must not use a fingerprint
+    short-circuit in that case and should fall through to a full validation so the
+    real error surfaces.
+    """
+    selection, errors = _dwc_dp_resource_selection(dataset, resource_tables)
+    if errors:
+        return None
+    parts = [
+        f"schema_version:{DWC_DP_SCHEMA_VERSION}",
+        f"cache_version:{_FINGERPRINT_CACHE_VERSION}",
+        *(
+            f"{resource_name}:{table.id}:{table.row_count}:{table.updated_at.isoformat()}:{','.join(table.columns or [])}"
+            for resource_name, table in sorted(selection, key=lambda pair: pair[0])
+        ),
+    ]
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def _dwc_dp_export_fingerprint(
+    dataset,
+    resource_tables: Optional[List[DwcDpResourceTable]],
+    dataset_id_param: Optional[str],
+    version_param: Optional[str],
+) -> Optional[str]:
+    """
+    Fingerprint for ExportDwcDp, which also bakes in title/description/EML, the
+    publishing user's identity, and any attached tree files -- everything besides
+    the resource tables that ends up in the exported package. Metadata-only (no
+    file reads), same fail-closed behaviour as _dwc_dp_resource_fingerprint.
+    """
+    resource_fingerprint = _dwc_dp_resource_fingerprint(dataset, resource_tables)
+    if resource_fingerprint is None:
+        return None
+
+    from api.models import UserFile
+
+    # export_dwc_dp_package embeds the dataset's user directly into EML as the
+    # creator and metadataProvider (see publish.py's set_person calls), not just
+    # dataset.eml -- so a profile edit (name, email, ORCID) must invalidate a
+    # cached export even when nothing about the dataset itself changed, or the
+    # archive would keep shipping stale contact information indefinitely.
+    user = dataset.user
+    publisher_identity = "|".join([
+        (getattr(user, "email", None) or "") if user else "",
+        (getattr(user, "first_name", None) or "") if user else "",
+        (getattr(user, "last_name", None) or "") if user else "",
+        (getattr(user, "orcid_id", None) or "") if user else "",
+    ])
+
+    tree_identity = ",".join(
+        f"{user_file.filename}:{user_file.uploaded_at.isoformat()}"
+        for user_file in dataset.user_files.order_by("id")
+        if Path(user_file.filename).suffix.lower() in UserFile.TREE_EXTENSIONS
+    )
+    parts = [
+        resource_fingerprint,
+        dataset.title or "",
+        dataset.description or "",
+        json.dumps(dataset.eml or {}, sort_keys=True, ensure_ascii=False),
+        dataset_id_param or "",
+        version_param or "",
+        tree_identity,
+        publisher_identity,
+    ]
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
 
 def _validate_dwc_dp_for_dataset(dataset, resources):
@@ -726,11 +826,38 @@ class ValidateDwcDp(OpenAIBaseModel):
         try:
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
+
+            fingerprint = _dwc_dp_resource_fingerprint(dataset, self.resource_tables)
+            cached = dataset.dwc_dp_validation or {}
+            if (
+                fingerprint is not None
+                and cached.get("valid") is True
+                and cached.get("resource_fingerprint") == fingerprint
+            ):
+                # Every mapped table's content is byte-for-byte what it was the last
+                # time this exact mapping validated cleanly -- re-running the same
+                # validation would produce the same answer, so don't pay for it again.
+                return json.dumps(
+                    {
+                        "valid": True,
+                        "unchanged_since_last_validation": True,
+                        "message": (
+                            "No mapped table has changed since the last successful "
+                            "DwC-DP validation, so it was not re-run."
+                        ),
+                        "warnings": cached.get("warnings", []),
+                        "errors": [],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+
             resources, mapping_errors = _dwc_dp_resources_from_mapping(dataset, self.resource_tables)
             validation = _validate_dwc_dp_for_dataset(dataset, resources)
             if mapping_errors:
                 validation["valid"] = False
                 validation["errors"] = mapping_errors + validation["errors"]
+            validation["resource_fingerprint"] = fingerprint
             dataset.dwc_dp_validation = validation
             dataset.save(update_fields=["dwc_dp_validation"])
             return json.dumps(validation, ensure_ascii=False, indent=2)
@@ -755,11 +882,35 @@ class ExportDwcDp(OpenAIBaseModel):
         try:
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
+
+            export_fingerprint = _dwc_dp_export_fingerprint(
+                dataset, self.resource_tables, self.dataset_id, self.version
+            )
+            cached = dataset.dwc_dp_validation or {}
+            if (
+                export_fingerprint is not None
+                and dataset.dwc_dp_url
+                and cached.get("valid") is True
+                and cached.get("export_fingerprint") == export_fingerprint
+            ):
+                # Same tables, same mapping, same title/description/EML/version as the
+                # last successful export -- the package on disk is still correct, so
+                # skip re-validating, re-packaging, and re-uploading it.
+                warning_text = ""
+                if cached.get("warnings"):
+                    warning_text = "\nReview warnings:\n- " + "\n- ".join(cached["warnings"])
+                return (
+                    "Nothing has changed since the last successful export (same "
+                    "tables, mapping, and metadata), so it was not re-exported. The "
+                    f"existing package is still authoritative: {dataset.dwc_dp_url}{warning_text}"
+                )
+
             _remove_empty_dwc_dp_resources(dataset)
             resources, mapping_errors = _dwc_dp_resources_from_mapping(dataset, self.resource_tables)
             if mapping_errors:
                 return "Error: " + "; ".join(mapping_errors)
             validation = _validate_dwc_dp_for_dataset(dataset, resources)
+            validation["resource_fingerprint"] = _dwc_dp_resource_fingerprint(dataset, self.resource_tables)
             dataset.dwc_dp_validation = validation
             if not validation["valid"]:
                 dataset.save(update_fields=["dwc_dp_validation"])
@@ -776,6 +927,8 @@ class ExportDwcDp(OpenAIBaseModel):
                 additional_files=_tree_additional_files(dataset),
             )
             dataset.dwc_dp_url = url
+            validation["export_fingerprint"] = export_fingerprint
+            dataset.dwc_dp_validation = validation
             dataset.save(update_fields=["dwc_dp_url", "dwc_dp_validation"])
             warning_text = ""
             if validation["warnings"]:
@@ -2323,15 +2476,28 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
                 Task.PACKAGE_PREPARATION_TASK,
                 Task.PREPUBLICATION_QUALITY_TASK,
             }:
-                resources, mapping_errors = _dwc_dp_resources_from_mapping(agent.dataset, None)
-                if mapping_errors:
-                    return (
-                        f"Error: Cannot complete '{task_name}' because the current DwC-DP "
-                        f"resource mapping is invalid: {'; '.join(mapping_errors)}"
-                    )
-                validation = _validate_dwc_dp_for_dataset(agent.dataset, resources)
-                agent.dataset.dwc_dp_validation = validation
-                agent.dataset.save(update_fields=["dwc_dp_validation"])
+                fingerprint = _dwc_dp_resource_fingerprint(agent.dataset, None)
+                cached = agent.dataset.dwc_dp_validation or {}
+                if (
+                    fingerprint is not None
+                    and cached.get("valid") is True
+                    and cached.get("resource_fingerprint") == fingerprint
+                ):
+                    # Already validated (by ValidateDwcDp or ExportDwcDp) with nothing
+                    # changed since -- reuse that result instead of re-validating on
+                    # every completion attempt.
+                    validation = cached
+                else:
+                    resources, mapping_errors = _dwc_dp_resources_from_mapping(agent.dataset, None)
+                    if mapping_errors:
+                        return (
+                            f"Error: Cannot complete '{task_name}' because the current DwC-DP "
+                            f"resource mapping is invalid: {'; '.join(mapping_errors)}"
+                        )
+                    validation = _validate_dwc_dp_for_dataset(agent.dataset, resources)
+                    validation["resource_fingerprint"] = fingerprint
+                    agent.dataset.dwc_dp_validation = validation
+                    agent.dataset.save(update_fields=["dwc_dp_validation"])
                 if not validation["valid"]:
                     details = "; ".join(validation["errors"][:5])
                     return (
@@ -2835,6 +3001,14 @@ class ValidateDwCA(OpenAIBaseModel):
                 if attempt < self.max_poll_attempts - 1:
                     time.sleep(self.poll_interval_seconds)
 
+            # GBIF validation of a real archive routinely takes well over 10 minutes.
+            # next_recheck_at tells the orchestrator (Agent.next_message) how long to
+            # wait before it's even worth spending another paid model turn just to
+            # call this tool again -- polling more often than GBIF can possibly have
+            # finished only burns tokens on "still running" round trips.
+            next_recheck_at = (
+                timezone.now() + datetime.timedelta(seconds=self.poll_interval_seconds)
+            ).isoformat()
             running_msg = {
                 'status': 'RUNNING',
                 'message': 'Validation is still running. Call ValidateDwCA again with validation_key to continue polling.',
@@ -2842,6 +3016,7 @@ class ValidateDwCA(OpenAIBaseModel):
                 'url': validation_url,
                 'last_seen_status': last_status,
                 'last_seen_payload': last_payload,
+                'next_recheck_at': next_recheck_at,
             }
             return json.dumps(running_msg)
 

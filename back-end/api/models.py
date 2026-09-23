@@ -1,6 +1,8 @@
 import traceback
 import csv
 import hashlib
+import datetime
+from django.utils import timezone
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.contrib.postgres.fields import ArrayField
@@ -1329,7 +1331,24 @@ class Agent(models.Model):
                 'tables': tables,
                 'changed_tables': changed_tables,
                 'relational_candidate_report': relational_candidate_report,
+                'tool_call_count': self.tool_call_count,
+                'call_count_nudge_threshold': getattr(
+                    settings, "AGENT_CALL_COUNT_NUDGE_THRESHOLD", 20
+                ),
             },
+        )
+
+    @property
+    def tool_call_count(self):
+        """How many tool-calling turns this agent has made so far in this task
+        stage. Surfaced back to the model as a soft, ignorable nudge -- not a
+        limit -- once it crosses a threshold, so a model that's been checking
+        the same thing repeatedly has a chance to notice on its own."""
+        return sum(
+            1
+            for message in self.message_set.all()
+            if (message.openai_obj or {}).get('role') == Message.Role.ASSISTANT
+            and (message.openai_obj or {}).get('tool_calls')
         )
 
     def messages_for_model(self):
@@ -1349,9 +1368,42 @@ class Agent(models.Model):
             if (message.openai_obj or {}).get('role') == Message.Role.ASSISTANT
             and (message.openai_obj or {}).get('tool_calls')
         ]
-        kept_tool_messages = set(
-            message.id for message in tool_assistant_messages[-tool_turn_limit:]
-        ) if tool_turn_limit else set()
+
+        # Both retention (how far back anything is kept at all, even compacted) and
+        # the full-vs-compacted split are expressed in fixed-size batches counted
+        # from the start of this agent's tool-call history, rather than a sliding
+        # "last N" window measured from the newest message. A sliding window drops
+        # (or promotes/demotes) exactly one turn on every single new turn, which
+        # rewrites a chunk of the prompt on every call and defeats prompt caching
+        # for everything after that point. Batching means a turn's kept/compacted
+        # status only changes once, when its batch closes, so the cached prefix can
+        # actually grow turn over turn instead of shifting every time. This can
+        # retain a few more older turns than OPENAI_TOOL_HISTORY_TURNS asks for
+        # (rounded up to a whole batch) -- a small, bounded token-budget cost in
+        # exchange for the cache actually holding.
+        batch_size = full_tool_turn_limit if full_tool_turn_limit > 0 else max(tool_turn_limit, 1)
+        kept_tool_messages = set()
+        full_tool_messages = set()
+        if tool_assistant_messages:
+            total_batches = (len(tool_assistant_messages) - 1) // batch_size + 1
+            current_batch = total_batches - 1
+
+            if tool_turn_limit:
+                retained_batches = max(-(-tool_turn_limit // batch_size), 1)  # ceil
+                oldest_kept_batch = max(total_batches - retained_batches, 0)
+                kept_tool_messages = {
+                    message.id
+                    for index, message in enumerate(tool_assistant_messages)
+                    if index // batch_size >= oldest_kept_batch
+                }
+
+            if full_tool_turn_limit:
+                full_tool_messages = {
+                    message.id
+                    for index, message in enumerate(tool_assistant_messages)
+                    if message.id in kept_tool_messages and index // full_tool_turn_limit == current_batch
+                }
+
         kept_call_ids = {
             str(tool_call.get('id'))
             for message in tool_assistant_messages
@@ -1359,9 +1411,6 @@ class Agent(models.Model):
             for tool_call in ((message.openai_obj or {}).get('tool_calls') or [])
             if tool_call.get('id')
         }
-        full_tool_messages = {
-            message.id for message in tool_assistant_messages[-full_tool_turn_limit:]
-        } if full_tool_turn_limit else set()
         full_call_ids = {
             str(tool_call.get('id'))
             for message in tool_assistant_messages
@@ -1435,6 +1484,28 @@ class Agent(models.Model):
         half = max_chars // 2
         return arguments[:half] + "...[compacted]..." + arguments[-half:]
 
+    @staticmethod
+    def _gbif_poll_status(last_message):
+        """If the last tool result is ValidateDwCA reporting the archive is still
+        running through the GBIF validator, return its parsed payload; otherwise
+        None. GBIF validation of a real archive routinely takes well over 10
+        minutes, so this lets next_message() recognise "we're just waiting on
+        GBIF" and treat that turn differently instead of burning a full paid model
+        call purely to be told 'still running' again."""
+        openai_obj = getattr(last_message, 'openai_obj', None) or {}
+        if openai_obj.get('role') != Message.Role.TOOL:
+            return None
+        content = openai_obj.get('content')
+        if not isinstance(content, str):
+            return None
+        try:
+            payload = json.loads(content)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict) or payload.get('status') != 'RUNNING' or 'validation_key' not in payload:
+            return None
+        return payload
+
     def next_message(self):
         last_message = self.message_set.last()
         print(f'Last message role: {last_message.role}, Completed at value for this agent: {self.completed_at}')
@@ -1442,6 +1513,21 @@ class Agent(models.Model):
             return None
         if self.busy_thinking:
             return last_message
+
+        gbif_poll = self._gbif_poll_status(last_message)
+        if gbif_poll:
+            next_recheck_at = gbif_poll.get('next_recheck_at')
+            if next_recheck_at:
+                try:
+                    recheck_time = datetime.datetime.fromisoformat(next_recheck_at)
+                except (TypeError, ValueError):
+                    recheck_time = None
+                if recheck_time and timezone.now() < recheck_time:
+                    # Not worth a full-context, full-price model turn just to be
+                    # told "still running" again before GBIF could plausibly be
+                    # done. The next poll (from the front end, or a scheduled
+                    # check) will retry this same check.
+                    return last_message
 
         # Otherwise we need to send it to GPT, last message was from the user, was the return from a function, or was the starting system message
         self.busy_thinking = True
@@ -1471,11 +1557,21 @@ class Agent(models.Model):
             ):
                 new_pdf_files_qs = self.dataset.user_files.none()
 
+            # Resuming a GBIF poll ("is it done yet? if not, call ValidateDwCA
+            # again") is a mechanical continuation with no domain judgment involved
+            # -- use the cheaper reasoning tier reserved for routine steps instead
+            # of the task's normal effort.
+            reasoning_effort = self.task.reasoning_effort
+            if gbif_poll:
+                reasoning_effort = getattr(
+                    settings, "OPENAI_SIMPLE_REASONING_EFFORT", reasoning_effort
+                )
+
             # Main GPT interaction
             response_message = create_response_message(
                 model_messages,
                 self.task.functions,
-                reasoning_effort=self.task.reasoning_effort,
+                reasoning_effort=reasoning_effort,
                 pdf_user_files=new_pdf_files_qs,
                 additional_input_items=state_items,
                 usage_agent_id=self.id,

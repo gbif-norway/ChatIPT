@@ -222,6 +222,8 @@
     text: |-
       QUALITY_GATE_TASK: Independently assess the completed publication artifacts. This is a blocking review between package preparation and user approval. Do not publish in this task.
 
+      Package preparation already built, validated, and exported the current DwC-DP and DwC-A artifacts. Trust the publication artifact status in your state update for what already succeeded instead of re-running ValidateDwcDp, ExportDwcDp, or UploadDwCA speculatively to double-check it. Only rebuild and re-export the specific package(s) that a finding from your audit actually invalidates.
+
       1. **Perform one combined source-to-publication audit:**
          * Compare the original uploaded tables/files, authoritative DwC-DP resources, DwC-A core/extensions, and exported EML.
          * The immutable ORIGINAL UPLOAD MANIFEST is the source inventory when available. For older uploads without one, or when row-level source evidence is needed, retrieve the file through `Dataset.objects.get(id=...).user_files` and call `extract_data()` on that user-file object. Do not call RollBack, which deletes the current package tables.
