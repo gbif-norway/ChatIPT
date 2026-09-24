@@ -2,6 +2,7 @@ import traceback
 import csv
 import hashlib
 import datetime
+from decimal import Decimal, InvalidOperation
 from django.utils import timezone
 from django.db import models
 from django.utils.translation import gettext_lazy as _
@@ -1491,6 +1492,52 @@ class Agent(models.Model):
             },
         )
 
+    @property
+    def dataset_estimated_cost_usd(self):
+        """Recorded, priced OpenAI spend across every agent for this dataset."""
+        total = self.dataset.openai_usage_records.aggregate(
+            total=models.Sum('estimated_cost_usd')
+        )['total']
+        return total or Decimal('0')
+
+    @property
+    def dataset_cost_limit_usd(self):
+        try:
+            return max(
+                Decimal(str(getattr(settings, 'OPENAI_DATASET_COST_LIMIT_USD', '2.20'))),
+                Decimal('0'),
+            )
+        except (InvalidOperation, TypeError, ValueError):
+            logging.getLogger(__name__).error(
+                "Invalid OPENAI_DATASET_COST_LIMIT_USD setting"
+            )
+            return Decimal('0')
+
+    def _dataset_cost_limit_reached(self):
+        limit = self.dataset_cost_limit_usd
+        return bool(limit and self.dataset_estimated_cost_usd >= limit)
+
+    def _pause_for_cost_limit(self):
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "Stopping dataset %s at estimated OpenAI cost %s (limit %s)",
+            self.dataset_id,
+            self.dataset_estimated_cost_usd,
+            self.dataset_cost_limit_usd,
+        )
+        return Message.objects.create(
+            agent=self,
+            openai_obj={
+                'role': Message.Role.ASSISTANT,
+                'content': (
+                    "This dataset has reached its automated processing limit, so I've stopped "
+                    "here to prevent further charges. Please contact the ChatIPT team if you "
+                    "would like the dataset reviewed or the limit adjusted."
+                ),
+                'cost_limit_pause': True,
+            },
+        )
+
     def messages_for_model(self):
         messages = list(self.message_set.all())
         tool_turn_limit = max(int(getattr(settings, "OPENAI_TOOL_HISTORY_TURNS", 8)), 0)
@@ -1665,6 +1712,9 @@ class Agent(models.Model):
         if self.busy_thinking:
             return last_message
 
+        if self._dataset_cost_limit_reached():
+            return [self._pause_for_cost_limit()]
+
         if self.no_progress_guarded and self.no_progress_stop_turns:
             turns = self.turns_without_progress()
             if turns >= self.no_progress_stop_turns:
@@ -1746,6 +1796,8 @@ class Agent(models.Model):
             )
             if not response_message.tool_calls and completion_tool_available:
                 first_response_content = getattr(response_message, "content", "") or ""
+                if self._dataset_cost_limit_reached():
+                    return [self._pause_for_cost_limit()]
                 response_message = create_response_message(
                     model_messages,
                     self.task.functions,

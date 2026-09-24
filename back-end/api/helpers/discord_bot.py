@@ -2,6 +2,7 @@ import os
 from typing import Optional, Dict, Any
 
 import requests
+from django.conf import settings
 
 
 def get_developer_user_id() -> str:
@@ -22,14 +23,25 @@ def get_developer_mention() -> str:
 
 
 def send_discord_message(message: str, allowed_mentions: Optional[Dict[str, Any]] = None):
+    # Never let a developer machine or CI test run notify the production Discord
+    # channel, even if its environment inherited a real webhook.
+    if getattr(settings, "TESTING", False) or os.getenv("PYTEST_CURRENT_TEST"):
+        return False
+
+    webhook = os.getenv('DISCORD_WEBHOOK', '').strip()
+    if not webhook:
+        return False
+
     print(message)
     payload: Dict[str, Any] = {"content": message}
     if allowed_mentions is not None:
         payload["allowed_mentions"] = allowed_mentions
 
-    response = requests.post(os.getenv('DISCORD_WEBHOOK'), json=payload)
+    response = requests.post(webhook, json=payload)
 
     if response.status_code == 204:
         print("Message sent successfully.")
+        return True
     else:
         print(f"Failed to send message. Status code: {response.status_code}")
+        return False

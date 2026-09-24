@@ -1,5 +1,6 @@
 import datetime
 import json
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -13,7 +14,7 @@ from api.helpers.openai_helpers import (
     CompatFunctionCall,
     CompatToolCall,
 )
-from api.models import Agent, Dataset, Message, Table, Task
+from api.models import Agent, Dataset, Message, OpenAIUsage, Table, Task
 from api.schema_ledger import (
     LEVEL_FIELDS,
     LEVEL_KEYS,
@@ -350,3 +351,75 @@ class VerificationLoopTests(AgentFixtureMixin, TestCase):
             "role": "tool", "tool_call_id": "notes", "content": "ok",
         })
         self.assertEqual(self.agent.turns_without_progress(), 0)
+
+
+class DatasetCostLimitTests(AgentFixtureMixin, TestCase):
+    def add_cost(self, amount, response_id="cost-1"):
+        return OpenAIUsage.objects.create(
+            dataset=self.dataset,
+            agent=self.agent,
+            task_name=self.task.name,
+            response_id=response_id,
+            estimated_cost_usd=Decimal(amount),
+        )
+
+    @override_settings(OPENAI_DATASET_COST_LIMIT_USD=Decimal("2.20"))
+    @patch("api.models.create_response_message")
+    def test_dataset_at_limit_stops_before_another_model_call(self, create_response_message_mock):
+        self.add_cost("2.20")
+
+        messages = self.agent.next_message()
+
+        create_response_message_mock.assert_not_called()
+        self.assertTrue(messages[-1].openai_obj.get("cost_limit_pause"))
+        self.assertIn("automated processing limit", messages[-1].openai_obj["content"])
+        self.agent.refresh_from_db()
+        self.assertFalse(self.agent.busy_thinking)
+
+    @override_settings(OPENAI_DATASET_COST_LIMIT_USD=Decimal("2.20"))
+    @patch("api.models.create_response_message")
+    def test_user_cannot_bypass_dataset_limit_with_continue(self, create_response_message_mock):
+        self.add_cost("2.21")
+        self.agent.next_message()
+        Message.objects.create(
+            agent=self.agent,
+            openai_obj={"role": "user", "content": "continue"},
+        )
+
+        messages = self.agent.next_message()
+
+        create_response_message_mock.assert_not_called()
+        self.assertTrue(messages[-1].openai_obj.get("cost_limit_pause"))
+
+    @override_settings(OPENAI_DATASET_COST_LIMIT_USD=Decimal("2.20"))
+    @patch("api.models.create_response_message")
+    def test_limit_prevents_automatic_no_tool_retry(self, create_response_message_mock):
+        def first_call(*_args, **_kwargs):
+            self.add_cost("2.21")
+            return CompatAssistantMessage(content="I did not choose a tool.")
+
+        create_response_message_mock.side_effect = first_call
+
+        messages = self.agent.next_message()
+
+        self.assertEqual(create_response_message_mock.call_count, 1)
+        self.assertTrue(messages[-1].openai_obj.get("cost_limit_pause"))
+
+    @override_settings(OPENAI_DATASET_COST_LIMIT_USD=Decimal("0"))
+    @patch("api.models.create_response_message")
+    def test_zero_disables_dataset_limit(self, create_response_message_mock):
+        self.add_cost("20.00")
+        create_response_message_mock.return_value = CompatAssistantMessage(
+            content="Done.",
+            tool_calls=[CompatToolCall(
+                id="complete",
+                function=CompatFunctionCall(
+                    name="SetAgentTaskToComplete",
+                    arguments=json.dumps({"agent_id": self.agent.id}),
+                ),
+            )],
+        )
+
+        self.agent.next_message()
+
+        create_response_message_mock.assert_called_once()

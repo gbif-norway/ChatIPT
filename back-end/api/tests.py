@@ -58,6 +58,7 @@ from .helpers.openai_helpers import (
     _response_to_compat_message,
     create_response_message,
 )
+from .helpers import discord_bot
 from .models import Agent, CustomUser, Dataset, Message, OpenAIUsage, Table, Task, UserFile
 from .openai_usage import record_response_usage, response_usage_defaults, usage_summary
 from .serializers import DatasetListSerializer, DatasetSerializer, UserFileSerializer
@@ -1904,6 +1905,15 @@ class ExcelWorkbookRepairTests(SimpleTestCase):
 
 
 class LogBugWithDeveloperTests(SimpleTestCase):
+    @override_settings(TESTING=True)
+    @patch("api.helpers.discord_bot.requests.post")
+    def test_test_suite_never_posts_to_discord(self, requests_post_mock):
+        with patch.dict(os.environ, {"DISCORD_WEBHOOK": "https://discord.invalid/webhook"}, clear=False):
+            sent = discord_bot.send_discord_message("This must stay local")
+
+        self.assertFalse(sent)
+        requests_post_mock.assert_not_called()
+
     @patch("api.agent_tools.discord_bot.send_discord_message")
     def test_uses_discord_user_id_for_direct_mention(self, send_discord_message_mock):
         with patch.dict(os.environ, {"DISCORD_DEVELOPER_USER_ID": "1234567890"}, clear=False):
