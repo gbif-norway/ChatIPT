@@ -30,7 +30,14 @@ Note: this task stage has made {{ tool_call_count }} tool calls so far. If the p
 {% endif %}
 
 {% if no_progress_warn_turns and no_progress_turns >= no_progress_warn_turns %}
-NO PROGRESS: the last {{ no_progress_turns }} tool turns changed nothing: no table written, no notes saved, no user input. Validation, lookups and read-only Python checks do not count. Stop re-checking what you have already verified. Your next action must be one of: write a remaining package change; save your findings with SetStructureNotes{% if agent.task.name == "Data transformation" %} (if the package already validates, this means the final source coverage report now, based on ReconcileSourceCoverage, marking anything not yet verified as unresolved instead of checking it again){% endif %}; ask with RequestUserInput; or call SetAgentTaskToComplete.{% if no_progress_stop_turns %} The workflow pauses after {{ no_progress_stop_turns }} turns without progress.{% endif %}
+NO PROGRESS: the last {{ no_progress_turns }} tool turns changed nothing: no table written, no notes saved, no user input. Validation, lookups, read-only Python checks, and exports or uploads that changed nothing do not count. Stop re-checking what you have already verified. Your next action must be one of: write a remaining package change; save your findings with SetStructureNotes{% if agent.task.name == "Data transformation" %} (if the package already validates, this means the final source coverage report now, based on ReconcileSourceCoverage, marking anything not yet verified as unresolved instead of checking it again){% endif %}; ask with RequestUserInput; or call SetAgentTaskToComplete.{% if no_progress_stop_turns %} The workflow pauses after {{ no_progress_stop_turns }} turns without progress.{% endif %}
+{% if agent.task.name == "Publication package preparation" %}{% if not dwc_dp_export_current %}
+Next required step: the current DwC-DP tables are not exported yet. Fix what ValidateDwcDp reports by writing the affected tables, then call ExportDwcDp.
+{% elif not dwca_uploaded_this_task %}
+Next required step: the current DwC-DP tables are already validated and exported, so do not validate or export them again. Use Python now to create the temporary core table and one table per chosen extension (each with `_coreid`) from the DwC-DP tables, using the DWC-A TERM LEDGER for term definitions, then call UploadDwCA. Where a term's fit is still uncertain, record it as a projection limitation or preserve it in dynamicProperties instead of looking it up again.
+{% else %}
+Next required step: both packages exist. Record the projection decisions, coverage, and package URLs with SetStructureNotes, then call SetAgentTaskToComplete.
+{% endif %}{% endif %}
 
 {% endif %}
 {% if schema_ledger %}

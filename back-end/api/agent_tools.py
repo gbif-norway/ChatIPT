@@ -409,6 +409,86 @@ class GetDarwinCoreInfo(OpenAIBaseModel):
         return "\n".join(lines)
 
 
+def _extension_lookup_key(value: str) -> str:
+    normalized = str(value or "").strip().casefold()
+    if normalized.endswith(".xml"):
+        normalized = normalized[:-4]
+    normalized = re.sub(r"_\d{4}-\d{2}-\d{2}$", "", normalized)
+    return re.sub(r"[^a-z0-9]+", "", normalized)
+
+
+def _resolve_extension(value: str):
+    """(extension_type, schema) for an extension key, title, or filename, or None."""
+    requested = _extension_lookup_key(value)
+    for extension_type, schema in EXTENSION_SCHEMAS.items():
+        candidates = {
+            _extension_lookup_key(extension_type.value),
+            _extension_lookup_key(schema.key),
+            _extension_lookup_key(schema.title),
+            _extension_lookup_key(schema.local_filename),
+        }
+        if requested in candidates:
+            return extension_type, schema
+    return None
+
+
+@lru_cache(maxsize=None)
+def _extension_term_definitions(extension_value: str) -> Dict[str, tuple[str, str]]:
+    """{casefolded term name: (name, description)} from a vendored extension XML."""
+    match = _resolve_extension(extension_value)
+    if match is None:
+        return {}
+    root = ET.parse(match[1].spec_path).getroot()
+    definitions = {}
+    for element in root:
+        if element.tag.rsplit("}", 1)[-1] != "property":
+            continue
+        name = element.attrib.get("name", "")
+        if name:
+            definitions[name.casefold()] = (
+                name,
+                element.attrib.get("{http://purl.org/dc/terms/}description", "").strip(),
+            )
+    return definitions
+
+
+class DwcTermReference:
+    """Vendored Darwin Core and extension references for ``schema_ledger.DwcReference``."""
+
+    def dwc_section(self, section):
+        quick_reference = _load_dwc_quick_reference()
+        section_name = _find_matching_section(quick_reference, section)
+        if section_name is None:
+            return None
+        return section_name, list(quick_reference[section_name])
+
+    def dwc_term(self, term):
+        lookup_key = _normalize_lookup_key(str(term))
+        if not lookup_key:
+            return None
+        for section_name, terms in _load_dwc_quick_reference().items():
+            for term_name, definition in terms.items():
+                if _normalize_lookup_key(term_name) == lookup_key:
+                    return term_name, section_name, _strip_examples(definition)
+        return None
+
+    def extensions(self):
+        return [extension_type.value for extension_type in EXTENSION_SCHEMAS]
+
+    def extension(self, value):
+        match = _resolve_extension(value)
+        if match is None:
+            return None
+        extension_type, schema = match
+        return extension_type.value, schema.title, tuple(schema.compatible_cores), tuple(schema.terms)
+
+    def extension_term(self, key, term):
+        try:
+            return _extension_term_definitions(key).get(str(term).strip().casefold())
+        except Exception:
+            return None
+
+
 class GetDwCExtensionInfo(OpenAIBaseModel):
     """
     Return the registered DwC-A extension catalogue with projection guidance.
@@ -433,14 +513,6 @@ class GetDwCExtensionInfo(OpenAIBaseModel):
             "['measurementTypeID', 'measurementValueID']."
         ),
     )
-
-    @staticmethod
-    def _lookup_key(value: str) -> str:
-        normalized = str(value or "").strip().casefold()
-        if normalized.endswith(".xml"):
-            normalized = normalized[:-4]
-        normalized = re.sub(r"_\d{4}-\d{2}-\d{2}$", "", normalized)
-        return re.sub(r"[^a-z0-9]+", "", normalized)
 
     @staticmethod
     def _guidance_lines(extension_type, schema) -> list[str]:
@@ -469,18 +541,7 @@ class GetDwCExtensionInfo(OpenAIBaseModel):
             ])
             return "\n".join(lines)
 
-        requested = self._lookup_key(self.extension)
-        match = None
-        for extension_type, schema in EXTENSION_SCHEMAS.items():
-            candidates = {
-                self._lookup_key(extension_type.value),
-                self._lookup_key(schema.key),
-                self._lookup_key(schema.title),
-                self._lookup_key(schema.local_filename),
-            }
-            if requested in candidates:
-                match = (extension_type, schema)
-                break
+        match = _resolve_extension(self.extension)
         if match is None:
             return (
                 f"Extension '{self.extension}' not recognised. "
@@ -801,6 +862,15 @@ def _dwc_dp_resource_fingerprint(dataset, resource_tables: Optional[List[DwcDpRe
         ),
     ]
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def dwc_dp_export_is_current(dataset) -> bool:
+    """True when the exported DwC-DP was built from the current resource tables."""
+    cached = dataset.dwc_dp_validation or {}
+    if not (dataset.dwc_dp_url and cached.get("valid") is True and cached.get("export_fingerprint")):
+        return False
+    fingerprint = _dwc_dp_resource_fingerprint(dataset, None)
+    return fingerprint is not None and cached.get("resource_fingerprint") == fingerprint
 
 
 def _dwc_dp_export_fingerprint(

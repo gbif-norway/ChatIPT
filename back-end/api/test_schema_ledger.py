@@ -7,7 +7,12 @@ from unittest.mock import patch
 import pandas as pd
 from django.test import SimpleTestCase, TestCase, override_settings
 
-from api.agent_tools import GetDwcDpTableInfo, SetWorkingPlan
+from api.agent_tools import (
+    DwcTermReference,
+    GetDwcDpTableInfo,
+    SetWorkingPlan,
+    _dwc_dp_resource_fingerprint,
+)
 from api.dwc_dp_specs import get_table_spec
 from api.helpers.openai_helpers import (
     CompatAssistantMessage,
@@ -18,9 +23,13 @@ from api.models import Agent, Dataset, Message, OpenAIUsage, Table, Task
 from api.schema_ledger import (
     LEVEL_FIELDS,
     LEVEL_KEYS,
+    dwc_lookups,
     lookup_is_covered,
+    plan_dwc_lookup,
+    render_dwc_ledger,
     render_field_details,
     render_table_manifest,
+    result_is_progress,
     schema_lookups,
     turns_since_progress,
 )
@@ -423,3 +432,236 @@ class DatasetCostLimitTests(AgentFixtureMixin, TestCase):
         self.agent.next_message()
 
         create_response_message_mock.assert_called_once()
+
+
+def tool_turn(call_id, name, args, result):
+    return [
+        {"role": "assistant", "content": "", "tool_calls": [{
+            "id": call_id, "type": "function",
+            "function": {"name": name, "arguments": json.dumps(args)},
+        }]},
+        {"role": "tool", "tool_call_id": call_id, "content": result},
+    ]
+
+
+class ArtifactProgressTests(SimpleTestCase):
+    """Dataset 526: a no-op ExportDwcDp between term lookups reset the limit."""
+
+    def entries(self, *turns):
+        t0 = datetime.datetime(2026, 9, 24, 14, 37)
+        entries = [(t0, {"role": "user", "content": "go"})]
+        for index, (name, result) in enumerate(turns, start=1):
+            clock = t0 + datetime.timedelta(seconds=index)
+            for obj in tool_turn(f"call-{index}", name, {}, result):
+                entries.append((clock, obj))
+        return entries
+
+    def test_only_artifact_changes_count_as_progress(self):
+        lookup = ("GetDwCExtensionInfo", "Projection guidance: ...")
+        cases = {
+            "DwC-DP successfully created and uploaded: https://x/dp.tar.gz": 0,
+            "Nothing has changed since the last successful export (same tables, mapping, and metadata), so it was not re-exported.": 3,
+            "DwC-DP validation failed; package was not exported:\n{}": 3,
+        }
+        for export_result, expected in cases.items():
+            entries = self.entries(lookup, ("ExportDwcDp", export_result))
+            self.assertEqual(turns_since_progress(entries + self.entries(lookup)[1:]), expected, export_result)
+
+        rejected = json.dumps({"status": "correction_required"})
+        self.assertEqual(turns_since_progress(self.entries(lookup, ("UploadDwCA", rejected), lookup)), 3)
+        uploaded = "DwCA successfully created and uploaded: https://x/dwca.zip"
+        self.assertEqual(turns_since_progress(self.entries(lookup, ("UploadDwCA", uploaded))), 0)
+
+    def test_result_is_progress(self):
+        self.assertTrue(result_is_progress("SetStructureNotes", "ok"))
+        self.assertFalse(result_is_progress("SetStructureNotes", "ERROR CALLING FUNCTION: bad"))
+        self.assertFalse(result_is_progress("GetDarwinCoreInfo", "Darwin Core term lookup results:"))
+
+
+class DwcTermLedgerTests(SimpleTestCase):
+    def setUp(self):
+        self.ref = DwcTermReference()
+
+    def lookups(self, *calls):
+        objs = []
+        for index, (name, args, result) in enumerate(calls):
+            objs += tool_turn(f"call-{index}", name, args, result)
+        return dwc_lookups(objs, self.ref)
+
+    def test_repeat_extension_terms_run_only_what_is_new(self):
+        lookups = self.lookups(
+            ("GetDwCExtensionInfo", {"extension": "dna_derived_data", "terms": ["DNA_sequence", "seq_meth"]}, "Projection guidance:"),
+        )
+        args, prefix = plan_dwc_lookup(
+            lookups, "GetDwCExtensionInfo",
+            {"extension": "DNA Derived Data", "terms": ["dna_sequence", "sop"]}, self.ref,
+        )
+        self.assertEqual(args["terms"], ["sop"])
+        self.assertIn("not repeated: dna_sequence", prefix)
+
+        args, prefix = plan_dwc_lookup(
+            lookups, "GetDwCExtensionInfo", {"extension": "dna_derived_data", "terms": ["seq_meth"]}, self.ref,
+        )
+        self.assertIsNone(args)
+        self.assertTrue(prefix.startswith("Not re-run"))
+
+        args, prefix = plan_dwc_lookup(lookups, "GetDwCExtensionInfo", {"extension": "dna_derived_data"}, self.ref)
+        self.assertIsNone(args)
+        self.assertIn("Registered `dna_derived_data` terms:", prefix)
+
+        # An extension not looked up yet runs normally.
+        args, prefix = plan_dwc_lookup(lookups, "GetDwCExtensionInfo", {"extension": "occurrence"}, self.ref)
+        self.assertEqual((args, prefix), ({"extension": "occurrence"}, ""))
+
+    def test_catalogue_sections_and_terms(self):
+        lookups = self.lookups(
+            ("GetDwCExtensionInfo", {}, "Darwin Core extension projection catalogue:"),
+            ("GetDarwinCoreInfo", {"section": "Event", "max_terms": 5}, "Event (24 terms total):"),
+            ("GetDarwinCoreInfo", {"terms": ["basisOfRecord", "notATerm"]}, "Darwin Core term lookup results:"),
+        )
+        self.assertIsNone(plan_dwc_lookup(lookups, "GetDwCExtensionInfo", {}, self.ref)[0])
+        self.assertIsNone(plan_dwc_lookup(lookups, "GetDarwinCoreInfo", {"section": "event", "max_terms": 3}, self.ref)[0])
+        # A longer listing than was shown still runs.
+        self.assertIsNotNone(plan_dwc_lookup(lookups, "GetDarwinCoreInfo", {"section": "Event"}, self.ref)[0])
+        self.assertIsNone(plan_dwc_lookup(lookups, "GetDarwinCoreInfo", {"terms": ["basis_of_record"]}, self.ref)[0])
+        # Unknown terms were never recorded, so they are passed through.
+        self.assertEqual(
+            plan_dwc_lookup(lookups, "GetDarwinCoreInfo", {"terms": ["notATerm"]}, self.ref)[0]["terms"],
+            ["notATerm"],
+        )
+        # Terms listed by the section lookup are covered too.
+        event_terms = self.ref.dwc_section("Event")[1][:5]
+        self.assertIsNone(plan_dwc_lookup(lookups, "GetDarwinCoreInfo", {"terms": list(event_terms)}, self.ref)[0])
+
+        ledger = render_dwc_ledger(lookups, self.ref)
+        self.assertIn("DWC-A TERM LEDGER", ledger)
+        self.assertIn("occurrence (event, taxon)", ledger)
+        self.assertIn("Event (first 5 terms)", ledger)
+        self.assertIn("- basisOfRecord (", ledger)
+
+    def test_failed_lookups_are_not_recorded(self):
+        lookups = self.lookups(
+            ("GetDwCExtensionInfo", {"extension": "nope"}, "Extension 'nope' not recognised."),
+            ("GetDarwinCoreInfo", {"terms": ["basisOfRecord"]}, "ERROR CALLING FUNCTION: boom"),
+        )
+        self.assertFalse(lookups)
+
+
+# The lookups agent 2228 (dataset 526) kept repeating after its DwC-DP export.
+RUN_526_LOOKUP_TURNS = [
+    [("GetDwCExtensionInfo", {"extension": ext}) for ext in [
+        "occurrence", "dna_derived_data", "extended_measurement_or_fact",
+        "measurement_or_fact", "identification", "humboldt_ecological_inventory",
+    ]],
+    [
+        ("GetDwCExtensionInfo", {"extension": "occurrence", "terms": ["occurrenceID", "eventID", "occurrenceStatus", "scientificName", "taxonRank"]}),
+        ("GetDwCExtensionInfo", {"extension": "dna_derived_data", "terms": ["DNA_sequence", "seq_meth", "sop", "pcr_primer_forward"]}),
+        ("GetDarwinCoreInfo", {"terms": ["eventID", "parentEventID", "eventDate", "decimalLatitude"]}),
+    ],
+    [("Python", {"code": "print(1)"})],
+    [
+        ("GetDwCExtensionInfo", {"extension": "dna_derived_data", "terms": ["DNA_sequence", "seq_meth", "sop"]}),
+        ("GetDwCExtensionInfo", {"extension": "occurrence", "terms": ["occurrenceID", "scientificName"]}),
+    ],
+    [("SetWorkingPlan", {"plan": "Event core; occurrence + dna_derived_data extensions."})],
+    [("ValidateDwcDp", {}), ("GetDwCExtensionInfo", {}), ("GetDarwinCoreInfo", {"section": "Event", "max_terms": 50})],
+    [("GetDwCExtensionInfo", {"extension": "occurrence", "terms": ["taxonRank", "occurrenceStatus"]})],
+    [("GetDwCExtensionInfo", {"extension": "dna_derived_data"})],
+    [("GetDarwinCoreInfo", {"terms": ["eventID", "basisOfRecord"]}), ("GetDwCExtensionInfo", {"extension": "dna_derived_data", "terms": ["sop"]})],
+    [("Python", {"code": "print(2)"})],
+    [("ExportDwcDp", {})],
+    [("ValidateDwcDp", {}), ("GetDwCExtensionInfo", {}), ("GetDarwinCoreInfo", {"section": "Event", "max_terms": 80})],
+    [("GetDwCExtensionInfo", {"extension": "occurrence", "terms": ["occurrenceID", "occurrenceStatus"]})],
+    [("GetDwCExtensionInfo", {"extension": "dna_derived_data", "terms": ["seq_meth"]})],
+    [("GetDwCExtensionInfo", {"extension": "measurement_or_fact"})],
+]
+
+
+class PackagePreparationLoopTests(AgentFixtureMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.agent.task = Task.objects.create(name=Task.PACKAGE_PREPARATION_TASK, text="Package", order=3)
+        self.agent.save()
+        self.event = Table.objects.create(
+            dataset=self.dataset, title="event", df=pd.DataFrame({"eventID": ["e1"]})
+        )
+
+    def mark_exported(self):
+        self.dataset.dwc_dp_url = "https://x/dp.tar.gz"
+        self.dataset.dwc_dp_validation = {
+            "valid": True,
+            "resource_fingerprint": _dwc_dp_resource_fingerprint(self.dataset, None),
+            "export_fingerprint": "export",
+        }
+        self.dataset.save()
+
+    def replay(self, turns):
+        """Run each turn's tool calls through Agent.run_function, as next_message does."""
+        results = {}
+        for turn_index, calls in enumerate(turns):
+            tool_calls = [{
+                "id": f"t{turn_index}-{call_index}", "type": "function",
+                "function": {"name": name, "arguments": json.dumps(args)},
+            } for call_index, (name, args) in enumerate(calls)]
+            Message.objects.create(agent=self.agent, openai_obj={
+                "role": "assistant", "content": "", "tool_calls": tool_calls,
+            })
+            for tool_call, (name, args) in zip(tool_calls, calls):
+                if name in {"ExportDwcDp", "ValidateDwcDp"}:
+                    result = (
+                        "Nothing has changed since the last successful export (same tables, mapping, "
+                        "and metadata), so it was not re-exported."
+                        if name == "ExportDwcDp"
+                        else json.dumps({"valid": True, "unchanged_since_last_validation": True})
+                    )
+                elif name == "Python":
+                    result = "1"
+                else:
+                    result = self.agent.run_function(SimpleNamespace(
+                        name=name, arguments=tool_call["function"]["arguments"],
+                    ))
+                results[tool_call["id"]] = (name, args, result)
+                Message.objects.create(agent=self.agent, openai_obj={
+                    "role": "tool", "tool_call_id": tool_call["id"], "content": result,
+                })
+        return results
+
+    @override_settings(AGENT_NO_PROGRESS_WARN_TURNS=8, AGENT_NO_PROGRESS_STOP_TURNS=15)
+    def test_run_526_pattern_is_deduplicated_nudged_and_paused(self):
+        self.mark_exported()
+        results = self.replay(RUN_526_LOOKUP_TURNS)
+
+        repeats = [
+            result for name, _args, result in results.values()
+            if name in {"GetDarwinCoreInfo", "GetDwCExtensionInfo"} and result.startswith("Not re-run")
+        ]
+        self.assertGreaterEqual(len(repeats), 10)
+        # The one partly-new request ran only for its new term.
+        partial = results["t8-0"][2]
+        self.assertTrue(partial.startswith("Already in the DWC-A TERM LEDGER, not repeated: eventID"))
+        self.assertIn("- basisOfRecord (", partial.split("\n\n", 1)[1])
+
+        state = self.agent.current_state_update()
+        self.assertIn("DWC-A TERM LEDGER", state)
+        self.assertIn("Extension `dna_derived_data`", state)
+        self.assertIn("- DNA_sequence:", state)
+        self.assertLess(len(self.agent.schema_ledger_text()), 16000)
+        self.assertEqual(self.agent.turns_without_progress(), 15)
+        warning = state[state.index("NO PROGRESS"):]
+        self.assertIn("already validated and exported", warning)
+        self.assertIn("call UploadDwCA", warning)
+
+        with patch("api.models.create_response_message") as create_response_message_mock:
+            messages = self.agent.next_message()
+            create_response_message_mock.assert_not_called()
+        self.assertTrue(messages[-1].openai_obj.get("no_progress_pause"))
+
+    @override_settings(AGENT_NO_PROGRESS_WARN_TURNS=2, AGENT_NO_PROGRESS_STOP_TURNS=0)
+    def test_nudge_asks_for_export_when_tables_changed_since(self):
+        self.mark_exported()
+        self.event.df = pd.DataFrame({"eventID": ["e1", "e2"]})
+        self.event.save()
+        self.add_read_only_turns(3)
+        warning = self.agent.current_state_update().split("NO PROGRESS", 1)[1]
+        self.assertIn("not exported yet", warning)
+        self.assertIn("call ExportDwcDp", warning)

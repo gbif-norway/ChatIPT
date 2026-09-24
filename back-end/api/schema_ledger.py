@@ -16,10 +16,14 @@ in isolation. Callers pass spec objects exposing ``name``, ``title``,
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+import re
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Sequence, Tuple
 
 LOOKUP_TOOL = "GetDwcDpTableInfo"
 PLAN_TOOL = "SetWorkingPlan"
+DWC_TERM_TOOL = "GetDarwinCoreInfo"
+EXTENSION_TOOL = "GetDwCExtensionInfo"
 
 # Ledger coverage levels for a looked-up table.
 LEVEL_KEYS = "keys"
@@ -39,8 +43,8 @@ READ_ONLY_TOOLS = frozenset({
     # let a verification loop reset the no-progress limit every few turns.
     "ValidateDwcDp",
     "ReconcileSourceCoverage",
-    "GetDarwinCoreInfo",
-    "GetDwCExtensionInfo",
+    DWC_TERM_TOOL,
+    EXTENSION_TOOL,
     "PreviewDwcDpDescriptor",
     "BasicValidationForSomeDwCTerms",
 })
@@ -49,6 +53,15 @@ _FAILED_RESULT_PREFIXES = (
     "Unknown DwC-DP table",
     "ERROR CALLING FUNCTION",
 )
+
+# Tools that change publication artifacts only when their result says so. A
+# no-op re-export or a rejected upload used to count as progress, so dataset
+# 526 could keep re-exporting an unchanged package between term lookups
+# without ever tripping the no-progress limit.
+PROGRESS_RESULT_PREFIXES = {
+    "ExportDwcDp": ("DwC-DP successfully created and uploaded",),
+    "UploadDwCA": ("DwCA successfully created and uploaded",),
+}
 
 
 def _as_list(value: Any) -> List[str]:
@@ -243,6 +256,258 @@ def reads_schema_files(code: Any) -> bool:
     return "table-schemas" in str(code or "")
 
 
+# -- Darwin Core and DwC-A extension lookups ---------------------------------
+#
+# Package preparation looks up Darwin Core and extension terms before building
+# the DwC-A projection. Those results were compacted away like the DwC-DP
+# schemas, and dataset 526 re-requested the same extension terms 5-6 times each
+# for eight minutes instead of building the projection. The lookups made so far
+# are rebuilt from the tool log into a compact term ledger, and repeats return
+# only what is new.
+
+MAX_TERM_DEFINITION_CHARS = 140
+MAX_LEDGER_TERM_DEFINITIONS = 160
+
+_DWC_FAILED_RESULT_PREFIXES = (
+    "ERROR CALLING FUNCTION",
+    "Unable to load",
+    "Extension schema",
+)
+
+
+class DwcReference(Protocol):
+    """Resolves Darwin Core and extension names against the vendored references."""
+
+    def dwc_section(self, section: str) -> Optional[Tuple[str, Sequence[str]]]:
+        """(canonical section name, its term names) or None."""
+
+    def dwc_term(self, term: str) -> Optional[Tuple[str, str, str]]:
+        """(canonical term name, section, definition without examples) or None."""
+
+    def extensions(self) -> Sequence[str]:
+        """Every registered extension key, in catalogue order."""
+
+    def extension(self, value: str) -> Optional[Tuple[str, str, Sequence[str], Sequence[str]]]:
+        """(key, title, compatible cores, registered term names) or None."""
+
+    def extension_term(self, key: str, term: str) -> Optional[Tuple[str, str]]:
+        """(canonical term name, definition) for a registered extension term, or None."""
+
+
+def term_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+@dataclass
+class DwcLookups:
+    catalogue: bool = False
+    # canonical section name -> max_terms listed (None = every term)
+    sections: Dict[str, Optional[int]] = field(default_factory=dict)
+    # term key -> (name, section, definition), in lookup order
+    terms: Dict[str, Tuple[str, str, str]] = field(default_factory=dict)
+    # extension key -> {term key: (name, definition)}; a key means its guidance was shown
+    extensions: Dict[str, Dict[str, Tuple[str, str]]] = field(default_factory=dict)
+
+    def __bool__(self):
+        return bool(self.catalogue or self.sections or self.terms or self.extensions)
+
+
+def _requested_terms(value: Any) -> List[str]:
+    return [term for term in (str(item).strip() for item in _as_list(value)) if term]
+
+
+def _record_dwc_terms(lookups: DwcLookups, ref: DwcReference, names: Iterable[str]) -> None:
+    for name in names:
+        resolved = ref.dwc_term(name)
+        if resolved:
+            lookups.terms.setdefault(term_key(resolved[0]), resolved)
+
+
+def _section_listing_limit(args: Dict[str, Any], section_terms: Sequence[str]) -> Optional[int]:
+    """Terms a section listing shows; None when it shows the whole section."""
+    try:
+        limit = int(args["max_terms"]) if args.get("max_terms") is not None else None
+    except (TypeError, ValueError):
+        return None
+    return None if limit is None or limit >= len(section_terms) else limit
+
+
+def dwc_lookups(openai_objs: Iterable[Dict[str, Any]], ref: DwcReference) -> DwcLookups:
+    """Darwin Core sections/terms and extensions successfully looked up in this history."""
+    lookups = DwcLookups()
+    for name, args, result in iter_tool_calls(openai_objs):
+        if name not in {DWC_TERM_TOOL, EXTENSION_TOOL} or result is None:
+            continue
+        if any(result.startswith(prefix) for prefix in _DWC_FAILED_RESULT_PREFIXES):
+            continue
+        if name == DWC_TERM_TOOL:
+            if args.get("terms"):
+                _record_dwc_terms(lookups, ref, _requested_terms(args.get("terms")))
+            elif args.get("section"):
+                section = ref.dwc_section(str(args["section"]))
+                if not section:
+                    continue
+                section_name, section_terms = section
+                limit = _section_listing_limit(args, section_terms)
+                previous = lookups.sections.get(section_name, 0)
+                if section_name not in lookups.sections or (
+                    previous is not None and (limit is None or limit > previous)
+                ):
+                    lookups.sections[section_name] = limit
+                _record_dwc_terms(lookups, ref, list(section_terms)[:limit] if limit else section_terms)
+            continue
+
+        if not args.get("extension"):
+            lookups.catalogue = True
+            continue
+        extension = ref.extension(str(args["extension"]))
+        if not extension:
+            continue
+        key = extension[0]
+        defined = lookups.extensions.setdefault(key, {})
+        for term in _requested_terms(args.get("terms")):
+            resolved = ref.extension_term(key, term)
+            if resolved:
+                defined.setdefault(term_key(resolved[0]), resolved)
+    return lookups
+
+
+def _covered_notice(scope: str) -> str:
+    return (
+        f"Not re-run: {scope} already looked up in this task and listed in the DWC-A TERM LEDGER "
+        "of the current workflow state. Map from the ledger instead of repeating lookups; if a "
+        "term's fit is still uncertain, record it as a projection limitation or preserve it in "
+        "dynamicProperties rather than looking it up again."
+    )
+
+
+def _partial_note(names: Sequence[str]) -> str:
+    return (
+        "Already in the DWC-A TERM LEDGER, not repeated: " + ", ".join(names) + ".\n\n"
+    )
+
+
+def plan_dwc_lookup(
+    lookups: DwcLookups, tool_name: str, args: Dict[str, Any], ref: DwcReference
+) -> Tuple[Optional[Dict[str, Any]], str]:
+    """Decide what part of a Darwin Core or extension lookup still needs running.
+
+    Returns ``(args, prefix)``: run the tool with ``args`` and prepend ``prefix``
+    to its result, or, when ``args`` is None, return ``prefix`` instead of
+    running it because the ledger already holds everything requested.
+    """
+    args = dict(args)
+    if tool_name == DWC_TERM_TOOL:
+        requested = _requested_terms(args.get("terms"))
+        if requested:
+            covered = [term for term in requested if term_key(term) in lookups.terms]
+            remaining = [term for term in requested if term_key(term) not in lookups.terms]
+            if not remaining:
+                return None, _covered_notice("these Darwin Core terms were")
+            args["terms"] = remaining
+            return args, _partial_note(covered) if covered else ""
+        if args.get("section"):
+            section = ref.dwc_section(str(args["section"]))
+            if section and section[0] in lookups.sections:
+                listed = lookups.sections[section[0]]
+                limit = _section_listing_limit(args, section[1])
+                if listed is None or (limit is not None and limit <= listed):
+                    return None, _covered_notice(f"the Darwin Core {section[0]} section was")
+        return args, ""
+
+    if tool_name != EXTENSION_TOOL:
+        return args, ""
+    if not args.get("extension"):
+        if lookups.catalogue:
+            return None, _covered_notice("the extension catalogue was")
+        return args, ""
+    extension = ref.extension(str(args["extension"]))
+    if not extension or extension[0] not in lookups.extensions:
+        return args, ""
+    key, _title, _cores, registered = extension
+    defined = lookups.extensions[key]
+    requested = _requested_terms(args.get("terms"))
+    if not requested:
+        return None, (
+            _covered_notice(f"guidance for the `{key}` extension was")
+            + f"\nRegistered `{key}` terms: {', '.join(registered)}"
+        )
+    covered = [term for term in requested if term_key(term) in defined]
+    remaining = [term for term in requested if term_key(term) not in defined]
+    if not remaining:
+        return None, _covered_notice(f"these `{key}` term definitions were")
+    args["terms"] = remaining
+    return args, _partial_note(covered) if covered else ""
+
+
+def _short_definition(definition: str) -> str:
+    text = " ".join(str(definition or "").split())
+    sentence_end = text.find(". ")
+    if 0 < sentence_end < MAX_TERM_DEFINITION_CHARS:
+        return text[: sentence_end + 1]
+    if len(text) > MAX_TERM_DEFINITION_CHARS:
+        return text[: MAX_TERM_DEFINITION_CHARS - 1].rstrip() + "…"
+    return text
+
+
+def render_dwc_ledger(lookups: DwcLookups, ref: DwcReference) -> str:
+    if not lookups:
+        return ""
+    lines = [
+        "DWC-A TERM LEDGER (Darwin Core and extension lookups already made in this task; they are "
+        "not re-run, so map from these definitions and move on to building the projection):"
+    ]
+    budget = [MAX_LEDGER_TERM_DEFINITIONS]
+
+    def term_lines(entries: Iterable[Tuple[str, str]]) -> List[str]:
+        rendered, names_only = [], []
+        for label, definition in entries:
+            if budget[0] > 0:
+                rendered.append(f"- {label}: {_short_definition(definition)}")
+                budget[0] -= 1
+            else:
+                names_only.append(label)
+        if names_only:
+            rendered.append("- Also looked up (definitions omitted for space): " + ", ".join(names_only))
+        return rendered
+
+    if lookups.catalogue:
+        catalogue = []
+        for key in ref.extensions():
+            extension = ref.extension(key)
+            if extension:
+                catalogue.append(f"{key} ({', '.join(extension[2]) or 'any core'})")
+        lines.append("")
+        lines.append("Extension catalogue (key and compatible cores): " + "; ".join(catalogue))
+    if lookups.sections:
+        lines.append("")
+        lines.append(
+            "Darwin Core sections listed: "
+            + ", ".join(
+                section if limit is None else f"{section} (first {limit} terms)"
+                for section, limit in lookups.sections.items()
+            )
+        )
+    if lookups.terms:
+        lines.append("")
+        lines.append("Darwin Core terms:")
+        lines.extend(term_lines(
+            (f"{name} ({section})", definition) for name, section, definition in lookups.terms.values()
+        ))
+    for key, defined in lookups.extensions.items():
+        extension = ref.extension(key)
+        if not extension:
+            continue
+        _key, title, cores, registered = extension
+        lines.append("")
+        lines.append(
+            f"Extension `{key}` ({title}; cores: {', '.join(cores) or 'any'}; "
+            f"{len(registered)} registered terms; guidance already shown):"
+        )
+        lines.extend(term_lines(defined.values()))
+    return "\n".join(lines)
+
+
 def latest_working_plan(openai_objs: Iterable[Dict[str, Any]]) -> str:
     plan = ""
     for name, args, result in iter_tool_calls(openai_objs):
@@ -251,12 +516,22 @@ def latest_working_plan(openai_objs: Iterable[Dict[str, Any]]) -> str:
     return plan
 
 
+def result_is_progress(tool_name: Optional[str], result: Any) -> bool:
+    if tool_name in READ_ONLY_TOOLS:
+        return False
+    text = result if isinstance(result, str) else json.dumps(result)
+    if text.startswith("ERROR CALLING FUNCTION"):
+        return False
+    success_prefixes = PROGRESS_RESULT_PREFIXES.get(tool_name or "")
+    return success_prefixes is None or text.startswith(success_prefixes)
+
+
 def turns_since_progress(entries: Iterable[Tuple[Any, Dict[str, Any]]], progress_floor=None) -> int:
     """Count tool-calling assistant turns since the last evidence of progress.
 
     ``entries`` are (created_at, openai_obj) pairs in chronological order.
-    Progress is a user message, a result from a tool outside READ_ONLY_TOOLS,
-    or ``progress_floor`` (e.g. the latest table revision, which catches
+    Progress is a user message, a result from a tool outside READ_ONLY_TOOLS
+    that reports a change (see ``result_is_progress``), or ``progress_floor`` (e.g. the latest table revision, which catches
     package writes made through Python).
     """
     entries = list(entries)
@@ -273,7 +548,7 @@ def turns_since_progress(entries: Iterable[Tuple[Any, Dict[str, Any]]], progress
                 function = (tool_call or {}).get("function") or {}
                 call_names[str((tool_call or {}).get("id"))] = str(function.get("name") or "")
         elif role == "tool":
-            is_progress = call_names.get(str(obj.get("tool_call_id"))) not in READ_ONLY_TOOLS
+            is_progress = result_is_progress(call_names.get(str(obj.get("tool_call_id"))), obj.get("content"))
         if is_progress and created_at is not None and (last_progress is None or created_at > last_progress):
             last_progress = created_at
     return sum(
@@ -298,9 +573,10 @@ def render_ledger(
     plan: str,
     get_spec: Callable[[str], Any],
     coverage_open_items: Optional[str] = None,
+    dwc_ledger: str = "",
 ) -> str:
     if not ledger and not plan and coverage_open_items is None:
-        return ""
+        return dwc_ledger
     lines = [
         "DWC-DP SCHEMA LEDGER (authoritative for this task; these lookups are complete and are not "
         "re-run, so use them instead of GetDwcDpTableInfo or reading schema files):"
@@ -322,4 +598,7 @@ def render_ledger(
             "Latest ReconcileSourceCoverage open items (everything else it checked is verified; "
             f"give these a disposition in the coverage report): {coverage_open_items}"
         )
+    if dwc_ledger:
+        lines.append("")
+        lines.append(dwc_ledger)
     return "\n".join(lines)

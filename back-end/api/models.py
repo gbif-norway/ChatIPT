@@ -1222,6 +1222,7 @@ class Agent(models.Model):
         "Data transformation",
         "Data validation and refinement",
         "Phylogenetic tree linking",
+        Task.PACKAGE_PREPARATION_TASK,
     }
     SOURCE_MANIFEST_TASKS = {
         "Data transformation",
@@ -1354,6 +1355,15 @@ class Agent(models.Model):
 
             relational_candidate_report = render_relational_candidate_report(tables)
         no_progress_turns = self.turns_without_progress() if self.no_progress_guarded else 0
+        dwc_dp_export_current = dwca_uploaded_this_task = False
+        if self.task.name == Task.PACKAGE_PREPARATION_TASK and no_progress_turns >= self.no_progress_warn_turns:
+            from api.schema_ledger import PROGRESS_RESULT_PREFIXES, latest_tool_results
+
+            dwc_dp_export_current = agent_tools.dwc_dp_export_is_current(self.dataset)
+            dwca_uploaded_this_task = any(
+                result.startswith(PROGRESS_RESULT_PREFIXES[agent_tools.UploadDwCA.__name__])
+                for result in latest_tool_results(self._history_objs(), agent_tools.UploadDwCA.__name__)
+            )
         return render_to_string(
             'state_update.txt',
             {
@@ -1365,6 +1375,8 @@ class Agent(models.Model):
                 'no_progress_turns': no_progress_turns,
                 'no_progress_warn_turns': self.no_progress_warn_turns,
                 'no_progress_stop_turns': self.no_progress_stop_turns,
+                'dwc_dp_export_current': dwc_dp_export_current,
+                'dwca_uploaded_this_task': dwca_uploaded_this_task,
                 'tool_call_count': self.tool_call_count,
                 'call_count_nudge_threshold': getattr(
                     settings, "AGENT_CALL_COUNT_NUDGE_THRESHOLD", 20
@@ -1400,9 +1412,16 @@ class Agent(models.Model):
         log every turn so they survive history compaction."""
         from api import source_coverage
         from api.dwc_dp_specs import get_table_spec
-        from api.schema_ledger import latest_tool_results, latest_working_plan, render_ledger
+        from api.schema_ledger import (
+            dwc_lookups,
+            latest_tool_results,
+            latest_working_plan,
+            render_dwc_ledger,
+            render_ledger,
+        )
 
         objs = self._history_objs()
+        dwc_reference = agent_tools.DwcTermReference()
         coverage_results = [
             result for result in latest_tool_results(objs, agent_tools.ReconcileSourceCoverage.__name__)
             if result.startswith(source_coverage.REPORT_PREFIX)
@@ -1431,6 +1450,7 @@ class Agent(models.Model):
             latest_working_plan(objs),
             get_table_spec,
             coverage_open_items=coverage_open_items,
+            dwc_ledger=render_dwc_ledger(dwc_lookups(objs, dwc_reference), dwc_reference),
         )
 
     @property
@@ -1956,9 +1976,20 @@ class Agent(models.Model):
                 fn_args.get('field_details'),
             ):
                 return schema_ledger.duplicate_lookup_notice(fn_args.get('table_name'), bool(include_fields))
+        prefix = ''
+        if fn.name in {schema_ledger.DWC_TERM_TOOL, schema_ledger.EXTENSION_TOOL}:
+            dwc_reference = agent_tools.DwcTermReference()
+            fn_args, prefix = schema_ledger.plan_dwc_lookup(
+                schema_ledger.dwc_lookups(self._history_objs(), dwc_reference),
+                fn.name,
+                fn_args,
+                dwc_reference,
+            )
+            if fn_args is None:
+                return prefix
 
         function_model_obj = function_model_class(**fn_args)
-        return function_model_obj.run()
+        return prefix + function_model_obj.run()
 
 
 class Message(models.Model):
