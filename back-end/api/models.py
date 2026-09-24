@@ -1545,7 +1545,7 @@ class Agent(models.Model):
     def dataset_cost_limit_usd(self):
         try:
             return max(
-                Decimal(str(getattr(settings, 'OPENAI_DATASET_COST_LIMIT_USD', '2.20'))),
+                Decimal(str(getattr(settings, 'OPENAI_DATASET_COST_LIMIT_USD', '3.00'))),
                 Decimal('0'),
             )
         except (InvalidOperation, TypeError, ValueError):

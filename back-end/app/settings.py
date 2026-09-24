@@ -269,7 +269,7 @@ OPENAI_SDK_MAX_RETRIES = int(os.environ.get("OPENAI_SDK_MAX_RETRIES", "0"))
 # before each model request; 0 disables it. A response already in flight can put
 # the final total slightly above the ceiling, but no subsequent request is made.
 OPENAI_DATASET_COST_LIMIT_USD = Decimal(
-    os.environ.get("OPENAI_DATASET_COST_LIMIT_USD", "2.20")
+    os.environ.get("OPENAI_DATASET_COST_LIMIT_USD", "3.00")
 )
 OPENAI_TOOL_HISTORY_TURNS = int(os.environ.get("OPENAI_TOOL_HISTORY_TURNS", "8"))
 OPENAI_FULL_TOOL_HISTORY_TURNS = int(os.environ.get("OPENAI_FULL_TOOL_HISTORY_TURNS", "2"))
