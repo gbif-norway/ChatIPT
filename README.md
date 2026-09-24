@@ -50,6 +50,26 @@ Local URLs:
 - Frontend: `http://localhost:3000`
 - Backend API: `http://localhost:8000/api`
 
+## OpenAI model routing
+
+ChatIPT routes bounded work to `gpt-6-luna`, general agentic work to
+`gpt-6-sol`, and the independent pre-publication quality gate to
+`gpt-6-astra`. The tier defaults can be overridden with
+`OPENAI_MODEL_EFFICIENT`, `OPENAI_MODEL_STANDARD`, and
+`OPENAI_MODEL_CRITICAL`. The legacy `OPENAI_MODEL` setting remains a fallback
+override for the standard tier.
+
+Administrators can inspect per-dataset model usage through the existing
+`openai-usage` API action. A cross-dataset rollout report is also available:
+
+```bash
+docker compose exec back-end python manage.py openai_model_report
+docker compose exec back-end python manage.py openai_model_report --since 2026-09-24
+```
+
+The report groups calls by model and workflow task and includes completion
+proxies, retries, latency, token/cache usage, and estimated standard-tier cost.
+
 ## DwC-DP schema snapshot
 
 ChatIPT vendors the complete DwC-DP profile and table schemas under

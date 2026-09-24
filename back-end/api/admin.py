@@ -111,6 +111,7 @@ class OpenAIUsageAdmin(admin.ModelAdmin):
         'input_tokens',
         'cached_input_tokens',
         'output_tokens',
+        'duration_ms',
         'long_context',
         'estimated_cost_usd',
         'created_at',

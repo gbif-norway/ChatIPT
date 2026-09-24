@@ -463,10 +463,28 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 'task_name': task_name,
                 **usage_summary(stage_records),
             })
+        by_model = []
+        for model in records.order_by().values_list('model', flat=True).distinct():
+            model_records = records.filter(model=model)
+            by_model.append({
+                'model': model,
+                **usage_summary(model_records),
+            })
+        by_task_and_model = []
+        groups = records.order_by().values_list('task_name', 'model').distinct()
+        for task_name, model in groups:
+            grouped_records = records.filter(task_name=task_name, model=model)
+            by_task_and_model.append({
+                'task_name': task_name,
+                'model': model,
+                **usage_summary(grouped_records),
+            })
         return Response({
             'dataset_id': dataset.id,
             'summary': usage_summary(records),
             'by_stage': by_stage,
+            'by_model': by_model,
+            'by_task_and_model': by_task_and_model,
             'requests': OpenAIUsageSerializer(records, many=True).data,
         })
 

@@ -265,8 +265,15 @@ OPENAI_SDK_MAX_RETRIES = int(os.environ.get("OPENAI_SDK_MAX_RETRIES", "0"))
 OPENAI_TOOL_HISTORY_TURNS = int(os.environ.get("OPENAI_TOOL_HISTORY_TURNS", "8"))
 OPENAI_FULL_TOOL_HISTORY_TURNS = int(os.environ.get("OPENAI_FULL_TOOL_HISTORY_TURNS", "2"))
 OPENAI_COMPACT_TOOL_CHARS = int(os.environ.get("OPENAI_COMPACT_TOOL_CHARS", "2500"))
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.4")
-OPENAI_REASONING_EFFORT = os.environ.get("OPENAI_REASONING_EFFORT", "medium")
+# OPENAI_MODEL remains a backwards-compatible override for the standard tier.
+OPENAI_MODEL_STANDARD = os.environ.get(
+    "OPENAI_MODEL_STANDARD",
+    os.environ.get("OPENAI_MODEL", "gpt-6-sol"),
+)
+OPENAI_MODEL_EFFICIENT = os.environ.get("OPENAI_MODEL_EFFICIENT", "gpt-6-luna")
+OPENAI_MODEL_CRITICAL = os.environ.get("OPENAI_MODEL_CRITICAL", "gpt-6-astra")
+OPENAI_MODEL = OPENAI_MODEL_STANDARD
+OPENAI_REASONING_EFFORT = os.environ.get("OPENAI_REASONING_EFFORT", "high")
 OPENAI_SIMPLE_REASONING_EFFORT = os.environ.get("OPENAI_SIMPLE_REASONING_EFFORT", "low")
 # Soft, ignorable nudge only -- shown to the model in state_update.txt once a task
 # stage has made this many tool calls. Not an enforced limit.

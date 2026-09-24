@@ -818,6 +818,19 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
     FINAL_PUBLICATION_TASK = "Final Review & Publication"
     MAINTENANCE_TASK = "Data maintenance"
 
+    EFFICIENT_MODEL_TASKS = {
+        "Data structure exploration",
+        FINAL_PUBLICATION_TASK,
+    }
+    MEDIUM_REASONING_TASKS = {
+        "Manuscript extraction and dataset scoping",
+        "Data content exploration",
+    }
+    LOW_REASONING_TASKS = {
+        "Data suitability assessment",
+        FINAL_PUBLICATION_TASK,
+    }
+
     name = models.CharField(max_length=300, unique=True)
     text = models.TextField()
     order = models.IntegerField(default=0, help_text='Order in which tasks should be executed (from tasks.yaml)')
@@ -887,14 +900,21 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
         return [getattr(agent_tools, f) for f in functions]
 
     @property
+    def model_name(self):
+        if self.name == self.PREPUBLICATION_QUALITY_TASK:
+            return getattr(settings, "OPENAI_MODEL_CRITICAL", "gpt-6-astra")
+        if self.name in self.EFFICIENT_MODEL_TASKS:
+            return getattr(settings, "OPENAI_MODEL_EFFICIENT", "gpt-6-luna")
+        return getattr(settings, "OPENAI_MODEL_STANDARD", "gpt-6-sol")
+
+    @property
     def reasoning_effort(self):
-        if self.name in {
-            "Data suitability assessment",
-            "Manuscript extraction and dataset scoping",
-            "Data structure exploration",
-            "Data content exploration",
-        }:
+        if self.name in self.LOW_REASONING_TASKS:
             return getattr(settings, "OPENAI_SIMPLE_REASONING_EFFORT", "low")
+        if self.name == "Data structure exploration":
+            return "medium"
+        if self.name in self.MEDIUM_REASONING_TASKS:
+            return "medium"
         return getattr(settings, "OPENAI_REASONING_EFFORT", "medium")
 
     def create_agent_with_system_messages(self, dataset:Dataset):
@@ -1568,9 +1588,13 @@ class Agent(models.Model):
                 )
 
             # Main GPT interaction
+            model = self.task.model_name
+            if gbif_poll:
+                model = getattr(settings, "OPENAI_MODEL_EFFICIENT", "gpt-6-luna")
             response_message = create_response_message(
                 model_messages,
                 self.task.functions,
+                model=model,
                 reasoning_effort=reasoning_effort,
                 pdf_user_files=new_pdf_files_qs,
                 additional_input_items=state_items,
@@ -1589,6 +1613,7 @@ class Agent(models.Model):
                 response_message = create_response_message(
                     model_messages,
                     self.task.functions,
+                    model=model,
                     reasoning_effort=self.task.reasoning_effort,
                     pdf_user_files=[],
                     additional_input_items=[
@@ -1782,6 +1807,7 @@ class OpenAIUsage(models.Model):
     output_tokens = models.PositiveBigIntegerField(default=0)
     reasoning_tokens = models.PositiveBigIntegerField(default=0)
     total_tokens = models.PositiveBigIntegerField(default=0)
+    duration_ms = models.PositiveBigIntegerField(default=0)
     long_context = models.BooleanField(default=False)
     input_price_per_million = models.DecimalField(
         max_digits=12,
@@ -1790,6 +1816,12 @@ class OpenAIUsage(models.Model):
         blank=True,
     )
     cached_input_price_per_million = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        null=True,
+        blank=True,
+    )
+    cache_write_price_per_million = models.DecimalField(
         max_digits=12,
         decimal_places=4,
         null=True,

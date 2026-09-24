@@ -1,19 +1,44 @@
 import logging
 from decimal import Decimal
 
-from django.db.models import Count, Sum
+from django.db.models import Avg, Count, Q, Sum
 
 
 logger = logging.getLogger(__name__)
 
 TOKENS_PER_MILLION = Decimal("1000000")
-GPT_5_4_LONG_CONTEXT_THRESHOLD = 272_000
-GPT_5_4_PRICING_SOURCE = "https://developers.openai.com/api/docs/models/gpt-5.4"
+LONG_CONTEXT_THRESHOLD = 272_000
 
-GPT_5_4_STANDARD_PRICING = {
-    "input": Decimal("2.50"),
-    "cached_input": Decimal("0.25"),
-    "output": Decimal("15.00"),
+MODEL_PRICING = {
+    "gpt-5.4": {
+        "input": Decimal("2.50"),
+        "cached_input": Decimal("0.25"),
+        # GPT-5.4 accounting historically treated cache writes as uncached input.
+        "cache_write": Decimal("2.50"),
+        "output": Decimal("15.00"),
+        "source": "https://developers.openai.com/api/docs/models/gpt-5.4",
+    },
+    "gpt-6-luna": {
+        "input": Decimal("0.10"),
+        "cached_input": Decimal("0.01"),
+        "cache_write": Decimal("0.125"),
+        "output": Decimal("0.50"),
+        "source": "https://developers.openai.com/api/docs/models/gpt-6-luna",
+    },
+    "gpt-6-sol": {
+        "input": Decimal("2.00"),
+        "cached_input": Decimal("0.20"),
+        "cache_write": Decimal("2.50"),
+        "output": Decimal("10.00"),
+        "source": "https://developers.openai.com/api/docs/models/gpt-6-sol",
+    },
+    "gpt-6-astra": {
+        "input": Decimal("10.00"),
+        "cached_input": Decimal("1.00"),
+        "cache_write": Decimal("12.50"),
+        "output": Decimal("50.00"),
+        "source": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+    },
 }
 
 
@@ -33,11 +58,19 @@ def _integer(obj, name):
         return 0
 
 
-def _is_gpt_5_4(model):
-    return model == "gpt-5.4" or model.startswith("gpt-5.4-")
+def _pricing_for_model(model):
+    for model_family, pricing in MODEL_PRICING.items():
+        if model == model_family or model.startswith(f"{model_family}-"):
+            return pricing
+    return None
 
 
-def response_usage_defaults(response, requested_model="", reasoning_effort=""):
+def response_usage_defaults(
+    response,
+    requested_model="",
+    reasoning_effort="",
+    duration_ms=0,
+):
     """Return the auditable usage fields stored for one Responses API call."""
     usage = _value(response, "usage", {}) or {}
     input_details = _value(usage, "input_tokens_details", {}) or {}
@@ -60,7 +93,8 @@ def response_usage_defaults(response, requested_model="", reasoning_effort=""):
     total_tokens = _integer(usage, "total_tokens") or input_tokens + output_tokens
     model = str(_value(response, "model", requested_model) or requested_model or "")
     service_tier = str(_value(response, "service_tier", "") or "")
-    long_context = _is_gpt_5_4(model) and input_tokens > GPT_5_4_LONG_CONTEXT_THRESHOLD
+    pricing = _pricing_for_model(model)
+    long_context = pricing is not None and input_tokens > LONG_CONTEXT_THRESHOLD
 
     defaults = {
         "model": model,
@@ -73,13 +107,15 @@ def response_usage_defaults(response, requested_model="", reasoning_effort=""):
         "output_tokens": output_tokens,
         "reasoning_tokens": reasoning_tokens,
         "total_tokens": total_tokens,
+        "duration_ms": max(int(duration_ms or 0), 0),
         "long_context": long_context,
     }
 
-    if not _is_gpt_5_4(model) or service_tier not in {"", "auto", "default"}:
+    if pricing is None or service_tier not in {"", "auto", "default"}:
         defaults.update({
             "input_price_per_million": None,
             "cached_input_price_per_million": None,
+            "cache_write_price_per_million": None,
             "output_price_per_million": None,
             "input_price_multiplier": None,
             "output_price_multiplier": None,
@@ -95,25 +131,26 @@ def response_usage_defaults(response, requested_model="", reasoning_effort=""):
         0,
     )
     input_cost = (
-        Decimal(uncached_input_tokens + cache_write_input_tokens)
-        * GPT_5_4_STANDARD_PRICING["input"]
-        + Decimal(cached_input_tokens) * GPT_5_4_STANDARD_PRICING["cached_input"]
+        Decimal(uncached_input_tokens) * pricing["input"]
+        + Decimal(cached_input_tokens) * pricing["cached_input"]
+        + Decimal(cache_write_input_tokens) * pricing["cache_write"]
     ) * input_multiplier / TOKENS_PER_MILLION
     output_cost = (
         Decimal(output_tokens)
-        * GPT_5_4_STANDARD_PRICING["output"]
+        * pricing["output"]
         * output_multiplier
         / TOKENS_PER_MILLION
     )
 
     defaults.update({
-        "input_price_per_million": GPT_5_4_STANDARD_PRICING["input"],
-        "cached_input_price_per_million": GPT_5_4_STANDARD_PRICING["cached_input"],
-        "output_price_per_million": GPT_5_4_STANDARD_PRICING["output"],
+        "input_price_per_million": pricing["input"],
+        "cached_input_price_per_million": pricing["cached_input"],
+        "cache_write_price_per_million": pricing["cache_write"],
+        "output_price_per_million": pricing["output"],
         "input_price_multiplier": input_multiplier,
         "output_price_multiplier": output_multiplier,
         "estimated_cost_usd": (input_cost + output_cost).quantize(Decimal("0.000001")),
-        "pricing_source": GPT_5_4_PRICING_SOURCE,
+        "pricing_source": pricing["source"],
     })
     return defaults
 
@@ -124,6 +161,7 @@ def record_response_usage(
     requested_model="",
     reasoning_effort="",
     retry_reason="",
+    duration_ms=0,
 ):
     """Persist one response exactly once, keyed by the OpenAI response id."""
     from api.models import Agent, OpenAIUsage
@@ -138,6 +176,7 @@ def record_response_usage(
         response,
         requested_model=requested_model,
         reasoning_effort=reasoning_effort,
+        duration_ms=duration_ms,
     )
     defaults.update({
         "dataset": agent.dataset,
@@ -155,14 +194,25 @@ def record_response_usage(
 def usage_summary(queryset):
     totals = queryset.aggregate(
         recorded_calls=Count("id"),
+        datasets=Count("dataset", distinct=True),
+        agents=Count("agent", distinct=True),
+        completed_agents=Count(
+            "agent",
+            filter=Q(agent__completed_at__isnull=False),
+            distinct=True,
+        ),
         input_tokens=Sum("input_tokens"),
         cached_input_tokens=Sum("cached_input_tokens"),
         cache_write_input_tokens=Sum("cache_write_input_tokens"),
         output_tokens=Sum("output_tokens"),
         reasoning_tokens=Sum("reasoning_tokens"),
         total_tokens=Sum("total_tokens"),
+        total_duration_ms=Sum("duration_ms"),
+        average_duration_ms=Avg("duration_ms"),
         estimated_cost_usd=Sum("estimated_cost_usd"),
     )
+    totals["completed_calls"] = queryset.filter(response_status="completed").count()
+    totals["retry_calls"] = queryset.exclude(retry_reason="").count()
     totals["long_context_calls"] = queryset.filter(long_context=True).count()
     totals["unpriced_calls"] = queryset.filter(estimated_cost_usd__isnull=True).count()
     for key, value in totals.items():

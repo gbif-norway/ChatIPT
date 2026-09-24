@@ -2,6 +2,7 @@ import json
 import hashlib
 import logging
 import tempfile
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
@@ -80,7 +81,7 @@ def create_response_message(
     usage_agent_id=None,
     usage_retry_reason="",
 ):
-    model = model or getattr(settings, "OPENAI_MODEL", "gpt-5.4")
+    model = model or getattr(settings, "OPENAI_MODEL_STANDARD", "gpt-6-sol")
     reasoning_effort = reasoning_effort or getattr(settings, "OPENAI_REASONING_EFFORT", "medium")
     print('---')
     print(f'---Calling GPT {model}---')
@@ -99,7 +100,9 @@ def create_response_message(
     if temperature is not None:
         openai_args['temperature'] = temperature
     openai_args['tools'] = _functions_to_responses_tools(functions)
+    request_started_at = time.monotonic()
     response = query_responses_api(openai_args)
+    duration_ms = round((time.monotonic() - request_started_at) * 1000)
     if usage_agent_id is not None:
         try:
             from api.openai_usage import record_response_usage
@@ -110,6 +113,7 @@ def create_response_message(
                 requested_model=model,
                 reasoning_effort=reasoning_effort,
                 retry_reason=usage_retry_reason,
+                duration_ms=duration_ms,
             )
         except Exception:
             # Accounting must never turn a successful model response into a failed

@@ -1940,9 +1940,9 @@ class ResponsesAdapterCompatibilityTests(SimpleTestCase):
         def __init__(self, openai_obj):
             self.openai_obj = openai_obj
 
-    @override_settings(OPENAI_MODEL="gpt-5.4", OPENAI_REASONING_EFFORT="high")
+    @override_settings(OPENAI_MODEL_STANDARD="gpt-6-sol", OPENAI_REASONING_EFFORT="high")
     @patch("api.helpers.openai_helpers.query_responses_api")
-    def test_default_request_uses_gpt_5_4_with_high_reasoning(self, query_mock):
+    def test_default_request_uses_standard_model_with_high_reasoning(self, query_mock):
         query_mock.return_value = SimpleNamespace(
             id="resp_1",
             status="completed",
@@ -1956,7 +1956,7 @@ class ResponsesAdapterCompatibilityTests(SimpleTestCase):
         )
 
         request = query_mock.call_args.args[0]
-        self.assertEqual(request["model"], "gpt-5.4")
+        self.assertEqual(request["model"], "gpt-6-sol")
         self.assertEqual(request["reasoning"], {"effort": "high"})
         self.assertNotIn("temperature", request)
 
@@ -2161,6 +2161,7 @@ class OpenAIUsageAccountingTests(TestCase):
         model="gpt-5.4",
         input_tokens=100_000,
         cached_tokens=80_000,
+        cache_write_tokens=0,
         output_tokens=1_000,
         reasoning_tokens=600,
     ):
@@ -2175,7 +2176,7 @@ class OpenAIUsageAccountingTests(TestCase):
                 input_tokens=input_tokens,
                 input_tokens_details=SimpleNamespace(
                     cached_tokens=cached_tokens,
-                    cache_write_tokens=0,
+                    cache_write_tokens=cache_write_tokens,
                 ),
                 output_tokens=output_tokens,
                 output_tokens_details=SimpleNamespace(reasoning_tokens=reasoning_tokens),
@@ -2209,6 +2210,28 @@ class OpenAIUsageAccountingTests(TestCase):
         self.assertEqual(values["output_price_multiplier"], Decimal("1.5"))
         self.assertEqual(values["estimated_cost_usd"], Decimal("0.645000"))
 
+    def test_gpt_6_models_use_their_current_standard_prices(self):
+        expected_costs = {
+            "gpt-6-luna": Decimal("0.003300"),
+            "gpt-6-sol": Decimal("0.066000"),
+            "gpt-6-astra": Decimal("0.330000"),
+        }
+
+        for model, expected_cost in expected_costs.items():
+            with self.subTest(model=model):
+                values = response_usage_defaults(self._response(model=model))
+                self.assertEqual(values["estimated_cost_usd"], expected_cost)
+                self.assertIn(model, values["pricing_source"])
+
+    def test_gpt_6_cache_writes_have_their_own_price(self):
+        values = response_usage_defaults(self._response(
+            model="gpt-6-sol",
+            cache_write_tokens=10_000,
+        ))
+
+        self.assertEqual(values["cache_write_price_per_million"], Decimal("2.50"))
+        self.assertEqual(values["estimated_cost_usd"], Decimal("0.071000"))
+
     def test_unknown_model_records_tokens_without_inventing_a_price(self):
         values = response_usage_defaults(self._response(model="future-model"))
 
@@ -2230,12 +2253,14 @@ class OpenAIUsageAccountingTests(TestCase):
             self.agent.id,
             reasoning_effort="high",
             retry_reason="no_tool_call",
+            duration_ms=1250,
         )
         record_response_usage(
             response,
             self.agent.id,
             reasoning_effort="high",
             retry_reason="no_tool_call",
+            duration_ms=1250,
         )
 
         self.assertEqual(OpenAIUsage.objects.count(), 1)
@@ -2244,6 +2269,7 @@ class OpenAIUsageAccountingTests(TestCase):
         self.assertEqual(record.task_name, "Data transformation")
         self.assertEqual(record.reasoning_effort, "high")
         self.assertEqual(record.retry_reason, "no_tool_call")
+        self.assertEqual(record.duration_ms, 1250)
         self.assertEqual(
             usage_summary(OpenAIUsage.objects.all())["estimated_cost_usd"],
             "0.085000",
@@ -2277,6 +2303,11 @@ class OpenAIUsageAccountingTests(TestCase):
         self.assertEqual(response.json()["summary"]["recorded_calls"], 1)
         self.assertEqual(response.json()["summary"]["estimated_cost_usd"], "0.085000")
         self.assertEqual(response.json()["by_stage"][0]["task_name"], "Data transformation")
+        self.assertEqual(response.json()["by_model"][0]["model"], "gpt-5.4")
+        self.assertEqual(
+            response.json()["by_task_and_model"][0]["task_name"],
+            "Data transformation",
+        )
         self.assertEqual(response.json()["requests"][0]["response_id"], "resp_usage_1")
 
     def test_dataset_owner_cannot_read_internal_costs(self):
@@ -3923,10 +3954,13 @@ class TaskFunctionTests(TestCase):
         )
 
     @override_settings(
+        OPENAI_MODEL_EFFICIENT="gpt-6-luna",
+        OPENAI_MODEL_STANDARD="gpt-6-sol",
+        OPENAI_MODEL_CRITICAL="gpt-6-astra",
         OPENAI_REASONING_EFFORT="medium",
         OPENAI_SIMPLE_REASONING_EFFORT="low",
     )
-    def test_exploration_uses_low_reasoning_but_transformation_uses_medium(self):
+    def test_tasks_route_to_model_tiers_and_reasoning_efforts(self):
         exploration = Task.objects.create(
             name="Data structure exploration",
             text="Explore",
@@ -3937,9 +3971,25 @@ class TaskFunctionTests(TestCase):
             text="Transform",
             order=2,
         )
+        quality_gate = Task.objects.create(
+            name=Task.PREPUBLICATION_QUALITY_TASK,
+            text="Audit",
+            order=3,
+        )
+        publication = Task.objects.create(
+            name=Task.FINAL_PUBLICATION_TASK,
+            text="Publish",
+            order=4,
+        )
 
-        self.assertEqual(exploration.reasoning_effort, "low")
+        self.assertEqual(exploration.model_name, "gpt-6-luna")
+        self.assertEqual(exploration.reasoning_effort, "medium")
+        self.assertEqual(transformation.model_name, "gpt-6-sol")
         self.assertEqual(transformation.reasoning_effort, "medium")
+        self.assertEqual(quality_gate.model_name, "gpt-6-astra")
+        self.assertEqual(quality_gate.reasoning_effort, "medium")
+        self.assertEqual(publication.model_name, "gpt-6-luna")
+        self.assertEqual(publication.reasoning_effort, "low")
 
 
 class PythonToolTests(SimpleTestCase):
