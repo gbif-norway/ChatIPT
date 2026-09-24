@@ -152,7 +152,7 @@ class GetDwcDpTableInfoTests(TestCase):
         self.assertIn("eventDate", output)
 
 
-class SchemaLedgerAgentTests(TestCase):
+class AgentFixtureMixin:
     def setUp(self):
         self.task = Task.objects.create(name="Data transformation", text="Transform", order=1)
         Task.objects.create(name="Data maintenance", text="Maintain", order=2)
@@ -167,6 +167,22 @@ class SchemaLedgerAgentTests(TestCase):
         )
         Message.objects.create(agent=self.agent, openai_obj={"role": "user", "content": "Go ahead."})
 
+    def add_read_only_turns(self, count):
+        for index in range(count):
+            call_id = f"read-{self.agent.message_set.count()}-{index}"
+            Message.objects.create(agent=self.agent, openai_obj={
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": call_id, "type": "function", "function": {
+                    "name": "Python", "arguments": json.dumps({"code": "print(1)"}),
+                }}],
+            })
+            Message.objects.create(agent=self.agent, openai_obj={
+                "role": "tool", "tool_call_id": call_id, "content": "1",
+            })
+
+
+class SchemaLedgerAgentTests(AgentFixtureMixin, TestCase):
     @patch("api.models.create_response_message")
     def test_run_524_pattern_fetches_each_schema_once(self, create_response_message_mock):
         # Turn 1 fetches all schemas; turns 2 and 3 repeat the same lookups, as run 524 did.
@@ -221,20 +237,6 @@ class SchemaLedgerAgentTests(TestCase):
         state = self.agent.current_state_update()
         self.assertIn("Working plan", state)
         self.assertIn("Graph: event -> material -> occurrence. Done: event.", state)
-
-    def add_read_only_turns(self, count):
-        for index in range(count):
-            call_id = f"read-{self.agent.message_set.count()}-{index}"
-            Message.objects.create(agent=self.agent, openai_obj={
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [{"id": call_id, "type": "function", "function": {
-                    "name": "Python", "arguments": json.dumps({"code": "print(1)"}),
-                }}],
-            })
-            Message.objects.create(agent=self.agent, openai_obj={
-                "role": "tool", "tool_call_id": call_id, "content": "1",
-            })
 
     @override_settings(AGENT_NO_PROGRESS_WARN_TURNS=3, AGENT_NO_PROGRESS_STOP_TURNS=5)
     def test_no_progress_warns_then_pauses_without_calling_the_model(self):
@@ -297,3 +299,54 @@ class SchemaLedgerAgentTests(TestCase):
         ]
         self.assertEqual(len(kept_text), 1)
         self.assertNotIn("tool_calls", kept_text[0])
+
+
+class VerificationLoopTests(AgentFixtureMixin, TestCase):
+    """Dataset 525: after a valid package, the agent alternated read-only Python
+    checks with no-op ValidateDwcDp calls, which used to reset the limit."""
+
+    def add_validation_turn(self):
+        call_id = f"validate-{self.agent.message_set.count()}"
+        Message.objects.create(agent=self.agent, openai_obj={
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": call_id, "type": "function", "function": {
+                "name": "ValidateDwcDp", "arguments": json.dumps({"agent_id": self.agent.id}),
+            }}],
+        })
+        Message.objects.create(agent=self.agent, openai_obj={
+            "role": "tool",
+            "tool_call_id": call_id,
+            "content": json.dumps({"valid": True, "unchanged_since_last_validation": True}),
+        })
+
+    @override_settings(AGENT_NO_PROGRESS_WARN_TURNS=8, AGENT_NO_PROGRESS_STOP_TURNS=15)
+    def test_validation_does_not_reset_the_no_progress_count(self):
+        for _ in range(2):
+            self.add_read_only_turns(7)
+            self.add_validation_turn()
+        self.assertEqual(self.agent.turns_without_progress(), 16)
+
+        state = self.agent.current_state_update()
+        warning = next(line for line in state.splitlines() if line.startswith("NO PROGRESS"))
+        self.assertNotIn("ValidateDwcDp", warning)
+        self.assertIn("final source coverage report", warning)
+
+        with patch("api.models.create_response_message") as create_response_message_mock:
+            messages = self.agent.next_message()
+            create_response_message_mock.assert_not_called()
+        self.assertTrue(messages[-1].openai_obj.get("no_progress_pause"))
+
+    def test_structure_notes_count_as_progress(self):
+        self.add_read_only_turns(10)
+        Message.objects.create(agent=self.agent, openai_obj={
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "notes", "type": "function", "function": {
+                "name": "SetStructureNotes", "arguments": "{}",
+            }}],
+        })
+        Message.objects.create(agent=self.agent, openai_obj={
+            "role": "tool", "tool_call_id": "notes", "content": "ok",
+        })
+        self.assertEqual(self.agent.turns_without_progress(), 0)

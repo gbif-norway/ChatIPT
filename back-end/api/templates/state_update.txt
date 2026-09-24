@@ -30,7 +30,7 @@ Note: this task stage has made {{ tool_call_count }} tool calls so far. If the p
 {% endif %}
 
 {% if no_progress_warn_turns and no_progress_turns >= no_progress_warn_turns %}
-NO PROGRESS: the last {{ no_progress_turns }} tool turns wrote no table, ran no validation or other package tool, and received no user input. Stop re-checking. Your next action must be a package write, ValidateDwcDp, RequestUserInput, or SetAgentTaskToComplete.{% if no_progress_stop_turns %} The workflow pauses after {{ no_progress_stop_turns }} turns without progress.{% endif %}
+NO PROGRESS: the last {{ no_progress_turns }} tool turns changed nothing: no table written, no notes saved, no user input. Validation, lookups and read-only Python checks do not count. Stop re-checking what you have already verified. Your next action must be one of: write a remaining package change; save your findings with SetStructureNotes{% if agent.task.name == "Data transformation" %} (if the package already validates, this means the final source coverage report now, based on ReconcileSourceCoverage, marking anything not yet verified as unresolved instead of checking it again){% endif %}; ask with RequestUserInput; or call SetAgentTaskToComplete.{% if no_progress_stop_turns %} The workflow pauses after {{ no_progress_stop_turns }} turns without progress.{% endif %}
 
 {% endif %}
 {% if schema_ledger %}

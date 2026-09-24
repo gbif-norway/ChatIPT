@@ -583,6 +583,115 @@ class GetDwcDpTableInfo(OpenAIBaseModel):
         )
 
 
+class ReconcileSourceCoverage(OpenAIBaseModel):
+    """
+    Deterministically reconcile the DwC-DP package against its sources in one call.
+
+    Compares the distinct values of every populated column in the original uploads (and in any
+    current working table that differs from them) with every field of every DwC-DP resource table,
+    after trimming, case-folding and numeric/date-time normalisation. Reports row representation
+    through a unique identifier column, populated source counts against destination counts, and
+    groups columns as Mapped, Partial, Not found, found only in dataset metadata, or Blank-only.
+    Use it once the package validates, as the evidence for the source coverage report; it is not
+    re-run while no package table, source upload, or dataset metadata has changed.
+    """
+
+    agent_id: PositiveInt = Field(..., description="REQUIRED: The ID of the agent making this request")
+
+    def run(self):
+        from api.models import Agent, Table, UserFile
+        from api import source_coverage
+
+        agent = Agent.objects.get(id=self.agent_id)
+        dataset = agent.dataset
+        tables = list(Table.objects.filter(dataset=dataset).order_by('created_at', 'id'))
+        user_files = list(dataset.user_files.all())
+        metadata = {
+            'title': dataset.title,
+            'description': dataset.description,
+            'eml': dataset.eml,
+        }
+        state = source_coverage.coverage_state(
+            ((table.id, table.title, table.updated_at.isoformat()) for table in tables),
+            (
+                (user_file.id, user_file.filename, user_file.uploaded_at.isoformat(), user_file.source_manifest)
+                for user_file in user_files
+            ),
+            metadata,
+        )
+
+        from api.schema_ledger import latest_tool_results
+
+        previous_results = [
+            result
+            for result in latest_tool_results(agent._history_objs(), type(self).__name__)
+            if result.startswith(source_coverage.REPORT_PREFIX)
+        ]
+        if previous_results and source_coverage.result_state(previous_results[-1]) == state:
+            open_items = source_coverage.latest_open_items(previous_results[-1:]) or '(none)'
+            return (
+                "Not re-run: no package table, source upload, or dataset metadata has changed since "
+                "your last ReconcileSourceCoverage in this task, "
+                f"so the result would be identical. Open items from that check: {open_items}. "
+                "Give each a disposition and save the coverage report with SetStructureNotes now."
+            )
+
+        destinations = {}
+        for table in tables:
+            resource_name = normalize_resource_name(table.title)
+            if resource_name in DWC_DP_TABLE_NAMES and table.df is not None:
+                destinations[resource_name] = table.df
+        if not destinations:
+            return (
+                "No DwC-DP resource tables exist yet, so there is nothing to reconcile. "
+                "Write the package first."
+            )
+
+        sources = []
+        problems = []
+        upload_fingerprints = set()
+        for user_file in user_files:
+            if user_file.file_type != UserFile.FileType.TABULAR:
+                continue
+            for manifest_table in (user_file.source_manifest or {}).get('tables', []):
+                if manifest_table.get('content_fingerprint'):
+                    upload_fingerprints.add(manifest_table['content_fingerprint'])
+            try:
+                _, dataframes = user_file.extract_data()
+            except Exception as exc:
+                problems.append(f"Could not reparse upload {user_file.filename}: {exc}")
+                continue
+            for sheet_name, df in dataframes.items():
+                if df is None or getattr(df, 'empty', True):
+                    continue
+                label = f"upload {user_file.filename}"
+                if len(dataframes) > 1:
+                    label += f" / {sheet_name}"
+                sources.append((label, Table.make_columns_unique(df.copy())))
+
+        for table in tables:
+            if normalize_resource_name(table.title) in DWC_DP_TABLE_NAMES or table.df is None:
+                continue
+            if Table.calculate_content_fingerprint(table.df) in upload_fingerprints:
+                continue  # identical to an upload that is already checked
+            sources.append((f"working table {table.id} `{table.title}`", table.df))
+
+        if not sources:
+            return "No source uploads or working tables were found to reconcile. " + " ".join(problems)
+
+        metadata_text = " ".join([
+            dataset.title or "",
+            dataset.description or "",
+            json.dumps(dataset.eml, ensure_ascii=False, default=str)
+            if isinstance(dataset.eml, (dict, list)) else str(dataset.eml or ""),
+        ])
+        results = source_coverage.reconcile(sources, destinations, metadata_text)
+        report = source_coverage.render_report(results, destinations, state=state)
+        if problems:
+            report += "\n" + "\n".join(problems)
+        return report
+
+
 class SetWorkingPlan(OpenAIBaseModel):
     """
     Record or replace your working plan for this task: the chosen resource graph, key decisions,

@@ -35,6 +35,10 @@ READ_ONLY_TOOLS = frozenset({
     LOOKUP_TOOL,
     PLAN_TOOL,
     "Python",
+    # Validation checks the package without changing it. Counting it as progress
+    # let a verification loop reset the no-progress limit every few turns.
+    "ValidateDwcDp",
+    "ReconcileSourceCoverage",
     "GetDarwinCoreInfo",
     "GetDwCExtensionInfo",
     "PreviewDwcDpDescriptor",
@@ -281,8 +285,21 @@ def turns_since_progress(entries: Iterable[Tuple[Any, Dict[str, Any]]], progress
     )
 
 
-def render_ledger(ledger: Dict[str, str], plan: str, get_spec: Callable[[str], Any]) -> str:
-    if not ledger and not plan:
+def latest_tool_results(openai_objs: Iterable[Dict[str, Any]], tool_name: str) -> List[str]:
+    return [
+        result
+        for name, _args, result in iter_tool_calls(openai_objs)
+        if name == tool_name and result is not None
+    ]
+
+
+def render_ledger(
+    ledger: Dict[str, str],
+    plan: str,
+    get_spec: Callable[[str], Any],
+    coverage_open_items: Optional[str] = None,
+) -> str:
+    if not ledger and not plan and coverage_open_items is None:
         return ""
     lines = [
         "DWC-DP SCHEMA LEDGER (authoritative for this task; these lookups are complete and are not "
@@ -299,4 +316,10 @@ def render_ledger(ledger: Dict[str, str], plan: str, get_spec: Callable[[str], A
         lines.append("")
         lines.append("Working plan (latest SetWorkingPlan; update it as writes complete):")
         lines.append(plan)
+    if coverage_open_items is not None:
+        lines.append("")
+        lines.append(
+            "Latest ReconcileSourceCoverage open items (everything else it checked is verified; "
+            f"give these a disposition in the coverage report): {coverage_open_items}"
+        )
     return "\n".join(lines)

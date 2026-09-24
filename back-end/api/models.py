@@ -857,6 +857,7 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
         dwc_dp_functions = [
             agent_tools.GetDwcDpTableInfo.__name__,
             agent_tools.SetWorkingPlan.__name__,
+            agent_tools.ReconcileSourceCoverage.__name__,
             agent_tools.ValidateDwcDp.__name__,
             agent_tools.PreviewDwcDpDescriptor.__name__,
         ]
@@ -1396,14 +1397,39 @@ class Agent(models.Model):
     def schema_ledger_text(self):
         """Schemas looked up and the working plan, rebuilt from the stored tool
         log every turn so they survive history compaction."""
+        from api import source_coverage
         from api.dwc_dp_specs import get_table_spec
-        from api.schema_ledger import latest_working_plan, render_ledger
+        from api.schema_ledger import latest_tool_results, latest_working_plan, render_ledger
 
         objs = self._history_objs()
+        coverage_results = [
+            result for result in latest_tool_results(objs, agent_tools.ReconcileSourceCoverage.__name__)
+            if result.startswith(source_coverage.REPORT_PREFIX)
+        ]
+        coverage_open_items = None
+        if coverage_results:
+            tables = list(Table.objects.filter(dataset_id=self.dataset_id))
+            user_files = list(self.dataset.user_files.all())
+            current_state = source_coverage.coverage_state(
+                ((table.id, table.title, table.updated_at.isoformat()) for table in tables),
+                (
+                    (user_file.id, user_file.filename, user_file.uploaded_at.isoformat(), user_file.source_manifest)
+                    for user_file in user_files
+                ),
+                {
+                    'title': self.dataset.title,
+                    'description': self.dataset.description,
+                    'eml': self.dataset.eml,
+                },
+            )
+            latest_result = coverage_results[-1]
+            if source_coverage.result_state(latest_result) == current_state:
+                coverage_open_items = source_coverage.latest_open_items([latest_result])
         return render_ledger(
             self.schema_ledger_entries(objs),
             latest_working_plan(objs),
             get_table_spec,
+            coverage_open_items=coverage_open_items,
         )
 
     @property
