@@ -856,6 +856,7 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
         ]
         dwc_dp_functions = [
             agent_tools.GetDwcDpTableInfo.__name__,
+            agent_tools.SetWorkingPlan.__name__,
             agent_tools.ValidateDwcDp.__name__,
             agent_tools.PreviewDwcDpDescriptor.__name__,
         ]
@@ -1214,6 +1215,12 @@ def invalidate_publication_artifacts_after_table_delete(sender, instance, **kwar
 
 
 class Agent(models.Model):
+    # DwC-DP building tasks where the server enforces the no-progress limit.
+    NO_PROGRESS_GUARDED_TASKS = {
+        "Data transformation",
+        "Data validation and refinement",
+        "Phylogenetic tree linking",
+    }
     SOURCE_MANIFEST_TASKS = {
         "Data transformation",
         "Data validation and refinement",
@@ -1344,6 +1351,7 @@ class Agent(models.Model):
             from api.relational_candidates import render_relational_candidate_report
 
             relational_candidate_report = render_relational_candidate_report(tables)
+        no_progress_turns = self.turns_without_progress() if self.no_progress_guarded else 0
         return render_to_string(
             'state_update.txt',
             {
@@ -1351,6 +1359,10 @@ class Agent(models.Model):
                 'tables': tables,
                 'changed_tables': changed_tables,
                 'relational_candidate_report': relational_candidate_report,
+                'schema_ledger': self.schema_ledger_text(),
+                'no_progress_turns': no_progress_turns,
+                'no_progress_warn_turns': self.no_progress_warn_turns,
+                'no_progress_stop_turns': self.no_progress_stop_turns,
                 'tool_call_count': self.tool_call_count,
                 'call_count_nudge_threshold': getattr(
                     settings, "AGENT_CALL_COUNT_NUDGE_THRESHOLD", 20
@@ -1369,6 +1381,88 @@ class Agent(models.Model):
             for message in self.message_set.all()
             if (message.openai_obj or {}).get('role') == Message.Role.ASSISTANT
             and (message.openai_obj or {}).get('tool_calls')
+        )
+
+    def _history_objs(self):
+        return [message.openai_obj or {} for message in self.message_set.all()]
+
+    def schema_ledger_entries(self, history_objs=None):
+        from api.dwc_dp_specs import RESERVED_TABLE_NAMES
+        from api.schema_ledger import schema_lookups
+
+        objs = history_objs if history_objs is not None else self._history_objs()
+        return schema_lookups(objs, RESERVED_TABLE_NAMES)
+
+    def schema_ledger_text(self):
+        """Schemas looked up and the working plan, rebuilt from the stored tool
+        log every turn so they survive history compaction."""
+        from api.dwc_dp_specs import get_table_spec
+        from api.schema_ledger import latest_working_plan, render_ledger
+
+        objs = self._history_objs()
+        return render_ledger(
+            self.schema_ledger_entries(objs),
+            latest_working_plan(objs),
+            get_table_spec,
+        )
+
+    @property
+    def no_progress_guarded(self):
+        return self.task.name in self.NO_PROGRESS_GUARDED_TASKS
+
+    @property
+    def no_progress_warn_turns(self):
+        return max(int(getattr(settings, "AGENT_NO_PROGRESS_WARN_TURNS", 8)), 0)
+
+    @property
+    def no_progress_stop_turns(self):
+        return max(int(getattr(settings, "AGENT_NO_PROGRESS_STOP_TURNS", 15)), 0)
+
+    def turns_without_progress(self):
+        """Tool-calling turns since the last table write, non-read-only tool
+        result, or user message."""
+        from api.schema_ledger import turns_since_progress
+
+        latest_table_revision = Table.objects.filter(dataset_id=self.dataset_id).aggregate(
+            latest=models.Max('updated_at')
+        )['latest']
+        entries = [
+            (message.created_at, message.openai_obj or {})
+            for message in self.message_set.all()
+        ]
+        return turns_since_progress(entries, latest_table_revision)
+
+    def _pause_for_no_progress(self, turns):
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "Pausing agent %s (dataset %s, task %s) after %s turns without package progress",
+            self.id,
+            self.dataset_id,
+            self.task.name,
+            turns,
+        )
+        try:
+            from api.helpers import discord_bot
+
+            if os.getenv('DISCORD_WEBHOOK'):
+                discord_bot.send_discord_message(
+                    f"ChatIPT paused dataset {self.dataset_id} ({self.task.name}): "
+                    f"{turns} tool turns without package progress."
+                )
+        except Exception:
+            logger.exception("Failed to send no-progress notification for agent %s", self.id)
+        return Message.objects.create(
+            agent=self,
+            openai_obj={
+                'role': Message.Role.ASSISTANT,
+                'content': (
+                    "I've spent the last several steps checking details without adding anything new "
+                    "to your data package, so I've paused here rather than keep going in circles. "
+                    "Reply \"continue\" and I'll carry on from where I am, or tell me if there's "
+                    "anything about your data you'd like to clarify first."
+                ),
+                'no_progress_pause': True,
+            },
         )
 
     def messages_for_model(self):
@@ -1445,6 +1539,17 @@ class Agent(models.Model):
             role = openai_obj.get('role')
             if role == Message.Role.ASSISTANT and openai_obj.get('tool_calls'):
                 if message.id not in kept_tool_messages:
+                    # Keep what the agent said (its plan, its reply to the user)
+                    # even when the old tool call itself is dropped; otherwise the
+                    # latest user message looks unanswered and the agent restarts.
+                    content = openai_obj.get('content')
+                    if isinstance(content, str) and content.strip():
+                        if len(content) > compact_chars:
+                            content = content[:compact_chars] + "\n...[older assistant text compacted]..."
+                        bounded.append(SimpleNamespace(openai_obj={
+                            'role': Message.Role.ASSISTANT,
+                            'content': content,
+                        }))
                     continue
             if role == Message.Role.TOOL:
                 if str(openai_obj.get('tool_call_id')) not in kept_call_ids:
@@ -1533,6 +1638,11 @@ class Agent(models.Model):
             return None
         if self.busy_thinking:
             return last_message
+
+        if self.no_progress_guarded and self.no_progress_stop_turns:
+            turns = self.turns_without_progress()
+            if turns >= self.no_progress_stop_turns:
+                return [self._pause_for_no_progress(turns)]
 
         gbif_poll = self._gbif_poll_status(last_message)
         if gbif_poll:
@@ -1752,6 +1862,23 @@ class Agent(models.Model):
             if not re.sub(r'[\s"\']', '', fn.arguments).startswith('{code'):
                 fnargs = json.dumps({'code': fn.arguments})
         fn_args = json.loads(fnargs, strict=False)
+
+        from api import schema_ledger
+
+        if fn.name == 'Python' and schema_ledger.reads_schema_files(fn_args.get('code')):
+            return schema_ledger.SCHEMA_FILE_NOTICE
+        if fn.name == agent_tools.GetDwcDpTableInfo.__name__ and fn_args.get('table_name'):
+            include_fields = fn_args.get('include_fields', True)
+            if isinstance(include_fields, str):
+                include_fields = include_fields.strip().lower() not in {'false', '0', 'no'}
+            if schema_ledger.lookup_is_covered(
+                self.schema_ledger_entries(),
+                fn_args.get('table_name'),
+                bool(include_fields),
+                fn_args.get('field_details'),
+            ):
+                return schema_ledger.duplicate_lookup_notice(fn_args.get('table_name'), bool(include_fields))
+
         function_model_obj = function_model_class(**fn_args)
         return function_model_obj.run()
 

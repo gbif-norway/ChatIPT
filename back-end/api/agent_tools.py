@@ -539,7 +539,11 @@ class GetDwcDpTableInfo(OpenAIBaseModel):
     Retrieve Darwin Core Data Package table schema information from vendored DwC-DP schemas.
 
     Call without parameters to list reserved DwC-DP table names.
-    Provide `table_name` to inspect required fields, primary keys, foreign keys, and field descriptors.
+    Provide `table_name` to get the table's keys, relationships and its complete field list in compact form
+    (name, type, required/unique, numeric bounds). Set include_fields=false for keys and relationships only.
+    Pass `field_details` with specific field names to get their full definitions, guidance and examples.
+    Looked-up schemas are kept in the DWC-DP SCHEMA LEDGER of the workflow state for the rest of the task,
+    so repeat lookups are not re-run.
     """
 
     table_name: Optional[str] = Field(
@@ -547,9 +551,14 @@ class GetDwcDpTableInfo(OpenAIBaseModel):
         description="Reserved DwC-DP table name, e.g. occurrence, event, material, nucleotide-analysis, organism-interaction.",
     )
     include_fields: bool = Field(default=True)
-    max_fields: PositiveInt = Field(default=120)
+    field_details: Optional[List[str]] = Field(
+        default=None,
+        description="Field names whose full definition, guidance and examples you need. Leave empty otherwise.",
+    )
 
     def run(self):
+        from api.schema_ledger import render_field_details, render_table_manifest
+
         if not self.table_name:
             grouped = [
                 "DwC-DP reserved table names:",
@@ -565,75 +574,37 @@ class GetDwcDpTableInfo(OpenAIBaseModel):
         except KeyError as exc:
             return str(exc)
 
-        lines = [
-            f"{spec.name} — {spec.title}",
-            spec.description,
-        ]
-        if spec.schema.get("comments"):
-            lines.append(f"Table guidance: {spec.schema['comments']}")
-        if spec.schema.get("examples"):
-            lines.append(f"Table examples: {spec.schema['examples']}")
-        if spec.schema.get("namespace"):
-            lines.append(f"Namespace: {spec.schema['namespace']}")
-        if spec.schema.get("identifier"):
-            lines.append(f"Table identifier: {spec.schema['identifier']}")
-        lines.extend([
-            f"Primary key (enforced): {', '.join(spec.primary_key) if spec.primary_key else '(none)'}",
-            f"Weak primary key (preserved, not enforced): "
-            f"{', '.join(spec.weak_primary_key) if spec.weak_primary_key else '(none)'}",
-            "Foreign keys (enforced package relationships):",
-        ])
-        if spec.foreign_keys:
-            for fk in spec.foreign_keys:
-                ref = fk.get("reference") or {}
-                lines.append(
-                    f"- {fk.get('fields')} -> {ref.get('resource') or spec.name}.{ref.get('fields')} "
-                    f"({fk.get('predicate', 'relationship')})"
-                )
-        else:
-            lines.append("- (none)")
+        if self.field_details:
+            return render_field_details(spec, self.field_details)
+        return render_table_manifest(
+            spec,
+            include_fields=self.include_fields,
+            include_guidance=True,
+        )
 
-        lines.append("Weak foreign keys (preserved source links, not enforced):")
-        if spec.weak_foreign_keys:
-            for fk in spec.weak_foreign_keys:
-                ref = fk.get("reference") or {}
-                lines.append(
-                    f"- {fk.get('fields')} -> {ref.get('resource') or spec.name}.{ref.get('fields')} "
-                    f"({fk.get('predicate', 'relationship')})"
-                )
-        else:
-            lines.append("- (none)")
 
-        if self.include_fields:
-            lines.append("Fields:")
-            for index, field in enumerate(spec.schema.get("fields", [])):
-                if index >= self.max_fields:
-                    lines.append(f"... {len(spec.schema.get('fields', [])) - self.max_fields} more fields not shown.")
-                    break
-                constraints = field.get("constraints") or {}
-                bits = []
-                if constraints.get("required"):
-                    bits.append("required")
-                if constraints.get("unique"):
-                    bits.append("unique")
-                if "minimum" in constraints:
-                    bits.append(f"min={constraints['minimum']}")
-                if "maximum" in constraints:
-                    bits.append(f"max={constraints['maximum']}")
-                bits.insert(0, f"type={field.get('type', 'string')}")
-                if field.get("format"):
-                    bits.append(f"format={field['format']}")
-                if field.get("namespace"):
-                    bits.append(f"namespace={field['namespace']}")
-                suffix = f" [{', '.join(bits)}]" if bits else ""
-                lines.append(f"- {field['name']}{suffix}: {field.get('description', '')}")
-                if field.get("comments"):
-                    lines.append(f"  Guidance: {field['comments']}")
-                if field.get("examples"):
-                    lines.append(f"  Examples: {field['examples']}")
-                if field.get("dcterms:isVersionOf"):
-                    lines.append(f"  Term: {field['dcterms:isVersionOf']}")
-        return "\n".join(lines)
+class SetWorkingPlan(OpenAIBaseModel):
+    """
+    Record or replace your working plan for this task: the chosen resource graph, key decisions,
+    package writes completed, and writes remaining. The latest plan is shown in the current
+    workflow state on every turn, so it survives when older tool calls are omitted from context.
+    Keep it concise and update it after each package write.
+    """
+
+    plan: str = Field(..., description="The complete current plan. Replaces any earlier plan.")
+
+    def run(self):
+        from api.schema_ledger import MAX_PLAN_CHARS
+
+        plan = (self.plan or "").strip()
+        if not plan:
+            return "ERROR CALLING FUNCTION: the plan is empty."
+        if len(plan) > MAX_PLAN_CHARS:
+            return (
+                f"Working plan saved, but only its first {MAX_PLAN_CHARS} characters are shown in the "
+                "workflow state. Shorten it next time."
+            )
+        return "Working plan saved. It is shown in the current workflow state on every turn."
 
 
 class DwcDpResourceTable(BaseModel):

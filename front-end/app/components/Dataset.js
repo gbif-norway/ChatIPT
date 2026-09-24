@@ -26,6 +26,13 @@ import {
 
 const emptyCreator = () => ({ first_name: '', last_name: '', email: '', orcid: '' });
 
+const METADATA_EDIT_TASKS = new Set([
+  'Publication package preparation',
+  'Pre-publication quality gate',
+  'Final Review & Publication',
+  'Data maintenance',
+]);
+
 const creatorsFromDataset = (dataset, fallbackUser) => {
   const savedCreators = Array.isArray(dataset?.eml?.users) ? dataset.eml.users : [];
   if (savedCreators.length > 0) {
@@ -693,10 +700,11 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                 className="btn btn-primary btn-sm"
                 data-bs-toggle="modal"
                 data-bs-target="#datasetMetadataModal"
-                title="View dataset metadata"
+                title="Edit dataset metadata"
+                onClick={handleStartMetadataEdit}
               >
                 <i className="bi bi-file-earmark-text me-1"></i>
-                Dataset Metadata
+                Edit metadata
               </button>
               {currentDataset.can_visualize_tree && (
                 <button 
@@ -772,6 +780,8 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                   refreshDataset={() => refreshDataset(currentDatasetId)}
                   currentDatasetId={currentDatasetId}
                   refreshTables={refreshTables}
+                  showMetadataEditLink={METADATA_EDIT_TASKS.has(agent.task.name)}
+                  onEditMetadata={handleStartMetadataEdit}
                 />
               ))}
             </Accordion>

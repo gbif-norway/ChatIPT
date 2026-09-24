@@ -279,6 +279,13 @@ OPENAI_SIMPLE_REASONING_EFFORT = os.environ.get("OPENAI_SIMPLE_REASONING_EFFORT"
 # stage has made this many tool calls. Not an enforced limit.
 AGENT_CALL_COUNT_NUDGE_THRESHOLD = int(os.environ.get("AGENT_CALL_COUNT_NUDGE_THRESHOLD", "20"))
 
+# Enforced no-progress limits for the DwC-DP building tasks. A tool-calling turn
+# counts toward the limit until a table is written, a non-read-only tool runs, or
+# the user replies. At WARN the workflow state tells the model to act; at STOP the
+# server pauses the agent and asks the user to continue. 0 disables a limit.
+AGENT_NO_PROGRESS_WARN_TURNS = int(os.environ.get("AGENT_NO_PROGRESS_WARN_TURNS", "8"))
+AGENT_NO_PROGRESS_STOP_TURNS = int(os.environ.get("AGENT_NO_PROGRESS_STOP_TURNS", "15"))
+
 # CORS settings for React frontend
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 

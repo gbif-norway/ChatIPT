@@ -57,7 +57,14 @@ const getComparableMessageText = (content) => {
   return main.trim();
 };
 
-const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
+const Agent = ({
+  agent,
+  refreshDataset,
+  currentDatasetId,
+  refreshTables,
+  showMetadataEditLink = false,
+  onEditMetadata,
+}) => {
   const [userInput, setUserInput] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState(getLoadingText({ phase: 'working' }));
@@ -617,6 +624,17 @@ const Agent = ({ agent, refreshDataset, currentDatasetId, refreshTables }) => {
               <div className="text-muted small mt-3">
                 Tip: use the paperclip to add data files, tree files, or manuscript PDFs.
               </div>
+              {showMetadataEditLink && (
+                <button
+                  type="button"
+                  className="btn btn-link btn-sm p-0 mt-1"
+                  data-bs-toggle="modal"
+                  data-bs-target="#datasetMetadataModal"
+                  onClick={onEditMetadata}
+                >
+                  Edit metadata
+                </button>
+              )}
             </form>
           )}
         </Accordion.Body>

@@ -29,6 +29,14 @@ Publication artifact status (authoritative -- trust this instead of re-running a
 Note: this task stage has made {{ tool_call_count }} tool calls so far. If the package above is already exported, uploaded, and valid, prefer calling SetAgentTaskToComplete over re-checking it again. If you're stuck on something specific, use RequestUserInput.
 {% endif %}
 
+{% if no_progress_warn_turns and no_progress_turns >= no_progress_warn_turns %}
+NO PROGRESS: the last {{ no_progress_turns }} tool turns wrote no table, ran no validation or other package tool, and received no user input. Stop re-checking. Your next action must be a package write, ValidateDwcDp, RequestUserInput, or SetAgentTaskToComplete.{% if no_progress_stop_turns %} The workflow pauses after {{ no_progress_stop_turns }} turns without progress.{% endif %}
+
+{% endif %}
+{% if schema_ledger %}
+{{ schema_ledger|safe }}
+
+{% endif %}
 Current table revisions (full evidence follows only for tables changed this turn):
 {% for table in tables %}
 - Table {{ table.id }} `{{ table.title|default:"(untitled)" }}`: {{ table.row_count }} rows x {{ table.columns|length }} columns; revision {{ table.updated_at|date:"c" }}.
