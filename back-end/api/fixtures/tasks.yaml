@@ -43,12 +43,8 @@
     name: Data content exploration
     text: |-
       1. Briefly describe the type of data each data island or extracted table (see structure_notes) appears to contain (e.g., "list of species names and counts," "site descriptions," "environmental measurements"), and add this information to the structure_notes (being careful not to overwrite what is there already, use SetStructureNotes). Ask the user about anything which is completely cryptic. Edit column headings as necessary to make the data content clear, and add any necessary info to the structure_notes. 
-      2. Generate a concise draft Title (3-5 words) and a short Description (1-5 sentences) for the entire dataset, describing the data itself in general, and save them using SetBasicMetadata.
-         - This is mandatory for this task. Do not complete this task without setting title and description.
-         - Do not ask the user to provide title/description first. Infer best-effort values from tables, extracted manuscript context, and conversation history.
-         - Ask the user only for optional edits/refinements after you have saved a draft.
-         - If your first SetBasicMetadata call fails due to missing title/description, immediately retry with generated draft values in the same turn.
-      3. Once you have this, please generate additional required metadata described in the SetEML function, as far as it's possible to generate it. You should be the one generating it based on the data but you can check it with the user, and in fact you should ask the user about any metadata you aren't sure of, but allow them to skip this step if they wish. Derive EML fields from the data first wherever possible: temporal_scope from eventDate and/or year/month/day (earliest-latest record dates, not "today" placeholders), geographic_scope from country/state/locality and coordinate bounds, taxonomic_scope from scientificName/taxonomic columns, and methodology from samplingProtocol/method columns. Use the user's name and email address as the contact as per their profile (ask them directly if unsure, even if it means repeating their email). This is the metadata that will get shown when the dataset is published, but it will be edited and refined as the publication process progresses.
+      2. Infer and save a concise dataset title (3-5 words) and description (1-5 sentences) with SetBasicMetadata. This task cannot complete without both.
+      3. Use SetEML to save the best-supported draft of all metadata without asking the user to confirm it; leave unsupported optional fields empty. Infer temporal, geographic, taxonomic, and methodology fields from the corresponding table evidence, including coordinate-derived geographic bounds. Use CC BY 4.0 by default and the user's ORCID profile for creators/contact when no better source exists. The final review will direct the user to the Dataset Metadata form for changes.
 
 - model: api.task
   fields:
@@ -193,7 +189,7 @@
       PACKAGE_PREPARATION_TASK: Build the authoritative DwC-DP and its DwC-A publication projection. Do not request publication approval and do not publish in this task.
 
       Your subtasks:
-      1.  **Complete draft metadata:** Check and edit metadata as necessary. If title or description is missing, generate the best supported value from the data and saved context instead of asking the user to write it. Leave user-facing metadata confirmation to the quality gate.
+      1.  **Complete draft metadata:** Update the metadata from the final data and saved context where needed. Fill any missing title or description with the best-supported value.
       2.  **Create and validate publication packages:**
           *   Run ValidateDwcDp. Fix any DwC-DP schema, required-field, unique-ID, numeric-constraint, or foreign-key issues before exporting. Treat warnings about duplicate weak primary identifiers used by the DwC-A core as issues to resolve before export.
           *   Optionally call PreviewDwcDpDescriptor if you need to inspect the generated datapackage.json before export.
@@ -214,7 +210,7 @@
           *   Call UploadDwCA with the temporary core table and explicit extension assignments (`table_id`, `extension_type`, and `core_id_column`).
           *   Never add DwC-A-only fields such as basisOfRecord directly to a DwC-DP resource when GetDwcDpTableInfo does not list them. The authoritative DwC-DP tables must remain schema-valid after projection and validation.
           *   Add the projection decisions, coverage, and package URLs to structure_notes for the independent quality gate. End with `SOURCE COVERAGE: COMPLETE` as the final nonblank line only when every current source column still has a disposition.
-      Finish this task only after both package URLs exist, the authoritative DwC-DP validates, projection coverage and omissions are recorded in structure_notes, and the current DwC-A can be handed to the independent quality gate. Do not ask for publication approval here.
+      Finish this task only after both package URLs exist, the authoritative DwC-DP validates, projection coverage and omissions are recorded in structure_notes, and the current DwC-A can be handed to the independent quality gate.
 
 - model: api.task
   fields:
@@ -230,7 +226,7 @@
          * Reconcile every populated column in the original COMPLETE COLUMN MANIFEST with the authoritative package and projection. Confirm source rows, populated-value counts, joins, identifiers, core/extension links, occurrence status/count consistency, and every deliberate omission or unresolved column.
          * For every deduplicated or aggregated entity, verify that the source establishes identity. Identical payloads, a shared locality, or identical missing values are not sufficient evidence that records represent the same event or entity.
          * For every non-trivial source-to-target mapping, compare the source header and representative values with the authoritative definition of the destination term. Exact value preservation does not make a semantically incorrect mapping valid. Keep table descriptions consistent with the final transformed content.
-         * Inspect the actual exported archive, not only Dataset.eml or temporary projection tables. Confirm that title, description, creators, contact details, licence, temporal/geographic/taxonomic scope, and methodology survive into EML where supported.
+         * Inspect the actual exported archive, not only Dataset.eml or temporary projection tables. Confirm that title, description, creators, contact details, licence, temporal/geographic/taxonomic scope, and methodology are complete as the evidence permits and survive into EML. Correct missing or unsupported values from the final data and saved context; use the ORCID profile for creators/contact when no better source exists.
          * Check for invented precision or unsupported inference. In particular, month-only and year-only dates must remain at that precision; coordinate signs/hemispheres, datum, country, and locality must be mutually consistent; placeholders such as `unknown@example.org` must not appear as real metadata.
          * Review taxon matches and spelling, coordinate interpretation, controlled vocabularies, record counts, uniqueness, and relationship resolution.
 
@@ -240,31 +236,26 @@
          * A taxon genuinely absent from the GBIF backbone or another unavoidable validator issue may be accepted only when it is supported by source evidence and explicitly acknowledged by the user. Record the reason in structure_notes.
          * Apply confirmed corrections to the authoritative data or metadata as appropriate. Rebuild both affected packages, then rerun the relevant internal validation.
 
-      3. **Confirm final metadata:**
-         * Present the clean title, description, creators/contact, licence, scopes, methodology, material omissions, and remaining non-blocking limitations for optional edits before completing this task.
-         * If the user requests an edit, apply it and rebuild the affected packages before continuing.
-
-      4. **Run the final external check:**
-         * Only after the audit, corrections, metadata confirmation, and final archive rebuild, call ValidateDwCA for the current archive and continue polling the same validation key until the result is finished.
+      3. **Run the final external check:**
+         * After the audit, corrections, and any required rebuild, call ValidateDwCA for the current archive and continue polling the same validation key until the result is finished.
          * The task cannot complete unless GBIF reports that this exact current archive is indexable.
          * Interpret every validator issue. Do not equate "indexable" with publication-ready. If validation requires another correction, rebuild the affected packages and start a new validation for the replacement archive.
          * Record a concise readiness report in structure_notes: checks performed, issues found, fixes made, remaining non-blocking limitations, explicit user acknowledgements, and the final GBIF validator key/status. End with `SOURCE COVERAGE: COMPLETE` as the final nonblank line only when every current source column has a disposition.
 
-      Complete this task only when there are no unresolved blockers, the current archive has a finished indexable GBIF validation, final metadata has been checked, and temporary DwC-A projection tables can be removed. Do not request publication approval and do not call PublishToGBIF.
+      Complete this task only when there are no unresolved blockers, the current archive has a finished indexable GBIF validation, metadata has been checked, and temporary DwC-A projection tables can be removed.
 
 - model: api.task
   fields:
     name: Final Review & Publication
     text: |-
-      FINAL_PUBLICATION_TASK: The packages have already been built and passed the pre-publication quality gate. Do not transform data, rebuild packages, or repeat technical review in this task.
+      FINAL_PUBLICATION_TASK: The packages have passed the quality gate. Present the result and publish it after explicit user approval.
 
-      1. Briefly show the user the final dataset title, description, licence, package links, material omissions, and any non-blocking limitations recorded by the quality gate.
-      2. Explain that publication is to the GBIF sandbox, where the dataset becomes publicly visible in the test system, not production gbif.org. Production publication requires contacting helpdesk@gbif.no with the sandbox dataset URL.
-      3. Tell the user that the default licence is CC BY 4.0 (`http://creativecommons.org/licenses/by/4.0/legalcode`) unless the quality gate recorded another confirmed licence.
-      4. Ask one consolidated question for final publication approval. Do not ask the user to reconfirm technical decisions already settled in the quality gate.
-      5. Only after explicit approval, call PublishToGBIF. Report the GBIF sandbox URL and DwC-DP URL on success, or report the publication error clearly.
+      1. Briefly show the dataset title, description, package links, material omissions, and non-blocking limitations.
+      2. Tell the user the metadata is ChatIPT's best-supported draft, including geographic scope and creators seeded from ORCID where applicable. The default licence is CC BY 4.0 (`http://creativecommons.org/licenses/by/4.0/legalcode`). Changes can be made in the Dataset Metadata form opened by the blue button beside the title.
+      3. Explain that publication is public in the GBIF sandbox, not production gbif.org; production publication requires sending the sandbox dataset URL to helpdesk@gbif.no. Ask for publication approval.
+      4. After explicit approval, call PublishToGBIF and report the GBIF sandbox and DwC-DP URLs, or the publication error.
 
-      If the user requests any data or metadata change instead of approving publication, do not publish or edit the validated artifact in this task. Record the confirmed request in structure_notes, then complete this task so Data maintenance can apply the change, rebuild both packages, and repeat quality validation before requesting publication approval again. Do not report an expected change request as a software bug.
+      If the user requests a change, record it in structure_notes and complete this task so Data maintenance can apply it, rebuild the packages, and repeat validation before approval.
 
 - model: api.task
   fields:

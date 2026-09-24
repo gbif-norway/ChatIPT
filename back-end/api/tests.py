@@ -1746,6 +1746,32 @@ class SetEMLProjectTitleTests(TestCase):
         self.assertEqual(result, "EML has been successfully set.")
         self.assertEqual(self.dataset.eml["project_title"], "Existing project")
 
+    def test_defaults_license_and_seeds_creators_from_orcid_profile(self):
+        profile_user = CustomUser.objects.create_user(
+            username="orcid-creator",
+            email="creator@example.org",
+            first_name="Ada",
+            last_name="Lovelace",
+            orcid_id="0000-0001-2345-6789",
+        )
+        self.dataset.user = profile_user
+        self.dataset.save()
+
+        SetEML(agent_id=self.agent.id).run()
+        self.dataset.refresh_from_db()
+
+        self.assertEqual(self.dataset.eml["license"], "CC BY 4.0")
+        self.assertEqual(self.dataset.eml["creators_source"], "user_profile")
+        self.assertEqual(
+            self.dataset.eml["users"],
+            [{
+                "first_name": "Ada",
+                "last_name": "Lovelace",
+                "email": "creator@example.org",
+                "orcid": "0000-0001-2345-6789",
+            }],
+        )
+
     def test_explicit_geographic_bounds_are_stored_for_export(self):
         result = SetEML(
             agent_id=self.agent.id,
@@ -3945,6 +3971,25 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
 
         self.assertEqual(self.task_names[start:start + 3], publication_tasks)
 
+    def test_metadata_is_inferred_without_intermediate_confirmation(self):
+        exploration = self.task_text["Data content exploration"]
+        quality_gate = self.task_text[Task.PREPUBLICATION_QUALITY_TASK]
+
+        self.assertIn("without asking the user to confirm it", exploration)
+        self.assertIn("coordinate-derived geographic bounds", exploration)
+        self.assertIn("CC BY 4.0 by default", exploration)
+        self.assertIn("ORCID profile for creators/contact", exploration)
+        self.assertIn("complete as the evidence permits", quality_gate)
+
+    def test_final_review_directs_metadata_edits_to_blue_form(self):
+        final_review = self.task_text[Task.FINAL_PUBLICATION_TASK]
+
+        self.assertIn("best-supported draft", final_review)
+        self.assertIn("including geographic scope", final_review)
+        self.assertIn("default licence is CC BY 4.0", final_review)
+        self.assertIn("blue button beside the title", final_review)
+        self.assertIn("creators seeded from ORCID", final_review)
+
     def test_transformation_prompt_delegates_semantic_routing_to_model(self):
         text = self.task_text["Data transformation"]
 
@@ -4125,11 +4170,10 @@ class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
     def test_final_publication_prompt_only_requests_approval_and_publishes(self):
         text = self.task_text[Task.FINAL_PUBLICATION_TASK]
 
-        self.assertIn("Do not transform data, rebuild packages, or repeat technical review", text)
-        self.assertIn("Ask one consolidated question for final publication approval", text)
-        self.assertIn("Only after explicit approval, call PublishToGBIF", text)
-        self.assertIn("complete this task so Data maintenance can apply the change", text)
-        self.assertIn("Do not report an expected change request as a software bug", text)
+        self.assertIn("packages have passed the quality gate", text)
+        self.assertIn("Ask for publication approval", text)
+        self.assertIn("After explicit approval, call PublishToGBIF", text)
+        self.assertIn("Data maintenance can apply it", text)
 
     def test_maintenance_rebuilds_and_revalidates_after_changes(self):
         text = self.task_text[Task.MAINTENANCE_TASK]

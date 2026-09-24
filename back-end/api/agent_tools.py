@@ -2115,6 +2115,8 @@ class SetEML(OpenAIBaseModel):
 
             if self.license is not None:
                 eml["license"] = self.license
+            else:
+                eml.setdefault("license", "CC BY 4.0")
 
             inferred_temporal_scope = self._infer_temporal_scope_from_dataset(dataset)
             temporal_scope_to_set, temporal_note = self._resolve_temporal_scope(
@@ -2206,6 +2208,18 @@ class SetEML(OpenAIBaseModel):
             if self.users is not None:
                 # Ensure we store plain dicts, not Pydantic objects
                 eml["users"] = [u.dict() for u in self.users]
+            elif not eml.get("users") and dataset.user:
+                # ORCID is the authenticated profile and therefore the best
+                # available creator seed when no manuscript/user list exists.
+                profile_user = dataset.user
+                if profile_user.first_name and profile_user.last_name:
+                    eml["users"] = [{
+                        "first_name": profile_user.first_name or "",
+                        "last_name": profile_user.last_name or "",
+                        "email": profile_user.email or "",
+                        "orcid": profile_user.orcid_id or None,
+                    }]
+                    eml.setdefault("creators_source", "user_profile")
             dataset.eml = eml
             dataset.save()
 

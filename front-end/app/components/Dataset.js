@@ -24,6 +24,57 @@ import {
   tableRowsUrl,
 } from '../utils/tableApi.mjs';
 
+const emptyCreator = () => ({ first_name: '', last_name: '', email: '', orcid: '' });
+
+const creatorsFromDataset = (dataset, fallbackUser) => {
+  const savedCreators = Array.isArray(dataset?.eml?.users) ? dataset.eml.users : [];
+  if (savedCreators.length > 0) {
+    return savedCreators.map((person) => ({
+      first_name: person?.first_name || '',
+      last_name: person?.last_name || '',
+      email: person?.email || '',
+      orcid: person?.orcid || '',
+    }));
+  }
+
+  const profile = dataset?.user_info || fallbackUser;
+  if (!profile) return [emptyCreator()];
+  return [{
+    first_name: profile.first_name || '',
+    last_name: profile.last_name || '',
+    email: profile.email || '',
+    orcid: profile.orcid_id || '',
+  }];
+};
+
+const metadataFormFromDataset = (dataset, fallbackUser) => {
+  const eml = dataset?.eml || {};
+  const bounds = eml.geographic_bounds || {};
+  return {
+    title: dataset?.title || '',
+    description: dataset?.description || '',
+    license: eml.license || 'CC BY 4.0',
+    temporal_scope: eml.temporal_scope || '',
+    geographic_scope: eml.geographic_scope || '',
+    geographic_west: bounds.west ?? '',
+    geographic_east: bounds.east ?? '',
+    geographic_north: bounds.north ?? '',
+    geographic_south: bounds.south ?? '',
+    taxonomic_scope: eml.taxonomic_scope || '',
+    methodology: eml.methodology || '',
+    project_title: eml.project_title || '',
+    dataset_citation: eml.dataset_citation || '',
+    manuscript_doi: eml.manuscript_doi || '',
+    manuscript_title: eml.manuscript_title || '',
+    journal: eml.journal || '',
+    publication_year: eml.publication_year ? String(eml.publication_year) : '',
+    abstract_source: eml.abstract_source || '',
+    methods_source: eml.methods_source || '',
+    creators_source: eml.creators_source || 'user_profile',
+    users: creatorsFromDataset(dataset, fallbackUser),
+  };
+};
+
 const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const { currentDataset, currentDatasetId, loading, error, refreshDataset, queueNextUserMessagePrefix } = useDataset();
   const { user } = useAuth();
@@ -47,8 +98,13 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const [metadataForm, setMetadataForm] = useState({
     title: '',
     description: '',
+    license: 'CC BY 4.0',
     temporal_scope: '',
     geographic_scope: '',
+    geographic_west: '',
+    geographic_east: '',
+    geographic_north: '',
+    geographic_south: '',
     taxonomic_scope: '',
     methodology: '',
     project_title: '',
@@ -60,6 +116,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     abstract_source: '',
     methods_source: '',
     creators_source: '',
+    users: [emptyCreator()],
   });
 
   useEffect(() => {
@@ -240,28 +297,11 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     if (!currentDataset) {
       return;
     }
-    const eml = currentDataset.eml || {};
-    setMetadataForm({
-      title: currentDataset.title || '',
-      description: currentDataset.description || '',
-      temporal_scope: eml.temporal_scope || '',
-      geographic_scope: eml.geographic_scope || '',
-      taxonomic_scope: eml.taxonomic_scope || '',
-      methodology: eml.methodology || '',
-      project_title: eml.project_title || '',
-      dataset_citation: eml.dataset_citation || '',
-      manuscript_doi: eml.manuscript_doi || '',
-      manuscript_title: eml.manuscript_title || '',
-      journal: eml.journal || '',
-      publication_year: eml.publication_year ? String(eml.publication_year) : '',
-      abstract_source: eml.abstract_source || '',
-      methods_source: eml.methods_source || '',
-      creators_source: eml.creators_source || '',
-    });
+    setMetadataForm(metadataFormFromDataset(currentDataset, user));
     setIsEditingMetadata(false);
     setMetadataSaveError('');
     setMetadataSaveSuccess('');
-  }, [currentDatasetId, currentDataset]);
+  }, [currentDatasetId, currentDataset, user]);
 
   const handleMetadataInputChange = (event) => {
     const { name, value } = event.target;
@@ -272,6 +312,28 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     if (metadataSaveSuccess) {
       setMetadataSaveSuccess('');
     }
+  };
+
+  const handleCreatorChange = (index, field, value) => {
+    setMetadataForm((prev) => ({
+      ...prev,
+      users: prev.users.map((person, personIndex) => (
+        personIndex === index ? { ...person, [field]: value } : person
+      )),
+    }));
+    setMetadataSaveError('');
+    setMetadataSaveSuccess('');
+  };
+
+  const addCreator = () => {
+    setMetadataForm((prev) => ({ ...prev, users: [...prev.users, emptyCreator()] }));
+  };
+
+  const removeCreator = (index) => {
+    setMetadataForm((prev) => ({
+      ...prev,
+      users: prev.users.filter((_, personIndex) => personIndex !== index),
+    }));
   };
 
   const handleOpenPackageTable = useCallback((tableId) => {
@@ -374,6 +436,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     .trim() || datasetOwner?.email || datasetOwner?.orcid_id || 'Unknown';
   const eml = currentDataset.eml || {};
   const metadataRows = [
+    { label: 'Licence', value: eml.license || 'CC BY 4.0' },
     { label: 'Temporal Coverage', value: eml.temporal_scope },
     { label: 'Geographic Coverage', value: eml.geographic_scope },
     { label: 'Taxonomic Coverage', value: eml.taxonomic_scope },
@@ -396,6 +459,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const taxonomicKeywords = Array.isArray(eml.taxonomic_keywords) ? eml.taxonomic_keywords : [];
   const hasGeographicBounds = eml.geographic_bounds && typeof eml.geographic_bounds === 'object';
   const knownEmlKeys = new Set([
+    'license',
     'temporal_scope',
     'geographic_scope',
     'taxonomic_scope',
@@ -435,23 +499,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   );
 
   const resetMetadataFormToCurrentDataset = () => {
-    setMetadataForm({
-      title: currentDataset.title || '',
-      description: currentDataset.description || '',
-      temporal_scope: eml.temporal_scope || '',
-      geographic_scope: eml.geographic_scope || '',
-      taxonomic_scope: eml.taxonomic_scope || '',
-      methodology: eml.methodology || '',
-      project_title: eml.project_title || '',
-      dataset_citation: eml.dataset_citation || '',
-      manuscript_doi: eml.manuscript_doi || '',
-      manuscript_title: eml.manuscript_title || '',
-      journal: eml.journal || '',
-      publication_year: eml.publication_year ? String(eml.publication_year) : '',
-      abstract_source: eml.abstract_source || '',
-      methods_source: eml.methods_source || '',
-      creators_source: eml.creators_source || '',
-    });
+    setMetadataForm(metadataFormFromDataset(currentDataset, user));
   };
 
   const handleStartMetadataEdit = () => {
@@ -488,6 +536,39 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       }
     }
 
+    const coordinateFields = [
+      ['geographic_west', 'West longitude', -180, 180],
+      ['geographic_east', 'East longitude', -180, 180],
+      ['geographic_north', 'North latitude', -90, 90],
+      ['geographic_south', 'South latitude', -90, 90],
+    ];
+    const enteredCoordinateCount = coordinateFields.filter(([field]) => String(metadataForm[field]).trim() !== '').length;
+    if (enteredCoordinateCount !== 0 && enteredCoordinateCount !== coordinateFields.length) {
+      setMetadataSaveError('Geographic bounds must include west, east, north, and south values.');
+      return;
+    }
+    const geographicBounds = {};
+    for (const [field, label, minimum, maximum] of coordinateFields) {
+      if (enteredCoordinateCount === 0) break;
+      const value = Number(metadataForm[field]);
+      if (!Number.isFinite(value) || value < minimum || value > maximum) {
+        setMetadataSaveError(`${label} must be a number from ${minimum} to ${maximum}.`);
+        return;
+      }
+      geographicBounds[field.replace('geographic_', '')] = value;
+    }
+
+    const creators = metadataForm.users
+      .map((person) => Object.fromEntries(
+        Object.entries(person).map(([key, value]) => [key, String(value || '').trim()])
+      ))
+      .filter((person) => Object.values(person).some(Boolean));
+    const incompleteCreator = creators.find((person) => !person.first_name || !person.last_name || !person.email);
+    if (incompleteCreator) {
+      setMetadataSaveError('Each dataset creator needs a first name, last name, and email address.');
+      return;
+    }
+
     setIsSavingMetadata(true);
     setMetadataSaveError('');
     setMetadataSaveSuccess('');
@@ -501,8 +582,10 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
 
       const updatedEml = {
         ...eml,
+        license: metadataForm.license,
         temporal_scope: metadataForm.temporal_scope.trim(),
         geographic_scope: metadataForm.geographic_scope.trim(),
+        geographic_bounds: enteredCoordinateCount === 0 ? null : geographicBounds,
         taxonomic_scope: metadataForm.taxonomic_scope.trim(),
         methodology: metadataForm.methodology.trim(),
         project_title: metadataForm.project_title.trim(),
@@ -514,6 +597,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
         abstract_source: metadataForm.abstract_source.trim(),
         methods_source: metadataForm.methods_source.trim(),
         creators_source: metadataForm.creators_source.trim(),
+        users: creators,
       };
 
       const response = await fetch(`${config.baseUrl}/api/datasets/${currentDatasetId}/`, {
@@ -919,6 +1003,21 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
 
               {isEditingMetadata ? (
                 <div className="row g-3 mb-3">
+                  <div className="col-md-6">
+                    <label className="form-label">Licence</label>
+                    <select
+                      className="form-select"
+                      name="license"
+                      value={metadataForm.license}
+                      onChange={handleMetadataInputChange}
+                      disabled={isSavingMetadata || isAgentCurrentlyWorking}
+                    >
+                      <option value="CC BY 4.0">CC BY 4.0</option>
+                      <option value="CC0 1.0">CC0 1.0</option>
+                      <option value="CC BY-NC 4.0">CC BY-NC 4.0</option>
+                    </select>
+                    <div className="form-text">The default is CC BY 4.0.</div>
+                  </div>
                   <div className="col-12">
                     <label className="form-label">Temporal Coverage</label>
                     <input
@@ -940,6 +1039,31 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                       onChange={handleMetadataInputChange}
                       disabled={isSavingMetadata || isAgentCurrentlyWorking}
                     />
+                  </div>
+                  <div className="col-12">
+                    <label className="form-label">Geographic Bounds</label>
+                    <div className="row g-2">
+                      {[
+                        ['geographic_west', 'West longitude'],
+                        ['geographic_east', 'East longitude'],
+                        ['geographic_north', 'North latitude'],
+                        ['geographic_south', 'South latitude'],
+                      ].map(([name, label]) => (
+                        <div className="col-md-3" key={name}>
+                          <input
+                            type="number"
+                            step="any"
+                            className="form-control"
+                            aria-label={label}
+                            placeholder={label}
+                            name={name}
+                            value={metadataForm[name]}
+                            onChange={handleMetadataInputChange}
+                            disabled={isSavingMetadata || isAgentCurrentlyWorking}
+                          />
+                        </div>
+                      ))}
+                    </div>
                   </div>
                   <div className="col-12">
                     <label className="form-label">Taxonomic Coverage</label>
@@ -1061,6 +1185,83 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                       onChange={handleMetadataInputChange}
                       disabled={isSavingMetadata || isAgentCurrentlyWorking}
                     />
+                  </div>
+                  <div className="col-12">
+                    <div className="d-flex align-items-center justify-content-between mb-2">
+                      <div>
+                        <label className="form-label mb-0">Dataset Creators</label>
+                        <div className="form-text mt-0">Initially filled from your ORCID profile when no creator list has been saved.</div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-outline-primary btn-sm"
+                        onClick={addCreator}
+                        disabled={isSavingMetadata || isAgentCurrentlyWorking}
+                      >
+                        Add creator
+                      </button>
+                    </div>
+                    {metadataForm.users.map((person, index) => (
+                      <div className="border rounded p-3 mb-2" key={`creator-${index}`}>
+                        <div className="row g-2">
+                          <div className="col-md-6">
+                            <input
+                              type="text"
+                              className="form-control"
+                              aria-label={`Creator ${index + 1} first name`}
+                              placeholder="First name"
+                              value={person.first_name}
+                              onChange={(event) => handleCreatorChange(index, 'first_name', event.target.value)}
+                              disabled={isSavingMetadata || isAgentCurrentlyWorking}
+                            />
+                          </div>
+                          <div className="col-md-6">
+                            <input
+                              type="text"
+                              className="form-control"
+                              aria-label={`Creator ${index + 1} last name`}
+                              placeholder="Last name"
+                              value={person.last_name}
+                              onChange={(event) => handleCreatorChange(index, 'last_name', event.target.value)}
+                              disabled={isSavingMetadata || isAgentCurrentlyWorking}
+                            />
+                          </div>
+                          <div className="col-md-6">
+                            <input
+                              type="email"
+                              className="form-control"
+                              aria-label={`Creator ${index + 1} email`}
+                              placeholder="Email"
+                              value={person.email}
+                              onChange={(event) => handleCreatorChange(index, 'email', event.target.value)}
+                              disabled={isSavingMetadata || isAgentCurrentlyWorking}
+                            />
+                          </div>
+                          <div className="col-md-5">
+                            <input
+                              type="text"
+                              className="form-control"
+                              aria-label={`Creator ${index + 1} ORCID`}
+                              placeholder="ORCID"
+                              value={person.orcid}
+                              onChange={(event) => handleCreatorChange(index, 'orcid', event.target.value)}
+                              disabled={isSavingMetadata || isAgentCurrentlyWorking}
+                            />
+                          </div>
+                          <div className="col-md-1 d-flex justify-content-end">
+                            <button
+                              type="button"
+                              className="btn btn-outline-danger"
+                              aria-label={`Remove creator ${index + 1}`}
+                              onClick={() => removeCreator(index)}
+                              disabled={isSavingMetadata || isAgentCurrentlyWorking}
+                            >
+                              <i className="bi bi-trash" aria-hidden="true"></i>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               ) : (
