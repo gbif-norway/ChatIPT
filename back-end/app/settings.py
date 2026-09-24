@@ -280,10 +280,13 @@ OPENAI_MODEL_STANDARD = os.environ.get(
     os.environ.get("OPENAI_MODEL", "gpt-6-sol"),
 )
 OPENAI_MODEL_EFFICIENT = os.environ.get("OPENAI_MODEL_EFFICIENT", "gpt-6-luna")
-OPENAI_MODEL_CRITICAL = os.environ.get("OPENAI_MODEL_CRITICAL", "gpt-6-astra")
+OPENAI_MODEL_CRITICAL = os.environ.get("OPENAI_MODEL_CRITICAL", "gpt-6-sol")
 OPENAI_MODEL = OPENAI_MODEL_STANDARD
 OPENAI_REASONING_EFFORT = os.environ.get("OPENAI_REASONING_EFFORT", "high")
 OPENAI_SIMPLE_REASONING_EFFORT = os.environ.get("OPENAI_SIMPLE_REASONING_EFFORT", "low")
+# The quality gate gets its independence from maximum reasoning on the standard
+# model rather than a separate, 5x pricier model tier.
+OPENAI_CRITICAL_REASONING_EFFORT = os.environ.get("OPENAI_CRITICAL_REASONING_EFFORT", "xhigh")
 # Soft, ignorable nudge only -- shown to the model in state_update.txt once a task
 # stage has made this many tool calls. Not an enforced limit.
 AGENT_CALL_COUNT_NUDGE_THRESHOLD = int(os.environ.get("AGENT_CALL_COUNT_NUDGE_THRESHOLD", "20"))

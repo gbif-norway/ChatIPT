@@ -214,14 +214,14 @@ class SchemaLedgerAgentTests(AgentFixtureMixin, TestCase):
             self.assertTrue(results[f"second-{table}"].startswith("Not re-run"), table)
             self.assertTrue(results[f"third-{table}"].startswith("Not re-run"), table)
 
-        # Every field of every looked-up schema is in the per-turn state, which is
+        # Every field of every looked-up schema is in the stable context, which is
         # not subject to history compaction.
-        state = self.agent.current_state_update()
-        self.assertIn("DWC-DP SCHEMA LEDGER", state)
+        context = self.agent.stable_context_text()
+        self.assertIn("DWC-DP SCHEMA LEDGER", context)
         for table in RUN_524_TABLES:
             for field in get_table_spec(table).fields:
-                self.assertIn(field, state, f"{table}.{field} missing from ledger")
-        self.assertLess(len(self.agent.schema_ledger_text()), 16000)
+                self.assertIn(field, context, f"{table}.{field} missing from ledger")
+        self.assertLess(len(context), 16000)
 
     def test_python_schema_file_reads_are_refused(self):
         result = self.agent.run_function(SimpleNamespace(
@@ -291,6 +291,8 @@ class SchemaLedgerAgentTests(AgentFixtureMixin, TestCase):
         AGENT_NO_PROGRESS_STOP_TURNS=0,
     )
     def test_dropped_tool_turns_keep_assistant_text(self):
+        # Turns are dropped a whole batch at a time: with batches of two, the
+        # first turn goes once the third batch opens (turn five).
         Message.objects.create(agent=self.agent, openai_obj={
             "role": "assistant",
             "content": "Thanks. I'll build an illustrative package and label the uncertain parts.",
@@ -299,7 +301,7 @@ class SchemaLedgerAgentTests(AgentFixtureMixin, TestCase):
             }}],
         })
         Message.objects.create(agent=self.agent, openai_obj={"role": "tool", "tool_call_id": "old", "content": "1"})
-        self.add_read_only_turns(3)
+        self.add_read_only_turns(4)
 
         bounded = [message.openai_obj for message in self.agent.messages_for_model()]
         self.assertNotIn("old", [obj.get("tool_call_id") for obj in bounded])
@@ -641,11 +643,13 @@ class PackagePreparationLoopTests(AgentFixtureMixin, TestCase):
         self.assertTrue(partial.startswith("Already in the DWC-A TERM LEDGER, not repeated: eventID"))
         self.assertIn("- basisOfRecord (", partial.split("\n\n", 1)[1])
 
+        context = self.agent.stable_context_text()
+        self.assertIn("DWC-A TERM LEDGER", context)
+        self.assertIn("Extension `dna_derived_data`", context)
+        self.assertIn("- DNA_sequence:", context)
+        self.assertLess(len(context), 16000)
         state = self.agent.current_state_update()
-        self.assertIn("DWC-A TERM LEDGER", state)
-        self.assertIn("Extension `dna_derived_data`", state)
-        self.assertIn("- DNA_sequence:", state)
-        self.assertLess(len(self.agent.schema_ledger_text()), 16000)
+        self.assertNotIn("- DNA_sequence:", state)
         self.assertEqual(self.agent.turns_without_progress(), 15)
         warning = state[state.index("NO PROGRESS"):]
         self.assertIn("already validated and exported", warning)
@@ -665,3 +669,105 @@ class PackagePreparationLoopTests(AgentFixtureMixin, TestCase):
         warning = self.agent.current_state_update().split("NO PROGRESS", 1)[1]
         self.assertIn("not exported yet", warning)
         self.assertIn("call ExportDwcDp", warning)
+
+
+class PromptCacheStabilityTests(AgentFixtureMixin, TestCase):
+    """Dataset 527: alternate calls were cached only up to the system prompt,
+    because history compaction rewrote every older turn every second call."""
+
+    def rendered(self):
+        return [json.dumps(message.openai_obj, sort_keys=True) for message in self.agent.messages_for_model()]
+
+    def add_large_turn(self, index):
+        call_id = f"big-{index}"
+        Message.objects.create(agent=self.agent, openai_obj={
+            "role": "assistant", "content": "", "tool_calls": [{"id": call_id, "type": "function", "function": {
+                "name": "Python", "arguments": json.dumps({"code": f"print({index})"}),
+            }}],
+        })
+        Message.objects.create(agent=self.agent, openai_obj={
+            "role": "tool", "tool_call_id": call_id, "content": f"{index}:" + "x" * 6000,
+        })
+
+    @override_settings(OPENAI_TOOL_HISTORY_TURNS=8, OPENAI_FULL_TOOL_HISTORY_TURNS=2, OPENAI_COMPACT_TOOL_CHARS=1000)
+    def test_each_call_only_rewrites_the_newest_turns(self):
+        previous = None
+        full_rewrites = 0
+        for index in range(26):
+            self.add_large_turn(index)
+            current = self.rendered()
+            if previous is not None:
+                shared = 0
+                while shared < min(len(previous), len(current)) and previous[shared] == current[shared]:
+                    shared += 1
+                # Messages are system + user + 2 per turn. Outside a batch drop,
+                # everything before the turn leaving the full window is reused.
+                if shared <= 2:
+                    full_rewrites += 1
+                else:
+                    self.assertGreaterEqual(shared, len(previous) - 4, index)
+            previous = current
+        # 26 turns in batches of 8: drops when turns 17 and 25 open new batches.
+        self.assertEqual(full_rewrites, 2)
+
+    @override_settings(OPENAI_FULL_TOOL_HISTORY_TURNS=2)
+    def test_full_window_and_compaction(self):
+        for index in range(5):
+            self.add_large_turn(index)
+        outputs = [obj["content"] for obj in (m.openai_obj for m in self.agent.messages_for_model()) if obj.get("role") == "tool"]
+        self.assertEqual(len(outputs), 5)
+        self.assertTrue(all("older tool output compacted" in output for output in outputs[:3]))
+        self.assertTrue(all(len(output) > 6000 for output in outputs[3:]))
+
+    @patch("api.models.create_response_message")
+    def test_stable_context_precedes_history_and_state_stays_small(self, create_response_message_mock):
+        self.dataset.structure_notes = "Event hierarchy: 71 parents, 124 samples."
+        self.dataset.save()
+        Message.objects.create(agent=self.agent, openai_obj={
+            "role": "assistant", "content": "", "tool_calls": [{"id": "lk", "type": "function", "function": {
+                "name": "GetDwcDpTableInfo", "arguments": json.dumps({"table_name": "event"}),
+            }}],
+        })
+        Message.objects.create(agent=self.agent, openai_obj={
+            "role": "tool", "tool_call_id": "lk", "content": GetDwcDpTableInfo(table_name="event").run(),
+        })
+        create_response_message_mock.return_value = CompatAssistantMessage(content="Done.")
+        self.agent.next_message()
+
+        model_messages = create_response_message_mock.call_args_list[0].args[0]
+        roles = [message.openai_obj["role"] for message in model_messages]
+        self.assertEqual(roles[:2], ["system", "system"])
+        stable = model_messages[1].openai_obj["content"]
+        self.assertTrue(stable.startswith("STABLE TASK CONTEXT"))
+        self.assertIn("DWC-DP SCHEMA LEDGER", stable)
+        self.assertIn("Event hierarchy: 71 parents", stable)
+        state = create_response_message_mock.call_args_list[0].kwargs["additional_input_items"][0]["content"]
+        self.assertNotIn("DWC-DP SCHEMA LEDGER", state)
+        self.assertNotIn("Event hierarchy: 71 parents", state)
+
+
+class ConcurrentTurnTests(AgentFixtureMixin, TestCase):
+    """Dataset 527: two overlapping refresh polls sent the same request twice."""
+
+    @patch("api.models.create_response_message")
+    def test_turn_already_claimed_elsewhere_is_not_sent_again(self, create_response_message_mock):
+        stale = Agent.objects.get(id=self.agent.id)
+        Agent.objects.filter(id=self.agent.id).update(busy_thinking=True)
+        result = stale.next_message()
+        create_response_message_mock.assert_not_called()
+        self.assertEqual(result.openai_obj["role"], "user")
+        self.assertTrue(Agent.objects.get(id=self.agent.id).busy_thinking)
+
+    @patch("api.models.create_response_message")
+    def test_turn_finished_elsewhere_is_not_sent_again(self, create_response_message_mock):
+        stale = Agent.objects.get(id=self.agent.id)
+
+        def other_request_answers():
+            # Runs between next_message's first read and its claim.
+            Message.objects.create(agent=self.agent, openai_obj={"role": "assistant", "content": "Done."})
+            return False
+
+        with patch.object(Agent, "_dataset_cost_limit_reached", side_effect=other_request_answers):
+            self.assertIsNone(stale.next_message())
+        create_response_message_mock.assert_not_called()
+        self.assertFalse(Agent.objects.get(id=self.agent.id).busy_thinking)

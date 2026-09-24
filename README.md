@@ -52,11 +52,13 @@ Local URLs:
 
 ## OpenAI model routing
 
-ChatIPT routes bounded work to `gpt-6-luna`, general agentic work to
-`gpt-6-sol`, and the independent pre-publication quality gate to
-`gpt-6-astra`. The tier defaults can be overridden with
+ChatIPT routes bounded work (including the suitability assessment, at `xhigh`
+effort) to `gpt-6-luna`, general agentic work to
+`gpt-6-sol`, and the independent pre-publication quality gate to `gpt-6-sol`
+at `xhigh` reasoning effort. The tier defaults can be overridden with
 `OPENAI_MODEL_EFFICIENT`, `OPENAI_MODEL_STANDARD`, and
-`OPENAI_MODEL_CRITICAL`. The legacy `OPENAI_MODEL` setting remains a fallback
+`OPENAI_MODEL_CRITICAL` (for example `gpt-6-astra`), and the quality gate's
+effort with `OPENAI_CRITICAL_REASONING_EFFORT`. The legacy `OPENAI_MODEL` setting remains a fallback
 override for the standard tier.
 
 Administrators can inspect per-dataset model usage through the existing

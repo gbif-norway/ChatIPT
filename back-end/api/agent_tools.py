@@ -496,7 +496,8 @@ class GetDwCExtensionInfo(OpenAIBaseModel):
     Call without parameters before choosing a DwC-A core or extensions. The catalogue includes
     core compatibility, subject, typical DwC-DP source resources, and use/avoid guidance.
     Supply `extension` to receive that extension's guidance and registered term index. Supply
-    `terms` with an extension to retrieve exact vendored definitions for selected terms.
+    `terms` with the extension in the same call to also receive exact vendored definitions for
+    the candidate terms, so one call per extension is enough.
     """
 
     extension: Optional[str] = Field(
@@ -575,6 +576,10 @@ class GetDwCExtensionInfo(OpenAIBaseModel):
             ])
             return "\n".join(lines)
 
+        lines.extend([
+            f"Registered terms ({len(schema.terms)}): " + ", ".join(schema.terms),
+            "",
+        ])
         requested = {str(term).strip().casefold() for term in self.terms if str(term).strip()}
         matched = [
             property_element

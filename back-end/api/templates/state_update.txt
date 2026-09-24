@@ -2,7 +2,8 @@ CURRENT WORKFLOW STATE
 
 This compact state is authoritative for the current turn. Older tool calls may have
 been omitted from context. Use the current tables and saved structure notes rather
-than repeating broad exploration.
+than repeating broad exploration. Looked-up schemas and terms and the saved structure
+notes are in the STABLE TASK CONTEXT message near the start of this conversation.
 
 Dataset title: {{ agent.dataset.title|default:"(not set)" }}
 Dataset description: {{ agent.dataset.description|default:"(not set)" }}
@@ -34,14 +35,14 @@ NO PROGRESS: the last {{ no_progress_turns }} tool turns changed nothing: no tab
 {% if agent.task.name == "Publication package preparation" %}{% if not dwc_dp_export_current %}
 Next required step: the current DwC-DP tables are not exported yet. Fix what ValidateDwcDp reports by writing the affected tables, then call ExportDwcDp.
 {% elif not dwca_uploaded_this_task %}
-Next required step: the current DwC-DP tables are already validated and exported, so do not validate or export them again. Use Python now to create the temporary core table and one table per chosen extension (each with `_coreid`) from the DwC-DP tables, using the DWC-A TERM LEDGER for term definitions, then call UploadDwCA. Where a term's fit is still uncertain, record it as a projection limitation or preserve it in dynamicProperties instead of looking it up again.
+Next required step: the current DwC-DP tables are already validated and exported, so do not validate or export them again. Use Python now to create the temporary core table and one table per chosen extension (each with `_coreid`) from the DwC-DP tables, using the DWC-A TERM LEDGER in the STABLE TASK CONTEXT for term definitions, then call UploadDwCA. Where a term's fit is still uncertain, record it as a projection limitation or preserve it in dynamicProperties instead of looking it up again.
 {% else %}
 Next required step: both packages exist. Record the projection decisions, coverage, and package URLs with SetStructureNotes, then call SetAgentTaskToComplete.
 {% endif %}{% endif %}
 
 {% endif %}
-{% if schema_ledger %}
-{{ schema_ledger|safe }}
+{% if working_state %}
+{{ working_state|safe }}
 
 {% endif %}
 Current table revisions (full evidence follows only for tables changed this turn):
@@ -59,7 +60,3 @@ Table {{ table.id }} `{{ table.title|default:"(untitled)" }}`:
 {% endfor %}
 {% endif %}
 
-{% if agent.dataset.structure_notes %}
-Saved structure and transformation notes:
-{{ agent.dataset.compact_structure_notes }}
-{% endif %}

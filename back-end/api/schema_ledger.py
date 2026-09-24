@@ -568,37 +568,33 @@ def latest_tool_results(openai_objs: Iterable[Dict[str, Any]], tool_name: str) -
     ]
 
 
-def render_ledger(
-    ledger: Dict[str, str],
-    plan: str,
-    get_spec: Callable[[str], Any],
-    coverage_open_items: Optional[str] = None,
-    dwc_ledger: str = "",
-) -> str:
-    if not ledger and not plan and coverage_open_items is None:
-        return dwc_ledger
-    lines = [
-        "DWC-DP SCHEMA LEDGER (authoritative for this task; these lookups are complete and are not "
-        "re-run, so use them instead of GetDwcDpTableInfo or reading schema files):"
-    ]
+def render_schema_manifests(ledger: Dict[str, str], get_spec: Callable[[str], Any]) -> str:
+    manifests = []
     for table, level in ledger.items():
         try:
             spec = get_spec(table)
         except KeyError:
             continue
-        lines.append("")
-        lines.append(render_table_manifest(spec, include_fields=(level == LEVEL_FIELDS)))
+        manifests.append(render_table_manifest(spec, include_fields=(level == LEVEL_FIELDS)))
+    if not manifests:
+        return ""
+    return "\n\n".join([
+        "DWC-DP SCHEMA LEDGER (authoritative for this task; these lookups are complete and are not "
+        "re-run, so use them instead of GetDwcDpTableInfo or reading schema files):",
+        *manifests,
+    ])
+
+
+def render_working_state(plan: str, coverage_open_items: Optional[str] = None) -> str:
+    lines = []
     if plan:
-        lines.append("")
         lines.append("Working plan (latest SetWorkingPlan; update it as writes complete):")
         lines.append(plan)
     if coverage_open_items is not None:
-        lines.append("")
+        if lines:
+            lines.append("")
         lines.append(
             "Latest ReconcileSourceCoverage open items (everything else it checked is verified; "
             f"give these a disposition in the coverage report): {coverage_open_items}"
         )
-    if dwc_ledger:
-        lines.append("")
-        lines.append(dwc_ledger)
     return "\n".join(lines)

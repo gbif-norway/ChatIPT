@@ -3966,8 +3966,9 @@ class TaskFunctionTests(TestCase):
     @override_settings(
         OPENAI_MODEL_EFFICIENT="gpt-6-luna",
         OPENAI_MODEL_STANDARD="gpt-6-sol",
-        OPENAI_MODEL_CRITICAL="gpt-6-astra",
+        OPENAI_MODEL_CRITICAL="gpt-6-sol",
         OPENAI_REASONING_EFFORT="medium",
+        OPENAI_CRITICAL_REASONING_EFFORT="xhigh",
         OPENAI_SIMPLE_REASONING_EFFORT="low",
     )
     def test_tasks_route_to_model_tiers_and_reasoning_efforts(self):
@@ -3991,15 +3992,22 @@ class TaskFunctionTests(TestCase):
             text="Publish",
             order=4,
         )
+        suitability = Task.objects.create(
+            name=Task.SUITABILITY_TASK,
+            text="Assess",
+            order=5,
+        )
 
         self.assertEqual(exploration.model_name, "gpt-6-luna")
         self.assertEqual(exploration.reasoning_effort, "medium")
         self.assertEqual(transformation.model_name, "gpt-6-sol")
         self.assertEqual(transformation.reasoning_effort, "medium")
-        self.assertEqual(quality_gate.model_name, "gpt-6-astra")
-        self.assertEqual(quality_gate.reasoning_effort, "medium")
+        self.assertEqual(quality_gate.model_name, "gpt-6-sol")
+        self.assertEqual(quality_gate.reasoning_effort, "xhigh")
         self.assertEqual(publication.model_name, "gpt-6-luna")
         self.assertEqual(publication.reasoning_effort, "low")
+        self.assertEqual(suitability.model_name, "gpt-6-luna")
+        self.assertEqual(suitability.reasoning_effort, "xhigh")
 
 
 class PythonToolTests(SimpleTestCase):

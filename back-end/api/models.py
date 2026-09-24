@@ -818,9 +818,11 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
     PREPUBLICATION_QUALITY_TASK = "Pre-publication quality gate"
     FINAL_PUBLICATION_TASK = "Final Review & Publication"
     MAINTENANCE_TASK = "Data maintenance"
+    SUITABILITY_TASK = "Data suitability assessment"
 
     EFFICIENT_MODEL_TASKS = {
         "Data structure exploration",
+        SUITABILITY_TASK,
         FINAL_PUBLICATION_TASK,
     }
     MEDIUM_REASONING_TASKS = {
@@ -828,7 +830,6 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
         "Data content exploration",
     }
     LOW_REASONING_TASKS = {
-        "Data suitability assessment",
         FINAL_PUBLICATION_TASK,
     }
 
@@ -905,13 +906,19 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
     @property
     def model_name(self):
         if self.name == self.PREPUBLICATION_QUALITY_TASK:
-            return getattr(settings, "OPENAI_MODEL_CRITICAL", "gpt-6-astra")
+            return getattr(settings, "OPENAI_MODEL_CRITICAL", "gpt-6-sol")
         if self.name in self.EFFICIENT_MODEL_TASKS:
             return getattr(settings, "OPENAI_MODEL_EFFICIENT", "gpt-6-luna")
         return getattr(settings, "OPENAI_MODEL_STANDARD", "gpt-6-sol")
 
     @property
     def reasoning_effort(self):
+        if self.name == self.PREPUBLICATION_QUALITY_TASK:
+            return getattr(settings, "OPENAI_CRITICAL_REASONING_EFFORT", "xhigh")
+        if self.name == self.SUITABILITY_TASK:
+            # One bounded in-scope decision: the efficient model at its highest
+            # effort instead of the standard model at low effort.
+            return "xhigh"
         if self.name in self.LOW_REASONING_TASKS:
             return getattr(settings, "OPENAI_SIMPLE_REASONING_EFFORT", "low")
         if self.name == "Data structure exploration":
@@ -1371,7 +1378,7 @@ class Agent(models.Model):
                 'tables': tables,
                 'changed_tables': changed_tables,
                 'relational_candidate_report': relational_candidate_report,
-                'schema_ledger': self.schema_ledger_text(),
+                'working_state': self.working_state_text(),
                 'no_progress_turns': no_progress_turns,
                 'no_progress_warn_turns': self.no_progress_warn_turns,
                 'no_progress_stop_turns': self.no_progress_stop_turns,
@@ -1407,21 +1414,41 @@ class Agent(models.Model):
         objs = history_objs if history_objs is not None else self._history_objs()
         return schema_lookups(objs, RESERVED_TABLE_NAMES)
 
-    def schema_ledger_text(self):
-        """Schemas looked up and the working plan, rebuilt from the stored tool
-        log every turn so they survive history compaction."""
-        from api import source_coverage
+    def stable_context_text(self):
+        """Looked-up schemas and terms plus saved structure notes, rebuilt from the
+        stored tool log so they survive history compaction.
+
+        This is sent once near the start of each request rather than in the
+        per-turn state at the end: it only changes when a lookup adds something or
+        the notes are saved, so it stays in the cached prompt prefix instead of
+        being paid for at the uncached rate on every call."""
         from api.dwc_dp_specs import get_table_spec
-        from api.schema_ledger import (
-            dwc_lookups,
-            latest_tool_results,
-            latest_working_plan,
-            render_dwc_ledger,
-            render_ledger,
-        )
+        from api.schema_ledger import dwc_lookups, render_dwc_ledger, render_schema_manifests
 
         objs = self._history_objs()
         dwc_reference = agent_tools.DwcTermReference()
+        sections = [
+            render_schema_manifests(self.schema_ledger_entries(objs), get_table_spec),
+            render_dwc_ledger(dwc_lookups(objs, dwc_reference), dwc_reference),
+        ]
+        if self.dataset.structure_notes:
+            sections.append("Saved structure and transformation notes:\n" + self.dataset.compact_structure_notes)
+        sections = [section for section in sections if section]
+        if not sections:
+            return ""
+        return "\n\n".join([
+            "STABLE TASK CONTEXT (authoritative; updated whenever a lookup adds something or notes are "
+            "saved, so rely on it instead of repeating lookups):",
+            *sections,
+        ])
+
+    def working_state_text(self):
+        """The working plan and open coverage items, which change often and so
+        belong in the per-turn state."""
+        from api import source_coverage
+        from api.schema_ledger import latest_tool_results, latest_working_plan, render_working_state
+
+        objs = self._history_objs()
         coverage_results = [
             result for result in latest_tool_results(objs, agent_tools.ReconcileSourceCoverage.__name__)
             if result.startswith(source_coverage.REPORT_PREFIX)
@@ -1445,13 +1472,7 @@ class Agent(models.Model):
             latest_result = coverage_results[-1]
             if source_coverage.result_state(latest_result) == current_state:
                 coverage_open_items = source_coverage.latest_open_items([latest_result])
-        return render_ledger(
-            self.schema_ledger_entries(objs),
-            latest_working_plan(objs),
-            get_table_spec,
-            coverage_open_items=coverage_open_items,
-            dwc_ledger=render_dwc_ledger(dwc_lookups(objs, dwc_reference), dwc_reference),
-        )
+        return render_working_state(latest_working_plan(objs), coverage_open_items)
 
     @property
     def no_progress_guarded(self):
@@ -1576,40 +1597,35 @@ class Agent(models.Model):
             and (message.openai_obj or {}).get('tool_calls')
         ]
 
-        # Both retention (how far back anything is kept at all, even compacted) and
-        # the full-vs-compacted split are expressed in fixed-size batches counted
-        # from the start of this agent's tool-call history, rather than a sliding
-        # "last N" window measured from the newest message. A sliding window drops
-        # (or promotes/demotes) exactly one turn on every single new turn, which
-        # rewrites a chunk of the prompt on every call and defeats prompt caching
-        # for everything after that point. Batching means a turn's kept/compacted
-        # status only changes once, when its batch closes, so the cached prefix can
-        # actually grow turn over turn instead of shifting every time. This can
-        # retain a few more older turns than OPENAI_TOOL_HISTORY_TURNS asks for
-        # (rounded up to a whole batch) -- a small, bounded token-budget cost in
-        # exchange for the cache actually holding.
-        batch_size = full_tool_turn_limit if full_tool_turn_limit > 0 else max(tool_turn_limit, 1)
-        kept_tool_messages = set()
-        full_tool_messages = set()
-        if tool_assistant_messages:
-            total_batches = (len(tool_assistant_messages) - 1) // batch_size + 1
-            current_batch = total_batches - 1
-
-            if tool_turn_limit:
-                retained_batches = max(-(-tool_turn_limit // batch_size), 1)  # ceil
-                oldest_kept_batch = max(total_batches - retained_batches, 0)
-                kept_tool_messages = {
-                    message.id
-                    for index, message in enumerate(tool_assistant_messages)
-                    if index // batch_size >= oldest_kept_batch
-                }
-
-            if full_tool_turn_limit:
-                full_tool_messages = {
-                    message.id
-                    for index, message in enumerate(tool_assistant_messages)
-                    if message.id in kept_tool_messages and index // full_tool_turn_limit == current_batch
-                }
+        # Prompt caching only pays for the unchanged prefix of a request, so what
+        # matters is where each turn's rendering changes, not how many turns are
+        # kept. Two rules keep the prefix stable:
+        #
+        # * A turn is shown in full while it is among the newest
+        #   OPENAI_FULL_TOOL_HISTORY_TURNS, then compacted for good. Compaction is
+        #   deterministic, so a compacted turn renders identically on every later
+        #   call, and each call rewrites only the few newest turns.
+        # * Dropping turns rewrites everything after them, so turns are dropped
+        #   from the start only in whole batches of OPENAI_TOOL_HISTORY_TURNS:
+        #   between one and two batches are retained, and a drop happens once per
+        #   batch rather than on every turn.
+        #
+        # The previous scheme closed a batch of two every second turn and dropped
+        # the oldest batch, which rewrote the whole history on alternate calls; in
+        # dataset 527 those calls were cached only up to the system prompt.
+        tool_turn_count = len(tool_assistant_messages)
+        full_tool_messages = {
+            message.id
+            for message in tool_assistant_messages[max(tool_turn_count - full_tool_turn_limit, 0):]
+        } if full_tool_turn_limit else set()
+        kept_tool_messages = set(full_tool_messages)
+        if tool_turn_limit and tool_assistant_messages:
+            current_batch = (tool_turn_count - 1) // tool_turn_limit
+            kept_tool_messages.update(
+                message.id
+                for index, message in enumerate(tool_assistant_messages)
+                if index // tool_turn_limit >= current_batch - 1
+            )
 
         kept_call_ids = {
             str(tool_call.get('id'))
@@ -1755,9 +1771,19 @@ class Agent(models.Model):
                     # check) will retry this same check.
                     return last_message
 
-        # Otherwise we need to send it to GPT, last message was from the user, was the return from a function, or was the starting system message
+        # Otherwise we need to send it to GPT, last message was from the user, was the return from a function, or was the starting system message.
+        # Claim the turn atomically: the front end polls refresh, and two overlapping
+        # requests that both saw busy_thinking=False used to send the same paid
+        # request twice (dataset 527, 17:18:30 and 17:18:31).
+        if not Agent.objects.filter(pk=self.pk, busy_thinking=False).update(busy_thinking=True):
+            return last_message
         self.busy_thinking = True
-        self.save()
+        # Another request may have finished a turn between our first read and the claim.
+        latest_message = self.message_set.last()
+        if latest_message.id != last_message.id:
+            Agent.objects.filter(pk=self.pk).update(busy_thinking=False)
+            self.busy_thinking = False
+            return None if latest_message.role == Message.Role.ASSISTANT else latest_message
         try:
             recent_non_system_messages = list(
                 self.message_set.exclude(openai_obj__role=Message.Role.SYSTEM).order_by('-created_at')[:2]
@@ -1765,6 +1791,13 @@ class Agent(models.Model):
             previous_non_system_message = recent_non_system_messages[1] if len(recent_non_system_messages) > 1 else None
             new_table_cutoff = previous_non_system_message.created_at if previous_non_system_message else None
             model_messages = self.messages_for_model()
+            stable_context = self.stable_context_text()
+            if stable_context:
+                insert_at = 1 if model_messages and (model_messages[0].openai_obj or {}).get('role') == Message.Role.SYSTEM else 0
+                model_messages.insert(insert_at, SimpleNamespace(openai_obj={
+                    'role': Message.Role.SYSTEM,
+                    'content': stable_context,
+                }))
             state_items = []
             if recent_non_system_messages:
                 state_items.append({
