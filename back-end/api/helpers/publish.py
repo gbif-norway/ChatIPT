@@ -633,13 +633,12 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         primary_person = {
             'first_name': 'Test',
             'last_name': 'User',
-            'orcid': '0000-0002-1825-0097',
+            'orcid': None,
             'email': primary_email,
         }
 
-    # A profile without a usable surname (blank or a placeholder such as
-    # '[unknown]') is completed from a verified entry for the same person:
-    # an explicit metadata_provider, or a creator sharing the account email/ORCID.
+    # Keep supporting names already saved per dataset, or a creator sharing
+    # the account email/ORCID, when the account profile lacks a surname.
     if not primary_person['last_name']:
         candidates = []
         if isinstance(eml_extra.get('metadata_provider'), dict):
@@ -889,8 +888,6 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
 
     prune(root)
 
-    # The GBIF EML profile requires a surName (or organisation/position) for every
-    # agent. Fail here with an actionable message rather than export invalid EML.
     incomplete_agents = []
     for role in ('creator', 'metadataProvider', 'contact', 'project/personnel'):
         for agent in findall(dataset_node, role):
@@ -905,10 +902,9 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         raise ValueError(
             "EML people are missing a verified surname (GBIF requires surName): "
             + ", ".join(incomplete_agents)
-            + ". Ask the user for the verified full names and record them with SetEML "
-            "(users for creators; metadata_provider for the account holder when they are "
-            "not a creator). Put a single-name person's name in last_name. Leave orcid "
-            "null unless a real ORCID iD was supplied."
+            + ". Ask the account holder for their name and save it once with SetUserName; "
+            "record other creators' names with SetEML. Put a single-name person's name "
+            "in last_name. Leave ORCID blank unless a real ORCID iD was supplied."
         )
 
     return ET.tostring(root, encoding='utf-8', xml_declaration=True).decode('utf-8')

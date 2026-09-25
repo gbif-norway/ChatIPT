@@ -1787,14 +1787,6 @@ class SetEML(OpenAIBaseModel):
         None,
         description="Optional list of people involved in the dataset. Each entry should be an object with first_name, last_name, email, and orcid keys."
     )
-    metadata_provider: Optional[EMLUser] = Field(
-        None,
-        description=(
-            "Optional verified name of the account holder who is preparing this metadata, used as "
-            "EML metadataProvider/contact when their profile name is incomplete and they are not "
-            "listed in users. Use the account email. Set orcid only for a real ORCID iD."
-        ),
-    )
     TEXT_PLACEHOLDER_VALUES: ClassVar[set[str]] = {
         "", "unknown", "not known", "not provided", "n/a", "na", "none", "null", "tbd", "pending"
     }
@@ -2390,14 +2382,6 @@ class SetEML(OpenAIBaseModel):
                         "orcid": normalize_orcid(profile_user.orcid_id),
                     }]
                     eml.setdefault("creators_source", "user_profile")
-            if "metadata_provider" in self.model_fields_set:
-                if self.metadata_provider is None:
-                    eml.pop("metadata_provider", None)
-                else:
-                    eml["metadata_provider"] = {
-                        **self.metadata_provider.dict(),
-                        "orcid": normalize_orcid(self.metadata_provider.orcid),
-                    }
             creators_missing_surname = [
                 person.get("first_name") or "(no name)"
                 for person in eml.get("users") or []
@@ -2405,6 +2389,13 @@ class SetEML(OpenAIBaseModel):
             ]
             dataset.eml = eml
             dataset.save()
+
+            profile_name_note = None
+            if dataset.user and not clean_person_name(dataset.user.last_name):
+                profile_name_note = (
+                    "The account holder's profile has no verified surname. If they give "
+                    "their name, save it once with SetUserName for future datasets."
+                )
 
             geographic_export_note = None
             if eml.get("geographic_scope") and not eml.get("geographic_bounds"):
@@ -2420,6 +2411,7 @@ class SetEML(OpenAIBaseModel):
                     geographic_export_note,
                     taxonomic_note,
                     methodology_note,
+                    profile_name_note,
                     (
                         "These creators have no verified surname and will block export until "
                         f"one is supplied: {', '.join(creators_missing_surname)}."
@@ -2523,6 +2515,37 @@ class SetUserLanguage(OpenAIBaseModel):
             return f"Error: Agent with id {self.agent_id} does not exist."
         except Exception as e:
             print("There has been an error with SetUserLanguage")
+            return repr(e)[:2000]
+
+
+class SetUserName(OpenAIBaseModel):
+    """
+    Saves the dataset owner's own name on their ChatIPT account profile. The profile name is
+    used as the EML metadataProvider and contact. Use this when the profile name is missing,
+    incomplete or a placeholder (e.g. '[unknown]') and the user has told you their name.
+    Only record a name the user gave for themselves; never another person's name. For a
+    person with a single name, put it in last_name. Returns a success or error message.
+    """
+    agent_id: PositiveInt = Field(..., description="REQUIRED: The ID of the agent making this request")
+    first_name: Optional[str] = Field(None, description="The user's given name(s). Omit to keep the current value.")
+    last_name: str = Field(..., description="REQUIRED: The user's surname / family name.")
+
+    def run(self):
+        try:
+            from api.models import Agent
+            user = Agent.objects.select_related('dataset__user').get(id=self.agent_id).dataset.user
+            if user is None:
+                return 'Error: This dataset has no owner account to update.'
+            last_name = clean_person_name(self.last_name)
+            if last_name is None:
+                return 'Error: last_name must be a real surname, not blank or a placeholder.'
+            first_name = clean_person_name(self.first_name)
+            user.last_name = last_name
+            if first_name is not None:
+                user.first_name = first_name
+            user.save(update_fields=['first_name', 'last_name'])
+            return f"Profile name saved as '{user.first_name} {user.last_name}'."
+        except Exception as e:
             return repr(e)[:2000]
 
 

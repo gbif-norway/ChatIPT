@@ -860,6 +860,7 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
             agent_tools.SetBasicMetadata.__name__,
             agent_tools.SetStructureNotes.__name__,
             agent_tools.SetEML.__name__,
+            agent_tools.SetUserName.__name__,
             agent_tools.SetUserLanguage.__name__,
             agent_tools.SetAgentTaskToComplete.__name__,
             agent_tools.RequestUserInput.__name__,

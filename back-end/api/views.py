@@ -22,6 +22,7 @@ from api.attention_notifications import (
     notification_payload,
 )
 from api.agent_turns import ensure_dataset_work
+from api.helpers.publish import clean_person_name
 
 logger = logging.getLogger(__name__)
 PRIVATE_PROFILE_STATUS_CODES = {401, 403, 404}
@@ -351,8 +352,8 @@ def orcid_callback(request):
                 orcid_id=orcid_id,
                 orcid_access_token=access_token,
                 orcid_refresh_token=token_info.get('refresh_token', ''),
-                first_name=first_name or '',
-                last_name=last_name or '',
+                first_name=clean_person_name(first_name) or '',
+                last_name=clean_person_name(last_name) or '',
                 institution=institution or '',
                 department=department or '',
                 country=country or '',
@@ -366,10 +367,11 @@ def orcid_callback(request):
             user.orcid_refresh_token = token_info.get('refresh_token', '')
             user.is_active = True  # Ensure user is active
             
-            # Update profile information if available
-            if first_name:
+            # Fill missing profile names from ORCID without replacing a name
+            # the account holder has already supplied.
+            if not clean_person_name(user.first_name) and clean_person_name(first_name):
                 user.first_name = first_name
-            if last_name:
+            if not clean_person_name(user.last_name) and clean_person_name(last_name):
                 user.last_name = last_name
             if institution:
                 user.institution = institution

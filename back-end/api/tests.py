@@ -37,6 +37,7 @@ from .agent_tools import (
     GetDarwinCoreInfo,
     GetDwCExtensionInfo,
     SetEML,
+    SetUserName,
     LogBugWithDeveloper,
     SetBasicMetadata,
     SetAgentTaskToComplete,
@@ -629,7 +630,7 @@ class EmlGenerationTests(SimpleTestCase):
             self.assertEqual(dataset.findtext(f'{role}/individualName/surName'), 'Johaadien')
         self.assertNotIn('[unknown]', ET.tostring(root, encoding='unicode'))
 
-    def test_make_eml_uses_explicit_metadata_provider_for_placeholder_profile(self):
+    def test_make_eml_keeps_saved_metadata_provider_for_placeholder_profile(self):
         class PlaceholderUser:
             first_name = 'rukaya'
             last_name = '[unknown]'
@@ -666,6 +667,10 @@ class EmlGenerationTests(SimpleTestCase):
                 user=PlaceholderUser(),
                 eml_extra={'users': [{'first_name': 'rukaya', 'last_name': '', 'email': 'x@example.org'}]},
             )
+
+    def test_make_eml_without_user_does_not_invent_orcid(self):
+        root = ET.fromstring(make_eml('Test dataset', 'Description'))
+        self.assertEqual(root.findall('.//userId'), [])
 
     @patch("api.helpers.publish.requests.post")
     def test_gbif_registration_uses_canonical_license_url(self, post_mock):
@@ -1854,6 +1859,36 @@ class SetEMLProjectTitleTests(TestCase):
 
         self.assertNotIn("users", self.dataset.eml)
         self.assertNotIn("creators_source", self.dataset.eml)
+
+    def test_set_user_name_updates_dataset_owner_profile(self):
+        owner = CustomUser.objects.create_user(
+            username="needs-name", email="owner@example.org",
+            first_name="rukaya", last_name="[unknown]",
+        )
+        self.dataset.user = owner
+        self.dataset.save()
+
+        result = SetUserName(agent_id=self.agent.id, first_name="Rukaya", last_name="Johaadien").run()
+        owner.refresh_from_db()
+
+        self.assertEqual(result, "Profile name saved as 'Rukaya Johaadien'.")
+        self.assertEqual((owner.first_name, owner.last_name), ("Rukaya", "Johaadien"))
+        for title in ("First dataset", "Another dataset"):
+            root = ET.fromstring(make_eml(title, "Description", user=owner))
+            self.assertEqual(root.findtext('dataset/metadataProvider/individualName/surName'), 'Johaadien')
+            self.assertEqual(root.findtext('dataset/contact/individualName/surName'), 'Johaadien')
+            self.assertEqual(root.findall('.//userId'), [])
+
+    def test_set_user_name_rejects_placeholder_surname(self):
+        owner = CustomUser.objects.create_user(username="keeps-name", email="k@example.org", last_name="Doe")
+        self.dataset.user = owner
+        self.dataset.save()
+
+        result = SetUserName(agent_id=self.agent.id, last_name="[unknown]").run()
+        owner.refresh_from_db()
+
+        self.assertTrue(result.startswith("Error"))
+        self.assertEqual(owner.last_name, "Doe")
 
     def test_blank_orcid_is_stored_as_null(self):
         SetEML(
