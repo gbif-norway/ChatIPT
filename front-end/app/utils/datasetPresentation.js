@@ -11,6 +11,12 @@ export const DATASET_STATUS = {
     textClass: 'text-warning',
     icon: 'bi-chat-left-text',
   },
+  failed: {
+    label: 'Needs attention',
+    badgeClass: 'text-bg-danger',
+    textClass: 'text-danger',
+    icon: 'bi-exclamation-triangle',
+  },
   ready: {
     label: 'Ready',
     badgeClass: 'text-bg-success',
@@ -49,14 +55,15 @@ const RESOURCE_LABELS = {
 
 export const getDatasetStatus = (dataset) => {
   if (dataset?.published_at) return 'published'
-  if (dataset?.package_ready) return 'ready'
 
   const agents = Array.isArray(dataset?.visible_agent_set) ? dataset.visible_agent_set : []
   const latestAgent = agents.at(-1)
-  if (!latestAgent || latestAgent.completed_at) return 'preparing'
+  if (!latestAgent || latestAgent.completed_at) return dataset?.package_ready ? 'ready' : 'preparing'
 
   const messages = Array.isArray(latestAgent.message_set) ? latestAgent.message_set : []
   const latestMessage = messages.at(-1)
+  if (latestMessage?.openai_obj?.workflow_error) return 'failed'
+  if (dataset?.package_ready) return 'ready'
   const hasToolCalls = latestMessage?.role === 'assistant'
     && Array.isArray(latestMessage?.openai_obj?.tool_calls)
     && latestMessage.openai_obj.tool_calls.length > 0

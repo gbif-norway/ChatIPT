@@ -102,27 +102,6 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
     }
   };
 
-  const sendInitialMessage = async ({ agentId, messageContent, headers }) => {
-    if (!agentId || !messageContent) {
-      return;
-    }
-
-    const messageHeaders = {
-      'Content-Type': 'application/json',
-      ...headers
-    };
-
-    await fetch(`${config.baseUrl}/api/messages/`, {
-      method: 'POST',
-      headers: messageHeaders,
-      credentials: 'include',
-      body: JSON.stringify({
-        agent: agentId,
-        openai_obj: { role: 'user', content: messageContent }
-      })
-    });
-  };
-
   const handleSubmit = async (event) => {
     event.preventDefault();
 
@@ -190,23 +169,6 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
 
       if (!datasetId) {
         throw new Error('Dataset created without an ID. Please try again.');
-      }
-
-      if (trimmedInput.length > 0) {
-        const activeAgent = Array.isArray(dataset.visible_agent_set)
-          ? dataset.visible_agent_set[dataset.visible_agent_set.length - 1]
-          : null;
-
-        try {
-          await sendInitialMessage({
-            agentId: activeAgent?.id,
-            messageContent: trimmedInput,
-            headers
-          });
-        } catch (messageError) {
-          console.error('Failed to send initial message after dataset creation:', messageError);
-          // Do not block navigation; allow dataset creation to succeed.
-        }
       }
 
       setUserInput('');

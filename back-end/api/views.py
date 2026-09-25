@@ -18,10 +18,10 @@ import logging
 from math import isfinite
 from api.attention_notifications import (
     arm_notification,
-    attention_kind_for_dataset,
     cancel_notification,
     notification_payload,
 )
+from api.agent_turns import ensure_dataset_work
 
 logger = logging.getLogger(__name__)
 PRIVATE_PROFILE_STATUS_CODES = {401, 403, 404}
@@ -441,7 +441,8 @@ class DatasetViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Automatically assign the current user to the dataset"""
         logger.info(f"DatasetViewSet.perform_create - User ID: {self.request.user.id}")
-        serializer.save(user=self.request.user)
+        dataset = serializer.save(user=self.request.user)
+        transaction.on_commit(lambda: ensure_dataset_work(dataset.id))
 
     @action(detail=True, methods=['get'], url_path='openai-usage')
     def openai_usage(self, request, *args, **kwargs):
@@ -509,10 +510,10 @@ class DatasetViewSet(viewsets.ModelViewSet):
             cancel_notification(dataset)
             return Response(notification_payload(dataset))
 
-        if attention_kind_for_dataset(dataset):
+        if not settings.ATTENTION_EMAIL_ENABLED:
             return Response(
-                {'detail': 'ChatIPT already needs your attention. Respond before setting another notification.'},
-                status=status.HTTP_409_CONFLICT,
+                {'detail': 'Email notifications are not configured on this server.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
         try:
@@ -523,33 +524,6 @@ class DatasetViewSet(viewsets.ModelViewSet):
         payload = notification_payload(dataset)
         payload['status'] = notification.status
         return Response(payload, status=status.HTTP_201_CREATED)
-
-    # @action(detail=True)
-    # def next_agent(self, request, *args, **kwargs):
-    #     dataset = self.get_object()
-    #     serializer = AgentSerializer(dataset.next_agent())
-    #     return Response(serializer.data, status=status.HTTP_200_OK)
-
-    @action(detail=True)
-    def refresh(self, request, *args, **kwargs):
-        dataset = self.get_object()
-
-        try:
-            from api.agent_turns import queue_agent_turn
-
-            next_agent = dataset.next_agent()
-            if next_agent:
-                queue_agent_turn(next_agent)
-                dataset.refresh_from_db()
-
-            serializer = self.get_serializer(dataset)
-            return Response(serializer.data)
-        except Exception as e:
-            logger.error(f"Error refreshing dataset {dataset.id}: {e}")
-            return Response(
-                {'error': f'Failed to refresh dataset: {str(e)}'}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
 
     @action(detail=True, methods=['get'], url_path='package-explorer')
     def package_explorer(self, request, *args, **kwargs):
@@ -972,7 +946,9 @@ class MessageViewSet(viewsets.ModelViewSet):
                 openai_obj['role'] = Message.Role.USER
                 serializer.validated_data['openai_obj'] = openai_obj
 
-        serializer.save()
+        message = serializer.save()
+        if message.role == Message.Role.USER:
+            transaction.on_commit(lambda: ensure_dataset_work(message.agent.dataset_id))
 
     @staticmethod
     def _read_tree_preview(user_file, max_chars=200):

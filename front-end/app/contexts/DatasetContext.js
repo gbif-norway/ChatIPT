@@ -3,7 +3,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
-import { datasetNeedsWorkflowAdvance } from '../utils/workflowState.mjs';
 
 const DatasetContext = createContext();
 
@@ -74,16 +73,7 @@ export const DatasetProvider = ({ children }) => {
       
       console.log(`Loading dataset ${datasetId} with ${config.baseUrl}/api/datasets/${datasetId}/`);
       const dataset = await fetchData(`${config.baseUrl}/api/datasets/${datasetId}/`);
-      
-      // Initialize new datasets and resume incomplete datasets that were reopened
-      // after their previous task completed but before the next task was created.
-      if (datasetNeedsWorkflowAdvance(dataset)) {
-        console.log('Dataset workflow needs advancing, using refresh endpoint');
-        const refreshedDataset = await fetchData(`${config.baseUrl}/api/datasets/${datasetId}/refresh`);
-        setDatasets(prev => new Map(prev).set(datasetId, refreshedDataset));
-      } else {
-        setDatasets(prev => new Map(prev).set(datasetId, dataset));
-      }
+      setDatasets(prev => new Map(prev).set(datasetId, dataset));
       
     } catch (error) {
       console.error('Error loading dataset:', error);
@@ -105,7 +95,7 @@ export const DatasetProvider = ({ children }) => {
 
     try {
       console.log(`[${timestamp}] 📡 Refreshing dataset ${datasetId} - making API call...`);
-      const refreshedDataset = await fetchData(`${config.baseUrl}/api/datasets/${datasetId}/refresh`);
+      const refreshedDataset = await fetchData(`${config.baseUrl}/api/datasets/${datasetId}/`);
       
       console.log(`[${timestamp}] ✅ Got refreshed dataset:`, {
         id: refreshedDataset.id,
@@ -168,11 +158,8 @@ export const DatasetProvider = ({ children }) => {
             assistantHasToolCalls
           ) {
             console.log(`[${timestamp}] 🔄 Need to continue refreshing - last message role: ${lastMessage.role}`);
-            // GBIF validation runs asynchronously. Polling the workflow every two
-            // seconds while it is still running creates a new model/tool turn each
-            // time, which can turn one validator job into a costly tight loop.
-            // Flex turns run in a backend worker and can take minutes. Keep
-            // polling, but avoid hammering refresh while the model is busy.
+            // Turns run in a backend worker and can take minutes, so poll more
+            // slowly while the model is busy or GBIF validation is running.
             const refreshDelay = validationStillRunning ? 15000 : lastAgent?.busy_thinking ? 8000 : 2000;
             await new Promise(resolve => setTimeout(resolve, refreshDelay));
             console.log(`[${timestamp}] ⏰ Finished waiting, scheduling next refresh...`);

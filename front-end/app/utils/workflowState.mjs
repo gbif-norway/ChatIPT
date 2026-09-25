@@ -7,15 +7,6 @@ export const getLatestVisibleAgent = (dataset) => {
   return agents.length > 0 ? agents[agents.length - 1] : null
 }
 
-export const datasetNeedsWorkflowAdvance = (dataset) => {
-  if (!dataset || dataset.published_at != null || dataset.package_ready) {
-    return false
-  }
-
-  const latestAgent = getLatestVisibleAgent(dataset)
-  return latestAgent == null || latestAgent.completed_at != null
-}
-
 export const datasetIsActivelyProcessing = (dataset) => {
   const latestAgent = getLatestVisibleAgent(dataset)
   if (!latestAgent || latestAgent.completed_at != null) {

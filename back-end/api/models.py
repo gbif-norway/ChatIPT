@@ -9,7 +9,7 @@ from django.utils.translation import gettext_lazy as _
 from django.contrib.postgres.fields import ArrayField
 from django.contrib.auth.models import AbstractUser
 from api import agent_tools
-from api.helpers.openai_helpers import create_response_message
+from api.helpers.openai_helpers import TRANSIENT_OPENAI_ERRORS, create_response_message
 from picklefield.fields import PickledObjectField
 import pandas as pd
 from django.template.loader import render_to_string
@@ -159,18 +159,31 @@ class Dataset(models.Model):
         note_lines = [line.strip() for line in (self.structure_notes or "").splitlines() if line.strip()]
         return bool(note_lines and note_lines[-1] == self.SOURCE_COVERAGE_MARKER)
 
-    def notify_active_agent_of_source_change(self):
+    def notify_active_agent_of_source_change(self, queue_turn=True, queue_delay_seconds=0):
         """Append current source evidence without rewriting the cached prompt."""
         active_agent = self.agent_set.filter(completed_at__isnull=True).first()
         if active_agent:
             active_agent.append_source_update()
+            if queue_turn:
+                from api.agent_turns import ensure_dataset_work
 
-    def handle_source_change(self):
-        """Invalidate derived state and show the active agent the new sources."""
+                ensure_dataset_work(self.id, delay_seconds=queue_delay_seconds)
+
+    def handle_source_change(self, queue_turn=True, queue_delay_seconds=0):
+        """Invalidate derived state and show the active agent the new sources.
+
+        A short queue delay lets a follow-up message or another file arrive
+        before the worker starts, while retaining a server-side continuation.
+        """
         self.refresh_source_mode(save=True)
         self.invalidate_source_coverage()
         self.invalidate_publication_artifacts()
-        transaction.on_commit(self.notify_active_agent_of_source_change, robust=True)
+        transaction.on_commit(
+            lambda: self.notify_active_agent_of_source_change(
+                queue_turn=queue_turn, queue_delay_seconds=queue_delay_seconds,
+            ),
+            robust=True,
+        )
 
     def save(self, *args, **kwargs):
         update_fields = kwargs.get("update_fields")
@@ -1801,12 +1814,11 @@ class Agent(models.Model):
                 if recheck_time and timezone.now() < recheck_time:
                     # Not worth a full-context, full-price model turn just to be
                     # told "still running" again before GBIF could plausibly be
-                    # done. The next poll (from the front end, or a scheduled
-                    # check) will retry this same check.
+                    # done. The turn worker schedules the job for next_recheck_at.
                     return last_message
 
         # Otherwise we need to send it to GPT, last message was from the user, was the return from a function, or was the starting system message.
-        # Claim the turn atomically: the front end polls refresh, and two overlapping
+        # Claim the turn atomically: before the turn worker, the front end polled refresh, and two overlapping
         # requests that both saw busy_thinking=False used to send the same paid
         # request twice (dataset 527, 17:18:30 and 17:18:31).
         if not Agent.objects.filter(pk=self.pk, busy_thinking=False).update(busy_thinking=True):
@@ -1987,6 +1999,10 @@ class Agent(models.Model):
 
             return messages
 
+        except TRANSIENT_OPENAI_ERRORS:
+            # The turn worker retries these with backoff before reporting failure.
+            raise
+
         except Exception as e:
             # Any unexpected error – report back to the user
             error_message = (
@@ -2003,6 +2019,7 @@ class Agent(models.Model):
                     openai_obj={
                         'role': Message.Role.ASSISTANT,
                         'content': error_message,
+                        'workflow_error': True,
                     },
                 )
             ]
@@ -2059,6 +2076,8 @@ class AgentTurnJob(models.Model):
     requested_after_message_id = models.PositiveBigIntegerField()
     requested_at = models.DateTimeField(auto_now_add=True)
     claimed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    available_at = models.DateTimeField(default=timezone.now, db_index=True)
+    failure_count = models.PositiveIntegerField(default=0)
 
 
 class Message(models.Model):
@@ -2185,6 +2204,7 @@ class DatasetAttentionNotification(models.Model):
         NEEDS_INPUT = 'needs_input', _('Needs input')
         READY = 'ready', _('Package ready')
         PUBLISHED = 'published', _('Published')
+        FAILED = 'failed', _('Processing failed')
 
     dataset = models.OneToOneField(
         Dataset,
@@ -2198,6 +2218,10 @@ class DatasetAttentionNotification(models.Model):
         choices=AttentionKind.choices,
         blank=True,
     )
+    ready_event_key = models.CharField(max_length=100, blank=True)
+    last_sent_event_key = models.CharField(max_length=100, blank=True)
+    # The package already announced as ready, so later pauses read as input requests.
+    ready_sent_key = models.CharField(max_length=100, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     ready_at = models.DateTimeField(null=True, blank=True)

@@ -9,11 +9,14 @@ from typing import Any, Dict, List
 
 from django.conf import settings
 from pydantic import BaseModel
-from openai import OpenAI, InternalServerError, RateLimitError
+from openai import APIConnectionError, OpenAI, InternalServerError, RateLimitError
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 
 
 logger = logging.getLogger(__name__)
+
+# Worth retrying the whole turn later (APITimeoutError is an APIConnectionError).
+TRANSIENT_OPENAI_ERRORS = (APIConnectionError, InternalServerError, RateLimitError)
 
 
 @dataclass

@@ -85,11 +85,18 @@ GPT-6 Luna stays on Standard. Flex costs are included in the per-dataset ceiling
 Capacity-only Flex 429s get one retry before a Standard fallback. Set
 `OPENAI_SOL_SERVICE_TIER=default` to disable Flex. Agent turns are queued in the
 database and run by `run_agent_turns --watch` from the backend container, so
-longer Flex calls do not hold the browser's refresh request open. The default
+longer Flex calls do not hold a browser request open. Once a dataset upload or
+user reply has been saved, the worker continues model and tool turns, advances
+workflow stages, and schedules GBIF validator rechecks without an open tab.
+It stops when the agent needs input, completes, or reports an error. Users can
+request a one-time email for the next attention event; email delivery requires
+`GMAIL_APP_EMAIL` and `GMAIL_APP_PASSWORD` on the backend. The default
 Flex timeout is 900 seconds; a crashed worker's turn is recoverable after the
 3600-second lease. Three workers run per backend container by default; set
 `AGENT_TURN_WORKER_COUNT` to adjust concurrency or `RUN_AGENT_TURN_WORKER=0`
-to disable them. OpenAI currently offers EU data residency for GPT-6 Sol only
+to disable them. One worker also reconciles recently active workflows left
+without a queued job by the earlier browser-driven implementation. OpenAI
+currently offers EU data residency for GPT-6 Sol only
 on Standard processing; use the Standard override if that applies to this
 deployment.
 

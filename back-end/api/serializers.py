@@ -176,7 +176,9 @@ class UserFileSerializer(serializers.ModelSerializer):
                     user_file.create_tables(filtered_dfs)
 
                 dataset = user_file.dataset
-                dataset.handle_source_change()
+                # Give a multi-file upload time to finish and its follow-up
+                # message time to arrive. The upload alone still starts work.
+                dataset.handle_source_change(queue_delay_seconds=15)
         except serializers.ValidationError:
             self._delete_stored_file(user_file)
             raise
@@ -336,6 +338,13 @@ class DatasetSerializer(serializers.ModelSerializer):
                 "No tasks are configured in the system. Please contact the administrator to load the required tasks."
             )
 
+        initial_note = (request.data.get('upload_context_message') or '').strip() if request else ''
+        if initial_note:
+            Message.objects.create(
+                agent=first_agent,
+                openai_obj={'role': Message.Role.USER, 'content': initial_note},
+            )
+
         discord_bot.send_discord_message(f"Dataset ID assigned: {dataset.id}.")
         return dataset
 
@@ -392,14 +401,16 @@ class DatasetListSerializer(serializers.ModelSerializer):
     def get_status(self, obj):
         if obj.published_at: 
             return 'published'
-        if obj.package_ready:
-            return 'ready'
         active_agent = obj.agent_set.filter(completed_at__isnull=True).order_by('created_at').first()
         if not active_agent:
-            return 'preparing'
+            return 'ready' if obj.package_ready else 'preparing'
 
         last_message = active_agent.message_set.order_by('-created_at').first()
         openai_obj = (last_message.openai_obj or {}) if last_message else {}
+        if openai_obj.get('workflow_error'):
+            return 'failed'
+        if obj.package_ready:
+            return 'ready'
         has_tool_calls = bool(openai_obj.get('tool_calls'))
         is_working = (
             active_agent.busy_thinking

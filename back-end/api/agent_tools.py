@@ -3018,11 +3018,7 @@ class PublishToGBIF(OpenAIBaseModel):
             if agent.task_id != (last_task.id if last_task else None):
                 agent.completed_at = timezone.now()
                 agent.save()
-
-                # Create the next agent in the workflow and kick it off, if any
-                new_agent = dataset.next_agent()
-                if new_agent:
-                    new_agent.next_message()
+                # The turn worker starts the next task once this turn finishes.
 
             return f'Successfully registered dataset with GBIF. URL: {gbif_url}'
         except Exception as e:

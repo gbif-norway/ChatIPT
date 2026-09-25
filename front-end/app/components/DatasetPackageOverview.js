@@ -103,7 +103,7 @@ export default function DatasetPackageOverview({ dataset, tables, tablesLoading 
   const [notificationEmail, setNotificationEmail] = useState('')
   const [emailNotificationError, setEmailNotificationError] = useState('')
   const [isSavingEmailNotification, setIsSavingEmailNotification] = useState(false)
-  const emailNotificationArmed = ['pending', 'ready', 'sending'].includes(emailNotification.status)
+  const emailNotificationArmed = Boolean(emailNotification.enabled)
   const sourceSummary = files.length > 0
     ? pluralize(files.length, 'uploaded file')
     : 'Waiting for source files'
@@ -117,7 +117,7 @@ export default function DatasetPackageOverview({ dataset, tables, tablesLoading 
   const trustText = validationTrustText
 
   useEffect(() => {
-    if (!datasetId || !isWorking) return
+    if (!datasetId) return
 
     let cancelled = false
     const loadEmailNotification = async () => {
@@ -139,7 +139,7 @@ export default function DatasetPackageOverview({ dataset, tables, tablesLoading 
     return () => {
       cancelled = true
     }
-  }, [datasetId, isWorking])
+  }, [datasetId])
 
   useEffect(() => {
     if (!showEmailNotificationModal) return
@@ -221,15 +221,15 @@ export default function DatasetPackageOverview({ dataset, tables, tablesLoading 
     }
   }
 
-  const notificationPrompt = isWorking && datasetId ? (
+  const notificationPrompt = datasetId ? (
     <div className="d-inline-flex flex-wrap align-items-center gap-2">
-      <span className="small text-muted">
-        This process can take some time.
-      </span>
+      {isWorking && <span className="small text-muted">This process can take some time.</span>}
       <button
         type="button"
         className={`btn btn-sm rounded-pill px-3 ${emailNotificationArmed ? 'btn-outline-success' : 'btn-warning'}`}
         onClick={openEmailNotificationModal}
+        disabled={emailNotification.delivery_available === false}
+        title={emailNotification.delivery_available === false ? 'Email notifications are unavailable on this server.' : undefined}
       >
         <i className={`bi ${emailNotificationArmed ? 'bi-envelope-check-fill' : 'bi-envelope'} me-1`} aria-hidden="true"></i>
         {emailNotificationArmed ? 'Email notification set' : 'Notify me by email'}
@@ -237,7 +237,7 @@ export default function DatasetPackageOverview({ dataset, tables, tablesLoading 
     </div>
   ) : null
 
-  const emailNotificationModal = isWorking && datasetId && showEmailNotificationModal ? (
+  const emailNotificationModal = datasetId && showEmailNotificationModal ? (
     <>
       <div
         className="modal fade show d-block"
@@ -276,7 +276,7 @@ export default function DatasetPackageOverview({ dataset, tables, tablesLoading 
 
             <div className="modal-body pt-3">
               <p className="small mb-3">
-                We’ll send one email when ChatIPT needs your input or your package is ready. <strong>Keep this tab open so processing can continue.</strong>
+                We’ll send one email the next time ChatIPT needs your input, hits a problem, or your package is ready. Once your upload or reply has been saved, you can close this tab.
               </p>
 
               {emailNotificationArmed ? (

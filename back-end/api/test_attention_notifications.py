@@ -20,6 +20,7 @@ from api.models import (
 )
 
 
+@override_settings(ATTENTION_EMAIL_ENABLED=True)
 class AttentionNotificationApiTests(TestCase):
     def setUp(self):
         self.user = CustomUser.objects.create_user(
@@ -74,6 +75,13 @@ class AttentionNotificationApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('email', response.data)
 
+    @override_settings(ATTENTION_EMAIL_ENABLED=False)
+    def test_disabled_delivery_cannot_be_armed(self):
+        response = self.client.post(self.url, {'email': 'notify@example.org'}, format='json')
+
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(DatasetAttentionNotification.objects.exists())
+
 
 @override_settings(
     ATTENTION_EMAIL_ENABLED=True,
@@ -116,6 +124,23 @@ class AttentionNotificationDispatchTests(TestCase):
         self.assertEqual(dispatch_due_notifications()['sent'], 0)
         self.assertEqual(len(mail.outbox), 1)
 
+        Message.objects.create(agent=self.agent, openai_obj={
+            'role': Message.Role.USER, 'content': 'Here is the answer.',
+        })
+        Message.objects.create(agent=self.agent, openai_obj={
+            'role': Message.Role.ASSISTANT, 'content': 'One more question.',
+        })
+        # One-shot: later questions wait until the user asks for another email.
+        self.assertFalse(mark_notification_ready_if_needed(self.dataset))
+        self.assertEqual(dispatch_due_notifications()['sent'], 0)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertFalse(self.client_payload()['enabled'])
+
+    def client_payload(self):
+        from api.attention_notifications import notification_payload
+
+        return notification_payload(Dataset.objects.get(pk=self.dataset.pk))
+
     def test_notification_is_queued_when_agent_finishes_thinking(self):
         notification = arm_notification(self.dataset, 'notify@example.org')
         self.agent.busy_thinking = True
@@ -139,8 +164,22 @@ class AttentionNotificationDispatchTests(TestCase):
             DatasetAttentionNotification.AttentionKind.NEEDS_INPUT,
         )
 
+    def test_processing_failure_sends_attention_email(self):
+        arm_notification(self.dataset, 'notify@example.org')
+        Message.objects.create(agent=self.agent, openai_obj={
+            'role': Message.Role.ASSISTANT,
+            'content': 'Processing stopped.',
+            'workflow_error': True,
+        })
+
+        self.assertTrue(mark_notification_ready_if_needed(self.dataset))
+        self.assertEqual(dispatch_due_notifications()['sent'], 1)
+        self.assertIn('processing stopped', mail.outbox[0].subject)
+
     def test_ready_package_is_an_attention_event(self):
         arm_notification(self.dataset, 'notify@example.org')
+        self.agent.completed_at = timezone.now()
+        self.agent.save(update_fields=['completed_at'])
         quality_task = Task.objects.create(
             name=Task.PREPUBLICATION_QUALITY_TASK,
             text='Check the package',
@@ -169,6 +208,69 @@ class AttentionNotificationDispatchTests(TestCase):
         self.assertEqual(notification.attention_kind, DatasetAttentionNotification.AttentionKind.READY)
         self.assertEqual(notification.status, DatasetAttentionNotification.Status.SENT)
         self.assertIn('package is ready', mail.outbox[0].subject)
+
+    def _make_package_ready(self, active_task_order=3):
+        quality_task = Task.objects.create(
+            name=Task.PREPUBLICATION_QUALITY_TASK,
+            text='Check the package',
+            order=2,
+        )
+        Agent.objects.create(dataset=self.dataset, task=quality_task, completed_at=timezone.now())
+        self.agent.completed_at = timezone.now()
+        self.agent.save(update_fields=['completed_at'])
+        publish_task = Task.objects.create(name='Publish', text='Publish', order=active_task_order)
+        publish_agent = Agent.objects.create(dataset=self.dataset, task=publish_task)
+        self.dataset.dwc_dp_url = 'https://example.org/package.tar.gz'
+        self.dataset.dwca_url = 'https://example.org/archive.zip'
+        self.dataset.dwca_validation = {
+            'url': self.dataset.dwca_url,
+            'status': 'FINISHED',
+            'metrics': {'indexeable': True},
+        }
+        self.dataset.dwc_dp_validation = {'valid': True}
+        self.dataset.save()
+        return publish_agent
+
+    def test_ready_is_announced_once_then_questions_need_input(self):
+        publish_agent = self._make_package_ready()
+        arm_notification(self.dataset, 'notify@example.org')
+        Message.objects.create(agent=publish_agent, openai_obj={
+            'role': Message.Role.ASSISTANT, 'content': 'Which licence?',
+        })
+        self.assertTrue(mark_notification_ready_if_needed(self.dataset))
+        dispatch_due_notifications()
+        self.assertIn('package is ready', mail.outbox[0].subject)
+
+        arm_notification(self.dataset, 'notify@example.org')
+        Message.objects.create(agent=publish_agent, openai_obj={
+            'role': Message.Role.USER, 'content': 'CC-BY',
+        })
+        Message.objects.create(agent=publish_agent, openai_obj={
+            'role': Message.Role.ASSISTANT, 'content': 'Anything else?',
+        })
+        self.assertTrue(mark_notification_ready_if_needed(self.dataset))
+        dispatch_due_notifications()
+        self.assertEqual(len(mail.outbox), 2)
+        self.assertIn('needs your attention', mail.outbox[1].subject)
+
+    def test_arming_while_package_is_ready_does_not_announce_it(self):
+        publish_agent = self._make_package_ready()
+        Message.objects.create(agent=publish_agent, openai_obj={
+            'role': Message.Role.ASSISTANT, 'content': 'Which licence?',
+        })
+        arm_notification(self.dataset, 'notify@example.org')
+        self.assertFalse(mark_notification_ready_if_needed(self.dataset))
+
+        Message.objects.create(agent=publish_agent, openai_obj={
+            'role': Message.Role.USER, 'content': 'CC-BY',
+        })
+        Message.objects.create(agent=publish_agent, openai_obj={
+            'role': Message.Role.ASSISTANT, 'content': 'Anything else?',
+        })
+        self.assertTrue(mark_notification_ready_if_needed(self.dataset))
+        dispatch_due_notifications()
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn('needs your attention', mail.outbox[0].subject)
 
     def test_delivery_failure_is_queued_for_retry(self):
         notification = arm_notification(self.dataset, 'notify@example.org')

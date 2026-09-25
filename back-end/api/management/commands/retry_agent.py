@@ -11,11 +11,12 @@ Examples:
     # Delete the last 2 messages (tool result + assistant response) and retry
     python manage.py retry_agent 123 --delete-count 2
 
-    # Just delete messages without triggering refresh
+    # Just delete messages without queueing a new turn
     python manage.py retry_agent 123 --delete-count 2 --no-refresh
 """
 
 from django.core.management.base import BaseCommand
+from api.agent_turns import queue_agent_turn
 from api.models import Dataset, Agent, Message
 
 
@@ -38,7 +39,7 @@ class Command(BaseCommand):
         parser.add_argument(
             '--no-refresh',
             action='store_true',
-            help='Do not trigger agent refresh after deleting messages'
+            help='Do not queue a new agent turn after deleting messages'
         )
 
     def handle(self, *args, **options):
@@ -115,15 +116,10 @@ class Command(BaseCommand):
             self.stdout.write(f'New last message role: {role}')
 
         if not no_refresh:
-            self.stdout.write('Triggering agent.next_message()...')
-            try:
-                result = agent.next_message()
-                if result:
-                    self.stdout.write(self.style.SUCCESS(f'Agent responded with {len(result)} new message(s)'))
-                else:
-                    self.stdout.write('Agent returned None (may need a user message to continue)')
-            except Exception as e:
-                self.stderr.write(self.style.ERROR(f'Error during next_message: {e}'))
+            if queue_agent_turn(agent):
+                self.stdout.write(self.style.SUCCESS('Queued a turn for the agent worker'))
+            else:
+                self.stdout.write('Nothing to queue (agent is complete or waiting for a user message)')
         else:
-            self.stdout.write('Skipping refresh (--no-refresh)')
+            self.stdout.write('Skipping turn (--no-refresh)')
 
