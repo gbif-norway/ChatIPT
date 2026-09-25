@@ -14,6 +14,7 @@ from pathlib import Path
 import os
 import sys
 from decimal import Decimal
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -264,6 +265,8 @@ REST_FRAMEWORK = {
 }
 
 OPENAI_RESPONSES_TIMEOUT_SECONDS = float(os.environ.get("OPENAI_RESPONSES_TIMEOUT_SECONDS", "180"))
+OPENAI_FLEX_TIMEOUT_SECONDS = float(os.environ.get("OPENAI_FLEX_TIMEOUT_SECONDS", "900"))
+AGENT_TURN_LEASE_SECONDS = int(os.environ.get("AGENT_TURN_LEASE_SECONDS", "3600"))
 OPENAI_SDK_MAX_RETRIES = int(os.environ.get("OPENAI_SDK_MAX_RETRIES", "0"))
 # Hard per-dataset ceiling for recorded OpenAI response costs. The guard runs
 # before each model request; 0 disables it. A response already in flight can put
@@ -281,6 +284,9 @@ OPENAI_MODEL_STANDARD = os.environ.get(
 )
 OPENAI_MODEL_EFFICIENT = os.environ.get("OPENAI_MODEL_EFFICIENT", "gpt-6-luna")
 OPENAI_MODEL_CRITICAL = os.environ.get("OPENAI_MODEL_CRITICAL", "gpt-6-sol")
+OPENAI_SOL_SERVICE_TIER = os.environ.get("OPENAI_SOL_SERVICE_TIER", "flex").lower()
+if OPENAI_SOL_SERVICE_TIER not in {"flex", "default"}:
+    raise ImproperlyConfigured("OPENAI_SOL_SERVICE_TIER must be flex or default")
 OPENAI_MODEL = OPENAI_MODEL_STANDARD
 OPENAI_REASONING_EFFORT = os.environ.get("OPENAI_REASONING_EFFORT", "high")
 OPENAI_SIMPLE_REASONING_EFFORT = os.environ.get("OPENAI_SIMPLE_REASONING_EFFORT", "low")

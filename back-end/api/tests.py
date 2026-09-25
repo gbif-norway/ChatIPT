@@ -13,6 +13,8 @@ from unittest.mock import patch
 from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.exceptions import ValidationError
 import openpyxl
+import httpx2
+from openai import RateLimitError
 import pandas as pd
 import yaml
 from .helpers.publish import (
@@ -57,6 +59,7 @@ from .helpers.openai_helpers import (
     _messages_to_responses_input,
     _response_to_compat_message,
     create_response_message,
+    query_responses_api,
 )
 from .helpers import discord_bot
 from .models import Agent, CustomUser, Dataset, Message, OpenAIUsage, Table, Task, UserFile
@@ -1970,6 +1973,157 @@ class ResponsesAdapterCompatibilityTests(SimpleTestCase):
         self.assertEqual(request["reasoning"], {"effort": "high"})
         self.assertNotIn("temperature", request)
 
+    @patch("api.helpers.openai_helpers.query_responses_api")
+    def test_explicit_cache_writes_only_the_frozen_opening(self, query_mock):
+        query_mock.return_value = SimpleNamespace(id="resp_1", status="completed", output=[])
+        messages = [
+            self._Message({"role": "system", "content": "Frozen instructions"}),
+            self._Message({"role": "user", "content": "Changing conversation"}),
+        ]
+
+        create_response_message(
+            messages, [], model="gpt-6-sol",
+            additional_input_items=[{"role": "system", "content": "Changing state"}],
+        )
+
+        request = query_mock.call_args.args[0]
+        self.assertEqual(request["prompt_cache_options"], {"mode": "explicit"})
+        self.assertEqual(request["input"][0], {
+            "role": "system",
+            "content": [{
+                "type": "input_text",
+                "text": "Frozen instructions",
+                "prompt_cache_breakpoint": {"mode": "explicit"},
+            }],
+        })
+        self.assertEqual(request["input"][-1]["content"], "Changing state")
+
+    @patch("api.helpers.openai_helpers.query_responses_api")
+    def test_older_models_keep_implicit_cache_compatibility(self, query_mock):
+        query_mock.return_value = SimpleNamespace(id="resp_1", status="completed", output=[])
+
+        create_response_message(
+            [self._Message({"role": "system", "content": "Instructions"})],
+            [], model="gpt-5.4",
+        )
+
+        request = query_mock.call_args.args[0]
+        self.assertNotIn("prompt_cache_options", request)
+        self.assertEqual(request["input"][0]["content"], "Instructions")
+
+    @patch("api.helpers.openai_helpers.query_responses_api")
+    def test_sol_uses_flex_and_luna_stays_on_standard(self, query_mock):
+        query_mock.return_value = SimpleNamespace(id="resp_1", status="completed", output=[])
+
+        create_response_message([], [], model="gpt-6-sol")
+        create_response_message([], [], model="gpt-6-luna")
+
+        self.assertEqual(query_mock.call_args_list[0].args[0]["service_tier"], "flex")
+        self.assertEqual(query_mock.call_args_list[1].args[0]["service_tier"], "default")
+
+    @patch("api.helpers.openai_helpers.query_responses_api")
+    @override_settings(OPENAI_SOL_SERVICE_TIER="default")
+    def test_sol_flex_can_be_disabled(self, query_mock):
+        query_mock.return_value = SimpleNamespace(id="resp_1", status="completed", output=[])
+
+        create_response_message([], [], model="gpt-6-sol")
+
+        self.assertEqual(query_mock.call_args.args[0]["service_tier"], "default")
+
+    @patch("api.helpers.openai_helpers.OpenAI")
+    @override_settings(OPENAI_FLEX_TIMEOUT_SECONDS=900, OPENAI_RESPONSES_TIMEOUT_SECONDS=180)
+    def test_flex_gets_a_longer_backend_timeout(self, openai_mock):
+        query_responses_api({"model": "gpt-6-sol", "service_tier": "flex"})
+        query_responses_api({"model": "gpt-6-luna", "service_tier": "default"})
+
+        self.assertEqual([call.kwargs["timeout"] for call in openai_mock.call_args_list],
+                         [900, 180])
+
+    @patch("api.helpers.openai_helpers.time.sleep")
+    @patch("api.helpers.openai_helpers.query_responses_api")
+    def test_flex_capacity_retries_then_falls_back_to_standard(self, query_mock, sleep_mock):
+        request = httpx2.Request("POST", "https://api.openai.com/v1/responses")
+        error = RateLimitError(
+            "Resource Unavailable",
+            response=httpx2.Response(429, request=request),
+            body={"error": {"type": "resource_unavailable", "message": "Resource Unavailable"}},
+        )
+        query_mock.side_effect = [error, error, SimpleNamespace(id="resp_1", status="completed", output=[])]
+
+        create_response_message([], [], model="gpt-6-sol")
+
+        self.assertEqual([call.args[0]["service_tier"] for call in query_mock.call_args_list],
+                         ["flex", "flex", "default"])
+        sleep_mock.assert_called_once_with(2)
+
+    @patch("api.helpers.openai_helpers.query_responses_api")
+    def test_other_429_does_not_trigger_standard_fallback(self, query_mock):
+        request = httpx2.Request("POST", "https://api.openai.com/v1/responses")
+        query_mock.side_effect = RateLimitError(
+            "Rate limit exceeded",
+            response=httpx2.Response(429, request=request),
+            body={"error": {"type": "rate_limit_error", "message": "Rate limit exceeded"}},
+        )
+
+        with self.assertRaises(RateLimitError):
+            create_response_message([], [], model="gpt-6-sol")
+        self.assertEqual(query_mock.call_count, 1)
+
+    def test_sdk_serializes_explicit_breakpoint_and_diagnostics(self):
+        sent = []
+
+        def respond(request):
+            sent.append(json.loads(request.content))
+            return httpx2.Response(200, json={
+                "id": "sdk-cache-test",
+                "created_at": 1,
+                "model": "gpt-6-sol",
+                "object": "response",
+                "output": [{
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "call_id": "call_1",
+                    "name": "Python",
+                    "arguments": "{}",
+                    "status": "completed",
+                }],
+                "parallel_tool_calls": True,
+                "tool_choice": "auto",
+                "tools": [],
+                "status": "completed",
+                "service_tier": "flex",
+                "prompt_cache_diagnostics": {"type": "cache_hit"},
+            })
+
+        from openai import OpenAI
+
+        client = OpenAI(
+            api_key="test",
+            http_client=httpx2.Client(transport=httpx2.MockTransport(respond)),
+        )
+        with patch("api.helpers.openai_helpers.OpenAI", return_value=client):
+            response = query_responses_api({
+                "model": "gpt-6-sol",
+                "service_tier": "flex",
+                "input": [{"role": "system", "content": [{
+                    "type": "input_text",
+                    "text": "Frozen opening",
+                    "prompt_cache_breakpoint": {"mode": "explicit"},
+                }]}],
+                "prompt_cache_options": {
+                    "mode": "explicit", "comparison_response_id": "previous-response",
+                },
+            })
+
+        self.assertEqual(sent[0]["input"][0]["content"][0]["prompt_cache_breakpoint"],
+                         {"mode": "explicit"})
+        self.assertEqual(sent[0]["prompt_cache_options"]["comparison_response_id"],
+                         "previous-response")
+        self.assertEqual(sent[0]["service_tier"], "flex")
+        self.assertEqual(response.service_tier, "flex")
+        self.assertEqual(response.prompt_cache_diagnostics.type, "cache_hit")
+        self.assertEqual(_response_to_compat_message(response).tool_calls[0].id, "call_1")
+
 
     def test_messages_are_mapped_to_responses_input_with_tool_history(self):
         messages = [
@@ -2242,6 +2396,19 @@ class OpenAIUsageAccountingTests(TestCase):
         self.assertEqual(values["cache_write_price_per_million"], Decimal("2.50"))
         self.assertEqual(values["estimated_cost_usd"], Decimal("0.071000"))
 
+    def test_flex_sol_is_priced_and_counts_toward_the_cost_ceiling(self):
+        response = self._response(model="gpt-6-sol", cache_write_tokens=10_000)
+        response.service_tier = "flex"
+
+        values = response_usage_defaults(response)
+        self.assertEqual(values["input_price_per_million"], Decimal("1.00"))
+        self.assertEqual(values["cache_write_price_per_million"], Decimal("1.2500"))
+        self.assertEqual(values["estimated_cost_usd"], Decimal("0.035500"))
+
+        record_response_usage(response, self.agent.id)
+        with override_settings(OPENAI_DATASET_COST_LIMIT_USD=Decimal("0.03")):
+            self.assertTrue(self.agent._dataset_cost_limit_reached())
+
     def test_unknown_model_records_tokens_without_inventing_a_price(self):
         values = response_usage_defaults(self._response(model="future-model"))
 
@@ -2298,6 +2465,33 @@ class OpenAIUsageAccountingTests(TestCase):
             ).exists()
         )
 
+    @patch("api.helpers.openai_helpers.query_responses_api")
+    def test_cache_hash_and_diagnostics_follow_the_agent(self, query_mock):
+        first = self._response(response_id="cache-first", model="gpt-6-sol")
+        second = self._response(response_id="cache-second", model="gpt-6-sol")
+        second.prompt_cache_diagnostics = {
+            "type": "cache_hit", "comparison_reusable_tokens": 3000,
+        }
+        query_mock.side_effect = [first, second]
+
+        def messages(user_text):
+            return [
+                SimpleNamespace(openai_obj={"role": "system", "content": "Fixed opening"}),
+                SimpleNamespace(openai_obj={"role": "user", "content": user_text}),
+            ]
+
+        create_response_message(messages("first"), [], usage_agent_id=self.agent.id,
+                                model="gpt-6-sol", reasoning_effort="high")
+        create_response_message(messages("second"), [], usage_agent_id=self.agent.id,
+                                model="gpt-6-sol", reasoning_effort="high")
+
+        request = query_mock.call_args.args[0]
+        self.assertEqual(request["prompt_cache_options"]["comparison_response_id"], "cache-first")
+        records = list(OpenAIUsage.objects.order_by("created_at", "id"))
+        self.assertEqual(len(records[0].cache_prefix_hash), 64)
+        self.assertEqual(records[0].cache_prefix_hash, records[1].cache_prefix_hash)
+        self.assertEqual(records[1].cache_diagnostics["type"], "cache_hit")
+
     def test_admin_can_read_dataset_usage_breakdown(self):
         record_response_usage(self._response(), self.agent.id)
         admin = CustomUser.objects.create_superuser(
@@ -2314,6 +2508,7 @@ class OpenAIUsageAccountingTests(TestCase):
         self.assertEqual(response.json()["summary"]["estimated_cost_usd"], "0.085000")
         self.assertEqual(response.json()["by_stage"][0]["task_name"], "Data transformation")
         self.assertEqual(response.json()["by_model"][0]["model"], "gpt-5.4")
+        self.assertEqual(response.json()["by_service_tier"][0]["service_tier"], "default")
         self.assertEqual(
             response.json()["by_task_and_model"][0]["task_name"],
             "Data transformation",
@@ -3024,6 +3219,7 @@ class PublicationArtifactInvalidationTests(TestCase):
             task=task,
             tables=[self.occurrence],
         )
+        opening = agent.message_set.first().openai_obj["content"]
 
         with self.captureOnCommitCallbacks(execute=True):
             UserFileSerializer().create({
@@ -3033,11 +3229,10 @@ class PublicationArtifactInvalidationTests(TestCase):
 
         self.assert_artifacts_invalidated()
         self.assertNotIn("SOURCE COVERAGE: COMPLETE", self.dataset.structure_notes)
-        prompt = agent.message_set.get(
-            openai_obj__role=Message.Role.SYSTEM,
-        ).openai_obj["content"]
-        self.assertIn('Sheet "metadata"', prompt)
-        self.assertIn('- [1] "licence": 1/1 populated', prompt)
+        self.assertEqual(agent.message_set.first().openai_obj["content"], opening)
+        source_update = agent.message_set.last().openai_obj["content"]
+        self.assertIn('Sheet "metadata"', source_update)
+        self.assertIn('- [1] "licence": 1/1 populated', source_update)
 
     def test_deleting_upload_invalidates_artifacts(self):
         from .views import UserFileViewSet

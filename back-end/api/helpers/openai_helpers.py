@@ -1,6 +1,7 @@
 import json
 import hashlib
 import logging
+import re
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -8,7 +9,7 @@ from typing import Any, Dict, List
 
 from django.conf import settings
 from pydantic import BaseModel
-from openai import OpenAI, InternalServerError
+from openai import OpenAI, InternalServerError, RateLimitError
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 
 
@@ -64,10 +65,40 @@ class CompatAssistantMessage:
     reraise=True,
 )
 def query_responses_api(args):
-    timeout_seconds = float(getattr(settings, "OPENAI_RESPONSES_TIMEOUT_SECONDS", 180.0))
+    timeout_setting = (
+        "OPENAI_FLEX_TIMEOUT_SECONDS" if args.get('service_tier') == 'flex'
+        else "OPENAI_RESPONSES_TIMEOUT_SECONDS"
+    )
+    timeout_seconds = float(getattr(settings, timeout_setting, 900.0 if args.get('service_tier') == 'flex' else 180.0))
     max_retries = int(getattr(settings, "OPENAI_SDK_MAX_RETRIES", 0))
     with OpenAI(timeout=timeout_seconds, max_retries=max_retries) as client:
         return client.responses.create(**args)
+
+
+def _flex_capacity_unavailable(exc):
+    """Only capacity exhaustion merits a Standard fallback, not every 429."""
+    body = getattr(exc, 'body', None) or {}
+    error = body.get('error', body) if isinstance(body, dict) else {}
+    if not isinstance(error, dict):
+        return False
+    code = str(error.get('code') or error.get('type') or '').lower()
+    message = str(error.get('message') or '').lower()
+    return 'resource_unavailable' in code or 'resource unavailable' in message
+
+
+def _query_with_flex_fallback(args):
+    if args.get('service_tier') != 'flex':
+        return query_responses_api(args)
+    for attempt in range(2):
+        try:
+            return query_responses_api(args)
+        except RateLimitError as exc:
+            if not _flex_capacity_unavailable(exc):
+                raise
+            if attempt == 0:
+                time.sleep(2)
+    logger.warning('Flex capacity unavailable for %s; retrying once on Standard', args['model'])
+    return query_responses_api({**args, 'service_tier': 'default'})
 
 
 def create_response_message(
@@ -96,12 +127,48 @@ def create_response_message(
         'model': model,
         'input': input_items,
         'reasoning': {'effort': reasoning_effort},
+        'service_tier': (
+            getattr(settings, 'OPENAI_SOL_SERVICE_TIER', 'flex')
+            if model == 'gpt-6-sol' or model.startswith('gpt-6-sol-')
+            else 'default'
+        ),
     }
     if temperature is not None:
         openai_args['temperature'] = temperature
     openai_args['tools'] = _functions_to_responses_tools(functions)
+    cache_prefix_hash = ''
+    if _supports_explicit_cache(model) and input_items and input_items[0].get('role') == 'system':
+        # The opening system message is a frozen snapshot. Lookups, current notes,
+        # and changing workflow state follow it and are deliberately not written.
+        opening = input_items[0]['content']
+        input_items[0] = {
+            'role': 'system',
+            'content': [{
+                'type': 'input_text',
+                'text': opening,
+                'prompt_cache_breakpoint': {'mode': 'explicit'},
+            }],
+        }
+        cache_prefix_hash = hashlib.sha256(json.dumps({
+            'model': model,
+            'reasoning_effort': reasoning_effort,
+            'temperature': temperature,
+            'tools': openai_args['tools'],
+            'opening': opening,
+        }, sort_keys=True, ensure_ascii=False).encode('utf-8')).hexdigest()
+        cache_options = {'mode': 'explicit'}
+        if usage_agent_id is not None:
+            from api.models import OpenAIUsage
+
+            previous_response_id = OpenAIUsage.objects.filter(
+                agent_id=usage_agent_id,
+                cache_prefix_hash=cache_prefix_hash,
+            ).order_by('-created_at', '-id').values_list('response_id', flat=True).first()
+            if previous_response_id:
+                cache_options['comparison_response_id'] = previous_response_id
+        openai_args['prompt_cache_options'] = cache_options
     request_started_at = time.monotonic()
-    response = query_responses_api(openai_args)
+    response = _query_with_flex_fallback(openai_args)
     duration_ms = round((time.monotonic() - request_started_at) * 1000)
     if usage_agent_id is not None:
         try:
@@ -114,6 +181,7 @@ def create_response_message(
                 reasoning_effort=reasoning_effort,
                 retry_reason=usage_retry_reason,
                 duration_ms=duration_ms,
+                cache_prefix_hash=cache_prefix_hash,
             )
         except Exception:
             # Accounting must never turn a successful model response into a failed
@@ -131,6 +199,12 @@ def create_response_message(
         '---'
     )
     return _response_to_compat_message(response)
+
+
+def _supports_explicit_cache(model):
+    """Explicit breakpoints are available on GPT-5.6 and newer families."""
+    match = re.match(r'^gpt-(\d+)(?:\.(\d+))?(?:-|$)', model)
+    return bool(match and (int(match[1]), int(match[2] or 0)) >= (5, 6))
 
 
 def _prepare_pdf_file_inputs(pdf_user_files) -> List[Dict[str, str]]:

@@ -74,6 +74,8 @@ class OpenAIUsageSerializer(serializers.ModelSerializer):
             'task_name',
             'response_id',
             'response_status',
+            'cache_prefix_hash',
+            'cache_diagnostics',
             'retry_reason',
             'model',
             'reasoning_effort',

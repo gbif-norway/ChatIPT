@@ -5,8 +5,7 @@ few thousand characters and later drops it entirely. Verbose schema lookups
 therefore disappeared from the model's context one or two turns after they were
 fetched, and agents re-fetched the same schemas dozens of times. This module
 keeps schema lookups small and derives a ledger from the stored tool-call log so
-the looked-up schemas, the agent's working plan and its progress survive
-compaction via the per-turn workflow state.
+looked-up schemas and the working plan survive compaction in the per-turn state.
 
 Everything here is pure (no Django or pandas imports) so it can be unit tested
 in isolation. Callers pass spec objects exposing ``name``, ``title``,

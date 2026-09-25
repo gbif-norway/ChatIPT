@@ -214,9 +214,8 @@ class SchemaLedgerAgentTests(AgentFixtureMixin, TestCase):
             self.assertTrue(results[f"second-{table}"].startswith("Not re-run"), table)
             self.assertTrue(results[f"third-{table}"].startswith("Not re-run"), table)
 
-        # Every field of every looked-up schema is in the stable context, which is
-        # not subject to history compaction.
-        context = self.agent.stable_context_text()
+        # Every looked-up field survives history compaction in the per-turn ledger.
+        context = self.agent.lookup_ledger_text()
         self.assertIn("DWC-DP SCHEMA LEDGER", context)
         for table in RUN_524_TABLES:
             for field in get_table_spec(table).fields:
@@ -643,13 +642,13 @@ class PackagePreparationLoopTests(AgentFixtureMixin, TestCase):
         self.assertTrue(partial.startswith("Already in the DWC-A TERM LEDGER, not repeated: eventID"))
         self.assertIn("- basisOfRecord (", partial.split("\n\n", 1)[1])
 
-        context = self.agent.stable_context_text()
+        context = self.agent.lookup_ledger_text()
         self.assertIn("DWC-A TERM LEDGER", context)
         self.assertIn("Extension `dna_derived_data`", context)
         self.assertIn("- DNA_sequence:", context)
         self.assertLess(len(context), 16000)
         state = self.agent.current_state_update()
-        self.assertNotIn("- DNA_sequence:", state)
+        self.assertIn("- DNA_sequence:", state)
         self.assertEqual(self.agent.turns_without_progress(), 15)
         warning = state[state.index("NO PROGRESS"):]
         self.assertIn("already validated and exported", warning)
@@ -720,7 +719,8 @@ class PromptCacheStabilityTests(AgentFixtureMixin, TestCase):
         self.assertTrue(all(len(output) > 6000 for output in outputs[3:]))
 
     @patch("api.models.create_response_message")
-    def test_stable_context_precedes_history_and_state_stays_small(self, create_response_message_mock):
+    def test_mutable_lookup_and_notes_follow_frozen_prompt(self, create_response_message_mock):
+        opening = self.agent.message_set.first().openai_obj["content"]
         self.dataset.structure_notes = "Event hierarchy: 71 parents, 124 samples."
         self.dataset.save()
         Message.objects.create(agent=self.agent, openai_obj={
@@ -735,15 +735,29 @@ class PromptCacheStabilityTests(AgentFixtureMixin, TestCase):
         self.agent.next_message()
 
         model_messages = create_response_message_mock.call_args_list[0].args[0]
-        roles = [message.openai_obj["role"] for message in model_messages]
-        self.assertEqual(roles[:2], ["system", "system"])
-        stable = model_messages[1].openai_obj["content"]
-        self.assertTrue(stable.startswith("STABLE TASK CONTEXT"))
-        self.assertIn("DWC-DP SCHEMA LEDGER", stable)
-        self.assertIn("Event hierarchy: 71 parents", stable)
+        self.assertEqual(model_messages[0].openai_obj["content"], opening)
+        self.assertEqual(model_messages[1].openai_obj["role"], "user")
         state = create_response_message_mock.call_args_list[0].kwargs["additional_input_items"][0]["content"]
-        self.assertNotIn("DWC-DP SCHEMA LEDGER", state)
-        self.assertNotIn("Event hierarchy: 71 parents", state)
+        self.assertIn("DWC-DP SCHEMA LEDGER", state)
+        self.assertIn("Event hierarchy: 71 parents", state)
+
+    def test_source_change_appends_update_without_rewriting_opening(self):
+        opening = self.agent.message_set.first().openai_obj["content"]
+
+        self.dataset.notify_active_agent_of_source_change()
+
+        self.assertEqual(self.agent.message_set.first().openai_obj["content"], opening)
+        update = self.agent.message_set.last().openai_obj
+        self.assertEqual(update["role"], "system")
+        self.assertIn("SOURCE FILE UPDATE", update["content"])
+        self.assertIn("No source files are currently attached", update["content"])
+
+        self.dataset.notify_active_agent_of_source_change()
+        included_updates = [
+            message for message in self.agent.messages_for_model()
+            if (message.openai_obj or {}).get('source_update')
+        ]
+        self.assertEqual(len(included_updates), 1)
 
 
 class ConcurrentTurnTests(AgentFixtureMixin, TestCase):

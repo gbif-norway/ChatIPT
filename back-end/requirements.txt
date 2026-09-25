@@ -1,5 +1,5 @@
 annotated-types==0.7.0
-anyio==4.9.0
+anyio==4.10.0
 argon2-cffi==25.1.0
 argon2-cffi-bindings==21.2.0
 asgiref==3.11.1
@@ -22,15 +22,15 @@ gunicorn==23.0.0
 h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1
-idna==3.10
+idna==3.20
 inflection==0.5.1
-jiter==0.10.0
+jiter==0.16.0
 jsonschema==4.24.0
 jsonschema-specifications==2025.4.1
 frictionless==5.19.0
 minio==7.2.15
 numpy==2.2.6
-openai==1.84.0
+openai==3.19.2
 openpyxl==3.1.5
 packaging==25.0
 pandas==2.2.3

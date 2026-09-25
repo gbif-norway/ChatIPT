@@ -53,6 +53,17 @@ if [ "${RUN_ATTENTION_NOTIFICATION_WORKER:-1}" = "1" ] && {
     python manage.py send_attention_notifications --watch &
 fi
 
+# Claims are stored in Postgres, so each backend replica may run a turn worker.
+if [ "${RUN_AGENT_TURN_WORKER:-1}" = "1" ] && {
+    [ "${1:-}" = "gunicorn" ] ||
+    { [ "${1:-}" = "python" ] && [ "${2:-}" = "manage.py" ] && [ "${3:-}" = "runserver" ]; }
+}; then
+    for worker_index in $(seq 1 "${AGENT_TURN_WORKER_COUNT:-3}"); do
+        echo "Starting agent turn worker ${worker_index}..."
+        python manage.py run_agent_turns --watch &
+    done
+fi
+
 # Start the application
 echo "Starting Django server..."
 exec "$@" 

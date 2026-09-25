@@ -69,8 +69,29 @@ docker compose exec back-end python manage.py openai_model_report
 docker compose exec back-end python manage.py openai_model_report --since 2026-09-24
 ```
 
-The report groups calls by model and workflow task and includes completion
-proxies, retries, latency, token/cache usage, and estimated standard-tier cost.
+The report groups calls by model, service tier, and workflow task and includes
+completion proxies, retries, latency, token/cache usage, and estimated cost.
+
+For GPT-5.6 and later, each agent keeps its opening prompt fixed and places an
+explicit cache breakpoint after it. Current notes, lookup ledgers, source-file
+updates, and workflow state follow that breakpoint, so they do not cause the
+opening prompt to be rewritten. Each usage record includes a hash of the intended
+cache prefix and OpenAI's comparison diagnostics against the previous call with
+that prefix. Compare `cached_input_tokens`, `cache_write_input_tokens`, and
+`cache_diagnostics` across calls when evaluating a cost change.
+
+GPT-6 Sol calls use Flex processing by default (`OPENAI_SOL_SERVICE_TIER=flex`);
+GPT-6 Luna stays on Standard. Flex costs are included in the per-dataset ceiling.
+Capacity-only Flex 429s get one retry before a Standard fallback. Set
+`OPENAI_SOL_SERVICE_TIER=default` to disable Flex. Agent turns are queued in the
+database and run by `run_agent_turns --watch` from the backend container, so
+longer Flex calls do not hold the browser's refresh request open. The default
+Flex timeout is 900 seconds; a crashed worker's turn is recoverable after the
+3600-second lease. Three workers run per backend container by default; set
+`AGENT_TURN_WORKER_COUNT` to adjust concurrency or `RUN_AGENT_TURN_WORKER=0`
+to disable them. OpenAI currently offers EU data residency for GPT-6 Sol only
+on Standard processing; use the Standard override if that applies to this
+deployment.
 
 ## DwC-DP schema snapshot
 

@@ -470,6 +470,10 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 'model': model,
                 **usage_summary(model_records),
             })
+        by_service_tier = [
+            {'service_tier': tier, **usage_summary(records.filter(service_tier=tier))}
+            for tier in records.order_by().values_list('service_tier', flat=True).distinct()
+        ]
         by_task_and_model = []
         groups = records.order_by().values_list('task_name', 'model').distinct()
         for task_name, model in groups:
@@ -484,6 +488,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
             'summary': usage_summary(records),
             'by_stage': by_stage,
             'by_model': by_model,
+            'by_service_tier': by_service_tier,
             'by_task_and_model': by_task_and_model,
             'requests': OpenAIUsageSerializer(records, many=True).data,
         })
@@ -530,10 +535,11 @@ class DatasetViewSet(viewsets.ModelViewSet):
         dataset = self.get_object()
 
         try:
-            # Do a refresh of agents and messages, so we get the next one of each if necessary
+            from api.agent_turns import queue_agent_turn
+
             next_agent = dataset.next_agent()
             if next_agent:
-                next_agent.next_message()
+                queue_agent_turn(next_agent)
                 dataset.refresh_from_db()
 
             serializer = self.get_serializer(dataset)

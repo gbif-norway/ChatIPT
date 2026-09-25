@@ -1,0 +1,14 @@
+SOURCE FILE UPDATE (authoritative; supersedes earlier upload lists and manifests).
+The current working tables and their revisions are in CURRENT WORKFLOW STATE.
+{% if user_files %}
+Current uploaded files:
+{% for user_file in user_files %}
+- {{ user_file.filename }} ({{ user_file.uploaded_at|date:"Y-m-d H:i" }} UTC)
+{% endfor %}
+{% for user_file in source_manifest_files %}
+Original upload manifest for {{ user_file.filename }}:
+{{ user_file.source_manifest_text|safe }}
+{% endfor %}
+{% else %}
+No source files are currently attached.
+{% endif %}

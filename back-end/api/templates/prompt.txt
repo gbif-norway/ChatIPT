@@ -48,7 +48,7 @@ Data handling:
 Currently, you are working on preprocessing (dataset.id {{ agent.dataset.id }}) with Tables:
 ---
 {% for table in agent.tables.all %}
-Table id {{ table.id }} - sheet name {{ table.title|default:"(untitled)" }} (created {{ table.created_at|date:"Y-m-d H:i" }} UTC{% if table.updated_at %}, last updated {{ table.updated_at|date:"Y-m-d H:i" }} UTC{% endif %}{% if not new_table_cutoff or table.created_at > new_table_cutoff %} (NEWLY CREATED){% endif %}).
+Table id {{ table.id }} - sheet name {{ table.title|default:"(untitled)" }} (created {{ table.created_at|date:"Y-m-d H:i" }} UTC{% if table.updated_at %}, last updated {{ table.updated_at|date:"Y-m-d H:i" }} UTC{% endif %}).
 {% if table.id in snapshot_table_ids %}Snapshot of `Table.objects.get(id={{ table.id }}).df`:
 {{ table.str_preview|safe }}
 {% if table.id not in source_manifest_covered_table_ids %}

@@ -159,18 +159,18 @@ class Dataset(models.Model):
         note_lines = [line.strip() for line in (self.structure_notes or "").splitlines() if line.strip()]
         return bool(note_lines and note_lines[-1] == self.SOURCE_COVERAGE_MARKER)
 
-    def refresh_active_agent_prompt(self):
-        """Refresh immutable source context after an upload or deletion."""
+    def notify_active_agent_of_source_change(self):
+        """Append current source evidence without rewriting the cached prompt."""
         active_agent = self.agent_set.filter(completed_at__isnull=True).first()
         if active_agent:
-            active_agent.regenerate_system_message()
+            active_agent.append_source_update()
 
     def handle_source_change(self):
-        """Invalidate derived state and refresh the active prompt after commit."""
+        """Invalidate derived state and show the active agent the new sources."""
         self.refresh_source_mode(save=True)
         self.invalidate_source_coverage()
         self.invalidate_publication_artifacts()
-        transaction.on_commit(self.refresh_active_agent_prompt, robust=True)
+        transaction.on_commit(self.notify_active_agent_of_source_change, robust=True)
 
     def save(self, *args, **kwargs):
         update_fields = kwargs.get("update_fields")
@@ -1258,7 +1258,7 @@ class Agent(models.Model):
         
         agent = cls.objects.create(dataset=dataset, task=task)
         agent.tables.set([t.id for t in tables])
-        system_message_text = agent.regenerate_system_message()
+        system_message_text = agent.create_system_message()
         logger = logging.getLogger(__name__)
         logger.debug(
             "Created system message for agent %s (%s characters)",
@@ -1267,7 +1267,14 @@ class Agent(models.Model):
         )
         return agent
 
-    def regenerate_system_message(self, new_table_cutoff=None):
+    @staticmethod
+    def _state_digest(value):
+        return hashlib.sha256(
+            json.dumps(value, sort_keys=True, default=str).encode('utf-8')
+        ).hexdigest()
+
+    def create_system_message(self):
+        """Capture the task's opening evidence once so its cache prefix stays fixed."""
         tables = list(Table.objects.filter(dataset_id=self.dataset_id).order_by('created_at', 'id'))
         user_files = list(self.dataset.user_files.all())
         source_manifest_files = [
@@ -1326,7 +1333,6 @@ class Agent(models.Model):
         context = {
             'agent': self,
             'all_tasks_count': Task.objects.count(),
-            'new_table_cutoff': new_table_cutoff,
             'snapshot_table_ids': snapshot_table_ids,
             'include_source_manifests': include_source_manifests,
             'source_manifest_covered_table_ids': source_manifest_covered_table_ids,
@@ -1335,16 +1341,26 @@ class Agent(models.Model):
             'legacy_tabular_files': legacy_tabular_files,
         }
         system_message_text = render_to_string('prompt.txt', context=context)
-        system_message = self.message_set.filter(openai_obj__role=Message.Role.SYSTEM).order_by('created_at').first()
-        if system_message:
-            openai_obj = system_message.openai_obj or {}
-            openai_obj['content'] = system_message_text
-            openai_obj['role'] = Message.Role.SYSTEM
-            system_message.openai_obj = openai_obj
-            system_message.save(update_fields=['openai_obj'])
-        else:
-            Message.objects.create(agent=self, openai_obj={'content': system_message_text, 'role': Message.Role.SYSTEM})
+        Message.objects.create(agent=self, openai_obj={
+            'content': system_message_text,
+            'role': Message.Role.SYSTEM,
+            'initial_notes_digest': self._state_digest(self.dataset.structure_notes),
+            'initial_eml_digest': self._state_digest(self.dataset.eml),
+        })
         return system_message_text
+
+    def append_source_update(self):
+        """Preserve the old prefix and append an authoritative source snapshot."""
+        files = list(self.dataset.user_files.order_by('uploaded_at', 'id'))
+        content = render_to_string('source_update.txt', {
+            'user_files': files,
+            'source_manifest_files': [f for f in files if (f.source_manifest or {}).get('tables')],
+        })
+        return Message.objects.create(agent=self, openai_obj={
+            'role': Message.Role.SYSTEM,
+            'content': content,
+            'source_update': True,
+        })
 
     def current_state_update(self, new_table_cutoff=None):
         tables = list(Table.objects.filter(dataset_id=self.dataset_id).order_by('created_at', 'id'))
@@ -1371,6 +1387,14 @@ class Agent(models.Model):
                 result.startswith(PROGRESS_RESULT_PREFIXES[agent_tools.UploadDwCA.__name__])
                 for result in latest_tool_results(self._history_objs(), agent_tools.UploadDwCA.__name__)
             )
+        initial = self.message_set.filter(openai_obj__role=Message.Role.SYSTEM).first()
+        initial_obj = (initial.openai_obj or {}) if initial else {}
+        notes_changed = initial_obj.get('initial_notes_digest') != self._state_digest(
+            self.dataset.structure_notes
+        )
+        eml_changed = initial_obj.get('initial_eml_digest') != self._state_digest(
+            self.dataset.eml
+        )
         return render_to_string(
             'state_update.txt',
             {
@@ -1379,6 +1403,16 @@ class Agent(models.Model):
                 'changed_tables': changed_tables,
                 'relational_candidate_report': relational_candidate_report,
                 'working_state': self.working_state_text(),
+                'lookup_ledger': self.lookup_ledger_text(),
+                'current_structure_notes': (
+                    self.dataset.compact_structure_notes or '(none)'
+                    if notes_changed else None
+                ),
+                'current_eml': (
+                    json.dumps(self.dataset.eml, ensure_ascii=False, sort_keys=True)
+                    if eml_changed and self.dataset.eml else None
+                ),
+                'eml_changed': eml_changed,
                 'no_progress_turns': no_progress_turns,
                 'no_progress_warn_turns': self.no_progress_warn_turns,
                 'no_progress_stop_turns': self.no_progress_stop_turns,
@@ -1414,14 +1448,8 @@ class Agent(models.Model):
         objs = history_objs if history_objs is not None else self._history_objs()
         return schema_lookups(objs, RESERVED_TABLE_NAMES)
 
-    def stable_context_text(self):
-        """Looked-up schemas and terms plus saved structure notes, rebuilt from the
-        stored tool log so they survive history compaction.
-
-        This is sent once near the start of each request rather than in the
-        per-turn state at the end: it only changes when a lookup adds something or
-        the notes are saved, so it stays in the cached prompt prefix instead of
-        being paid for at the uncached rate on every call."""
+    def lookup_ledger_text(self):
+        """Recover looked-up terms and schemas after tool-history compaction."""
         from api.dwc_dp_specs import get_table_spec
         from api.schema_ledger import dwc_lookups, render_dwc_ledger, render_schema_manifests
 
@@ -1431,14 +1459,11 @@ class Agent(models.Model):
             render_schema_manifests(self.schema_ledger_entries(objs), get_table_spec),
             render_dwc_ledger(dwc_lookups(objs, dwc_reference), dwc_reference),
         ]
-        if self.dataset.structure_notes:
-            sections.append("Saved structure and transformation notes:\n" + self.dataset.compact_structure_notes)
         sections = [section for section in sections if section]
         if not sections:
             return ""
         return "\n\n".join([
-            "STABLE TASK CONTEXT (authoritative; updated whenever a lookup adds something or notes are "
-            "saved, so rely on it instead of repeating lookups):",
+            "LOOKUP LEDGER (authoritative; successful lookups survive tool-history compaction):",
             *sections,
         ])
 
@@ -1581,6 +1606,13 @@ class Agent(models.Model):
 
     def messages_for_model(self):
         messages = list(self.message_set.all())
+        latest_source_update_id = next(
+            (
+                message.id for message in reversed(messages)
+                if (message.openai_obj or {}).get('source_update')
+            ),
+            None,
+        )
         tool_turn_limit = max(int(getattr(settings, "OPENAI_TOOL_HISTORY_TURNS", 8)), 0)
         full_tool_turn_limit = max(
             int(getattr(settings, "OPENAI_FULL_TOOL_HISTORY_TURNS", 2)),
@@ -1645,6 +1677,8 @@ class Agent(models.Model):
         bounded = []
         for message in messages:
             openai_obj = message.openai_obj or {}
+            if openai_obj.get('source_update') and message.id != latest_source_update_id:
+                continue
             role = openai_obj.get('role')
             if role == Message.Role.ASSISTANT and openai_obj.get('tool_calls'):
                 if message.id not in kept_tool_messages:
@@ -1791,13 +1825,6 @@ class Agent(models.Model):
             previous_non_system_message = recent_non_system_messages[1] if len(recent_non_system_messages) > 1 else None
             new_table_cutoff = previous_non_system_message.created_at if previous_non_system_message else None
             model_messages = self.messages_for_model()
-            stable_context = self.stable_context_text()
-            if stable_context:
-                insert_at = 1 if model_messages and (model_messages[0].openai_obj or {}).get('role') == Message.Role.SYSTEM else 0
-                model_messages.insert(insert_at, SimpleNamespace(openai_obj={
-                    'role': Message.Role.SYSTEM,
-                    'content': stable_context,
-                }))
             state_items = []
             if recent_non_system_messages:
                 state_items.append({
@@ -2025,6 +2052,15 @@ class Agent(models.Model):
         return prefix + function_model_obj.run()
 
 
+class AgentTurnJob(models.Model):
+    """One durable, claimable model/tool turn per agent."""
+
+    agent = models.OneToOneField(Agent, on_delete=models.CASCADE)
+    requested_after_message_id = models.PositiveBigIntegerField()
+    requested_at = models.DateTimeField(auto_now_add=True)
+    claimed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+
 class Message(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE)
@@ -2066,6 +2102,8 @@ class OpenAIUsage(models.Model):
     task_name = models.CharField(max_length=300, blank=True)
     response_id = models.CharField(max_length=200, unique=True)
     response_status = models.CharField(max_length=40, blank=True)
+    cache_prefix_hash = models.CharField(max_length=64, blank=True)
+    cache_diagnostics = models.JSONField(default=dict, blank=True)
     retry_reason = models.CharField(max_length=100, blank=True)
     model = models.CharField(max_length=100, blank=True)
     reasoning_effort = models.CharField(max_length=30, blank=True)

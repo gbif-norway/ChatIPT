@@ -171,7 +171,9 @@ export const DatasetProvider = ({ children }) => {
             // GBIF validation runs asynchronously. Polling the workflow every two
             // seconds while it is still running creates a new model/tool turn each
             // time, which can turn one validator job into a costly tight loop.
-            const refreshDelay = validationStillRunning ? 15000 : 2000;
+            // Flex turns run in a backend worker and can take minutes. Keep
+            // polling, but avoid hammering refresh while the model is busy.
+            const refreshDelay = validationStillRunning ? 15000 : lastAgent?.busy_thinking ? 8000 : 2000;
             await new Promise(resolve => setTimeout(resolve, refreshDelay));
             console.log(`[${timestamp}] ⏰ Finished waiting, scheduling next refresh...`);
             if (datasetId === currentDatasetId) {

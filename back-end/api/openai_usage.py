@@ -70,6 +70,7 @@ def response_usage_defaults(
     requested_model="",
     reasoning_effort="",
     duration_ms=0,
+    cache_prefix_hash='',
 ):
     """Return the auditable usage fields stored for one Responses API call."""
     usage = _value(response, "usage", {}) or {}
@@ -108,10 +109,12 @@ def response_usage_defaults(
         "reasoning_tokens": reasoning_tokens,
         "total_tokens": total_tokens,
         "duration_ms": max(int(duration_ms or 0), 0),
+        "cache_prefix_hash": cache_prefix_hash,
+        "cache_diagnostics": _cache_diagnostics(response),
         "long_context": long_context,
     }
 
-    if pricing is None or service_tier not in {"", "auto", "default"}:
+    if pricing is None or service_tier not in {"", "auto", "default", "flex"}:
         defaults.update({
             "input_price_per_million": None,
             "cached_input_price_per_million": None,
@@ -124,6 +127,7 @@ def response_usage_defaults(
         })
         return defaults
 
+    tier_multiplier = Decimal("0.5") if service_tier == "flex" else Decimal("1")
     input_multiplier = Decimal("2") if long_context else Decimal("1")
     output_multiplier = Decimal("1.5") if long_context else Decimal("1")
     uncached_input_tokens = max(
@@ -134,25 +138,34 @@ def response_usage_defaults(
         Decimal(uncached_input_tokens) * pricing["input"]
         + Decimal(cached_input_tokens) * pricing["cached_input"]
         + Decimal(cache_write_input_tokens) * pricing["cache_write"]
-    ) * input_multiplier / TOKENS_PER_MILLION
+    ) * input_multiplier * tier_multiplier / TOKENS_PER_MILLION
     output_cost = (
         Decimal(output_tokens)
         * pricing["output"]
-        * output_multiplier
+        * output_multiplier * tier_multiplier
         / TOKENS_PER_MILLION
     )
 
     defaults.update({
-        "input_price_per_million": pricing["input"],
-        "cached_input_price_per_million": pricing["cached_input"],
-        "cache_write_price_per_million": pricing["cache_write"],
-        "output_price_per_million": pricing["output"],
+        "input_price_per_million": pricing["input"] * tier_multiplier,
+        "cached_input_price_per_million": pricing["cached_input"] * tier_multiplier,
+        "cache_write_price_per_million": pricing["cache_write"] * tier_multiplier,
+        "output_price_per_million": pricing["output"] * tier_multiplier,
         "input_price_multiplier": input_multiplier,
         "output_price_multiplier": output_multiplier,
         "estimated_cost_usd": (input_cost + output_cost).quantize(Decimal("0.000001")),
         "pricing_source": pricing["source"],
     })
     return defaults
+
+
+def _cache_diagnostics(response):
+    diagnostics = _value(response, 'prompt_cache_diagnostics')
+    if diagnostics is None:
+        return {}
+    if hasattr(diagnostics, 'model_dump'):
+        return diagnostics.model_dump(exclude_none=True)
+    return dict(diagnostics) if isinstance(diagnostics, dict) else {}
 
 
 def record_response_usage(
@@ -162,6 +175,7 @@ def record_response_usage(
     reasoning_effort="",
     retry_reason="",
     duration_ms=0,
+    cache_prefix_hash='',
 ):
     """Persist one response exactly once, keyed by the OpenAI response id."""
     from api.models import Agent, OpenAIUsage
@@ -177,6 +191,7 @@ def record_response_usage(
         requested_model=requested_model,
         reasoning_effort=reasoning_effort,
         duration_ms=duration_ms,
+        cache_prefix_hash=cache_prefix_hash,
     )
     defaults.update({
         "dataset": agent.dataset,

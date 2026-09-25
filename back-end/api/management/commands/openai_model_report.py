@@ -43,6 +43,11 @@ class Command(BaseCommand):
                 **usage_summary(records.filter(model=model)),
             })
 
+        by_service_tier = [
+            {"service_tier": tier, **usage_summary(records.filter(service_tier=tier))}
+            for tier in records.order_by().values_list("service_tier", flat=True).distinct()
+        ]
+
         by_task_and_model = []
         groups = records.order_by().values_list("task_name", "model").distinct()
         for task_name, model in groups:
@@ -60,6 +65,7 @@ class Command(BaseCommand):
             },
             "overall": usage_summary(records),
             "by_model": by_model,
+            "by_service_tier": by_service_tier,
             "by_task_and_model": by_task_and_model,
         }
         self.stdout.write(json.dumps(report, indent=2, sort_keys=True))

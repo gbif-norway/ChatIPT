@@ -96,6 +96,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const [tableRowsError, setTableRowsError] = useState('');
   const [showTableTabOverflowCue, setShowTableTabOverflowCue] = useState(false);
   const tableTabsRef = useRef(null);
+  const processingRefreshStartedRef = useRef(null);
   const tableRowsControllerRef = useRef(null);
   const [activeAgentKey, setActiveAgentKey] = useState(null);
   const [isEditingMetadata, setIsEditingMetadata] = useState(false);
@@ -287,6 +288,14 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       setActiveTableId(null);
     }
   }, [currentDatasetId, loadTablesForDataset]);
+
+  useEffect(() => {
+    if (currentDatasetId && datasetIsActivelyProcessing(currentDataset)
+      && processingRefreshStartedRef.current !== currentDatasetId) {
+      processingRefreshStartedRef.current = currentDatasetId;
+      refreshDataset(currentDatasetId);
+    }
+  }, [currentDataset, currentDatasetId, refreshDataset]);
 
   useEffect(() => {
     loadActiveTableRows();
