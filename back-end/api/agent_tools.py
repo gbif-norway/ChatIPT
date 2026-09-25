@@ -12,7 +12,9 @@ from api.helpers.openai_helpers import OpenAIBaseModel
 from typing import Optional, List, Dict, Tuple, ClassVar, Literal
 from api.helpers.publish import (
     DwcaExtensionLinkError,
+    clean_person_name,
     clean_text,
+    normalize_orcid,
     upload_dwca, 
     register_dataset_and_endpoint,
 )
@@ -1785,6 +1787,14 @@ class SetEML(OpenAIBaseModel):
         None,
         description="Optional list of people involved in the dataset. Each entry should be an object with first_name, last_name, email, and orcid keys."
     )
+    metadata_provider: Optional[EMLUser] = Field(
+        None,
+        description=(
+            "Optional verified name of the account holder who is preparing this metadata, used as "
+            "EML metadataProvider/contact when their profile name is incomplete and they are not "
+            "listed in users. Use the account email. Set orcid only for a real ORCID iD."
+        ),
+    )
     TEXT_PLACEHOLDER_VALUES: ClassVar[set[str]] = {
         "", "unknown", "not known", "not provided", "n/a", "na", "none", "null", "tbd", "pending"
     }
@@ -2362,19 +2372,37 @@ class SetEML(OpenAIBaseModel):
 
             if self.users is not None:
                 # Ensure we store plain dicts, not Pydantic objects
-                eml["users"] = [u.dict() for u in self.users]
+                eml["users"] = [
+                    {**u.dict(), "orcid": normalize_orcid(u.orcid)} for u in self.users
+                ]
             elif not eml.get("users") and dataset.user:
                 # ORCID is the authenticated profile and therefore the best
                 # available creator seed when no manuscript/user list exists.
+                # Placeholder names such as '[unknown]' are not verified authorship.
                 profile_user = dataset.user
-                if profile_user.first_name and profile_user.last_name:
+                first_name = clean_person_name(profile_user.first_name)
+                last_name = clean_person_name(profile_user.last_name)
+                if first_name and last_name:
                     eml["users"] = [{
-                        "first_name": profile_user.first_name or "",
-                        "last_name": profile_user.last_name or "",
+                        "first_name": first_name,
+                        "last_name": last_name,
                         "email": profile_user.email or "",
-                        "orcid": profile_user.orcid_id or None,
+                        "orcid": normalize_orcid(profile_user.orcid_id),
                     }]
                     eml.setdefault("creators_source", "user_profile")
+            if "metadata_provider" in self.model_fields_set:
+                if self.metadata_provider is None:
+                    eml.pop("metadata_provider", None)
+                else:
+                    eml["metadata_provider"] = {
+                        **self.metadata_provider.dict(),
+                        "orcid": normalize_orcid(self.metadata_provider.orcid),
+                    }
+            creators_missing_surname = [
+                person.get("first_name") or "(no name)"
+                for person in eml.get("users") or []
+                if not clean_person_name(person.get("last_name"))
+            ]
             dataset.eml = eml
             dataset.save()
 
@@ -2392,6 +2420,11 @@ class SetEML(OpenAIBaseModel):
                     geographic_export_note,
                     taxonomic_note,
                     methodology_note,
+                    (
+                        "These creators have no verified surname and will block export until "
+                        f"one is supplied: {', '.join(creators_missing_surname)}."
+                        if creators_missing_surname else None
+                    ),
                 )
                 if note
             ]

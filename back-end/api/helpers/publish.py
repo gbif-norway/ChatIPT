@@ -69,6 +69,38 @@ def clean_text(value) -> str | None:
     return text or None
 
 
+_PERSON_NAME_PLACEHOLDERS = {
+    'unknown', 'not known', 'not provided', 'n/a', 'na', 'none', 'null', 'tbd', 'pending', '-', '?',
+}
+_ORCID_RE = re.compile(r"\d{4}-\d{4}-\d{4}-\d{3}[\dX]")
+
+
+def clean_person_name(value) -> str | None:
+    """Return a real person name part, or None for blanks and placeholders like '[unknown]'."""
+    text = clean_text(value)
+    if text is None:
+        return None
+    if text.strip('[]()<>{} ').casefold() in _PERSON_NAME_PLACEHOLDERS:
+        return None
+    return text
+
+
+def normalize_orcid(value) -> str | None:
+    """Return a bare ORCID iD (0000-0000-0000-000X), or None when the value is not one."""
+    text = clean_text(value)
+    if text is None:
+        return None
+    match = re.match(
+        r"^(?:https?://)?(?:www\.)?orcid\.org/(?P<identifier>[^?#]+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        text = (match.group("identifier") or "").strip().strip("/")
+    text = text.upper()
+    return text if _ORCID_RE.fullmatch(text) else None
+
+
 class DwcaExtensionLinkError(ValueError):
     """Expected projection error raised when extension rows cannot link to the core."""
 
@@ -262,24 +294,6 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     package_id = clean_text(eml_extra.get('package_id'))
     if package_id:
         root.set('packageId', package_id)
-
-    def normalize_orcid_identifier(value: str | None) -> str | None:
-        """Normalize ORCID input to the identifier token expected in EML userId."""
-        text = clean_text(value)
-        if text is None:
-            return None
-
-        match = re.match(
-            r"^(?:https?://)?(?:www\.)?orcid\.org/(?P<identifier>[^?#]+)",
-            text,
-            flags=re.IGNORECASE,
-        )
-        if match:
-            text = (match.group("identifier") or "").strip().strip("/")
-
-        if re.fullmatch(r"\d{4}-\d{4}-\d{4}-[\dXx]{4}", text):
-            return text.upper()
-        return text
 
     def normalize_doi(value: str | None) -> str | None:
         if value in (None, ''):
@@ -567,10 +581,10 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         include_email: bool = True,
     ):
         individual = get_or_create(parent_node, 'individualName')
-        set_text(get_or_create(individual, 'givenName'), person.get('first_name') or person.get('givenName') or '')
-        set_text(get_or_create(individual, 'surName'), person.get('last_name') or person.get('surName') or '')
+        set_text(get_or_create(individual, 'givenName'), clean_person_name(person.get('first_name') or person.get('givenName')))
+        set_text(get_or_create(individual, 'surName'), clean_person_name(person.get('last_name') or person.get('surName')))
 
-        orcid_value = normalize_orcid_identifier(person.get('orcid') or person.get('userId'))
+        orcid_value = normalize_orcid(person.get('orcid') or person.get('userId'))
 
         if include_email:
             email_value = person.get('email') or person.get('electronicMailAddress') or ''
@@ -580,6 +594,9 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
             user_id = get_or_create(parent_node, 'userId')
             user_id.set('directory', 'https://orcid.org/')
             user_id.text = orcid_value
+        else:
+            # The template ships an empty ORCID userId; GBIF rejects it without an identifier.
+            remove_children(parent_node, 'userId')
         if include_role:
             set_text(get_or_create(parent_node, 'role'), role_value or 'metadataProvider')
 
@@ -605,12 +622,45 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     if primary_email.lower().endswith('@orcid.org'):
         primary_email = ''
 
-    primary_person = {
-        'first_name': (getattr(user, 'first_name', None) or 'Test') if user else 'Test',
-        'last_name': (getattr(user, 'last_name', None) or 'User') if user else 'User',
-        'orcid': (getattr(user, 'orcid_id', None) or '0000-0000-0000-0000') if user else '0000-0002-1825-0097',
-        'email': primary_email,
-    }
+    if user:
+        primary_person = {
+            'first_name': clean_person_name(getattr(user, 'first_name', None)) or '',
+            'last_name': clean_person_name(getattr(user, 'last_name', None)) or '',
+            'orcid': normalize_orcid(getattr(user, 'orcid_id', None)),
+            'email': primary_email,
+        }
+    else:
+        primary_person = {
+            'first_name': 'Test',
+            'last_name': 'User',
+            'orcid': '0000-0002-1825-0097',
+            'email': primary_email,
+        }
+
+    # A profile without a usable surname (blank or a placeholder such as
+    # '[unknown]') is completed from a verified entry for the same person:
+    # an explicit metadata_provider, or a creator sharing the account email/ORCID.
+    if not primary_person['last_name']:
+        candidates = []
+        if isinstance(eml_extra.get('metadata_provider'), dict):
+            candidates.append(eml_extra['metadata_provider'])
+        for person in eml_extra.get('users') or []:
+            person_email = (clean_text(person.get('email')) or '').casefold()
+            person_orcid = normalize_orcid(person.get('orcid'))
+            if (
+                (primary_email and person_email == primary_email.casefold())
+                or (primary_person['orcid'] and person_orcid == primary_person['orcid'])
+            ):
+                candidates.append(person)
+        for person in candidates:
+            if clean_person_name(person.get('last_name')):
+                primary_person = {
+                    'first_name': clean_person_name(person.get('first_name')) or '',
+                    'last_name': clean_person_name(person.get('last_name')),
+                    'orcid': normalize_orcid(person.get('orcid')) or primary_person['orcid'],
+                    'email': clean_text(person.get('email')) or primary_email,
+                }
+                break
 
     creator_node = get_or_create(dataset_node, 'creator')
     set_person(creator_node, primary_person)
@@ -639,7 +689,7 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     if isinstance(contact_email, str) and contact_email.strip():
         contact_person['email'] = contact_email.strip()
     elif not primary_email and user:
-        primary_orcid = normalize_orcid_identifier(primary_person['orcid'])
+        primary_orcid = normalize_orcid(primary_person['orcid'])
         primary_name = (
             primary_person['first_name'].strip().casefold(),
             primary_person['last_name'].strip().casefold(),
@@ -648,7 +698,7 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
             person_email = clean_text(person.get('email'))
             if not person_email or person_email.lower().endswith('@orcid.org'):
                 continue
-            person_orcid = normalize_orcid_identifier(person.get('orcid'))
+            person_orcid = normalize_orcid(person.get('orcid'))
             same_orcid = bool(primary_orcid and person_orcid and primary_orcid == person_orcid)
             same_name = (
                 not person_orcid
@@ -838,6 +888,28 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
                 element.remove(child)
 
     prune(root)
+
+    # The GBIF EML profile requires a surName (or organisation/position) for every
+    # agent. Fail here with an actionable message rather than export invalid EML.
+    incomplete_agents = []
+    for role in ('creator', 'metadataProvider', 'contact', 'project/personnel'):
+        for agent in findall(dataset_node, role):
+            if not (
+                (agent.findtext('individualName/surName') or '').strip()
+                or (agent.findtext('organizationName') or '').strip()
+                or (agent.findtext('positionName') or '').strip()
+            ):
+                given = (agent.findtext('individualName/givenName') or '').strip()
+                incomplete_agents.append(f"{role.split('/')[-1]} '{given or '(no name)'}'")
+    if incomplete_agents:
+        raise ValueError(
+            "EML people are missing a verified surname (GBIF requires surName): "
+            + ", ".join(incomplete_agents)
+            + ". Ask the user for the verified full names and record them with SetEML "
+            "(users for creators; metadata_provider for the account holder when they are "
+            "not a creator). Put a single-name person's name in last_name. Leave orcid "
+            "null unless a real ORCID iD was supplied."
+        )
 
     return ET.tostring(root, encoding='utf-8', xml_declaration=True).decode('utf-8')
 

@@ -606,6 +606,67 @@ class EmlGenerationTests(SimpleTestCase):
 
         self.assertIsNone(root.find('dataset/contact/electronicMailAddress'))
 
+    def test_make_eml_omits_empty_orcid_and_completes_placeholder_surname(self):
+        class PlaceholderUser:
+            first_name = 'rukaya'
+            last_name = '[unknown]'
+            orcid_id = '   '
+            email = 'rukaya@example.org'
+
+        root = ET.fromstring(make_eml(
+            'Placeholder profile',
+            'Description',
+            user=PlaceholderUser(),
+            eml_extra={'users': [
+                {'first_name': 'Rukaya', 'last_name': 'Johaadien',
+                 'email': 'rukaya@example.org', 'orcid': None},
+            ]},
+        ))
+        dataset = root.find('dataset')
+
+        self.assertEqual(root.findall('.//userId'), [])
+        for role in ('creator', 'metadataProvider', 'contact'):
+            self.assertEqual(dataset.findtext(f'{role}/individualName/surName'), 'Johaadien')
+        self.assertNotIn('[unknown]', ET.tostring(root, encoding='unicode'))
+
+    def test_make_eml_uses_explicit_metadata_provider_for_placeholder_profile(self):
+        class PlaceholderUser:
+            first_name = 'rukaya'
+            last_name = '[unknown]'
+            orcid_id = ''
+            email = 'rukaya@example.org'
+
+        root = ET.fromstring(make_eml(
+            'Someone else\'s dataset',
+            'Description',
+            user=PlaceholderUser(),
+            eml_extra={
+                'users': [{'first_name': 'Jane', 'last_name': 'Doe', 'email': 'jane@example.org'}],
+                'metadata_provider': {'first_name': 'Rukaya', 'last_name': 'Johaadien',
+                                      'email': 'rukaya@example.org', 'orcid': None},
+            },
+        ))
+        dataset = root.find('dataset')
+
+        self.assertEqual(dataset.findtext('metadataProvider/individualName/surName'), 'Johaadien')
+        self.assertEqual(dataset.findtext('creator/individualName/surName'), 'Doe')
+        self.assertIsNone(dataset.find('metadataProvider/userId'))
+
+    def test_make_eml_rejects_people_without_surname(self):
+        class PlaceholderUser:
+            first_name = 'rukaya'
+            last_name = '[unknown]'
+            orcid_id = ''
+            email = 'rukaya@example.org'
+
+        with self.assertRaisesRegex(ValueError, "missing a verified surname"):
+            make_eml(
+                'Incomplete names',
+                'Description',
+                user=PlaceholderUser(),
+                eml_extra={'users': [{'first_name': 'rukaya', 'last_name': '', 'email': 'x@example.org'}]},
+            )
+
     @patch("api.helpers.publish.requests.post")
     def test_gbif_registration_uses_canonical_license_url(self, post_mock):
         post_mock.side_effect = [
@@ -1775,6 +1836,34 @@ class SetEMLProjectTitleTests(TestCase):
                 "orcid": "0000-0001-2345-6789",
             }],
         )
+
+    def test_does_not_seed_creators_from_placeholder_profile_name(self):
+        profile_user = CustomUser.objects.create_user(
+            username="placeholder-profile",
+            email="placeholder@example.org",
+            first_name="rukaya",
+            last_name="[unknown]",
+            orcid_id=" ",
+        )
+        self.dataset.user = profile_user
+        self.dataset.eml = {}
+        self.dataset.save()
+
+        SetEML(agent_id=self.agent.id, users=None, creators_source=None).run()
+        self.dataset.refresh_from_db()
+
+        self.assertNotIn("users", self.dataset.eml)
+        self.assertNotIn("creators_source", self.dataset.eml)
+
+    def test_blank_orcid_is_stored_as_null(self):
+        SetEML(
+            agent_id=self.agent.id,
+            users=[{"first_name": "Jane", "last_name": "Doe",
+                    "email": "jane@example.org", "orcid": " "}],
+        ).run()
+        self.dataset.refresh_from_db()
+
+        self.assertIsNone(self.dataset.eml["users"][0]["orcid"])
 
     def test_explicit_geographic_bounds_are_stored_for_export(self):
         result = SetEML(
