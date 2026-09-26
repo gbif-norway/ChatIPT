@@ -123,6 +123,7 @@ def create_response_message(
     pdf_file_inputs = _prepare_pdf_file_inputs(pdf_user_files if pdf_user_files is not None else [])
     if pdf_file_inputs:
         input_items = _attach_pdf_files_to_latest_user_message(input_items, pdf_file_inputs)
+    history_end_index = len(input_items)
     if additional_input_items:
         input_items = [*input_items, *additional_input_items]
 
@@ -152,6 +153,24 @@ def create_response_message(
                 'prompt_cache_breakpoint': {'mode': 'explicit'},
             }],
         }
+        # The per-turn state update is appended below and changes on every turn.
+        # Cache the latest reusable conversation boundary before that update as
+        # well as the frozen opening. Tool results are usually that boundary.
+        for item in reversed(input_items[1:history_end_index]):
+            if item.get('type') == 'function_call_output' and isinstance(item.get('output'), str):
+                item['output'] = [{
+                    'type': 'input_text',
+                    'text': item['output'],
+                    'prompt_cache_breakpoint': {'mode': 'explicit'},
+                }]
+                break
+            if item.get('role') in {'user', 'system'} and isinstance(item.get('content'), str):
+                item['content'] = [{
+                    'type': 'input_text',
+                    'text': item['content'],
+                    'prompt_cache_breakpoint': {'mode': 'explicit'},
+                }]
+                break
         cache_prefix_hash = hashlib.sha256(json.dumps({
             'model': model,
             'reasoning_effort': reasoning_effort,

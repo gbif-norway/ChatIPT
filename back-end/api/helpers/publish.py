@@ -26,6 +26,7 @@ from api.dwc_specs import (
     EXTENSION_SCHEMAS,
     DarwinCoreCoreType,
     DarwinCoreExtensionType,
+    is_gbif_basis_of_record,
 )
 from api.helpers import discord_bot
 from api.publication_validation import utf8_serialization_errors
@@ -99,6 +100,14 @@ def normalize_orcid(value) -> str | None:
         text = (match.group("identifier") or "").strip().strip("/")
     text = text.upper()
     return text if _ORCID_RE.fullmatch(text) else None
+
+
+class EmlExportError(ValueError):
+    """Metadata that cannot be represented in the exported EML."""
+
+
+class DwcaPreflightError(ValueError):
+    """A correctable problem found while preparing a DwC-A archive."""
 
 
 class DwcaExtensionLinkError(ValueError):
@@ -235,6 +244,138 @@ def _sanitize_dataframe_for_utf8_export(df: pd.DataFrame) -> pd.DataFrame:
         )
     return sanitized
 
+# DwC-DP uses detection wording for molecular records; GBIF's DwC-A
+# occurrenceStatus expects present/absent.
+DWCA_OCCURRENCE_STATUS_ALIASES = {
+    "detected": "present",
+    "not detected": "absent",
+    "undetected": "absent",
+}
+
+
+def _dwca_occurrence_status(df):
+    if "occurrenceStatus" not in df.columns:
+        return df
+    df = df.copy()
+    df["occurrenceStatus"] = df["occurrenceStatus"].map(
+        lambda value: DWCA_OCCURRENCE_STATUS_ALIASES.get(value.strip().casefold(), value)
+        if isinstance(value, str)
+        else value
+    )
+    return df
+
+
+def _month_bounds(token: str) -> tuple[str, str] | None:
+    """Return the first and last day of a year-month such as 2018-06 or June 2018."""
+    for fmt in ("%Y-%m", "%B %Y", "%b %Y"):
+        try:
+            month = datetime.strptime(token, fmt).date()
+        except ValueError:
+            continue
+        last_day = calendar.monthrange(month.year, month.month)[1]
+        return month.isoformat(), month.replace(day=last_day).isoformat()
+    return None
+
+
+def _to_iso_date(value: str | None, is_end: bool = False, context: date | None = None) -> str | None:
+    if value in (None, ''):
+        return None
+
+    token = str(value).strip().strip(",.;:")
+    if not token:
+        return None
+
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(token, fmt).date().isoformat()
+        except ValueError:
+            pass
+
+    for fmt in ("%d %B %Y", "%d %b %Y", "%B %d %Y", "%b %d %Y"):
+        try:
+            return datetime.strptime(token, fmt).date().isoformat()
+        except ValueError:
+            pass
+
+    # EML calendarDate has no year-month form, so a month widens to its
+    # first day as a start and its last day as an end.
+    month_bounds = _month_bounds(token)
+    if month_bounds:
+        return month_bounds[1] if is_end else month_bounds[0]
+
+    year_only = re.fullmatch(r"\d{4}", token)
+    if year_only:
+        return token
+
+    day_only = re.fullmatch(r"\d{1,2}", token)
+    if day_only and context is not None:
+        day = int(token)
+        max_day = calendar.monthrange(context.year, context.month)[1]
+        if 1 <= day <= max_day:
+            return datetime(context.year, context.month, day).date().isoformat()
+
+    return None
+
+def normalize_temporal_scope(raw_value: str) -> tuple[str, str] | tuple[str, str, str] | None:
+    temporal_value_str = str(raw_value or "").strip()
+    if not temporal_value_str:
+        return None
+
+    month_bounds = _month_bounds(temporal_value_str)
+    if month_bounds:
+        return ("range", *month_bounds)
+
+    single_iso = _to_iso_date(temporal_value_str)
+    if single_iso:
+        return ("single", single_iso)
+
+    # Unspaced "1990-2020" and "2–30 June 2018". ISO dates never match because
+    # their right-hand side is neither four digits nor a day-month-year.
+    range_parts = None
+    compact_range = re.fullmatch(
+        r"(\d{4}|\d{1,2})\s*[-–—]\s*(\d{4}|\d{1,2}\s+[A-Za-z]+\.?\s+\d{4})",
+        temporal_value_str,
+    )
+    if compact_range:
+        range_parts = list(compact_range.groups())
+    else:
+        for sep in ("/", " to ", " - ", " – "):
+            if sep in temporal_value_str:
+                parts = [s.strip() for s in temporal_value_str.split(sep, 1)]
+                if len(parts) == 2 and parts[0] and parts[1]:
+                    range_parts = parts
+                    break
+
+    if range_parts is not None:
+        left, right = range_parts
+        right_iso = _to_iso_date(right, is_end=True)
+        right_context = (
+            datetime.strptime(right_iso, "%Y-%m-%d").date()
+            if right_iso and re.fullmatch(r"\d{4}-\d{2}-\d{2}", right_iso)
+            else None
+        )
+        left_iso = _to_iso_date(left, is_end=False, context=right_context)
+        if left_iso and right_iso:
+            # Year-only endpoints cover the whole year. ISO strings then sort
+            # chronologically without constructing an invalid date from year 0000.
+            left_bound = left_iso + "-01-01" if len(left_iso) == 4 else left_iso
+            right_bound = right_iso + "-12-31" if len(right_iso) == 4 else right_iso
+            if left_bound > right_bound:
+                return None
+            return ("range", left_iso, right_iso)
+
+    # Prose must name at least two real dates; one date could be either end of
+    # an open range, and one impossible date means the text cannot be trusted.
+    iso_dates = re.findall(r"\b\d{4}-\d{2}-\d{2}\b", temporal_value_str)
+    if len(iso_dates) >= 2:
+        try:
+            parsed = sorted(date.fromisoformat(value) for value in iso_dates)
+        except ValueError:
+            return None
+        return ("range", parsed[0].isoformat(), parsed[-1].isoformat())
+    return None
+
+
 def make_eml(title, description, user=None, eml_extra: dict | None = None):
     """Render an EML document populated with available metadata and prune empty elements.
 
@@ -304,85 +445,6 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         doi = doi.replace('https://doi.org/', '').replace('http://doi.org/', '')
         doi = doi.replace('doi:', '').strip()
         return doi or None
-
-    def _to_iso_date(value: str | None, is_end: bool = False, context: date | None = None) -> str | None:
-        if value in (None, ''):
-            return None
-
-        token = str(value).strip().strip(",.;:")
-        if not token:
-            return None
-
-        for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
-            try:
-                return datetime.strptime(token, fmt).date().isoformat()
-            except ValueError:
-                pass
-
-        for fmt in ("%d %B %Y", "%d %b %Y", "%B %d %Y", "%b %d %Y"):
-            try:
-                return datetime.strptime(token, fmt).date().isoformat()
-            except ValueError:
-                pass
-
-        year_month = re.fullmatch(r"(\d{4})-(\d{2})", token)
-        if year_month:
-            year = int(year_month.group(1))
-            month = int(year_month.group(2))
-            if 1 <= month <= 12:
-                # EML calendarDate accepts a year or a full date, but not a
-                # year-month. Retain the known year without inventing a day.
-                return str(year)
-
-        year_only = re.fullmatch(r"\d{4}", token)
-        if year_only:
-            return token
-
-        day_only = re.fullmatch(r"\d{1,2}", token)
-        if day_only and context is not None:
-            day = int(token)
-            max_day = calendar.monthrange(context.year, context.month)[1]
-            if 1 <= day <= max_day:
-                return datetime(context.year, context.month, day).date().isoformat()
-
-        return None
-
-    def _normalize_temporal_scope(raw_value: str) -> tuple[str, str] | tuple[str, str, str] | None:
-        temporal_value_str = str(raw_value or "").strip()
-        if not temporal_value_str:
-            return None
-
-        single_iso = _to_iso_date(temporal_value_str)
-        if single_iso:
-            return ("single", single_iso)
-
-        range_parts = None
-        for sep in ("/", " to ", " - ", " – "):
-            if sep in temporal_value_str:
-                parts = [s.strip() for s in temporal_value_str.split(sep, 1)]
-                if len(parts) == 2 and parts[0] and parts[1]:
-                    range_parts = parts
-                    break
-
-        if range_parts is not None:
-            left, right = range_parts
-            right_iso = _to_iso_date(right, is_end=True)
-            right_context = (
-                datetime.strptime(right_iso, "%Y-%m-%d").date()
-                if right_iso and re.fullmatch(r"\d{4}-\d{2}-\d{2}", right_iso)
-                else None
-            )
-            left_iso = _to_iso_date(left, is_end=False, context=right_context)
-            if left_iso and right_iso:
-                return ("range", left_iso, right_iso)
-
-        iso_dates = re.findall(r"\b\d{4}-\d{2}-\d{2}\b", temporal_value_str)
-        if len(iso_dates) >= 2:
-            return ("range", iso_dates[0], iso_dates[-1])
-        if len(iso_dates) == 1:
-            return ("single", iso_dates[0])
-
-        return None
 
     def _coerce_coordinate(value) -> float | None:
         if value in (None, ''):
@@ -670,7 +732,10 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     # Optional additional metadata
     # GBIF accepts one of three dataset licenses. Keep the license in EML and
     # registration metadata instead of requiring a DwC-DP usage-policy table.
-    _, license_metadata = normalize_gbif_license(eml_extra.get("license"))
+    try:
+        _, license_metadata = normalize_gbif_license(eml_extra.get("license"))
+    except ValueError as exc:
+        raise EmlExportError(str(exc)) from exc
     rights_link = get_or_create(
         get_or_create(get_or_create(dataset_node, "intellectualRights"), "para"),
         "ulink",
@@ -776,7 +841,13 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     # Temporal
     temporal_value = eml_extra.get('temporal_scope')
     if temporal_value:
-        normalized_temporal = _normalize_temporal_scope(str(temporal_value))
+        normalized_temporal = normalize_temporal_scope(str(temporal_value))
+        if normalized_temporal is None:
+            raise EmlExportError(
+                "EML temporal_scope could not be exported as calendar dates. "
+                "Use a supported date or range such as 2018-06-02/2018-06-30; "
+                "keep the original prose in methodology or dataset notes."
+            )
         if normalized_temporal and normalized_temporal[0] == "range":
             _, start, end = normalized_temporal
             range_node = ET.SubElement(coverage, 'temporalCoverage')
@@ -899,7 +970,7 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
                 given = (agent.findtext('individualName/givenName') or '').strip()
                 incomplete_agents.append(f"{role.split('/')[-1]} '{given or '(no name)'}'")
     if incomplete_agents:
-        raise ValueError(
+        raise EmlExportError(
             "EML people are missing a verified surname (GBIF requires surName): "
             + ", ".join(incomplete_agents)
             + ". Ask the account holder for their name and save it once with SetUserName; "
@@ -952,7 +1023,7 @@ def assert_case_insensitive_unique_identifier(df, column_name: str):
                 collision_examples.append(" / ".join(map(str, variants[:3])))
 
         example_text = "; ".join(collision_examples) if collision_examples else "No examples available"
-        raise ValueError(
+        raise DwcaPreflightError(
             f"Identifier column '{column_name}' contains case-insensitive duplicates. "
             f"Examples: {example_text}"
         )
@@ -1308,13 +1379,14 @@ def _decoded_dialect_character(value: str | None, default: str) -> str:
 def _safe_zip_filename(filename: str) -> str:
     path = PurePosixPath(str(filename).replace("\\", "/"))
     if path.is_absolute() or ".." in path.parts or len(path.parts) != 1 or not path.name:
-        raise ValueError(f"Unsafe archive filename: {filename!r}.")
+        raise DwcaPreflightError(f"Unsafe archive filename: {filename!r}.")
     return path.name
 
 
 def validate_dwca_archive(archive_path: str | Path) -> dict:
     """Validate the exact DwC-A ZIP that will be uploaded."""
     errors = []
+    warnings = []
     try:
         with zipfile.ZipFile(archive_path) as archive:
             names = archive.namelist()
@@ -1326,17 +1398,34 @@ def validate_dwca_archive(archive_path: str | Path) -> dict:
                 if required not in names:
                     errors.append(f"Archive is missing required file '{required}'.")
             if errors:
-                return {"valid": False, "errors": errors}
+                return {"valid": False, "errors": errors, "warnings": warnings}
 
             try:
                 meta_root = ET.fromstring(archive.read("meta.xml").decode("utf-8", "strict"))
             except Exception as exc:
-                return {"valid": False, "errors": [f"meta.xml is invalid strict UTF-8 XML: {exc}."]}
+                return {"valid": False, "errors": [f"meta.xml is invalid strict UTF-8 XML: {exc}."], "warnings": warnings}
             try:
                 eml_root = ET.fromstring(archive.read("eml.xml").decode("utf-8", "strict"))
             except Exception as exc:
                 errors.append(f"eml.xml is invalid strict UTF-8 XML: {exc}.")
             else:
+                eml_dataset = next(
+                    (element for element in eml_root if _local_xml_name(element.tag) == "dataset"),
+                    None,
+                )
+                if eml_dataset is not None:
+                    for role in ("creator", "metadataProvider", "contact"):
+                        people = eml_dataset.findall(role)
+                        if not people:
+                            errors.append(f"eml.xml is missing a {role}.")
+                        for person in people:
+                            if not any((person.findtext(path) or "").strip() for path in (
+                                "individualName/surName", "organizationName", "positionName",
+                            )):
+                                errors.append(f"eml.xml {role} is missing a verified surname or organization.")
+                            for user_id in person.findall("userId"):
+                                if not (user_id.text or "").strip() or list(user_id):
+                                    errors.append(f"eml.xml {role} has an empty or malformed ORCID userId.")
                 for project in (
                     element
                     for element in eml_root.iter()
@@ -1384,6 +1473,8 @@ def validate_dwca_archive(archive_path: str | Path) -> dict:
                 indexes = []
                 id_index = None
                 coreid_index = None
+                basis_index = None
+                status_index = None
                 for child in table:
                     child_name = _local_xml_name(child.tag)
                     if child_name not in {"id", "coreid", "field"}:
@@ -1400,6 +1491,10 @@ def validate_dwca_archive(archive_path: str | Path) -> dict:
                         id_index = index
                     elif child_name == "coreid":
                         coreid_index = index
+                    elif child.attrib.get("term", "").endswith("/basisOfRecord"):
+                        basis_index = index
+                    elif child.attrib.get("term", "").endswith("/occurrenceStatus"):
+                        status_index = index
 
                 if table_kind == "extension" and coreid_index is None:
                     errors.append("meta.xml extension does not declare a coreid field.")
@@ -1454,6 +1549,37 @@ def validate_dwca_archive(archive_path: str | Path) -> dict:
                             f"from meta.xml: {preview}."
                         )
 
+                    if table.attrib.get("rowType", "").endswith("/Occurrence") and data_rows and not malformed:
+                        if basis_index is None:
+                            errors.append(
+                                f"DwC-A occurrence table '{location}' has no basisOfRecord field; "
+                                "GBIF requires a supported basis for each occurrence."
+                            )
+                        else:
+                            basis_counts = {}
+                            for row in data_rows:
+                                value = row[basis_index].strip()
+                                if not is_gbif_basis_of_record(value):
+                                    basis_counts[value or "(blank)"] = basis_counts.get(value or "(blank)", 0) + 1
+                            if basis_counts:
+                                errors.append(
+                                    f"DwC-A occurrence table '{location}' has unsupported basisOfRecord "
+                                    f"values: {list(basis_counts.items())[:5]}."
+                                )
+                        if status_index is not None:
+                            invalid_status = {
+                                row[status_index].strip() for row in data_rows
+                                if row[status_index].strip()
+                                and row[status_index].strip().casefold() not in {"present", "absent"}
+                            }
+                            if invalid_status:
+                                warnings.append(
+                                    f"DwC-A occurrence table '{location}' has occurrenceStatus "
+                                    f"values other than present/absent: {sorted(invalid_status)[:5]}. "
+                                    "GBIF may interpret unrecognised values as PRESENT, so absence "
+                                    "records could be published as presences. Use present or absent."
+                                )
+
                     if table_kind == "core" and id_index is not None and not malformed:
                         identifiers = [row[id_index].strip() for row in data_rows]
                         if any(not value for value in identifiers):
@@ -1492,7 +1618,107 @@ def validate_dwca_archive(archive_path: str | Path) -> dict:
     except Exception as exc:
         errors.append(f"DwC-A archive cannot be opened: {exc}.")
 
-    return {"valid": not errors, "errors": list(dict.fromkeys(errors))}
+    return {
+        "valid": not errors,
+        "errors": list(dict.fromkeys(errors)),
+        "warnings": list(dict.fromkeys(warnings)),
+    }
+
+
+def inspect_dwca_archive(archive_path: str | Path) -> dict:
+    """Summarize one exported archive without returning its record-level contents."""
+    preflight = validate_dwca_archive(archive_path)
+    summary = {"preflight": preflight, "eml": {}, "tables": []}
+    with zipfile.ZipFile(archive_path) as archive:
+        names = set(archive.namelist())
+        if not {"meta.xml", "eml.xml"}.issubset(names):
+            return summary
+        meta = ET.fromstring(archive.read("meta.xml"))
+        eml = ET.fromstring(archive.read("eml.xml"))
+
+        dataset_node = next(
+            (node for node in eml if _local_xml_name(node.tag) == "dataset"), None
+        )
+        if dataset_node is not None:
+            def eml_text(path):
+                return clean_text(dataset_node.findtext(path))
+
+            people = []
+            for node in dataset_node:
+                role = _local_xml_name(node.tag)
+                if role in {"creator", "metadataProvider", "contact"}:
+                    people.append({
+                        "role": role,
+                        "given_name": clean_text(node.findtext("individualName/givenName")),
+                        "surname": clean_text(node.findtext("individualName/surName")),
+                        "email": clean_text(node.findtext("electronicMailAddress")),
+                        "orcid": clean_text(node.findtext("userId")),
+                    })
+            temporal = []
+            for node in dataset_node.findall("coverage/temporalCoverage"):
+                temporal.append({
+                    "start": clean_text(node.findtext("rangeOfDates/beginDate/calendarDate")),
+                    "end": clean_text(node.findtext("rangeOfDates/endDate/calendarDate")),
+                    "single": clean_text(node.findtext("singleDateTime/calendarDate")),
+                })
+            rights = dataset_node.find("intellectualRights/para/ulink")
+            summary["eml"] = {
+                "title": eml_text("title"),
+                "description": eml_text("abstract/para"),
+                "people": people,
+                "license_url": rights.attrib.get("url") if rights is not None else None,
+                "temporal_coverage": temporal,
+                "geographic_scope": eml_text("coverage/geographicCoverage/geographicDescription"),
+                "taxonomic_scope": eml_text("coverage/taxonomicCoverage/generalTaxonomicCoverage"),
+                "methodology": eml_text("methods/methodStep/description/para"),
+            }
+
+        for table in meta:
+            kind = _local_xml_name(table.tag)
+            if kind not in {"core", "extension"}:
+                continue
+            location = table.findtext("{*}files/{*}location")
+            if not location or location not in names:
+                continue
+            field_terms = {
+                int(field.attrib["index"]): field.attrib["term"].rsplit("/", 1)[-1]
+                for field in table
+                if _local_xml_name(field.tag) == "field"
+                and field.attrib.get("index", "").isdigit()
+                and field.attrib.get("term")
+            }
+            delimiter = _decoded_dialect_character(table.attrib.get("fieldsTerminatedBy"), "\t")
+            enclosed_by = table.attrib.get("fieldsEnclosedBy")
+            reader_kwargs = {"delimiter": delimiter}
+            if enclosed_by:
+                reader_kwargs["quotechar"] = _decoded_dialect_character(enclosed_by, '"')
+            else:
+                reader_kwargs["quoting"] = csv.QUOTE_NONE
+            reader = csv.reader(
+                io.StringIO(archive.read(location).decode("utf-8", "strict"), newline=""),
+                **reader_kwargs,
+            )
+            ignored_headers = int(table.attrib.get("ignoreHeaderLines") or 0)
+            counts = {"basisOfRecord": {}, "occurrenceStatus": {}}
+            row_count = 0
+            for index, row in enumerate(reader):
+                if index < ignored_headers:
+                    continue
+                row_count += 1
+                for field_index, field_name in field_terms.items():
+                    if field_name in counts and field_index < len(row):
+                        value = row[field_index].strip() or "(blank)"
+                        counts[field_name][value] = counts[field_name].get(value, 0) + 1
+            summary["tables"].append({
+                "kind": kind,
+                "file": location,
+                "row_type": table.attrib.get("rowType"),
+                "row_count": row_count,
+                "fields": list(field_terms.values()),
+                "basis_of_record": counts["basisOfRecord"],
+                "occurrence_status": counts["occurrenceStatus"],
+            })
+    return summary
 
 
 def upload_dwca(
@@ -1506,8 +1732,16 @@ def upload_dwca(
     additional_files: list[tuple[str, bytes]] | None = None,
 ):
     df_core = _sanitize_dataframe_for_utf8_export(df_core)
+    if core_type == DarwinCoreCoreType.OCCURRENCE:
+        df_core = _dwca_occurrence_status(df_core)
     extensions = [
-        (_sanitize_dataframe_for_utf8_export(ext_df), ext_type, core_id_column)
+        (
+            _dwca_occurrence_status(_sanitize_dataframe_for_utf8_export(ext_df))
+            if ext_type == DarwinCoreExtensionType.OCCURRENCE
+            else _sanitize_dataframe_for_utf8_export(ext_df),
+            ext_type,
+            core_id_column,
+        )
         for ext_df, ext_type, core_id_column in extensions or []
     ]
     serialization_errors = utf8_serialization_errors({
@@ -1518,7 +1752,7 @@ def upload_dwca(
         },
     })
     if serialization_errors:
-        raise ValueError(
+        raise DwcaPreflightError(
             "DwC-A UTF-8 preflight failed: " + "; ".join(serialization_errors)
         )
 
@@ -1531,6 +1765,8 @@ def upload_dwca(
     
     try:
         archive.eml_text = make_eml(title, description, user, eml_extra)
+    except EmlExportError:
+        raise
     except Exception as e:
         error_msg = f"🚨 UploadDwCA Error - Failed to generate EML:\n{str(e)}\n\nTraceback:\n{traceback.format_exc()}\n\nTemplates root: {_TEMPLATES_ROOT}\nCurrent working directory: {os.getcwd()}"
         discord_bot.send_discord_message(error_msg)
@@ -1550,7 +1786,7 @@ def upload_dwca(
             df_core[core_id_column].astype("string").fillna("").str.strip()
         )
         if df_core[core_id_column].eq("").any():
-            raise ValueError(f"DwC-A core identifier column '{core_id_column}' contains blank values.")
+            raise DwcaPreflightError(f"DwC-A core identifier column '{core_id_column}' contains blank values.")
         assert_case_insensitive_unique_identifier(df_core, core_id_column)
 
     core_identifiers = (
@@ -1626,7 +1862,7 @@ def upload_dwca(
         schema = EXTENSION_SCHEMAS[ext_type]
         if schema.compatible_cores and core_type.value not in schema.compatible_cores:
             compatible = ", ".join(schema.compatible_cores)
-            raise ValueError(
+            raise DwcaPreflightError(
                 f"DwC-A extension '{ext_type}' is not compatible with the '{core_type.value}' "
                 f"core. Compatible cores: {compatible}."
             )
@@ -1657,7 +1893,7 @@ def upload_dwca(
         )
         blank_links = int(ext_df[actual_core_id_column].eq("").sum())
         if core_id_index is None:
-            raise ValueError("DwC-A extensions require a core table with an explicit identifier.")
+            raise DwcaPreflightError("DwC-A extensions require a core table with an explicit identifier.")
         nonblank_links = set(ext_df.loc[ext_df[actual_core_id_column].ne(""), actual_core_id_column])
         unresolved = sorted(nonblank_links - core_identifiers)
         if blank_links or unresolved:
@@ -1733,14 +1969,14 @@ def upload_dwca(
                     for filename, file_content in additional_files:
                         safe_name = _safe_zip_filename(filename)
                         if safe_name in zipf.namelist():
-                            raise ValueError(
+                            raise DwcaPreflightError(
                                 f"Ancillary file '{safe_name}' conflicts with a DwC-A package file."
                             )
                         zipf.writestr(safe_name, file_content)
 
             archive_validation = validate_dwca_archive(local_path)
             if not archive_validation["valid"]:
-                raise ValueError(
+                raise DwcaPreflightError(
                     "Serialized DwC-A archive validation failed: "
                     + "; ".join(archive_validation["errors"])
                 )
@@ -1748,6 +1984,8 @@ def upload_dwca(
             client = Minio(os.getenv('MINIO_URI'), access_key=os.getenv('MINIO_ACCESS_KEY'), secret_key=os.getenv('MINIO_SECRET_KEY'))
             upload_file(client, os.getenv('MINIO_BUCKET'), f"{os.getenv('MINIO_BUCKET_FOLDER')}/{file_name}", local_path)
             return f"https://{os.getenv('MINIO_URI')}/{os.getenv('MINIO_BUCKET')}/{os.getenv('MINIO_BUCKET_FOLDER')}/{file_name}"
+    except DwcaPreflightError:
+        raise
     except Exception as e:
         error_msg = (
             f"🚨 UploadDwCA Error - Failed during archive export/upload:\n"

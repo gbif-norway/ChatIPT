@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+import re
 from typing import Dict, Iterable, Tuple
 from xml.etree import ElementTree as ET
 
@@ -89,6 +90,28 @@ class DarwinCoreExtensionType(str, Enum):
 
     def __str__(self) -> str:
         return self.value
+
+
+# Canonical values used for local checks before GBIF's external interpretation.
+GBIF_BASIS_OF_RECORD_VALUES = frozenset({
+    "MaterialEntity", "PreservedSpecimen", "FossilSpecimen", "LivingSpecimen",
+    "MaterialSample", "Event", "HumanObservation", "MachineObservation",
+    "Taxon", "Occurrence", "MaterialCitation",
+})
+
+
+_GBIF_BASIS_KEYS = frozenset(
+    re.sub(r"[\s_-]+", "", value).casefold()
+    for value in GBIF_BASIS_OF_RECORD_VALUES
+)
+
+
+def is_gbif_basis_of_record(value) -> bool:
+    """Recognize spelling variants of the canonical basisOfRecord values."""
+    return (
+        isinstance(value, str)
+        and re.sub(r"[\s_-]+", "", value).casefold() in _GBIF_BASIS_KEYS
+    )
 
 
 def _terms_from_spec(local_filename: str) -> Tuple[str, ...]:

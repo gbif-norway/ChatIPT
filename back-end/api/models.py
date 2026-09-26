@@ -883,6 +883,7 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
             agent_tools.GetDwCExtensionInfo.__name__,
             agent_tools.ExportDwcDp.__name__,
             agent_tools.UploadDwCA.__name__,
+            agent_tools.InspectPublicationArtifacts.__name__,
         ]
         quality_gate_functions = [
             *package_preparation_functions,

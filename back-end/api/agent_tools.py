@@ -11,11 +11,15 @@ import numpy as np
 from api.helpers.openai_helpers import OpenAIBaseModel
 from typing import Optional, List, Dict, Tuple, ClassVar, Literal
 from api.helpers.publish import (
+    DwcaPreflightError,
     DwcaExtensionLinkError,
+    EmlExportError,
     clean_person_name,
     clean_text,
     normalize_orcid,
-    upload_dwca, 
+    inspect_dwca_archive,
+    normalize_temporal_scope,
+    upload_dwca,
     register_dataset_and_endpoint,
 )
 import datetime
@@ -28,7 +32,9 @@ from api.helpers import discord_bot
 import json
 import os
 import uuid
+import tempfile
 from pathlib import Path
+from minio import Minio
 from xml.etree import ElementTree as ET
 from requests.auth import HTTPBasicAuth
 import requests
@@ -40,6 +46,7 @@ from api.dwc_specs import (
     EXTENSION_SCHEMAS,
     DarwinCoreCoreType,
     DarwinCoreExtensionType,
+    is_gbif_basis_of_record,
 )
 from api.dwc_dp_specs import (
     DWC_DP_SCHEMA_VERSION,
@@ -1091,6 +1098,8 @@ class ExportDwcDp(OpenAIBaseModel):
             if validation["warnings"]:
                 warning_text = "\nReview warnings:\n- " + "\n- ".join(validation["warnings"])
             return f"DwC-DP successfully created and uploaded: {url}{warning_text}"
+        except EmlExportError as exc:
+            return f"Error: {exc}"
         except Exception as exc:
             import traceback
             discord_bot.send_discord_message(
@@ -1411,9 +1420,8 @@ class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
                 table_results[table.id]['unmatched_columns'] = unmatched_columns
                 
                 validation_errors = {}
-                allowed_basis_of_record = {'MaterialEntity', 'PreservedSpecimen', 'FossilSpecimen', 'LivingSpecimen', 'MaterialSample', 'Event', 'HumanObservation', 'MachineObservation', 'Taxon', 'Occurrence', 'MaterialCitation'}
                 if 'basisOfRecord' in df.columns:
-                    invalid_basis = df[~df['basisOfRecord'].isin(allowed_basis_of_record)]
+                    invalid_basis = df[~df['basisOfRecord'].map(is_gbif_basis_of_record)]
                     if not invalid_basis.empty:
                         validation_errors['basisOfRecord'] = invalid_basis.index.tolist()
                 if 'decimalLatitude' in df.columns:
@@ -1762,7 +1770,14 @@ class SetEML(OpenAIBaseModel):
             "CC BY-NC 4.0. Existing datasets default to CC BY 4.0."
         ),
     )
-    temporal_scope: Optional[str] = Field(None, description="Optional temporal coverage of the dataset (e.g. 1990-2020)")
+    temporal_scope: Optional[str] = Field(
+        None,
+        description=(
+            "Optional temporal coverage as calendar dates, e.g. 2018-06-02/2018-06-30, "
+            "2018-06, 1990/2020, or 2018. Descriptive prose belongs in methodology. "
+            "Pass null or an empty string to clear a saved temporal scope."
+        ),
+    )
     geographic_scope: Optional[str] = Field(None, description="Optional geographic coverage of the dataset (e.g. Amazon Basin, Brazil)")
     geographic_bounds: Optional[EMLGeographicBounds] = Field(
         None,
@@ -2268,19 +2283,39 @@ class SetEML(OpenAIBaseModel):
             from api.models import Agent
             agent = Agent.objects.get(id=self.agent_id)
             dataset = agent.dataset
-            eml = dataset.eml or {}
+            eml = dict(dataset.eml or {})
 
             if self.license is not None:
                 eml["license"] = self.license
             else:
                 eml.setdefault("license", "CC BY 4.0")
 
-            inferred_temporal_scope = self._infer_temporal_scope_from_dataset(dataset)
-            temporal_scope_to_set, temporal_note = self._resolve_temporal_scope(
-                self.temporal_scope, eml.get("temporal_scope"), inferred_temporal_scope
-            )
-            if temporal_scope_to_set is not None:
-                eml["temporal_scope"] = temporal_scope_to_set
+            if "temporal_scope" in self.model_fields_set and not clean_text(self.temporal_scope):
+                eml.pop("temporal_scope", None)
+                temporal_note = "Saved temporal scope cleared."
+            else:
+                inferred_temporal_scope = self._infer_temporal_scope_from_dataset(dataset)
+                temporal_scope_to_set, temporal_note = self._resolve_temporal_scope(
+                    self.temporal_scope, eml.get("temporal_scope"), inferred_temporal_scope
+                )
+                if temporal_scope_to_set is not None:
+                    if normalize_temporal_scope(temporal_scope_to_set) is None:
+                        # Caught here rather than at UploadDwCA, where it would cost a rebuild.
+                        if self.temporal_scope is not None:
+                            return (
+                                f"Error: temporal_scope '{temporal_scope_to_set}' cannot be "
+                                "exported as EML calendar dates. Nothing was saved. Call SetEML "
+                                "again with a date, month, or range such as 2018-06-02/2018-06-30, "
+                                "2018-06, 1990/2020, or 2018. Put descriptive prose in methodology."
+                            )
+                        # A legacy saved value must not block unrelated edits.
+                        temporal_note = (
+                            f"The saved temporal_scope '{temporal_scope_to_set}' cannot be exported "
+                            "as EML calendar dates and will block export until it is replaced with "
+                            "a date, month, or range, or cleared with temporal_scope=null."
+                        )
+                    else:
+                        eml["temporal_scope"] = temporal_scope_to_set
 
             inferred_geographic_scope = self._infer_geographic_scope_from_dataset(dataset)
             inferred_geographic_bounds = self._infer_geographic_bounds_from_dataset(dataset)
@@ -2987,6 +3022,8 @@ class UploadDwCA(OpenAIBaseModel):
                     "row-count preservation for every listed table before retrying."
                 ),
             }, indent=2)
+        except (EmlExportError, DwcaPreflightError) as e:
+            return f"Error: {e}"
         except Exception as e:
             import traceback
             error_msg = (
@@ -3001,6 +3038,87 @@ class UploadDwCA(OpenAIBaseModel):
             )
             discord_bot.send_discord_message(error_msg)
             return repr(e)[:2000]
+
+
+class InspectPublicationArtifacts(OpenAIBaseModel):
+    """Summarize the current DwC-A, EML, table counts, and GBIF validator issues."""
+
+    agent_id: PositiveInt = Field(...)
+
+    def run(self):
+        from api.models import Agent
+
+        try:
+            agent = Agent.objects.select_related("dataset").get(id=self.agent_id)
+            dataset = agent.dataset
+            uri = os.getenv("MINIO_URI", "")
+            bucket = os.getenv("MINIO_BUCKET", "")
+            folder = os.getenv("MINIO_BUCKET_FOLDER", "").strip("/")
+            prefix = f"https://{uri}/{bucket}/{folder}/"
+            url = dataset.dwca_url or ""
+            name = url.removeprefix(prefix) if url.startswith(prefix) else ""
+            if not re.fullmatch(r"output-\d{4}-\d{2}-\d{2}-\d{6}-\d{6}\.zip", name):
+                return "Error: The current DwC-A is missing or is not a ChatIPT archive in configured storage."
+
+            client = Minio(
+                uri,
+                access_key=os.getenv("MINIO_ACCESS_KEY"),
+                secret_key=os.getenv("MINIO_SECRET_KEY"),
+            )
+            with tempfile.TemporaryDirectory() as temp_dir:
+                local_path = Path(temp_dir) / "archive.zip"
+                client.fget_object(bucket, f"{folder}/{name}", str(local_path))
+                report = inspect_dwca_archive(local_path)
+
+            intended_temporal = (dataset.eml or {}).get("temporal_scope")
+            if intended_temporal and not report["eml"].get("temporal_coverage"):
+                report["preflight"]["valid"] = False
+                report["preflight"]["errors"].append(
+                    "The saved temporal_scope is absent from the exported EML. "
+                    "Use an exportable date range and rebuild the archive."
+                )
+
+            for field in ("description", "methodology"):
+                value = report["eml"].get(field)
+                if value:
+                    report["eml"][f"{field}_length"] = len(value)
+                    report["eml"][field] = value[:600]
+
+            report["source_tables"] = [
+                {
+                    "file": user_file.filename,
+                    "tables": [
+                        {"name": table.get("name"), "row_count": table.get("row_count")}
+                        for table in (user_file.source_manifest or {}).get("tables", [])
+                    ],
+                }
+                for user_file in dataset.user_files.all()
+            ]
+            report["dwc_dp_tables"] = [
+                {"name": table.title, "row_count": table.row_count}
+                for table in dataset.table_set.filter(title__in=DWC_DP_TABLE_NAMES)
+            ]
+            validation = dataset.dwca_validation or {}
+            report["gbif_validation"] = {
+                "status": validation.get("status", "NOT_RUN"),
+                "current_archive": validation.get("url") == url,
+                "key": validation.get("key"),
+                "indexable": (validation.get("metrics") or {}).get("indexeable"),
+                "issues": [
+                    {
+                        "file": file.get("fileName"),
+                        "codes": [
+                            {"code": issue.get("issue"), "count": issue.get("count")}
+                            for issue in (file.get("issues") or [])
+                        ],
+                    }
+                    for file in (validation.get("metrics") or {}).get("files", [])
+                    if file.get("issues")
+                ],
+            }
+            return json.dumps(report, ensure_ascii=False)
+        except Exception as exc:
+            return f"Error: Could not inspect the current publication archive: {exc}"
 
 
 class PublishToGBIF(OpenAIBaseModel):

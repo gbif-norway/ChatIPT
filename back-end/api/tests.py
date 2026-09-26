@@ -1156,7 +1156,7 @@ class EmlGenerationTests(SimpleTestCase):
         )
         month_dataset = ET.fromstring(month_scope.encode('utf-8')).find('dataset')
         month_begin = month_dataset.find('coverage/temporalCoverage/rangeOfDates/beginDate/calendarDate')
-        self.assertEqual(month_begin.text, '1837')
+        self.assertEqual(month_begin.text, '1837-05-01')
 
     def test_make_eml_extracts_iso_dates_from_free_text_temporal_scope(self):
         class DummyUser:
@@ -2761,6 +2761,7 @@ class DwcaExportSanitizationTests(SimpleTestCase):
             {
                 "scientificName": "Apus apus",
                 "occurrenceID": "occ-1",
+                "basisOfRecord": "HumanObservation",
                 "occurrenceRemarks": "first line\nsecond line\twith tab",
             },
         ])
@@ -2818,7 +2819,10 @@ class DwcaExportSanitizationTests(SimpleTestCase):
             "MINIO_BUCKET": "bucket",
             "MINIO_BUCKET_FOLDER": "packages",
         }
-        core = pd.DataFrame([{"occurrenceID": "occ-1", "scientificName": "Apus apus"}])
+        core = pd.DataFrame([{
+            "occurrenceID": "occ-1", "scientificName": "Apus apus",
+            "basisOfRecord": "MaterialSample",
+        }])
         extension_values = {
             DarwinCoreExtensionType.AUDIOVISUAL: {"identifier": "https://example.org/media/1"},
             DarwinCoreExtensionType.EXTENDED_MEASUREMENT_OR_FACT: {

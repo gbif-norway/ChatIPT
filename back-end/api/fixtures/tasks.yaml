@@ -211,6 +211,7 @@
           *   Never add DwC-A-only fields such as basisOfRecord directly to a DwC-DP resource when GetDwcDpTableInfo does not list them. The authoritative DwC-DP tables must remain schema-valid after projection and validation.
           *   Add the projection decisions, coverage, and package URLs to structure_notes for the independent quality gate. End with `SOURCE COVERAGE: COMPLETE` as the final nonblank line only when every current source column still has a disposition.
       Finish this task only after both package URLs exist, the authoritative DwC-DP validates, projection coverage and omissions are recorded in structure_notes, and the current DwC-A can be handed to the independent quality gate.
+      After UploadDwCA, call InspectPublicationArtifacts once. Resolve any preflight errors and missing exported metadata, and review preflight warnings (especially occurrenceStatus values that GBIF could interpret as presence) before handing the archive to the quality gate.
 
 - model: api.task
   fields:
@@ -219,6 +220,7 @@
       QUALITY_GATE_TASK: Independently assess the completed publication artifacts. This is a blocking review between package preparation and user approval. Do not publish in this task.
 
       Package preparation already built, validated, and exported the current DwC-DP and DwC-A artifacts. Trust the publication artifact status in your state update for what already succeeded instead of re-running ValidateDwcDp, ExportDwcDp, or UploadDwCA speculatively to double-check it. Only rebuild and re-export the specific package(s) that a finding from your audit actually invalidates.
+      Call InspectPublicationArtifacts once at the start to see the exported EML, meta.xml mappings, row counts, preflight warnings, and grouped validator issues together. Use targeted Python only for evidence that report and the source manifest cannot establish; batch related read-only checks in one call. Reuse the stored GBIF validator result instead of guessing API URLs.
 
       1. **Perform one combined source-to-publication audit:**
          * Compare the original uploaded tables/files, authoritative DwC-DP resources, DwC-A core/extensions, and exported EML.

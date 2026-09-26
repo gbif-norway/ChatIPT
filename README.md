@@ -73,11 +73,12 @@ The report groups calls by model, service tier, and workflow task and includes
 completion proxies, retries, latency, token/cache usage, and estimated cost.
 
 For GPT-5.6 and later, each agent keeps its opening prompt fixed and places an
-explicit cache breakpoint after it. Current notes, lookup ledgers, source-file
-updates, and workflow state follow that breakpoint, so they do not cause the
-opening prompt to be rewritten. Each usage record includes a hash of the intended
-cache prefix and OpenAI's comparison diagnostics against the previous call with
-that prefix. Compare `cached_input_tokens`, `cache_write_input_tokens`, and
+explicit cache breakpoint after it. A second breakpoint follows the latest
+eligible conversation item so unchanged history can also be reused. The
+changing per-turn workflow state follows that breakpoint. Each usage record
+includes a hash of the opening cache prefix and
+OpenAI's comparison diagnostics against the previous call with that prefix.
+Compare `cached_input_tokens`, `cache_write_input_tokens`, and
 `cache_diagnostics` across calls when evaluating a cost change.
 
 GPT-6 Sol calls use Flex processing by default (`OPENAI_SOL_SERVICE_TIER=flex`);
