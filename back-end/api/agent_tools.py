@@ -1767,7 +1767,8 @@ class SetEML(OpenAIBaseModel):
         None,
         description=(
             "Optional GBIF dataset license. Choose CC0 1.0, CC BY 4.0, or "
-            "CC BY-NC 4.0. Existing datasets default to CC BY 4.0."
+            "CC BY-NC 4.0. Omit or pass null to keep the saved license, or use "
+            "CC BY 4.0 when none is saved. Only a supported value changes it."
         ),
     )
     temporal_scope: Optional[str] = Field(
@@ -2285,10 +2286,7 @@ class SetEML(OpenAIBaseModel):
             dataset = agent.dataset
             eml = dict(dataset.eml or {})
 
-            if self.license is not None:
-                eml["license"] = self.license
-            else:
-                eml.setdefault("license", "CC BY 4.0")
+            eml["license"] = self.license or eml.get("license") or "CC BY 4.0"
 
             if "temporal_scope" in self.model_fields_set and not clean_text(self.temporal_scope):
                 eml.pop("temporal_scope", None)

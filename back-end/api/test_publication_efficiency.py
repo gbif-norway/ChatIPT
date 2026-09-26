@@ -56,6 +56,10 @@ def archive_at(path, rows="occ-1\tHumanObservation\tpresent\n", meta=META, eml=E
 
 
 class PublicationEfficiencyTests(SimpleTestCase):
+    def test_null_license_uses_default_in_eml(self):
+        eml = make_eml("Showcase data", "Description", eml_extra={"license": None})
+        self.assertIn("http://creativecommons.org/licenses/by/4.0/legalcode", eml)
+
     @patch("api.helpers.openai_helpers.query_responses_api")
     def test_history_breakpoint_precedes_changing_state(self, query_mock):
         query_mock.return_value = SimpleNamespace(id="resp-1", status="completed", output=[])
@@ -312,6 +316,38 @@ class SetEMLTemporalScopeExportTests(TestCase):
 
         self.assertEqual(result, "EML has been successfully set.")
         self.assertEqual(self.dataset.eml["temporal_scope"], "June 2018")
+
+    def test_explicit_null_keeps_saved_license_and_exports(self):
+        self.dataset.eml = {"license": "CC BY 4.0"}
+        self.dataset.save(update_fields=["eml"])
+        Dataset.objects.filter(pk=self.dataset.pk).update(
+            dwc_dp_url="https://example.org/package.zip",
+            dwca_url="https://example.org/archive.zip",
+            dwc_dp_validation={"valid": True},
+            dwca_validation={"valid": True},
+        )
+
+        result = SetEML(agent_id=self.agent.id, license=None).run()
+        self.dataset.refresh_from_db()
+        self.assertEqual(result, "EML has been successfully set.")
+        self.assertEqual(self.dataset.eml["license"], "CC BY 4.0")
+        self.assertEqual(self.dataset.dwc_dp_url, "https://example.org/package.zip")
+        self.assertEqual(self.dataset.dwca_url, "https://example.org/archive.zip")
+
+        Dataset.objects.filter(pk=self.dataset.pk).update(eml={"license": None})
+        SetEML(agent_id=self.agent.id, license=None).run()
+        self.dataset.refresh_from_db()
+        self.assertEqual(self.dataset.eml["license"], "CC BY 4.0")
+        self.assertEqual(self.dataset.dwca_url, "")
+        self.assertEqual(self.dataset.dwc_dp_url, "")
+
+        SetEML(agent_id=self.agent.id, license="CC0 1.0").run()
+        self.dataset.refresh_from_db()
+        self.assertEqual(self.dataset.eml["license"], "CC0 1.0")
+
+        SetEML(agent_id=self.agent.id, license=None).run()
+        self.dataset.refresh_from_db()
+        self.assertEqual(self.dataset.eml["license"], "CC0 1.0")
 
     def test_rejects_backwards_scope_without_saving_other_fields(self):
         result = SetEML(
