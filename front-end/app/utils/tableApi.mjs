@@ -1,12 +1,29 @@
 export const DEFAULT_TABLE_PAGE_SIZE = 50
 export const TABLE_PAGE_SIZE_OPTIONS = [25, 50, 100, 200]
 
-export const tableRowsUrl = (baseUrl, tableId, page, pageSize) => {
+export const TABLE_PACKAGE_FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'dwc-dp', label: 'DwC-DP' },
+  { id: 'dwca', label: 'DwC-A' },
+]
+
+export const tableRowsUrl = (baseUrl, tableId, page, pageSize, filter = {}) => {
   const safePage = Math.max(Number(page) || 1, 1)
   const safePageSize = Math.max(Number(pageSize) || DEFAULT_TABLE_PAGE_SIZE, 1)
   const offset = (safePage - 1) * safePageSize
-  return `${baseUrl}/api/tables/${tableId}/rows/?offset=${offset}&limit=${safePageSize}`
+  const params = new URLSearchParams({ offset: String(offset), limit: String(safePageSize) })
+  const search = String(filter.search || '').trim()
+  if (search) {
+    params.set('search', search)
+    if (filter.column) params.set('column', filter.column)
+    if (filter.exact) params.set('exact', 'true')
+  }
+  return `${baseUrl}/api/tables/${tableId}/rows/?${params}`
 }
+
+export const filterTablesByPackage = (tables, packageFilter) => (
+  packageFilter === 'all' ? tables : tables.filter((table) => table.package === packageFilter)
+)
 
 export const normalizeTableList = (payload) => {
   if (!Array.isArray(payload)) throw new Error('The table list response was invalid.')
@@ -14,6 +31,7 @@ export const normalizeTableList = (payload) => {
     ...table,
     row_count: Number(table.row_count) || 0,
     columns: Array.isArray(table.columns) ? table.columns : [],
+    package: table.package || '',
   }))
 }
 

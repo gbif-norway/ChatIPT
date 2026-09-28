@@ -20,6 +20,7 @@ _PLACEHOLDER_URL_RE = re.compile(
     r"^(?:url[_ -]?\d+|placeholder(?:[_ -]?\d+)?|example(?:[_ -]?\d+)?)$",
     re.IGNORECASE,
 )
+_BARE_ORCID_RE = re.compile(r"^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$")
 _YEAR_RE = re.compile(r"^(\d{4})$")
 _YEAR_MONTH_RE = re.compile(r"^(\d{4})-(\d{2})$")
 _FULL_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
@@ -488,6 +489,24 @@ def semantic_dwc_dp_warnings(resources: Mapping[str, pd.DataFrame]) -> list[str]
                     f"Semantic review: resource '{resource_name}' contains {blank_count} assertion "
                     "row(s) with a blank assertionValue. Consider omitting them and documenting the "
                     "unused source field once."
+                )
+
+        for column in df.columns:
+            if not (isinstance(column, str) and column.endswith("ID")):
+                continue
+            bare = sorted({
+                part.strip()
+                for value in df[column]
+                if isinstance(value, str)
+                for part in value.split("|")
+                if _BARE_ORCID_RE.match(part.strip())
+            })
+            if bare:
+                warnings.append(
+                    f"Semantic review: resource '{resource_name}' field '{column}' has "
+                    f"{len(bare)} bare ORCID value(s), e.g. {bare[0]}. Use the resolvable form "
+                    f"https://orcid.org/{bare[0]}, consistently in every field that refers to "
+                    "the same person."
                 )
 
     relationship = resources.get("resource-relationship")

@@ -1200,6 +1200,8 @@ class Table(models.Model):
     description = models.CharField(max_length=2000, blank=True)
     row_count = models.PositiveBigIntegerField(default=0, editable=False)
     columns = models.JSONField(default=list, editable=False)
+    # "core" or the extension type when UploadDwCA last used this table.
+    dwca_role = models.CharField(max_length=100, blank=True, default='', editable=False)
 
     @staticmethod
     def display_columns(raw_columns):
@@ -1249,9 +1251,31 @@ class Table(models.Model):
             self.dataset.invalidate_dwca_artifacts()
         return result
 
-    def row_page(self, offset, limit):
+    def search_rows(self, search, column=None, exact=False):
+        """Return the rows whose cell text contains (or, when exact, equals) the search text."""
+        df = self.df
+        labels = self.columns or self.display_columns(df.columns)
+        if column is None:
+            positions = range(len(labels))
+        elif column in labels:
+            positions = [labels.index(column)]
+        else:
+            raise ValueError(f"Unknown column: {column}")
+        needle = search.strip() if exact else search.strip().casefold()
+        mask = np.zeros(len(df.index), dtype=bool)
+        for position in positions:
+            text = df.iloc[:, position].astype('string').fillna('').str.strip()
+            if exact:
+                matches = text == needle
+            else:
+                matches = text.str.casefold().str.contains(needle, regex=False)
+            mask |= matches.to_numpy(dtype=bool, na_value=False)
+        return df[mask]
+
+    def row_page(self, offset, limit, rows=None):
         """Serialize one bounded DataFrame slice without copying the full table."""
-        page = self.df.iloc[offset:offset + limit].copy()
+        rows = self.df if rows is None else rows
+        page = rows.iloc[offset:offset + limit].copy()
         page.columns = self.columns or self.display_columns(page.columns)
         page = page.replace([np.inf, -np.inf], np.nan)
         for column in page.select_dtypes(include=['object']).columns:

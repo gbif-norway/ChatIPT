@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, Mapping
@@ -449,6 +450,88 @@ def _foreign_key_values(df: pd.DataFrame, fields: list[str]) -> tuple[set[tuple[
     return values, partially_blank
 
 
+@lru_cache(maxsize=None)
+def _incoming_links(target_name: str) -> tuple[tuple[str, Dict[str, Any], bool], ...]:
+    """Keys from other resources that point at a shared resource, excluding its own satellites."""
+    links = []
+    for source_name in sorted(RESERVED_TABLE_NAMES):
+        # agent-identifier, protocol-reference and similar describe the entity itself.
+        if source_name == target_name or source_name.startswith(f"{target_name}-"):
+            continue
+        spec = get_table_spec(source_name)
+        for foreign_key, weak in [(key, False) for key in spec.foreign_keys] + [
+            (key, True) for key in spec.weak_foreign_keys
+        ]:
+            if (foreign_key.get("reference") or {}).get("resource") == target_name:
+                links.append((source_name, foreign_key, weak))
+    return tuple(links)
+
+
+def _unlinked_shared_rows(
+    resources: Mapping[str, pd.DataFrame],
+    valid_columns_by_resource: Mapping[str, set[str]],
+) -> list[str]:
+    """Warn about rows of shared resources (agent, protocol, ...) that no data resource uses."""
+    warnings = []
+    for target_name, target_df in resources.items():
+        spec = get_table_spec(target_name)
+        if any(
+            (key.get("reference") or {}).get("resource") not in ("", target_name)
+            for key in spec.foreign_keys
+        ):
+            continue  # it links itself to the data
+        links = _incoming_links(target_name)
+        primary_key = spec.primary_key
+        target_columns = valid_columns_by_resource[target_name]
+        if not links or len(primary_key) != 1 or primary_key[0] not in target_columns:
+            continue
+
+        referenced: Dict[str, set[str]] = {}
+        for source_name, foreign_key, weak in links:
+            source_df = resources.get(source_name)
+            source_fields = _as_field_list(foreign_key.get("fields"))
+            target_fields = _as_field_list((foreign_key.get("reference") or {}).get("fields"))
+            if (
+                source_df is None
+                or len(source_fields) != 1
+                or len(target_fields) != 1
+                or source_fields[0] not in valid_columns_by_resource[source_name]
+                or target_fields[0] not in target_columns
+            ):
+                continue
+            values = referenced.setdefault(target_fields[0], set())
+            for value in _series_text(source_df[source_fields[0]]):
+                # Weak ID fields such as identifiedByID may list several agents.
+                parts = value.split("|") if weak else [value]
+                values.update(part.strip() for part in parts if part.strip())
+
+        keys = _series_text(target_df[primary_key[0]])
+        linked = pd.Series(False, index=target_df.index)
+        for field_name, values in referenced.items():
+            linked |= _series_text(target_df[field_name]).isin(values)
+        unlinked = keys[(keys != "") & ~linked]
+        if unlinked.empty:
+            continue
+        examples = ", ".join(unlinked.head(5))
+        suffix = f" and {len(unlinked) - 5} more" if len(unlinked) > 5 else ""
+        # Suggest fields on resources already in the package, then their enforced link tables.
+        routes = sorted({
+            f"{source_name}.{_as_field_list(key.get('fields'))[0]}"
+            if source_name in resources else source_name
+            for source_name, key, weak in links
+            if source_name in resources
+            or (not weak and any(source_name.startswith(f"{name}-") for name in resources))
+        })[:8]
+        warnings.append(
+            f"Semantic review: resource '{target_name}' has {len(unlinked)} row(s) that no other "
+            f"resource references ({primary_key[0]}: {examples}{suffix}). A shared entity should be "
+            "linked to the records it describes"
+            + (f", for example through {', '.join(routes)}" if routes else "")
+            + ". Link each row, or remove it if the source gives it no role."
+        )
+    return warnings
+
+
 def validate_dwc_dp_resources(resources: Mapping[str, pd.DataFrame]) -> Dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -596,6 +679,7 @@ def validate_dwc_dp_resources(resources: Mapping[str, pd.DataFrame]) -> Dict[str
                 )
 
     errors.extend(utf8_serialization_errors(normalized_resources))
+    warnings.extend(_unlinked_shared_rows(normalized_resources, valid_columns_by_resource))
     warnings.extend(validate_publication_safety(normalized_resources))
     warnings.extend(semantic_dwc_dp_warnings(normalized_resources))
 

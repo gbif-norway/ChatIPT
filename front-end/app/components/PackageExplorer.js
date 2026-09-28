@@ -5,7 +5,7 @@ import cytoscape from 'cytoscape'
 import config from '../config.js'
 import { useTheme } from '../contexts/ThemeContext'
 import { pluralize } from '../utils/datasetPresentation'
-import { normalizeTablePage, tableRowsUrl } from '../utils/tableApi.mjs'
+import TableRowsView from './TableRowsView'
 
 const NODE_PRIORITY = [
   'event',
@@ -23,22 +23,6 @@ const formatResourceName = (name) => String(name || '')
   .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
   .join(' ')
 
-const formatValue = (value) => {
-  if (value === null || value === undefined || value === '') return '—'
-  if (typeof value === 'object') return JSON.stringify(value)
-  return String(value)
-}
-
-const joinKey = (row, fields) => {
-  if (!row || !Array.isArray(fields) || fields.length === 0) return null
-  const values = fields.map((field) => {
-    const value = row[field]
-    if (value === null || value === undefined) return null
-    const text = typeof value === 'object' ? JSON.stringify(value) : String(value).trim()
-    return text || null
-  })
-  return values.some((value) => value === null) ? null : values.join('\u001f')
-}
 
 const graphCategory = (name) => {
   if (name.includes('assertion') || name.includes('relationship')) return 'claims'
@@ -57,14 +41,6 @@ const graphCategory = (name) => {
     || name.includes('chronometric')
   ) return 'evidence'
   return 'records'
-}
-
-const recordSignature = (node, row, rowIndex) => {
-  const identityFields = node?.primaryKey?.length
-    ? node.primaryKey
-    : (node?.weakPrimaryKey?.length ? node.weakPrimaryKey : [])
-  const identity = joinKey(row, identityFields)
-  return identity || `row-${rowIndex}`
 }
 
 const parseExamples = (value) => String(value || '')
@@ -95,15 +71,37 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
   const [visible, setVisible] = useState(false)
   const [selection, setSelection] = useState(null)
   const [hoveredNodeId, setHoveredNodeId] = useState(null)
-  const [previewRows, setPreviewRows] = useState([])
-  const [previewLoading, setPreviewLoading] = useState(false)
-  const [previewError, setPreviewError] = useState('')
+  // Set when a foreign-key value is followed, so the target table opens filtered to that record.
+  const [linkFilter, setLinkFilter] = useState(null)
 
   const nodeMap = useMemo(
     () => new Map((model?.nodes || []).map((node) => [node.id, node])),
     [model]
   )
   const selectedNode = selection?.type === 'node' ? nodeMap.get(selection.id) : null
+  const foreignKeys = useMemo(() => {
+    const links = new Map()
+    for (const edge of model?.edges || []) {
+      if (edge.source !== selectedNode?.id || edge.sourceFields.length !== 1) continue
+      if (!links.has(edge.sourceFields[0])) links.set(edge.sourceFields[0], edge)
+    }
+    return links
+  }, [model, selectedNode?.id])
+
+  const selectFromGraph = useCallback((nextSelection) => {
+    setLinkFilter(null)
+    setSelection(nextSelection)
+  }, [])
+
+  const followForeignKey = useCallback((edge, value) => {
+    setLinkFilter({
+      key: Date.now(),
+      search: String(value).trim(),
+      column: edge.targetFields[0],
+      exact: true,
+    })
+    setSelection({ type: 'node', id: edge.target })
+  }, [])
 
   const loadModel = useCallback(() => {
     if (!datasetId) return
@@ -135,6 +133,7 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
           if (bIndex === -1) return -1
           return aIndex - bIndex
         })[0]
+        setLinkFilter(null)
         setSelection(firstNode ? { type: 'node', id: firstNode.id } : null)
       } catch (loadError) {
         if (loadError.name !== 'AbortError' && loadControllerRef.current === controller) {
@@ -156,7 +155,6 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
     const onHidden = () => {
       setVisible(false)
       setHoveredNodeId(null)
-      setPreviewRows([])
     }
     modal.addEventListener('show.bs.modal', onShow)
     modal.addEventListener('shown.bs.modal', onShown)
@@ -168,37 +166,6 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
       loadControllerRef.current?.abort()
     }
   }, [loadModel])
-
-  useEffect(() => {
-    if (!visible || !selectedNode?.tableId) {
-      setPreviewRows([])
-      return undefined
-    }
-
-    const controller = new AbortController()
-    const loadPreview = async () => {
-      setPreviewLoading(true)
-      setPreviewError('')
-      try {
-        const response = await fetch(
-          tableRowsUrl(config.baseUrl, selectedNode.tableId, 1, 6),
-          { credentials: 'include', signal: controller.signal },
-        )
-        const data = await response.json()
-        if (!response.ok) throw new Error(data?.detail || 'The table preview could not be loaded.')
-        setPreviewRows(normalizeTablePage(data).results)
-      } catch (loadError) {
-        if (loadError.name !== 'AbortError') {
-          setPreviewRows([])
-          setPreviewError(loadError.message)
-        }
-      } finally {
-        if (!controller.signal.aborted) setPreviewLoading(false)
-      }
-    }
-    loadPreview()
-    return () => controller.abort()
-  }, [selectedNode?.tableId, visible])
 
   useEffect(() => {
     if (!visible || !graphRef.current || !model?.nodes?.length) return undefined
@@ -320,10 +287,10 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
     })
 
     cy.on('tap', 'node', (event) => {
-      setSelection({ type: 'node', id: event.target.id() })
+      selectFromGraph({ type: 'node', id: event.target.id() })
     })
     cy.on('tap', 'edge', (event) => {
-      setSelection({ type: 'edge', id: event.target.id() })
+      selectFromGraph({ type: 'edge', id: event.target.id() })
     })
     cy.on('mouseover', 'node', (event) => setHoveredNodeId(event.target.id()))
     cy.on('mouseout', 'node', () => setHoveredNodeId(null))
@@ -337,7 +304,7 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
       cy.destroy()
       cyRef.current = null
     }
-  }, [visible, model, isDark])
+  }, [visible, model, isDark, selectFromGraph])
 
   useEffect(() => {
     const cy = cyRef.current
@@ -367,7 +334,44 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
     ? model?.edges?.find((edge) => edge.id === selection.id)
     : null
   const hoveredNode = hoveredNodeId ? nodeMap.get(hoveredNodeId) : null
-  const selectedRows = previewRows.map((row, rowIndex) => ({ row, rowIndex }))
+  const fieldsByName = new Map((selectedNode?.fields || []).map((field) => [field.name, field]))
+
+  const renderFieldHeader = (column) => {
+    const field = fieldsByName.get(column)
+    const link = foreignKeys.get(column)
+    return (
+      <span title={field?.description || column}>
+        {column}
+        {(field?.primary || field?.weakPrimary) && (
+          <i
+            className={`bi ${field.primary ? 'bi-key-fill' : 'bi-key'} ms-1`}
+            aria-label={field.primary ? 'Primary key' : 'Public identifier'}
+          ></i>
+        )}
+        {link && (
+          <i
+            className="bi bi-link-45deg ms-1"
+            aria-label={`Links to ${nodeMap.get(link.target)?.title || link.target}`}
+          ></i>
+        )}
+      </span>
+    )
+  }
+
+  const renderLinkedCell = (column, value) => {
+    const link = foreignKeys.get(column)
+    if (!link || value === null || value === undefined || String(value).trim() === '') return null
+    return (
+      <button
+        type="button"
+        className="btn btn-link btn-sm p-0 package-fk-link"
+        title={`Open ${nodeMap.get(link.target)?.title || link.target} ${link.targetFields[0]} = ${value}`}
+        onClick={() => followForeignKey(link, value)}
+      >
+        {String(value)}
+      </button>
+    )
+  }
   const totalRows = (model?.nodes || []).reduce((sum, node) => sum + node.rowCount, 0)
   const examples = selectedNode ? parseExamples(selectedNode.examples).slice(0, 2) : []
 
@@ -454,7 +458,7 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
                           <li key={edge.id}>
                             <button
                               type="button"
-                              onClick={() => setSelection({ type: 'edge', id: edge.id })}
+                              onClick={() => selectFromGraph({ type: 'edge', id: edge.id })}
                             >
                               {nodeMap.get(edge.source)?.title || formatResourceName(edge.source)}{' '}
                               <strong>{edge.predicate}</strong>{' '}
@@ -491,57 +495,32 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
 
                         <div className="package-inspector-section">
                           <div className="package-inspector-section-title">
-                            <strong>Data preview (first 6 rows)</strong>
+                            <strong>Rows</strong>
                             <button
                               type="button"
                               className="btn btn-sm btn-link"
                               data-bs-dismiss="modal"
                               onClick={() => onOpenTable?.(selectedNode.tableId)}
                             >
-                              Open full table
+                              Open on main page
                             </button>
                           </div>
-                          {previewLoading ? (
-                            <div className="d-flex align-items-center gap-2 text-muted small">
-                              <span className="spinner-border spinner-border-sm" aria-hidden="true"></span>
-                              Loading preview…
-                            </div>
-                          ) : previewError ? (
-                            <p className="text-danger small mb-0" role="alert">{previewError}</p>
-                          ) : selectedRows.length > 0 ? (
-                            <div className="table-responsive package-preview-table">
-                              <table className="table table-sm align-middle mb-0">
-                                <thead>
-                                  <tr>
-                                    {selectedNode.fields.map((field) => (
-                                      <th scope="col" key={field.name}>
-                                        <span>{field.name}</span>
-                                        {(field.primary || field.weakPrimary) && (
-                                          <i
-                                            className={`bi ${field.primary ? 'bi-key-fill' : 'bi-key'} ms-1`}
-                                            title={field.primary ? 'Primary key' : 'Public identifier'}
-                                            aria-label={field.primary ? 'Primary key' : 'Public identifier'}
-                                          ></i>
-                                        )}
-                                      </th>
-                                    ))}
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {selectedRows.slice(0, 6).map((entry) => (
-                                    <tr key={recordSignature(selectedNode, entry.row, entry.rowIndex)}>
-                                      {selectedNode.fields.map((field) => (
-                                        <td key={field.name} title={formatValue(entry.row[field.name])}>
-                                          {formatValue(entry.row[field.name])}
-                                        </td>
-                                      ))}
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          ) : (
-                            <p className="text-muted small mb-0">This table has no rows to preview.</p>
+                          {foreignKeys.size > 0 && (
+                            <p className="package-preview-hint mt-0 mb-2">
+                              <i className="bi bi-link-45deg" aria-hidden="true"></i>{' '}
+                              Click a linked value to open the record it points to.
+                            </p>
+                          )}
+                          {visible && (
+                            <TableRowsView
+                              key={`${selectedNode.tableId}:${linkFilter?.key || ''}`}
+                              tableId={selectedNode.tableId}
+                              columns={selectedNode.fields.map((field) => field.name)}
+                              totalRows={selectedNode.rowCount}
+                              initialFilter={linkFilter}
+                              renderHeader={renderFieldHeader}
+                              renderCell={renderLinkedCell}
+                            />
                           )}
                         </div>
 

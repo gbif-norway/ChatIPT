@@ -2678,6 +2678,13 @@ class UploadDwCA(OpenAIBaseModel):
             dataset.dwca_url = dwca_url
             dataset.dwca_validation = None
             dataset.save(update_fields=["dwc_core", "dwca_url", "dwca_validation"])
+            # Queryset updates skip Table.save, which would discard the new archive.
+            dataset.table_set.exclude(dwca_role='').update(dwca_role='')
+            dataset.table_set.filter(id=self.core_table_id).update(dwca_role='core')
+            for assignment in extension_assignments:
+                dataset.table_set.filter(id=assignment.table_id).update(
+                    dwca_role=getattr(assignment.extension_type, 'value', assignment.extension_type)
+                )
             return f'DwCA successfully created and uploaded: {dwca_url}'
         except DwcaExtensionLinkError as e:
             assignments = self.extension_tables or []

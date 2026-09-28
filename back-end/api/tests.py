@@ -207,6 +207,55 @@ class DwcDpSpecTests(SimpleTestCase):
         self.assertTrue(any("integer values" in error for error in validation['errors']))
         self.assertTrue(any("boolean values" in error for error in validation['errors']))
 
+    def test_warns_about_shared_rows_that_no_resource_references(self):
+        event = pd.DataFrame([{'event_pk': 'e1', 'eventCategory': 'occurrence'}])
+        occurrence = pd.DataFrame([{
+            'occurrence_pk': 'o1', 'event_fk': 'e1', 'occurrenceStatus': 'present',
+            'identifiedByID': 'https://orcid.org/0000-0001-9166-7617',
+        }])
+        agent = pd.DataFrame([
+            {'agent_pk': 'a1', 'agentID': 'https://orcid.org/0000-0001-9166-7617'},
+            {'agent_pk': 'a2', 'agentID': 'https://orcid.org/0000-0002-7901-6595'},
+            {'agent_pk': 'a3', 'agentID': 'https://orcid.org/0000-0002-1825-0097'},
+        ])
+        agent_role = pd.DataFrame([{'event_fk': 'e1', 'agent_fk': 'a2', 'agentRole': 'collector'}])
+        # An identifier row describes the agent itself, so it is not a link to the data.
+        agent_identifier = pd.DataFrame([{'agent_fk': 'a3', 'identifier': 'x'}])
+        protocol = pd.DataFrame([{'protocol_pk': 'p1', 'protocolName': 'BG Sentinel + CO2'}])
+
+        warnings = validate_dwc_dp_resources({
+            'event': event,
+            'occurrence': occurrence,
+            'agent': agent,
+            'event-agent-role': agent_role,
+            'agent-identifier': agent_identifier,
+            'protocol': protocol,
+        })['warnings']
+        unlinked = [warning for warning in warnings if 'no other resource references' in warning]
+
+        self.assertEqual(len(unlinked), 2)
+        self.assertIn("resource 'agent' has 1 row(s) that no other resource references (agent_pk: a3)", unlinked[0])
+        self.assertIn('occurrence.recordedByID', unlinked[0])
+        self.assertIn("resource 'protocol' has 1 row(s)", unlinked[1])
+        self.assertIn('event.eventProtocol_fk', unlinked[1])
+
+    def test_warns_about_bare_orcid_identifiers(self):
+        agent = pd.DataFrame([{'agent_pk': 'a1', 'agentID': '0000-0001-9166-7617'}])
+        identification = pd.DataFrame([{
+            'identification_pk': 'i1',
+            'identifiedByID': 'https://orcid.org/0000-0002-7901-6595 | 0000-0001-9166-7617',
+        }])
+
+        warnings = validate_dwc_dp_resources({'agent': agent, 'identification': identification})['warnings']
+
+        self.assertIn(
+            "Semantic review: resource 'agent' field 'agentID' has 1 bare ORCID value(s), "
+            "e.g. 0000-0001-9166-7617. Use the resolvable form https://orcid.org/0000-0001-9166-7617, "
+            "consistently in every field that refers to the same person.",
+            warnings,
+        )
+        self.assertTrue(any("'identification' field 'identifiedByID'" in warning for warning in warnings))
+
     def test_enforces_strong_foreign_keys_but_not_weak_foreign_keys(self):
         event = pd.DataFrame([
             {
@@ -3963,6 +4012,8 @@ class DwcaArtifactValidationTests(TestCase):
         self.dataset.refresh_from_db()
         self.assertEqual(self.dataset.dwca_url, "https://example.org/replacement.zip")
         self.assertIsNone(self.dataset.dwca_validation)
+        core.refresh_from_db()
+        self.assertEqual(core.dwca_role, "core")
 
 
 class TableColumnManifestTests(TestCase):

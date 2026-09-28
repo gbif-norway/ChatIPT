@@ -6,22 +6,20 @@ import { useAuth } from '../contexts/AuthContext';
 import Agent from './Agent';
 import DatasetPackageOverview, { PublicationPackageCards } from './DatasetPackageOverview';
 import PackageExplorer from './PackageExplorer';
+import TableRowsView from './TableRowsView';
 import TreeVisualization from './TreeVisualization';
 import { getDatasetStatus, getStatusMeta, pluralize } from '../utils/datasetPresentation';
 import { datasetIsActivelyProcessing } from '../utils/workflowState.mjs';
 
 import Accordion from 'react-bootstrap/Accordion';
-import DataTable from 'react-data-table-component';
 import Tabs from 'react-bootstrap/Tabs';
 import Tab from 'react-bootstrap/Tab';
 import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
 import {
-  DEFAULT_TABLE_PAGE_SIZE,
+  filterTablesByPackage,
   normalizeTableList,
-  normalizeTablePage,
-  TABLE_PAGE_SIZE_OPTIONS,
-  tableRowsUrl,
+  TABLE_PACKAGE_FILTERS,
 } from '../utils/tableApi.mjs';
 
 const emptyCreator = () => ({ first_name: '', last_name: '', email: '', orcid: '' });
@@ -89,15 +87,10 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const [tablesLoading, setTablesLoading] = useState(true);
   const [tablesError, setTablesError] = useState('');
   const [activeTableId, setActiveTableId] = useState(null);
-  const [tablePage, setTablePage] = useState(1);
-  const [tablePageSize, setTablePageSize] = useState(DEFAULT_TABLE_PAGE_SIZE);
-  const [tableRows, setTableRows] = useState([]);
-  const [tableRowsLoading, setTableRowsLoading] = useState(false);
-  const [tableRowsError, setTableRowsError] = useState('');
+  const [tablePackageFilter, setTablePackageFilter] = useState('all');
   const [showTableTabOverflowCue, setShowTableTabOverflowCue] = useState(false);
   const tableTabsRef = useRef(null);
   const processingRefreshStartedRef = useRef(null);
-  const tableRowsControllerRef = useRef(null);
   const [activeAgentKey, setActiveAgentKey] = useState(null);
   const [isEditingMetadata, setIsEditingMetadata] = useState(false);
   const [isSavingMetadata, setIsSavingMetadata] = useState(false);
@@ -150,7 +143,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       tabList.removeEventListener('scroll', updateOverflowCue);
       resizeObserver.disconnect();
     };
-  }, [tables]);
+  }, [tables, tablePackageFilter]);
 
   // Helper function to fetch data with timeout
   const fetchData = async (url, options = {}) => {
@@ -198,7 +191,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       const nextTables = normalizeTableList(payload);
       setTables(nextTables);
       setActiveTableId(nextTables[0]?.id ?? null);
-      setTablePage(1);
     } catch (error) {
       console.error('Error loading tables:', error);
       setTables([]);
@@ -222,7 +214,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
           ? currentId
           : (nextTables[0]?.id ?? null)
       ));
-      setTablePage(1);
     } catch (error) {
       console.error('Error refreshing tables:', error);
       setTablesError('Tables could not be refreshed. Please retry.');
@@ -231,39 +222,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     }
   }, [currentDatasetId]);
 
-  const loadActiveTableRows = useCallback(async () => {
-    tableRowsControllerRef.current?.abort();
-    if (!activeTableId) {
-      setTableRows([]);
-      return;
-    }
-    const controller = new AbortController();
-    tableRowsControllerRef.current = controller;
-    setTableRowsLoading(true);
-    setTableRowsError('');
-    setTableRows([]);
-    try {
-      const response = await fetch(
-        tableRowsUrl(config.baseUrl, activeTableId, tablePage, tablePageSize), {
-          credentials: 'include',
-          signal: controller.signal,
-        },
-      );
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.detail || `HTTP error! status: ${response.status}`);
-      setTableRows(normalizeTablePage(payload).results);
-    } catch (error) {
-      if (error.name === 'AbortError') return;
-      console.error('Error loading table rows:', error);
-      setTableRows([]);
-      setTableRowsError('This table page could not be loaded. Please retry.');
-    } finally {
-      if (tableRowsControllerRef.current === controller) {
-        tableRowsControllerRef.current = null;
-        setTableRowsLoading(false);
-      }
-    }
-  }, [activeTableId, tablePage, tablePageSize]);
 
   const handleVisualizeTreeClick = () => {
     // Bootstrap modal will be shown via data-bs-toggle
@@ -296,11 +254,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       refreshDataset(currentDatasetId);
     }
   }, [currentDataset, currentDatasetId, refreshDataset]);
-
-  useEffect(() => {
-    loadActiveTableRows();
-    return () => tableRowsControllerRef.current?.abort();
-  }, [loadActiveTableRows]);
 
   // Set active agent when dataset changes
   useEffect(() => {
@@ -353,8 +306,8 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   };
 
   const handleOpenPackageTable = useCallback((tableId) => {
+    setTablePackageFilter('all');
     setActiveTableId(tableId);
-    setTablePage(1);
     window.setTimeout(() => {
       document.querySelector('.dataset-table-panel')?.scrollIntoView({
         behavior: 'smooth',
@@ -363,7 +316,10 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     }, 250);
   }, []);
 
-  const activeTable = tables.find((table) => String(table.id) === String(activeTableId));
+  const visibleTables = filterTablesByPackage(tables, tablePackageFilter);
+  const shownTableId = visibleTables.some((table) => String(table.id) === String(activeTableId))
+    ? activeTableId
+    : (visibleTables[0]?.id ?? null);
 
   // Dataset.js should only be shown when there's a currentDatasetId
   // The upload flow is now handled in page.js
@@ -843,71 +799,66 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                 </div>
               </div>
             ) : tables.length > 0 ? (
-              <div
-                ref={tableTabsRef}
-                className={`dataset-table-tabs ${showTableTabOverflowCue ? 'has-more-tabs' : ''}`}
-              >
-                <Tabs
-                  activeKey={activeTableId}
-                  onSelect={(tableId) => {
-                    setActiveTableId(tableId);
-                    setTablePage(1);
-                  }}
-                  className="mb-3"
-                >
-                  {tables.map((table) => (
-                    <Tab
-                      eventKey={table.id}
-                      title={(
-                        <span>
-                          {table.title}
-                          <small className="ms-1">({pluralize(table.row_count, 'row')})</small>
-                        </span>
-                      )}
-                      key={table.id}
+              <>
+                <div className="btn-group btn-group-sm mb-2" role="group" aria-label="Filter tables by package">
+                  {TABLE_PACKAGE_FILTERS.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={`btn ${tablePackageFilter === option.id ? 'btn-secondary' : 'btn-outline-secondary'}`}
+                      aria-pressed={tablePackageFilter === option.id}
+                      onClick={() => setTablePackageFilter(option.id)}
                     >
-                      <div data-table-id={table.id}>
-                        {String(table.id) === String(activeTableId) && (
-                          <>
-                            {tableRowsError && (
-                              <div className="alert alert-danger mx-2" role="alert">
-                                {tableRowsError}{' '}
-                                <button
-                                  type="button"
-                                  className="btn btn-sm btn-outline-danger ms-2"
-                                  onClick={loadActiveTableRows}
-                                >
-                                  Retry
-                                </button>
-                              </div>
-                            )}
-                            <DataTable
-                              columns={(activeTable?.columns || []).map((column) => ({
-                                name: column,
-                                selector: (row) => row[column],
-                              }))}
-                              data={tableRows}
-                              progressPending={tableRowsLoading}
-                              pagination
-                              paginationServer
-                              paginationTotalRows={activeTable?.row_count || 0}
-                              paginationDefaultPage={tablePage}
-                              paginationPerPage={tablePageSize}
-                              paginationRowsPerPageOptions={TABLE_PAGE_SIZE_OPTIONS}
-                              onChangePage={setTablePage}
-                              onChangeRowsPerPage={(nextPageSize) => {
-                                setTablePageSize(nextPageSize);
-                                setTablePage(1);
-                              }}
-                              dense
-                            />
-                          </>
-                        )}
-                      </div>
-                    </Tab>
+                      {option.label}
+                      <span className="ms-1 opacity-75">
+                        {filterTablesByPackage(tables, option.id).length}
+                      </span>
+                    </button>
                   ))}
-                </Tabs>
-              </div>
+                </div>
+                {visibleTables.length === 0 ? (
+                  <div className="alert alert-light small" role="status">
+                    {tablePackageFilter === 'dwca'
+                      ? 'DwC-A tables appear here once ChatIPT uploads the archive, and are removed after the pre-publication quality check. The archive itself stays available to download.'
+                      : 'No DwC-DP tables yet. They appear once ChatIPT has organised the source data into the package.'}
+                  </div>
+                ) : (
+                  <div
+                    ref={tableTabsRef}
+                    className={`dataset-table-tabs ${showTableTabOverflowCue ? 'has-more-tabs' : ''}`}
+                  >
+                    <Tabs
+                      activeKey={shownTableId}
+                      onSelect={(tableId) => setActiveTableId(tableId)}
+                      className="mb-3"
+                    >
+                      {visibleTables.map((table) => (
+                        <Tab
+                          eventKey={table.id}
+                          title={(
+                            <span title={table.dwca_role ? `DwC-A ${table.dwca_role}` : undefined}>
+                              {table.title}
+                              <small className="ms-1">({pluralize(table.row_count, 'row')})</small>
+                            </span>
+                          )}
+                          key={table.id}
+                        >
+                          <div data-table-id={table.id}>
+                            {String(table.id) === String(shownTableId) && (
+                              <TableRowsView
+                                key={table.id}
+                                tableId={table.id}
+                                columns={table.columns}
+                                totalRows={table.row_count}
+                              />
+                            )}
+                          </div>
+                        </Tab>
+                      ))}
+                    </Tabs>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="alert alert-info">
                 <strong>No tables to display yet.</strong>

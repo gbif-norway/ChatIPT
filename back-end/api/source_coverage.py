@@ -42,6 +42,11 @@ _DATETIME_T_RE = re.compile(r"(\d)T(\d)")
 _WHITESPACE_RE = re.compile(r"\s+")
 _TOKEN_SPLIT_RE = re.compile(r"[\s:|;,/=]+")
 _IDENTIFIER_NAME_RE = re.compile(r"(?:id|identifier|number|code|key)$", re.IGNORECASE)
+_REMARKS_FIELD_RE = re.compile(r"remarks$", re.IGNORECASE)
+_FREE_TEXT_NAME_RE = re.compile(r"(?:remarks?|notes?|comments?)$", re.IGNORECASE)
+# Shorter values (codes, small numbers) occur inside unrelated remarks text by chance.
+REMARKS_MIN_VALUE_CHARS = 3
+REMARKS_SCAN_LIMIT = 2_000_000
 
 
 def normalize_value(value) -> Optional[str]:
@@ -88,7 +93,7 @@ class ColumnResult:
     name: str
     populated: int
     distinct: int
-    status: str  # mapped | partial | metadata | not_found | blank
+    status: str  # mapped | partial | remarks | metadata | not_found | blank
     targets: List[Tuple[str, float, int]] = field(default_factory=list)  # (table.field, rate, dest populated)
     via_tokens: bool = False
     weak: bool = False
@@ -110,6 +115,7 @@ class DestinationIndex:
         self.distinct: Dict[str, int] = {}
         self.value_index: Dict[str, List[str]] = defaultdict(list)
         self.token_index: Dict[str, set] = defaultdict(set)
+        self.remarks_values: Dict[str, List[str]] = {}
         for table_name, df in destinations.items():
             for column in df.columns:
                 target = f"{table_name}.{column}"
@@ -117,6 +123,8 @@ class DestinationIndex:
                 self.populated[target] = int(len(values))
                 distinct = values.drop_duplicates()
                 self.distinct[target] = int(len(distinct))
+                if _REMARKS_FIELD_RE.search(str(column)):
+                    self.remarks_values[target] = list(distinct)
                 for value in distinct:
                     self.value_index[value].append(target)
                     for token in _tokens(value):
@@ -130,6 +138,24 @@ class DestinationIndex:
                 targets |= self.token_index.get(value, set())
             for target in targets:
                 counts[target] += 1
+        return counts
+
+
+    def is_remarks(self, target: str) -> bool:
+        return target in self.remarks_values
+
+    def remarks_counts(self, values: Sequence[str]) -> Dict[str, int]:
+        """Count values that appear as whole words inside free-text remarks fields."""
+        values = [value for value in values if len(value) >= REMARKS_MIN_VALUE_CHARS]
+        remarks_total = sum(len(texts) for texts in self.remarks_values.values())
+        if not values or len(values) * remarks_total > REMARKS_SCAN_LIMIT:
+            return {}
+        counts: Dict[str, int] = defaultdict(int)
+        for value in values:
+            pattern = re.compile(rf"(?<!\w){re.escape(value)}(?!\w)")
+            for target, texts in self.remarks_values.items():
+                if any(value in text and pattern.search(text) for text in texts):
+                    counts[target] += 1
         return counts
 
 
@@ -197,6 +223,20 @@ def reconcile_table(
                     or best_target not in index.token_index.get(value, set())
                 )
             ][:3]
+        # A structured source fact kept only inside free-text remarks needs a disposition:
+        # the package may have a dedicated field or resource for it.
+        if not _FREE_TEXT_NAME_RE.search(name):
+            if (
+                result.status == "mapped"
+                and via_tokens
+                and all(index.is_remarks(target) for target, _rate, _populated in result.targets)
+            ):
+                result.status = "remarks"
+            elif result.status == "not_found":
+                remarks_ranked = _rank_targets(index.remarks_counts(sample), len(sample), name, index)
+                if remarks_ranked and remarks_ranked[0][1] >= MAPPED_RATE:
+                    result.status = "remarks"
+                    result.targets = remarks_ranked[:1]
         if result.status in {"mapped", "partial"} and distinct <= LOW_CARDINALITY:
             best_field = result.targets[0][0].split(".", 1)[1]
             result.weak = best_field.casefold() != name.casefold()
@@ -294,6 +334,11 @@ def render_report(
                     for c in grouped["partial"]
                 )
             )
+        if grouped["remarks"]:
+            lines.append(
+                f"Only inside free-text remarks ({len(grouped['remarks'])}): "
+                + "; ".join(f"{c.name} -> {_target_text(c)}" for c in grouped["remarks"])
+            )
         if grouped["metadata"]:
             lines.append(
                 f"Found only in dataset metadata ({len(grouped['metadata'])}): "
@@ -309,15 +354,18 @@ def render_report(
             )
         if grouped["blank"]:
             lines.append(f"Blank-only ({len(grouped['blank'])}): " + ", ".join(c.name for c in grouped["blank"]))
-        for column in grouped["partial"] + grouped["not_found"] + [c for c in grouped["mapped"] if c.weak]:
+        undecided = grouped["partial"] + grouped["remarks"] + grouped["not_found"]
+        for column in undecided + [c for c in grouped["mapped"] if c.weak]:
             open_items.append(f"{source.label}: {column.name}")
 
     lines.append("")
     lines.append(
         "Use this as the evidence for the coverage report. Do not re-verify Mapped columns. Give every "
-        "Partial, Not found and weak column a disposition from context you already have: mapped with a "
-        "named transformation, deliberately omitted with a reason, or unresolved. Then save the report "
-        "with SetStructureNotes."
+        "Partial, remarks-only, Not found and weak column a disposition from context you already have: "
+        "mapped with a named transformation, deliberately omitted with a reason, or unresolved. A "
+        "remarks-only column keeps a structured source fact as free text; move it to a native field or "
+        "dedicated resource (for example protocol, an *-assertion or *-identifier table) when one fits, "
+        "and keep it in remarks only with the reason none does. Then save the report with SetStructureNotes."
     )
     lines.append(f"{OPEN_ITEMS_PREFIX} " + ("; ".join(open_items) if open_items else "(none)"))
     if state:
