@@ -167,6 +167,7 @@ class UserFileSerializer(serializers.ModelSerializer):
                         source_manifest = UserFile.build_source_manifest(
                             dfs,
                             excel_visibility=getattr(user_file, "_excel_visibility", None),
+                            excel_comments=getattr(user_file, "_excel_comments", None),
                         )
                         filtered_dfs = UserFile.filter_dataframes(dfs)
                     except ValueError as exc:

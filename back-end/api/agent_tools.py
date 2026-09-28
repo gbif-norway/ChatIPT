@@ -1191,6 +1191,7 @@ class Python(OpenAIBaseModel):
     - `dataset`: this dataset's Dataset object.
     - `sources`: the original uploads, `sources[filename][sheet_name] -> DataFrame`, freshly loaded
       on first access. `list(sources)` shows the filenames without loading anything.
+      `sources.cell_comments(filename)` returns that workbook's cell comments by sheet.
 
     Other notes:
     - Use print() for output – stdout is captured and truncated to 3000 chars.

@@ -89,19 +89,26 @@ def _extracted_copy(user_file):
     return {sheet: None if frame is None else frame.copy() for sheet, frame in _upload_cache[key].items()}
 
 
+def tabular_source_files(dataset):
+    """Tabular uploads keyed as `sources` exposes them; a repeated filename gets its file id."""
+    files = {}
+    for user_file in dataset.user_files.order_by('id'):
+        if user_file.file_type != user_file.FileType.TABULAR:
+            continue
+        name = user_file.filename
+        if name in files:
+            name = f'{name} (file {user_file.id})'
+        files[name] = user_file
+    return files
+
+
 class SourceFiles(Mapping):
     """Original uploads by filename, each a {sheet_name: DataFrame} dict, loaded on first use."""
 
     def __init__(self, dataset):
-        self._files = {}
-        for user_file in dataset.user_files.order_by('id'):
-            if user_file.file_type != user_file.FileType.TABULAR:
-                continue
-            name = user_file.filename
-            if name in self._files:
-                name = f'{name} (file {user_file.id})'
-            self._files[name] = user_file
+        self._files = tabular_source_files(dataset)
         self._loaded = {}
+        self._comments = {}
 
     def __getitem__(self, name):
         if name not in self._loaded:
@@ -113,6 +120,14 @@ class SourceFiles(Mapping):
 
     def __len__(self):
         return len(self._files)
+
+    def cell_comments(self, name):
+        """Every cell comment in an uploaded workbook, as {sheet_name: [comment, ...]}."""
+        if name not in self._comments:
+            user_file = self._files[name]
+            user_file.extract_data()
+            self._comments[name] = getattr(user_file, '_excel_comments', None) or {}
+        return {sheet: list(comments) for sheet, comments in self._comments[name].items()}
 
     def __repr__(self):
         return f'SourceFiles({list(self._files)})'

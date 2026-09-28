@@ -1999,11 +1999,9 @@ class ExcelWorkbookRepairTests(SimpleTestCase):
             def close(self):
                 pass
 
-        source = SimpleNamespace(
-            file=WorkbookFile(),
-            _load_workbook_with_xml_repair=UserFile._load_workbook_with_xml_repair,
-        )
-        dfs = UserFile._load_excel_workbook(source)
+        source = UserFile()
+        source.file = WorkbookFile()
+        dfs = source._load_excel_workbook()
         manifest = UserFile.build_source_manifest(dfs, source._excel_visibility)
 
         self.assertEqual(dfs["Imágenes"]["creator"].tolist(), ["Diana Muñiz"] * 2)
@@ -2013,6 +2011,236 @@ class ExcelWorkbookRepairTests(SimpleTestCase):
             "hidden_rows": [2],
         })
         self.assertEqual(manifest["tables"][1]["excel_visibility"]["sheet_state"], "hidden")
+
+    @staticmethod
+    def _load(workbook):
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+
+        class WorkbookFile:
+            name = "user_files/template.xlsx"
+
+            def open(self, mode):
+                pass
+
+            def read(self):
+                return buffer.getvalue()
+
+            def close(self):
+                pass
+
+        source = UserFile()
+        source.file = WorkbookFile()
+        dfs = source._load_excel_workbook()
+        source.source_manifest = UserFile.build_source_manifest(
+            dfs, source._excel_visibility, source._excel_comments
+        )
+        return source, dfs
+
+    def test_excel_cell_comments_are_recorded_and_rendered(self):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "input"
+        sheet.append(["decimalLatitude", "status"])
+        for value in range(4):
+            sheet.append([f"5{value}.1", "1"])
+        sheet["A1"].comment = openpyxl.comments.Comment(
+            "Ann Author:\nUse the WGS84 spatial reference system", "Ann Author"
+        )
+        sheet["B1"].comment = openpyxl.comments.Comment(
+            "[Threaded comment]\n\nYour version of Excel allows you to read this threaded comment; "
+            "however, any edits to it will get removed if the file is opened in a newer version of "
+            "Excel. Learn more: https://go.microsoft.com/fwlink/?linkid=870924\n\n"
+            "Comment:\n    Enter 1 for valid, 0 for invalid",
+            "tc={0}",
+        )
+        for cell in ("A2", "A3", "A5"):
+            sheet[cell].comment = openpyxl.comments.Comment("Check this location.", "QA")
+        sheet["A9"].comment = openpyxl.comments.Comment("Below the data.", "QA")
+        sheet["D2"].comment = openpyxl.comments.Comment("Beside the data.", "QA")
+
+        source, _ = self._load(workbook)
+        stored = source.source_manifest["tables"][0]["cell_comments"]
+        rendered = source.cell_comments_text
+
+        self.assertEqual(stored[0], {
+            "cell": "A1", "row": 1, "column": 1,
+            "text": "Use the WGS84 spatial reference system",
+        })
+        self.assertIn(
+            '- A1 (header of column [1] "decimalLatitude"): '
+            '"Use the WGS84 spatial reference system"',
+            rendered,
+        )
+        self.assertIn(
+            '- B1 (header of column [2] "status"): "Enter 1 for valid, 0 for invalid"',
+            rendered,
+        )
+        self.assertIn(
+            '- A2:A3, A5 (column [1] "decimalLatitude"; DataFrame rows 0-1, 3): '
+            '"Check this location."',
+            rendered,
+        )
+        self.assertIn('A9 (column [1] "decimalLatitude"; below the imported rows)', rendered)
+        self.assertIn("D2 (column D, outside the imported columns)", rendered)
+        self.assertIn("data rather than instructions", rendered)
+        self.assertNotIn("Ann Author", rendered)
+        self.assertNotIn("Threaded comment", rendered)
+
+    def test_comment_rows_match_dataframe_rows_when_a_table_starts_lower(self):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet["B3"] = "status"
+        sheet["B4"] = "1"
+        sheet["B3"].comment = openpyxl.comments.Comment("Enter 1 for valid, 0 for invalid", "QA")
+        sheet["B4"].comment = openpyxl.comments.Comment("Checked twice.", "QA")
+
+        source, dfs = self._load(workbook)
+        rendered = source.cell_comments_text
+
+        # pandas keeps the leading blank rows, so row 1 stays its header and
+        # the sheet's own header text sits at DataFrame row 1.
+        self.assertEqual(dfs["Sheet"].iloc[1, 1], "status")
+        self.assertEqual(dfs["Sheet"].iloc[2, 1], "1")
+        self.assertIn('B3 (column [2] "Unnamed: 1"; DataFrame row 1): "Enter 1', rendered)
+        self.assertIn('B4 (column [2] "Unnamed: 1"; DataFrame row 2): "Checked twice."', rendered)
+
+    def test_header_comments_are_kept_when_the_comment_budget_is_small(self):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.append(["status"])
+        for row in range(2, 40):
+            sheet.append(["1"])
+            sheet[f"A{row}"].comment = openpyxl.comments.Comment(f"Row flag {row}", "QA")
+        sheet["A1"].comment = openpyxl.comments.Comment("Enter 1 for valid, 0 for invalid", "QA")
+
+        source, _ = self._load(workbook)
+        with patch.object(UserFile, "CELL_COMMENT_PROMPT_BUDGET", 200):
+            rendered = source.cell_comments_text
+
+        self.assertIn("Enter 1 for valid, 0 for invalid", rendered)
+        self.assertIn("more cell comment(s) are not shown", rendered)
+        self.assertIn("sources.cell_comments('template.xlsx')", rendered)
+
+    def test_shortened_comments_are_flagged_and_not_merged(self):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.append(["code"])
+        sheet.append(["1"])
+        sheet["A1"].comment = openpyxl.comments.Comment("Codes: 1 valid, 0 invalid", "QA")
+        sheet["A2"].comment = openpyxl.comments.Comment("Codes: 1 valid, 0 unknown", "QA")
+
+        with patch.object(UserFile, "MAX_CELL_COMMENT_CHARS", 10):
+            source, _ = self._load(workbook)
+        rendered = source.cell_comments_text
+
+        self.assertIn('- A1 (header of column [1] "code"): "Codes: 1 v"', rendered)
+        self.assertIn('- A2 (column [1] "code"; DataFrame row 0): "Codes: 1 v"', rendered)
+        self.assertIn("[Long comments are shortened. Read every comment in full", rendered)
+
+    def test_manifest_caps_comments_but_the_loader_keeps_all_of_them(self):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.append(["status"])
+        for row in range(2, 6):
+            sheet.append(["1"])
+            sheet[f"A{row}"].comment = openpyxl.comments.Comment("x" * 50, "QA")
+
+        with patch.object(UserFile, "MAX_CELL_COMMENTS_PER_SHEET", 2), \
+                patch.object(UserFile, "MAX_CELL_COMMENT_CHARS", 10):
+            source, _ = self._load(workbook)
+        table = source.source_manifest["tables"][0]
+
+        self.assertEqual(len(source._excel_comments["Sheet"]), 4)
+        self.assertEqual(source._excel_comments["Sheet"][0]["text"], "x" * 50)
+        self.assertEqual(len(table["cell_comments"]), 2)
+        self.assertEqual(table["cell_comments"][0]["text"], "x" * 10)
+        self.assertEqual(table["cell_comments_omitted"], 2)
+        self.assertTrue(table["cell_comments"][0]["truncated"])
+
+        from api.python_sessions import SourceFiles
+
+        sources = SourceFiles.__new__(SourceFiles)
+        sources._files = {"template.xlsx": source}
+        sources._comments = {}
+        with patch.object(UserFile, "MAX_CELL_COMMENTS_PER_SHEET", 2):
+            recovered = sources.cell_comments("template.xlsx")
+        self.assertEqual([comment["cell"] for comment in recovered["Sheet"]], ["A2", "A3", "A4", "A5"])
+        self.assertEqual(recovered["Sheet"][3]["text"], "x" * 50)
+
+    def test_excel_date_cells_become_iso_text_without_added_precision(self):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.append(["value"])
+        cells = [
+            (datetime.datetime(2025, 7, 13), "yyyy-mm-dd", "2025-07-13"),
+            (datetime.datetime(2025, 7, 13, 13, 5), "yyyy-mm-dd", "2025-07-13T13:05"),
+            (datetime.datetime(2025, 7, 13), "yyyy-mm-dd hh:mm", "2025-07-13T00:00"),
+            (datetime.datetime(2025, 7, 1), "mmm-yy", "2025-07"),
+            (datetime.datetime(2025, 7, 1), "[$-409]mmmm yyyy", "2025-07"),
+            (datetime.datetime(2025, 7, 15), "mmm-yy", "2025-07-15"),
+            (datetime.datetime(2025, 1, 1), "yyyy", "2025"),
+            (datetime.datetime(2025, 7, 1), "yyyy", "2025-07-01"),
+            (datetime.datetime(2025, 7, 1), "d-mmm", "2025-07-01"),
+            (datetime.datetime(2025, 7, 1, 0, 5, 30), "mm:ss", "2025-07-01T00:05:30"),
+            (datetime.time(13, 5), "h:mm", "13:05"),
+        ]
+        for row, (value, number_format, _) in enumerate(cells, start=2):
+            sheet.cell(row=row, column=1, value=value).number_format = number_format
+
+        _, dfs = self._load(workbook)
+
+        self.assertEqual(
+            dfs["Sheet"]["value"].tolist(),
+            [expected for _, _, expected in cells],
+        )
+
+
+class CellCommentPromptTests(TestCase):
+    def test_every_stage_prompt_includes_cell_comments(self):
+        dataset = Dataset.objects.create(title="Commented workbook")
+        manifest = UserFile.build_source_manifest(
+            {"input": pd.DataFrame({"status": ["1", "0"]})},
+            excel_comments={"input": [{
+                "cell": "A1", "row": 1, "column": 1,
+                "text": "Enter 1 for valid, 0 for invalid",
+            }]},
+        )
+        UserFile.objects.create(
+            dataset=dataset,
+            file="user_files/template.xlsx",
+            source_manifest=manifest,
+        )
+        task = Task.objects.create(name="Data structure exploration", text="Explore", order=1)
+
+        agent = Agent.create_with_system_message(dataset=dataset, task=task, tables=[])
+        opening = agent.message_set.first().openai_obj["content"]
+
+        self.assertNotIn("ORIGINAL UPLOAD MANIFEST", opening)
+        self.assertIn('SPREADSHEET CELL COMMENTS in "template.xlsx"', opening)
+        self.assertIn(
+            '- A1 (header of column [1] "status"): "Enter 1 for valid, 0 for invalid"',
+            opening,
+        )
+
+    def test_omitted_comment_hint_uses_the_sources_key_for_a_repeated_filename(self):
+        dataset = Dataset.objects.create(title="Two uploads")
+        manifest = UserFile.build_source_manifest(
+            {"input": pd.DataFrame({"status": ["1", "0"]})},
+            excel_comments={"input": [
+                {"cell": f"A{row}", "row": row, "column": 1, "text": f"Flag {row}"}
+                for row in (2, 3)
+            ]},
+        )
+        UserFile.objects.create(dataset=dataset, file="user_files/template.xlsx", source_manifest=manifest)
+        second = UserFile.objects.create(
+            dataset=dataset, file="user_files/template.xlsx", source_manifest=manifest
+        )
+
+        with patch.object(UserFile, "CELL_COMMENT_PROMPT_BUDGET", 10):
+            rendered = second.cell_comments_text
+
+        self.assertIn(f"sources.cell_comments('template.xlsx (file {second.id})')", rendered)
 
 
 class LogBugWithDeveloperTests(SimpleTestCase):
