@@ -379,4 +379,6 @@ back-end/.env.prod
 back-end/.env.staging
 
 eml*
+!back-end/api/templates/xsd/eml-2.2.0/
+!back-end/api/templates/xsd/eml-2.2.0/**
 back-end/phylo-tree-examples/

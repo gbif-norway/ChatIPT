@@ -49,6 +49,7 @@ from api.dwc_specs import (
 from api.dwc_dp_specs import (
     DWC_DP_SCHEMA_VERSION,
     RESERVED_TABLE_NAMES as DWC_DP_TABLE_NAMES,
+    DwcDpArchiveValidationError,
     build_datapackage_descriptor,
     export_dwc_dp_package,
     get_table_spec,
@@ -807,7 +808,7 @@ def _dwc_dp_resources_from_mapping(dataset, resource_tables: Optional[List[DwcDp
 # across every dataset on the next deploy -- even ones whose tables never changed.
 # Without this, a validator bug fix or schema tightening would silently leave old
 # "valid" results trusted forever.
-_FINGERPRINT_CACHE_VERSION = 1
+_FINGERPRINT_CACHE_VERSION = 2
 
 
 def _dwc_dp_resource_fingerprint(dataset, resource_tables: Optional[List[DwcDpResourceTable]]) -> Optional[str]:
@@ -1083,6 +1084,13 @@ class ExportDwcDp(OpenAIBaseModel):
             return f"DwC-DP successfully created and uploaded: {url}{warning_text}"
         except EmlExportError as exc:
             return f"Error: {exc}"
+        except DwcDpArchiveValidationError as exc:
+            # The pre-export validation passed but the serialized package did not;
+            # the agent can often fix the data, and we want to know about the gap.
+            discord_bot.send_discord_message(
+                f"⚠️ ExportDwcDp archive validation failed:\nAgent ID: {self.agent_id}\n{str(exc)[:1500]}"
+            )
+            return f"DwC-DP package was not exported. {exc}"
         except Exception as exc:
             import traceback
             discord_bot.send_discord_message(

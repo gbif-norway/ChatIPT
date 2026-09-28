@@ -118,6 +118,15 @@ directory together, update the local index/version metadata and
 tests in Docker. Once DwC-DP 1.0 is ratified, update the snapshot and profile URL
 atomically from `1.0_DEV` to the final versioned release.
 
+Exported packages are validated offline with checks ported from GBIF's
+[dwc-dp-analyser](https://github.com/gbif/dwc-dp-analyser): the descriptor against
+the DwC-DP profile (its base Frictionless Data Package v1 schema is vendored at
+`back-end/api/templates/frictionless/data-package-v1.json`), each resource schema
+against its canonical table schema, `eml.xml` against the EML 2.2.0 XSDs in
+`back-end/api/templates/xsd/eml-2.2.0` (copied from dwc-dp-analyser commit
+`d3dd96bc7c769724466f8495c331299ebd8c977f`), and every row with Frictionless
+`validate()`.
+
 ## Deployment docs
 
 Operational deployment instructions are maintained in [`DEPLOYMENT.md`](DEPLOYMENT.md).
