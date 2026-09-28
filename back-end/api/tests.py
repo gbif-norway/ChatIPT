@@ -4064,8 +4064,6 @@ class DwcaArtifactValidationTests(TestCase):
         self.dataset.refresh_from_db()
         self.assertEqual(self.dataset.dwca_url, "https://example.org/replacement.zip")
         self.assertIsNone(self.dataset.dwca_validation)
-        core.refresh_from_db()
-        self.assertEqual(core.dwca_role, "core")
 
 
 class TableColumnManifestTests(TestCase):

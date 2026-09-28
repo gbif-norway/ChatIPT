@@ -15,7 +15,7 @@ class TaskSerializer(serializers.ModelSerializer):
 
 
 class TableSerializer(serializers.ModelSerializer):
-    package = serializers.SerializerMethodField()
+    is_dwc_dp = serializers.SerializerMethodField()
 
     class Meta:
         model = Table
@@ -28,20 +28,14 @@ class TableSerializer(serializers.ModelSerializer):
             'description',
             'row_count',
             'columns',
-            'dwca_role',
-            'package',
+            'is_dwc_dp',
         ]
         read_only_fields = fields
 
-    def get_package(self, obj):
-        """Name the publication package a table belongs to, if any."""
+    def get_is_dwc_dp(self, obj):
         from api.dwc_dp_specs import RESERVED_TABLE_NAMES
 
-        if obj.title in RESERVED_TABLE_NAMES:
-            return 'dwc-dp'
-        if obj.dwca_role:
-            return 'dwca'
-        return ''
+        return obj.title in RESERVED_TABLE_NAMES
 
 
 class TablePageQuerySerializer(serializers.Serializer):

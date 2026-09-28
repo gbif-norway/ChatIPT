@@ -116,23 +116,13 @@ class TableApiTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
 
-    def test_list_names_the_package_each_table_belongs_to(self):
-        projection = Table.objects.create(
-            dataset=self.dataset,
-            title='dwca core',
-            df=pd.DataFrame({'occurrenceID': ['occ-1']}),
-        )
-        Table.objects.filter(pk=projection.pk).update(dwca_role='core')
+    def test_list_marks_dwc_dp_resource_tables(self):
         Table.objects.create(dataset=self.dataset, title='source', df=pd.DataFrame({'a': [1]}))
 
         response = self.client.get(reverse('table-list'), {'dataset': self.dataset.id})
 
-        packages = {table['title']: (table['package'], table['dwca_role']) for table in response.data}
-        self.assertEqual(packages, {
-            'occurrence': ('dwc-dp', ''),
-            'dwca core': ('dwca', 'core'),
-            'source': ('', ''),
-        })
+        marks = {table['title']: table['is_dwc_dp'] for table in response.data}
+        self.assertEqual(marks, {'occurrence': True, 'source': False})
 
     def test_rows_rejects_unbounded_page_sizes(self):
         response = self.client.get(

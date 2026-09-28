@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  filterTablesByPackage,
   normalizeTableList,
   normalizeTablePage,
   tableRowsUrl,
@@ -26,23 +25,22 @@ test('adds row search parameters only when there is search text', () => {
   )
 })
 
-test('filters tables by publication package', () => {
-  const tables = [
-    { id: 1, package: 'dwc-dp' },
-    { id: 2, package: 'dwca' },
-    { id: 3, package: '' },
-  ]
-  assert.deepEqual(filterTablesByPackage(tables, 'all').map((table) => table.id), [1, 2, 3])
-  assert.deepEqual(filterTablesByPackage(tables, 'dwc-dp').map((table) => table.id), [1])
-  assert.deepEqual(filterTablesByPackage(tables, 'dwca').map((table) => table.id), [2])
-})
-
 test('normalizes lightweight table summaries', () => {
   assert.deepEqual(
     normalizeTableList([{ id: 1, row_count: '12', columns: ['eventID'] }]),
-    [{ id: 1, row_count: 12, columns: ['eventID'], package: '' }],
+    [{ id: 1, row_count: 12, columns: ['eventID'], is_dwc_dp: false }],
   )
   assert.throws(() => normalizeTableList({ results: [] }), /invalid/)
+})
+
+test('lists DwC-DP resource tables first', () => {
+  const tables = normalizeTableList([
+    { id: 1, is_dwc_dp: false },
+    { id: 2, is_dwc_dp: true },
+    { id: 3, is_dwc_dp: false },
+    { id: 4, is_dwc_dp: true },
+  ])
+  assert.deepEqual(tables.map((table) => table.id), [2, 4, 1, 3])
 })
 
 test('rejects malformed table pages', () => {

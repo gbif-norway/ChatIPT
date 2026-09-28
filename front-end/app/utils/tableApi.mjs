@@ -1,12 +1,6 @@
 export const DEFAULT_TABLE_PAGE_SIZE = 50
 export const TABLE_PAGE_SIZE_OPTIONS = [25, 50, 100, 200]
 
-export const TABLE_PACKAGE_FILTERS = [
-  { id: 'all', label: 'All' },
-  { id: 'dwc-dp', label: 'DwC-DP' },
-  { id: 'dwca', label: 'DwC-A' },
-]
-
 export const tableRowsUrl = (baseUrl, tableId, page, pageSize, filter = {}) => {
   const safePage = Math.max(Number(page) || 1, 1)
   const safePageSize = Math.max(Number(pageSize) || DEFAULT_TABLE_PAGE_SIZE, 1)
@@ -21,18 +15,16 @@ export const tableRowsUrl = (baseUrl, tableId, page, pageSize, filter = {}) => {
   return `${baseUrl}/api/tables/${tableId}/rows/?${params}`
 }
 
-export const filterTablesByPackage = (tables, packageFilter) => (
-  packageFilter === 'all' ? tables : tables.filter((table) => table.package === packageFilter)
-)
-
+// DwC-DP resource tables come first; source and working tables keep their order after them.
 export const normalizeTableList = (payload) => {
   if (!Array.isArray(payload)) throw new Error('The table list response was invalid.')
-  return payload.map((table) => ({
+  const tables = payload.map((table) => ({
     ...table,
     row_count: Number(table.row_count) || 0,
     columns: Array.isArray(table.columns) ? table.columns : [],
-    package: table.package || '',
+    is_dwc_dp: Boolean(table.is_dwc_dp),
   }))
+  return [...tables.filter((table) => table.is_dwc_dp), ...tables.filter((table) => !table.is_dwc_dp)]
 }
 
 export const normalizeTablePage = (payload) => {

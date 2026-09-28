@@ -1200,8 +1200,6 @@ class Table(models.Model):
     description = models.CharField(max_length=2000, blank=True)
     row_count = models.PositiveBigIntegerField(default=0, editable=False)
     columns = models.JSONField(default=list, editable=False)
-    # "core" or the extension type when UploadDwCA last used this table.
-    dwca_role = models.CharField(max_length=100, blank=True, default='', editable=False)
 
     @staticmethod
     def display_columns(raw_columns):
