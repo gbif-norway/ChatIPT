@@ -376,7 +376,168 @@ def normalize_temporal_scope(raw_value: str) -> tuple[str, str] | tuple[str, str
     return None
 
 
-def make_eml(title, description, user=None, eml_extra: dict | None = None):
+def _infer_taxon_rank(name: str, index: int, total: int) -> str:
+    lower = name.lower()
+    if lower in {'animalia', 'plantae', 'fungi', 'bacteria', 'archaea', 'protista', 'chromista'}:
+        return 'kingdom'
+    if lower.endswith('aceae') or lower.endswith('idae'):
+        return 'family'
+    if lower.endswith('ales'):
+        return 'order'
+    if lower.endswith('mycota') or lower.endswith('phyta'):
+        return 'phylum'
+    if lower.endswith('opsida') or lower.endswith('phyceae'):
+        return 'class'
+    if total == 1:
+        return 'taxon'
+    return 'higherTaxon' if index == 0 else 'taxon'
+
+
+def _normalize_taxonomic_keywords(raw_keywords) -> list[dict[str, str]]:
+    if not isinstance(raw_keywords, list):
+        return []
+
+    normalized = []
+    seen = set()
+    for keyword in raw_keywords:
+        if not isinstance(keyword, dict):
+            continue
+        scientific_name = clean_text(
+            keyword.get('scientificName')
+            or keyword.get('scientific_name')
+            or keyword.get('taxonRankValue')
+            or keyword.get('name')
+        )
+        if not scientific_name:
+            continue
+        rank = clean_text(keyword.get('rank') or keyword.get('taxonRankName'))
+        common_name = clean_text(keyword.get('commonName') or keyword.get('common_name'))
+        key = ((rank or '').lower(), scientific_name.lower(), (common_name or '').lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append({
+            'rank': rank or 'taxon',
+            'scientificName': scientific_name,
+            'commonName': common_name,
+        })
+    return normalized
+
+
+def _fallback_taxonomic_keywords_from_scope(scope: str | None) -> list[dict[str, str]]:
+    """Conservative fallback for simple scopes like "Plantae, Fabaceae".
+
+    IPT writes taxonomicClassification from structured taxon keywords, not
+    from prose descriptions. Stop before sentence-like tokens to avoid
+    turning general text into bogus classifications.
+    """
+    if not scope:
+        return []
+
+    tokens = []
+    for raw_token in str(scope).split(','):
+        token = raw_token.strip()
+        if not token:
+            continue
+        if any(char in token for char in '.;:()'):
+            break
+        if len(token.split()) > 3 or len(token) > 80:
+            break
+        tokens.append(token)
+        if len(tokens) >= 12:
+            break
+
+    return [
+        {
+            'rank': _infer_taxon_rank(token, index, len(tokens)),
+            'scientificName': token,
+            'commonName': None,
+        }
+        for index, token in enumerate(tokens)
+    ]
+
+
+# A genus-like capitalised word, optionally followed by lowercase epithets.
+_SCIENTIFIC_NAME_RE = re.compile(r"[A-Z][a-z]+(?: [a-z][a-z-]+){0,2}")
+_NON_EPITHET_WORDS = frozenset({
+    'sp', 'spp', 'species', 'taxa', 'taxon', 'genus', 'genera', 'group', 'complex',
+    'lato', 'stricto', 'of', 'in', 'from', 'with',
+})
+# Parentheticals like "(Diptera: Culicidae)" and lists after "including" or a
+# label such as "Genera:" are where descriptive scopes name their taxa.
+_TAXON_LIST_RE = re.compile(
+    r"\(([^()]*)\)|(?:\b(?:including|includes|include|such as|e\.g\.)|:)\s*([^.;()]*)",
+    flags=re.IGNORECASE,
+)
+
+
+def _taxon_keywords_from_prose(scope: str | None) -> list[dict[str, str]]:
+    """Scientific names named in a descriptive scope such as
+    "Mosquitoes (Diptera: Culicidae), including Aedes and Culex".
+
+    Only whole list items shaped like scientific names are taken, so common
+    names ("Mosquitoes") and prose ("oribatid taxa") are never classified.
+    """
+    if not scope:
+        return []
+
+    names = []
+    seen = set()
+    for match in _TAXON_LIST_RE.finditer(str(scope)):
+        if match.group(1) and re.search(r"\d{4}", match.group(1)):
+            continue  # an authorship such as "(Linnaeus, 1758)"
+        items = re.split(r"[,:;/]|\s+(?:and|or|&)\s+", match.group(1) or match.group(2) or "")
+        for item in items:
+            name = re.sub(r"^(?:and|or)\s+", "", item.strip(), flags=re.IGNORECASE)
+            if not _SCIENTIFIC_NAME_RE.fullmatch(name):
+                continue
+            genus, *epithets = name.split()
+            if any(word in _NON_EPITHET_WORDS for word in epithets):
+                name = genus  # "Aedes spp", "Culex taxa"
+            if name.casefold() not in seen and len(names) < 25:
+                seen.add(name.casefold())
+                names.append(name)
+
+    return [
+        {
+            'rank': 'species' if ' ' in name else _infer_taxon_rank(name, index, len(names)),
+            'scientificName': name,
+            'commonName': None,
+        }
+        for index, name in enumerate(names)
+    ]
+
+
+def taxonomic_keywords_for_eml(eml_extra: dict | None) -> list[dict[str, str]]:
+    """Classifications exported as EML taxonomicCoverage for `dataset.eml`."""
+    eml_extra = eml_extra or {}
+    keywords = _normalize_taxonomic_keywords(eml_extra.get('taxonomic_keywords'))
+    if keywords:
+        return keywords
+    scope = clean_text(eml_extra.get('taxonomic_scope'))
+    return _fallback_taxonomic_keywords_from_scope(scope) or _taxon_keywords_from_prose(scope)
+
+
+def is_synthetic_orcid_email(value) -> bool:
+    """ORCID-only accounts log in with "<orcid>@orcid.org", which is not a mailbox."""
+    return (clean_text(value) or '').lower().endswith('@orcid.org')
+
+
+def eml_package_id(dataset_id=None) -> str:
+    """Unique id for this version of a dataset's EML, in IPT's "<uuid>/v<version>" form.
+
+    The UUID is stable per ChatIPT dataset; without a dataset it is random.
+    """
+    if dataset_id in (None, ''):
+        dataset_uuid = uuid.uuid4()
+    else:
+        instance = os.getenv('FRONTEND_URL') or 'https://chatipt.svc.gbif.no'
+        dataset_uuid = uuid.uuid5(uuid.NAMESPACE_URL, f"{instance.rstrip('/')}/dataset/{dataset_id}")
+    version = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+    return f"{dataset_uuid}/v{version}"
+
+
+def make_eml(title, description, user=None, eml_extra: dict | None = None, dataset_id=None):
     """Render an EML document populated with available metadata and prune empty elements.
 
     Args:
@@ -385,6 +546,7 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         user: Primary user (creator/metadataProvider)
         eml_extra: Optional dict from `dataset.eml` with keys like
                    geographic_scope, temporal_scope, taxonomic_scope, methodology, users, project_title
+        dataset_id: ChatIPT dataset id, used to derive the EML packageId
     """
     eml_path = _TEMPLATES_ROOT / "eml.xml"
     if not eml_path.exists():
@@ -432,9 +594,7 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         if elem is not None and text not in (None, ''):
             elem.text = str(text)
 
-    package_id = clean_text(eml_extra.get('package_id'))
-    if package_id:
-        root.set('packageId', package_id)
+    root.set('packageId', clean_text(eml_extra.get('package_id')) or eml_package_id(dataset_id))
 
     def normalize_doi(value: str | None) -> str | None:
         if value in (None, ''):
@@ -539,84 +699,6 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         text = f"{value:.6f}".rstrip('0').rstrip('.')
         return text if text != '-0' else '0'
 
-    def _infer_taxon_rank(name: str, index: int, total: int) -> str:
-        lower = name.lower()
-        if lower in {'animalia', 'plantae', 'fungi', 'bacteria', 'archaea', 'protista', 'chromista'}:
-            return 'kingdom'
-        if lower.endswith('aceae') or lower.endswith('idae'):
-            return 'family'
-        if lower.endswith('ales'):
-            return 'order'
-        if lower.endswith('mycota') or lower.endswith('phyta'):
-            return 'phylum'
-        if lower.endswith('opsida') or lower.endswith('phyceae'):
-            return 'class'
-        if total == 1:
-            return 'taxon'
-        return 'higherTaxon' if index == 0 else 'taxon'
-
-    def _normalize_taxonomic_keywords(raw_keywords) -> list[dict[str, str]]:
-        if not isinstance(raw_keywords, list):
-            return []
-
-        normalized = []
-        seen = set()
-        for keyword in raw_keywords:
-            if not isinstance(keyword, dict):
-                continue
-            scientific_name = clean_text(
-                keyword.get('scientificName')
-                or keyword.get('scientific_name')
-                or keyword.get('taxonRankValue')
-                or keyword.get('name')
-            )
-            if not scientific_name:
-                continue
-            rank = clean_text(keyword.get('rank') or keyword.get('taxonRankName'))
-            common_name = clean_text(keyword.get('commonName') or keyword.get('common_name'))
-            key = ((rank or '').lower(), scientific_name.lower(), (common_name or '').lower())
-            if key in seen:
-                continue
-            seen.add(key)
-            normalized.append({
-                'rank': rank or 'taxon',
-                'scientificName': scientific_name,
-                'commonName': common_name,
-            })
-        return normalized
-
-    def _fallback_taxonomic_keywords_from_scope(scope: str | None) -> list[dict[str, str]]:
-        """Conservative fallback for simple scopes like "Plantae, Fabaceae".
-
-        IPT writes taxonomicClassification from structured taxon keywords, not
-        from prose descriptions. Stop before sentence-like tokens to avoid
-        turning general text into bogus classifications.
-        """
-        if not scope:
-            return []
-
-        tokens = []
-        for raw_token in str(scope).split(','):
-            token = raw_token.strip()
-            if not token:
-                continue
-            if any(char in token for char in '.;:()'):
-                break
-            if len(token.split()) > 3 or len(token) > 80:
-                break
-            tokens.append(token)
-            if len(tokens) >= 12:
-                break
-
-        return [
-            {
-                'rank': _infer_taxon_rank(token, index, len(tokens)),
-                'scientificName': token,
-                'commonName': None,
-            }
-            for index, token in enumerate(tokens)
-        ]
-
     dataset_node = find(root, 'dataset')
     if dataset_node is None:
         dataset_node = ET.SubElement(root, 'dataset')
@@ -650,7 +732,7 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
 
         if include_email:
             email_value = person.get('email') or person.get('electronicMailAddress') or ''
-            if email_value:
+            if email_value and not is_synthetic_orcid_email(email_value):
                 set_text(get_or_create(parent_node, 'electronicMailAddress'), email_value)
         if orcid_value:
             user_id = get_or_create(parent_node, 'userId')
@@ -681,7 +763,7 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
     primary_email = (getattr(user, 'email', None) or '') if user else ''
     # ORCID-only accounts use a synthetic address as their login identifier.
     # It is not a deliverable contact address and must not be published in EML.
-    if primary_email.lower().endswith('@orcid.org'):
+    if is_synthetic_orcid_email(primary_email):
         primary_email = ''
 
     if user:
@@ -760,7 +842,7 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
         )
         for person in users_list:
             person_email = clean_text(person.get('email'))
-            if not person_email or person_email.lower().endswith('@orcid.org'):
+            if not person_email or is_synthetic_orcid_email(person_email):
                 continue
             person_orcid = normalize_orcid(person.get('orcid'))
             same_orcid = bool(primary_orcid and person_orcid and primary_orcid == person_orcid)
@@ -864,10 +946,15 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None):
 
     # Taxonomic
     taxonomic_scope = clean_text(eml_extra.get('taxonomic_scope'))
-
-    taxonomic_keywords = _normalize_taxonomic_keywords(eml_extra.get('taxonomic_keywords'))
-    if not taxonomic_keywords:
-        taxonomic_keywords = _fallback_taxonomic_keywords_from_scope(taxonomic_scope)
+    taxonomic_keywords = taxonomic_keywords_for_eml(eml_extra)
+    if taxonomic_scope and not taxonomic_keywords:
+        # The GBIF profile requires a taxonomicClassification, so the scope
+        # would otherwise be dropped from the archive without notice.
+        raise EmlExportError(
+            "EML taxonomic_scope names no scientific taxon, so it cannot be exported as "
+            "taxonomicCoverage. Call SetEML with a taxonomic_scope that names at least one "
+            "scientific name, e.g. 'Mites (Acari)' or 'Mosquitoes (Diptera: Culicidae)'."
+        )
 
     if taxonomic_keywords:
         tax = ET.SubElement(coverage, 'taxonomicCoverage')
@@ -1730,6 +1817,7 @@ def upload_dwca(
     user=None,
     eml_extra: dict | None = None,
     additional_files: list[tuple[str, bytes]] | None = None,
+    dataset_id=None,
 ):
     df_core = _sanitize_dataframe_for_utf8_export(df_core)
     if core_type == DarwinCoreCoreType.OCCURRENCE:
@@ -1764,7 +1852,7 @@ def upload_dwca(
         raise RuntimeError(f"Failed to create Archive: {e}") from e
     
     try:
-        archive.eml_text = make_eml(title, description, user, eml_extra)
+        archive.eml_text = make_eml(title, description, user, eml_extra, dataset_id=dataset_id)
     except EmlExportError:
         raise
     except Exception as e:

@@ -1,4 +1,5 @@
 import os
+import uuid
 import datetime
 import io
 import json
@@ -19,6 +20,7 @@ import pandas as pd
 import yaml
 from .helpers.publish import (
     DwcaExtensionLinkError,
+    EmlExportError,
     assert_case_insensitive_unique_identifier,
     gbif_dataset_type_for_core,
     make_eml,
@@ -524,6 +526,56 @@ class EmlGenerationTests(SimpleTestCase):
             root.attrib['packageId'],
             'b13c5da2-d21a-4d25-af44-2f6a732c06a1',
         )
+
+    def test_make_eml_derives_unique_package_identifier_per_dataset(self):
+        first = ET.fromstring(make_eml('Dataset', 'Description', dataset_id=534)).attrib['packageId']
+        second = ET.fromstring(make_eml('Dataset', 'Description', dataset_id=534)).attrib['packageId']
+        other = ET.fromstring(make_eml('Dataset', 'Description', dataset_id=533)).attrib['packageId']
+        unbound = ET.fromstring(make_eml('Dataset', 'Description')).attrib['packageId']
+
+        self.assertNotIn('test', first)
+        self.assertEqual(first.split('/v')[0], second.split('/v')[0])
+        self.assertNotEqual(first, second)
+        self.assertNotEqual(first.split('/v')[0], other.split('/v')[0])
+        uuid.UUID(unbound.split('/v')[0])
+
+    def test_make_eml_exports_scientific_names_from_descriptive_taxonomic_scope(self):
+        cases = {
+            (
+                'Mosquitoes (Diptera: Culicidae), including Aedes, Anopheles, Coquillettidia, '
+                'Culex, and Culiseta; identifications range from genus to species. '
+                'All recorded individuals are adult females.'
+            ): ['Diptera', 'Culicidae', 'Aedes', 'Anopheles', 'Coquillettidia', 'Culex', 'Culiseta'],
+            'Mites (Acari), including oribatid and mesostigmatid taxa.': ['Acari'],
+            'Mosquitoes, including Culex pipiens (Linnaeus, 1758) and Aedes spp.': [
+                'Culex pipiens', 'Aedes',
+            ],
+            'Scientific names: Aedes vexans, Culex pipiens': ['Aedes vexans', 'Culex pipiens'],
+        }
+        for scope, expected in cases.items():
+            with self.subTest(scope=scope):
+                root = ET.fromstring(make_eml('Taxa', 'Description', eml_extra={'taxonomic_scope': scope}))
+                coverage = root.find('dataset/coverage/taxonomicCoverage')
+                self.assertEqual(coverage.findtext('generalTaxonomicCoverage'), scope)
+                self.assertEqual(
+                    [node.text for node in coverage.findall('taxonomicClassification/taxonRankValue')],
+                    expected,
+                )
+
+    def test_make_eml_rejects_taxonomic_scope_without_scientific_names(self):
+        with self.assertRaisesRegex(EmlExportError, 'names no scientific taxon'):
+            make_eml('Taxa', 'Description', eml_extra={
+                'taxonomic_scope': 'Terrestrial vascular plants of Norway.',
+            })
+
+    def test_make_eml_does_not_publish_synthetic_orcid_email_from_creator_list(self):
+        root = ET.fromstring(make_eml('Creators', 'Description', eml_extra={'users': [
+            {'first_name': 'Ana', 'last_name': 'Solares', 'orcid': '0000-0002-3353-7088',
+             'email': '0000-0002-3353-7088@orcid.org'},
+        ]}))
+
+        self.assertNotIn('@orcid.org', ET.tostring(root, encoding='unicode'))
+        self.assertEqual(root.findtext('dataset/creator/userId'), '0000-0002-3353-7088')
 
     def test_make_eml_uses_each_supported_gbif_license(self):
         expected = {

@@ -19,6 +19,7 @@ from api.helpers.publish import (
     normalize_orcid,
     inspect_dwca_archive,
     normalize_temporal_scope,
+    taxonomic_keywords_for_eml,
     upload_dwca,
     register_dataset_and_endpoint,
 )
@@ -2430,6 +2431,12 @@ class SetEML(OpenAIBaseModel):
                     "their name, save it once with SetUserName for future datasets."
                 )
 
+            taxonomic_export_note = None
+            if eml.get("taxonomic_scope") and not taxonomic_keywords_for_eml(eml):
+                taxonomic_export_note = (
+                    "Taxonomic scope was saved but names no scientific taxon, so it will block "
+                    "export as taxonomicCoverage until it does, e.g. 'Mites (Acari)'."
+                )
             geographic_export_note = None
             if eml.get("geographic_scope") and not eml.get("geographic_bounds"):
                 geographic_export_note = (
@@ -2443,6 +2450,7 @@ class SetEML(OpenAIBaseModel):
                     geographic_note,
                     geographic_export_note,
                     taxonomic_note,
+                    taxonomic_export_note,
                     methodology_note,
                     profile_name_note,
                     (
@@ -2979,6 +2987,7 @@ class UploadDwCA(OpenAIBaseModel):
                 user=dataset.user,
                 eml_extra=dataset.eml,
                 additional_files=additional_files if additional_files else None,
+                dataset_id=dataset.id,
             )
 
             core_choice_map = {

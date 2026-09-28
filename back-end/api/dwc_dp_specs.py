@@ -875,7 +875,7 @@ def create_dwc_dp_archive(
             encoding="utf-8",
         )
         (package_root / "eml.xml").write_text(
-            make_eml(title, description, user, eml_extra),
+            make_eml(title, description, user, eml_extra, dataset_id=dataset_id),
             encoding="utf-8",
         )
         for raw_name, df in resources.items():
