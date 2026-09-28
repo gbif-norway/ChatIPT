@@ -2,7 +2,7 @@ import sys
 from io import StringIO
 import calendar
 import hashlib
-from pydantic import Field, PositiveInt, BaseModel, EmailStr
+from pydantic import Field, PositiveInt, BaseModel, EmailStr, PrivateAttr
 import re
 from functools import lru_cache
 from html import unescape
@@ -26,7 +26,7 @@ from api.helpers.publish import (
 import datetime
 import utm
 from dateutil.parser import parse, ParserError
-from django.template.loader import render_to_string
+from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 from api.helpers import discord_bot
@@ -42,16 +42,15 @@ import requests
 import yaml
 
 from api.dwc_specs import (
-    ALL_SCHEMAS,
     CORE_SCHEMAS,
     EXTENSION_SCHEMAS,
     DarwinCoreCoreType,
     DarwinCoreExtensionType,
-    is_gbif_basis_of_record,
 )
 from api.dwc_dp_specs import (
     DWC_DP_SCHEMA_VERSION,
     RESERVED_TABLE_NAMES as DWC_DP_TABLE_NAMES,
+    DwcDpArchiveValidationError,
     build_datapackage_descriptor,
     export_dwc_dp_package,
     get_table_spec,
@@ -187,57 +186,6 @@ def normalize_event_date(value) -> Optional[str]:
     """
     return _normalize_event_date(value)[0]
 
-
-# Allowed Darwin Core terms
-DARWIN_CORE_TERMS = {
-    # Record-level
-    "type", "modified", "language", "references", "institutionID", "collectionID", "institutionCode",
-    "collectionCode", "ownerInstitutionCode", "basisOfRecord", "informationWithheld", "dynamicProperties",
-    # Occurrence
-    "occurrenceID", "catalogNumber", "recordNumber", "recordedBy", "recordedByID", "individualCount",
-    "organismQuantity", "organismQuantityType", "sex", "lifeStage", "reproductiveCondition", "caste",
-    "behavior", "vitality", "establishmentMeans", "degreeOfEstablishment", "pathway", "georeferenceVerificationStatus",
-    "occurrenceStatus", "associatedMedia", "associatedOccurrences", "associatedReferences", "associatedTaxa",
-    "otherCatalogNumbers", "occurrenceRemarks",
-    # Organism
-    "organismID", "organismName", "organismScope", "associatedOrganisms", "previousIdentifications",
-    "organismRemarks",
-    # MaterialEntity
-    "materialEntityID", "preparations", "disposition", "verbatimLabel", "associatedSequences", "materialEntityRemarks",
-    # MaterialSample
-    "materialSampleID",
-    # Event
-    "eventID", "parentEventID", "eventType", "fieldNumber", "eventDate", "eventTime", "startDayOfYear", "endDayOfYear",
-    "year", "month", "day", "verbatimEventDate", "habitat", "samplingProtocol", "sampleSizeValue", "sampleSizeUnit",
-    "samplingEffort", "fieldNotes", "eventRemarks",
-    # Location
-    "locationID", "higherGeographyID", "higherGeography", "continent", "waterBody", "islandGroup", "island", "country",
-    "countryCode", "stateProvince", "county", "municipality", "locality", "verbatimLocality", "minimumElevationInMeters",
-    "maximumElevationInMeters", "verbatimElevation", "verticalDatum", "minimumDepthInMeters", "maximumDepthInMeters",
-    "verbatimDepth", "minimumDistanceAboveSurfaceInMeters", "maximumDistanceAboveSurfaceInMeters", "locationAccordingTo",
-    "locationRemarks", "decimalLatitude", "decimalLongitude", "geodeticDatum", "coordinateUncertaintyInMeters",
-    "coordinatePrecision", "pointRadiusSpatialFit", "verbatimCoordinates", "verbatimLatitude", "verbatimLongitude",
-    "verbatimCoordinateSystem", "verbatimSRS", "footprintWKT", "footprintSRS", "footprintSpatialFit", "georeferencedBy",
-    "georeferencedDate", "georeferenceProtocol", "georeferenceSources", "georeferenceRemarks",
-    # GeologicalContext
-    "geologicalContextID", "earliestEonOrLowestEonothem", "latestEonOrHighestEonothem", "earliestEraOrLowestErathem",
-    "latestEraOrHighestErathem", "earliestPeriodOrLowestSystem", "latestPeriodOrHighestSystem", "earliestEpochOrLowestSeries",
-    "latestEpochOrHighestSeries", "earliestAgeOrLowestStage", "latestAgeOrHighestStage", "lowestBiostratigraphicZone",
-    "highestBiostratigraphicZone", "lithostratigraphicTerms", "group", "formation", "member", "bed",
-    # Identification
-    "identificationID", "verbatimIdentification", "identificationQualifier", "typeStatus", "identifiedBy", "identifiedByID",
-    "dateIdentified", "identificationReferences", "identificationVerificationStatus", "identificationRemarks",
-    # Taxon
-    "taxonID", "scientificNameID", "acceptedNameUsageID", "parentNameUsageID", "originalNameUsageID", "nameAccordingToID",
-    "namePublishedInID", "taxonConceptID", "scientificName", "acceptedNameUsage", "parentNameUsage", "originalNameUsage",
-    "nameAccordingTo", "namePublishedIn", "namePublishedInYear", "higherClassification", "kingdom", "phylum", "class", "order",
-    "superfamily", "family", "subfamily", "tribe", "subtribe", "genus", "genericName", "subgenus", "infragenericEpithet",
-    "specificEpithet", "infraspecificEpithet", "cultivarEpithet", "taxonRank", "verbatimTaxonRank", "scientificNameAuthorship",
-    "vernacularName", "nomenclaturalCode", "taxonomicStatus", "nomenclaturalStatus", "taxonRemarks",
-    # MeasurementOrFact
-    "measurementID", "parentMeasurementID", "measurementType", "measurementValue", "measurementAccuracy", "measurementUnit",
-    "measurementDeterminedBy", "measurementDeterminedDate", "measurementMethod", "measurementRemarks"
-}
 
 class EMLUser(BaseModel):
     """Representation of an individual associated with the dataset."""
@@ -675,29 +623,12 @@ class ReconcileSourceCoverage(OpenAIBaseModel):
     agent_id: PositiveInt = Field(..., description="REQUIRED: The ID of the agent making this request")
 
     def run(self):
-        from api.models import Agent, Table, UserFile
+        from api.models import Agent
         from api import source_coverage
-
-        agent = Agent.objects.get(id=self.agent_id)
-        dataset = agent.dataset
-        tables = list(Table.objects.filter(dataset=dataset).order_by('created_at', 'id'))
-        user_files = list(dataset.user_files.all())
-        metadata = {
-            'title': dataset.title,
-            'description': dataset.description,
-            'eml': dataset.eml,
-        }
-        state = source_coverage.coverage_state(
-            ((table.id, table.title, table.updated_at.isoformat()) for table in tables),
-            (
-                (user_file.id, user_file.filename, user_file.uploaded_at.isoformat(), user_file.source_manifest)
-                for user_file in user_files
-            ),
-            metadata,
-        )
-
         from api.schema_ledger import latest_tool_results
 
+        agent = Agent.objects.get(id=self.agent_id)
+        state = source_coverage_state(agent.dataset)
         previous_results = [
             result
             for result in latest_tool_results(agent._history_objs(), type(self).__name__)
@@ -711,61 +642,94 @@ class ReconcileSourceCoverage(OpenAIBaseModel):
                 f"so the result would be identical. Open items from that check: {open_items}. "
                 "Give each a disposition and save the coverage report with SetStructureNotes now."
             )
+        return source_coverage_report(agent.dataset)
 
-        destinations = {}
-        for table in tables:
-            resource_name = normalize_resource_name(table.title)
-            if resource_name in DWC_DP_TABLE_NAMES and table.df is not None:
-                destinations[resource_name] = table.df
-        if not destinations:
-            return (
-                "No DwC-DP resource tables exist yet, so there is nothing to reconcile. "
-                "Write the package first."
-            )
 
-        sources = []
-        problems = []
-        upload_fingerprints = set()
-        for user_file in user_files:
-            if user_file.file_type != UserFile.FileType.TABULAR:
+def source_coverage_state(dataset):
+    from api.models import Table
+    from api import source_coverage
+
+    return source_coverage.coverage_state(
+        (
+            (table.id, table.title, table.updated_at.isoformat())
+            for table in Table.objects.filter(dataset=dataset).order_by('created_at', 'id')
+        ),
+        (
+            (user_file.id, user_file.filename, user_file.uploaded_at.isoformat(), user_file.source_manifest)
+            for user_file in dataset.user_files.all()
+        ),
+        {
+            'title': dataset.title,
+            'description': dataset.description,
+            'eml': dataset.eml,
+        },
+    )
+
+
+def source_coverage_report(dataset):
+    """Reconcile every populated source column against the DwC-DP resource tables."""
+    from api.models import Table, UserFile
+    from api import source_coverage
+
+    tables = list(Table.objects.filter(dataset=dataset).order_by('created_at', 'id'))
+    user_files = list(dataset.user_files.all())
+    state = source_coverage_state(dataset)
+
+    destinations = {}
+    for table in tables:
+        resource_name = normalize_resource_name(table.title)
+        if resource_name in DWC_DP_TABLE_NAMES and table.df is not None:
+            destinations[resource_name] = table.df
+    if not destinations:
+        return (
+            "No DwC-DP resource tables exist yet, so there is nothing to reconcile. "
+            "Write the package first."
+        )
+
+    sources = []
+    problems = []
+    upload_fingerprints = set()
+    for user_file in user_files:
+        if user_file.file_type != UserFile.FileType.TABULAR:
+            continue
+        for manifest_table in (user_file.source_manifest or {}).get('tables', []):
+            if manifest_table.get('content_fingerprint'):
+                upload_fingerprints.add(manifest_table['content_fingerprint'])
+        try:
+            _, dataframes = user_file.extract_data()
+        except Exception as exc:
+            problems.append(f"Could not reparse upload {user_file.filename}: {exc}")
+            continue
+        for sheet_name, df in dataframes.items():
+            if df is None or getattr(df, 'empty', True):
                 continue
-            for manifest_table in (user_file.source_manifest or {}).get('tables', []):
-                if manifest_table.get('content_fingerprint'):
-                    upload_fingerprints.add(manifest_table['content_fingerprint'])
-            try:
-                _, dataframes = user_file.extract_data()
-            except Exception as exc:
-                problems.append(f"Could not reparse upload {user_file.filename}: {exc}")
-                continue
-            for sheet_name, df in dataframes.items():
-                if df is None or getattr(df, 'empty', True):
-                    continue
-                label = f"upload {user_file.filename}"
-                if len(dataframes) > 1:
-                    label += f" / {sheet_name}"
-                sources.append((label, Table.make_columns_unique(df.copy())))
+            label = f"upload {user_file.filename}"
+            if len(dataframes) > 1:
+                label += f" / {sheet_name}"
+            sources.append((label, Table.make_columns_unique(df.copy())))
 
-        for table in tables:
-            if normalize_resource_name(table.title) in DWC_DP_TABLE_NAMES or table.df is None:
-                continue
-            if Table.calculate_content_fingerprint(table.df) in upload_fingerprints:
-                continue  # identical to an upload that is already checked
-            sources.append((f"working table {table.id} `{table.title}`", table.df))
+    for table in tables:
+        if normalize_resource_name(table.title) in DWC_DP_TABLE_NAMES or table.df is None:
+            continue
+        if Table.calculate_content_fingerprint(table.df) in upload_fingerprints:
+            continue  # identical to an upload that is already checked
+        sources.append((f"working table {table.id} `{table.title}`", table.df))
 
-        if not sources:
-            return "No source uploads or working tables were found to reconcile. " + " ".join(problems)
+    if not sources:
+        return "No source uploads or working tables were found to reconcile. " + " ".join(problems)
 
-        metadata_text = " ".join([
-            dataset.title or "",
-            dataset.description or "",
-            json.dumps(dataset.eml, ensure_ascii=False, default=str)
-            if isinstance(dataset.eml, (dict, list)) else str(dataset.eml or ""),
-        ])
-        results = source_coverage.reconcile(sources, destinations, metadata_text)
-        report = source_coverage.render_report(results, destinations, state=state)
-        if problems:
-            report += "\n" + "\n".join(problems)
-        return report
+    metadata_text = " ".join([
+        dataset.title or "",
+        dataset.description or "",
+        json.dumps(dataset.eml, ensure_ascii=False, default=str)
+        if isinstance(dataset.eml, (dict, list)) else str(dataset.eml or ""),
+    ])
+    results = source_coverage.reconcile(sources, destinations, metadata_text)
+    report = source_coverage.render_report(results, destinations, state=state)
+    if problems:
+        report += "\n" + "\n".join(problems)
+    return report
+
 
 
 class SetWorkingPlan(OpenAIBaseModel):
@@ -845,7 +809,7 @@ def _dwc_dp_resources_from_mapping(dataset, resource_tables: Optional[List[DwcDp
 # across every dataset on the next deploy -- even ones whose tables never changed.
 # Without this, a validator bug fix or schema tightening would silently leave old
 # "valid" results trusted forever.
-_FINGERPRINT_CACHE_VERSION = 1
+_FINGERPRINT_CACHE_VERSION = 2
 
 
 def _dwc_dp_resource_fingerprint(dataset, resource_tables: Optional[List[DwcDpResourceTable]]) -> Optional[str]:
@@ -939,6 +903,26 @@ def _dwc_dp_export_fingerprint(
 
 def _validate_dwc_dp_for_dataset(dataset, resources):
     return validate_dwc_dp_resources(resources)
+
+
+def current_dwc_dp_validation(dataset):
+    """Validation of the current resource tables, reusing a cached result when unchanged."""
+    fingerprint = _dwc_dp_resource_fingerprint(dataset, None)
+    cached = dataset.dwc_dp_validation or {}
+    if (
+        fingerprint is not None
+        and cached.get("valid") is True
+        and cached.get("resource_fingerprint") == fingerprint
+    ):
+        return cached
+    resources, mapping_errors = _dwc_dp_resources_from_mapping(dataset, None)
+    if mapping_errors:
+        return {"valid": False, "errors": mapping_errors, "warnings": [], "mapping_errors": mapping_errors}
+    validation = _validate_dwc_dp_for_dataset(dataset, resources)
+    validation["resource_fingerprint"] = fingerprint
+    dataset.dwc_dp_validation = validation
+    dataset.save(update_fields=["dwc_dp_validation"])
+    return validation
 
 
 def _remove_empty_dwc_dp_resources(dataset) -> list[str]:
@@ -1101,6 +1085,13 @@ class ExportDwcDp(OpenAIBaseModel):
             return f"DwC-DP successfully created and uploaded: {url}{warning_text}"
         except EmlExportError as exc:
             return f"Error: {exc}"
+        except DwcDpArchiveValidationError as exc:
+            # The pre-export validation passed but the serialized package did not;
+            # the agent can often fix the data, and we want to know about the gap.
+            discord_bot.send_discord_message(
+                f"⚠️ ExportDwcDp archive validation failed:\nAgent ID: {self.agent_id}\n{str(exc)[:1500]}"
+            )
+            return f"DwC-DP package was not exported. {exc}"
         except Exception as exc:
             import traceback
             discord_bot.send_discord_message(
@@ -1190,315 +1181,6 @@ class PreviewDwcDpDescriptor(OpenAIBaseModel):
             return repr(exc)[:2000]
 
 
-class BasicValidationForSomeDwCTerms(OpenAIBaseModel):
-    """
-    A few automatic basic checks for an Agent's tables against the Darwin Core standard.
-    Returns a basic validation report.
-    """
-    agent_id: PositiveInt = Field(...)
-
-    @staticmethod
-    def _should_ignore_column(column_name: str) -> bool:
-        lowered = column_name.strip().lower()
-        return lowered == "id" or lowered.endswith("id")
-
-    def assess_columns_against_dwc(self, columns) -> dict:
-        normalized_map: Dict[str, str] = {}
-        for col in columns:
-            name = str(col).strip()
-            if not name or self._should_ignore_column(name):
-                continue
-            lower = name.lower()
-            normalized_map.setdefault(lower, name)
-
-        if not normalized_map:
-            return {
-                'status': 'skipped',
-                'message': 'Skipped DwC schema check because only identifier-style columns were present.',
-            }
-
-        normalized_cols = set(normalized_map.keys())
-
-        for schema in ALL_SCHEMAS:
-            if normalized_cols <= schema.normalized_terms:
-                return {
-                    'status': 'match',
-                    'schema': schema.key,
-                    'title': schema.title,
-                    'message': f"Columns align with the '{schema.title}' schema ({schema.key}).",
-                }
-
-        best_schema = None
-        best_invalid: set[str] | None = None
-        best_score = None
-        for schema in ALL_SCHEMAS:
-            allowed = schema.normalized_terms
-            invalid = normalized_cols - allowed
-            shared = normalized_cols & allowed
-            score = (len(invalid), -len(shared))
-            if best_score is None or score < best_score:
-                best_score = score
-                best_schema = schema
-                best_invalid = invalid
-
-        if best_schema and best_invalid is not None and len(best_invalid) < len(normalized_cols):
-            invalid_cols = sorted(normalized_map[name] for name in best_invalid)
-            return {
-                'status': 'partial',
-                'schema': best_schema.key,
-                'title': best_schema.title,
-                'invalid_columns': invalid_cols,
-                'message': (
-                    f"Closest match is '{best_schema.title}' ({best_schema.key}), "
-                    f"but the following columns are not allowed: {', '.join(invalid_cols)}."
-                ),
-            }
-
-        return {
-            'status': 'no_match',
-            'invalid_columns': sorted(normalized_map[name] for name in normalized_cols),
-            'message': 'No Darwin Core core or extension schema covers the non-identifier columns in this table.',
-        }
-
-    def validate_and_format_event_dates(self, df):
-        failed_indices = []
-        future_date_indices = []
-        current_date = datetime.date.today()
-
-        if "eventDate" in df.columns:
-            for idx, date_value in df["eventDate"].items():
-                formatted_date, comparison_date = _normalize_event_date(date_value)
-                if formatted_date is None:
-                    failed_indices.append(idx)
-                    continue
-                df.at[idx, "eventDate"] = formatted_date
-                if comparison_date and comparison_date > current_date:
-                    future_date_indices.append(idx)
-
-        return df, failed_indices, future_date_indices
-    
-    def validate_scientific_names(self, df):
-        """
-        Validate scientific names against GBIF API to detect potential typos.
-        
-        Args:
-            df: DataFrame with scientificName column
-            
-        Returns:
-            str: Validation message describing any issues found, or None if no issues
-        """
-        import urllib.parse
-        import time
-        
-        # Get unique scientific names and their counts
-        name_counts = df['scientificName'].value_counts()
-        unique_names = name_counts.index.tolist()
-        
-        # Remove empty/null names
-        unique_names = [name for name in unique_names if pd.notna(name) and str(name).strip()]
-        
-        if not unique_names:
-            return "No valid scientific names found in the scientificName column."
-        
-        # Determine which names to check based on quantity
-        if len(unique_names) <= 50:
-            # Check all names if reasonable amount
-            names_to_check = unique_names
-        else:
-            # Check the least common names (most likely to be typos) - bottom 30
-            names_to_check = name_counts.tail(30).index.tolist()
-        
-        fuzzy_matches = []
-        unmatched_names = []
-        corrected_names = {}
-        
-        print(f"Validating {len(names_to_check)} scientific names against GBIF API...")
-        
-        for i, name in enumerate(names_to_check):
-            try:
-                # Add small delay to be respectful to GBIF API
-                if i > 0 and i % 10 == 0:
-                    time.sleep(1)
-                
-                encoded_name = urllib.parse.quote(str(name))
-                response = requests.get(
-                    f"https://api.gbif.org/v1/species/match?scientificName={encoded_name}",
-                    timeout=10
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    confidence = data.get('confidence', 0)
-                    match_type = data.get('matchType', '')
-                    suggested_name = data.get('canonicalName', data.get('scientificName', ''))
-                    
-                    if match_type == 'FUZZY' and confidence >= 80:
-                        # High confidence fuzzy match - likely a typo
-                        fuzzy_matches.append({
-                            'original': name,
-                            'suggested': suggested_name,
-                            'confidence': confidence
-                        })
-                        # Auto-correct high confidence matches
-                        if confidence >= 85:
-                            corrected_names[name] = suggested_name
-                    elif match_type == 'NONE' or confidence < 50:
-                        # No match or very low confidence
-                        unmatched_names.append(name)
-                        
-            except Exception as e:
-                print(f"Error checking name '{name}': {e}")
-                continue
-        
-        # Apply auto-corrections to the DataFrame
-        if corrected_names:
-            for original, corrected in corrected_names.items():
-                df.loc[df['scientificName'] == original, 'scientificName'] = corrected
-        
-        # Build validation message
-        issues = []
-        
-        if corrected_names:
-            corrections_list = [f"'{orig}' → '{corr}'" for orig, corr in corrected_names.items()]
-            issues.append(f"Auto-corrected {len(corrected_names)} scientific names with high confidence matches: {'; '.join(corrections_list[:5])}")
-            if len(corrections_list) > 5:
-                issues.append(f"... and {len(corrections_list) - 5} more corrections")
-        
-        if fuzzy_matches and not corrected_names:
-            # Only show fuzzy matches that weren't auto-corrected
-            remaining_fuzzy = [match for match in fuzzy_matches if match['original'] not in corrected_names]
-            if remaining_fuzzy:
-                fuzzy_list = [f"'{match['original']}' (suggested: '{match['suggested']}', confidence: {match['confidence']}%)" for match in remaining_fuzzy[:3]]
-                issues.append(f"Found {len(remaining_fuzzy)} potential typos with moderate confidence: {'; '.join(fuzzy_list)}")
-                if len(remaining_fuzzy) > 3:
-                    issues.append(f"... and {len(remaining_fuzzy) - 3} more potential typos")
-        
-        if unmatched_names:
-            unmatched_list = [f"'{name}'" for name in unmatched_names[:5]]
-            issues.append(f"Could not match {len(unmatched_names)} names against GBIF database: {', '.join(unmatched_list)}")
-            if len(unmatched_names) > 5:
-                issues.append(f"... and {len(unmatched_names) - 5} more unmatched names")
-            issues.append("These may be valid names not in GBIF, recent taxonomic changes, or require manual verification.")
-        
-        if issues:
-            return " ".join(issues)
-        else:
-            print(f"All {len(names_to_check)} scientific names validated successfully against GBIF.")
-            return None
-    
-    def run(self):
-        from api.models import Agent, Table
-        agent = Agent.objects.get(id=self.agent_id)
-        dataset = agent.dataset
-        tables = dataset.table_set.all()
-        table_results = {}
-        for table in tables:
-            table_results[table.id] = {}
-            df = table.df
-            if all(isinstance(col, int) for col in df.columns):            
-                table_results[table.id]['table_errors'] = f'Table {table.id} appears to only have ints as column headers - most probably the column headers are row 1 or you need to make column headers. Fix this and run the validation report again.'
-            else:
-                column_assessment = self.assess_columns_against_dwc(df.columns)
-                table_results[table.id]['dwc_schema'] = column_assessment
-
-                # Cast every column header to string first so mixed-type headers (e.g. ints) do not raise
-                standardized_columns = {str(col).lower(): col for col in df.columns}
-                matched_columns = {}
-                for term in DARWIN_CORE_TERMS:
-                    if term.lower() in standardized_columns:
-                        original_col = standardized_columns[term.lower()]
-                        matched_columns[term] = original_col
-
-                # Determine columns that couldn't be matched *before* any renaming
-                unmatched_columns = [col for col in df.columns if col not in matched_columns.values()]
-
-                # Apply renaming now (mapping original ➜ standard term) so downstream logic sees the correct headers
-                if matched_columns:
-                    rename_mapping = {orig: term for term, orig in matched_columns.items() if term != orig}
-                    if rename_mapping:
-                        df.rename(columns=rename_mapping, inplace=True)
-
-                table_results[table.id]['unmatched_columns'] = unmatched_columns
-                
-                validation_errors = {}
-                if 'basisOfRecord' in df.columns:
-                    invalid_basis = df[~df['basisOfRecord'].map(is_gbif_basis_of_record)]
-                    if not invalid_basis.empty:
-                        validation_errors['basisOfRecord'] = invalid_basis.index.tolist()
-                if 'decimalLatitude' in df.columns:
-                    lat_numeric = pd.to_numeric(df['decimalLatitude'], errors='coerce')
-                    # Update the DataFrame so the column is stored as numeric (NaNs where conversion failed)
-                    df['decimalLatitude'] = lat_numeric
-                    invalid_latitude = df[lat_numeric.isna() | (lat_numeric < -90) | (lat_numeric > 90)]
-                    if not invalid_latitude.empty:
-                        validation_errors['decimalLatitude'] = invalid_latitude.index.tolist()
-                if 'decimalLongitude' in df.columns:
-                    lon_numeric = pd.to_numeric(df['decimalLongitude'], errors='coerce')
-                    # Persist numeric conversion back to the DataFrame
-                    df['decimalLongitude'] = lon_numeric
-                    invalid_longitude = df[lon_numeric.isna() | (lon_numeric < -180) | (lon_numeric > 180)]
-                    if not invalid_longitude.empty:
-                        validation_errors['decimalLongitude'] = invalid_longitude.index.tolist()
-                if 'individualCount' in df.columns:
-                    ind_numeric = pd.to_numeric(df['individualCount'], errors='coerce')
-                    # Persist numeric conversion back to the DataFrame
-                    df['individualCount'] = ind_numeric
-                    invalid_individual_count = df[ind_numeric.isna() | (ind_numeric <= 0) | (ind_numeric % 1 != 0)]
-                    if not invalid_individual_count.empty:
-                        validation_errors['individualCount'] = invalid_individual_count.index.tolist()
-                if 'catalogNumber' in df.columns:
-                    # Check for duplicate catalogNumbers
-                    duplicate_catalog_numbers = df[df['catalogNumber'].duplicated(keep=False)]
-                    if not duplicate_catalog_numbers.empty:
-                        validation_errors['catalogNumber'] = duplicate_catalog_numbers.index.tolist()
-                
-                corrected_dates_df, event_date_error_indices, future_date_indices = self.validate_and_format_event_dates(df)
-                validation_errors['eventDate'] = event_date_error_indices
-                validation_errors['eventDateFuture'] = future_date_indices
-                table_results[table.id]['validation_errors'] = validation_errors
-
-                table.df = corrected_dates_df
-                table.save()
-                
-                general_errors = {}
-
-                if 'scientificName' not in df.columns:
-                    general_errors['scientificName'] = 'scientificName is missing from this Table (this is fine if this Table is a Measurement or Fact extension)'
-                else:
-                    # Scientific name validation using GBIF API
-                    scientific_name_issues = self.validate_scientific_names(df)
-                    if scientific_name_issues:
-                        general_errors['scientificName'] = scientific_name_issues
-
-                if ('organismQuantity' in df.columns and 'organismQuantityType' not in df.columns):
-                    general_errors['organismQuantity'] = 'organismQuantity is a column in this Table, but the corresponding required column "organismQuantityType" is missing.'
-                elif ('organismQuantityType' in df.columns and 'organismQuantity' not in df.columns):
-                    general_errors['organismQuantity'] = 'organismQuantityType is a column in this Table, but the corresponding required column "organismQuantity" is missing.'
-                if 'basisOfRecord' not in df.columns:
-                    general_errors['basisOfRecord'] = 'basisOfRecord is missing from this Table (this is fine if the core is Taxon or if this Table is a Measurement or Fact extension)'
-                if 'occurrenceID' not in df.columns:
-                    general_errors['occurrenceID'] = 'occurrenceID is missing from this Table and is a required field. If this is a Measurement or Fact table, the occurrenceID column needs to link back to the core occurrence table.'
-                if 'id' not in df.columns and 'ID' not in df.columns and 'measurementID' not in df.columns:
-                    # It is an occurrence core table
-                    if 'occurrenceID' in df.columns:
-                        occurrence_ids = df['occurrenceID'].astype('string').fillna('').str.strip()
-                        non_empty_occurrence_ids = occurrence_ids[occurrence_ids != '']
-                        if not non_empty_occurrence_ids.str.casefold().is_unique:
-                            general_errors['occurrenceID'] = (
-                                'Is this an occurrence core table? If it is, occurrenceID must be unique '
-                                '(case-insensitive) - use e.g. '
-                                '`df["occurrenceID"] = [str(uuid.uuid4()) for _ in range(len(df))]` '
-                                'to force a unique value for each row. Be careful of any extension tables '
-                                'with linkages using the ID column.'
-                            )
-
-                table_results[table.id]['general_errors'] = general_errors
-        
-        print('validation report:')
-        print(render_to_string('validation.txt', context={ 'tables': table_results }))
-        return render_to_string('validation.txt', context={ 'tables': table_results })
-
-
 class Python(OpenAIBaseModel):
     """
     Run python code using `exec(code, globals={'Dataset': Dataset, 'Table': Table, 'pd': pd, 'np': np, 'uuid': uuid, 'datetime': datetime, 're': re, 'utm': utm, 'replace_table': replace_table, 'create_or_replace': create_or_replace, 'delete_tables': delete_tables, 'normalize_event_date': normalize_event_date}, {})`.
@@ -1514,9 +1196,17 @@ class Python(OpenAIBaseModel):
         • `delete_tables(dataset_id, exclude_ids=None) -> list[int]` deletes all tables for the dataset except those in `exclude_ids` and returns deleted ids.
         • `normalize_event_date(value) -> str | None` normalizes complete or partial dates without inventing missing precision.
 
+    Preloaded for you:
+    - `dataset`: this dataset's Dataset object.
+    - `sources`: the original uploads, `sources[filename][sheet_name] -> DataFrame`, freshly loaded
+      on first access. `list(sources)` shows the filenames without loading anything.
+      `sources.cell_comments(filename)` returns that workbook's cell comments by sheet.
+
     Other notes:
-    - Use print() for output – stdout is captured and truncated to 2000 chars.
-    - State does not persist between calls.
+    - Use print() for output – stdout is captured and truncated to 3000 chars.
+    - Variables you assign (DataFrames, dicts, lists, ...) persist into your later Python calls in
+      this task stage, so load and prepare once, then reuse. Functions are not kept; redefine
+      them when needed. A persisted DataFrame is a snapshot: reload a Table after changing it.
     - ALL YOUR CODE IS PREFIXED AUTOMATICALLY WITH: 
         ```
         import pandas as pd
@@ -1532,14 +1222,22 @@ class Python(OpenAIBaseModel):
         So this SHOULD NOT BE INCLUDED. Just begin using (without importing) pd, np, uuid, re, utm, replace_table, create_or_replace, delete_tables, normalize_event_date, Table, Dataset and datetime as necessary.
     """
     code: str = Field(..., description="String containing valid python code to be executed in `exec()`")
+    _agent_id: Optional[int] = PrivateAttr(None)
+
+    def bind_agent(self, agent_id):
+        self._agent_id = agent_id
+        return self
 
     def run(self):
+        from api import python_sessions
+
         code = re.sub(r"^(\s|`)*(?i:python)?\s*", "", self.code)
         code = re.sub(r"(\s|`)*$", "", code)
         old_stdout = sys.stdout
         new_stdout = StringIO()
         sys.stdout = new_stdout
         result = ''
+        note = ''
         try:
             from api.models import Dataset, Table
 
@@ -1578,7 +1276,6 @@ class Python(OpenAIBaseModel):
                     print(f"Deleted tables {deleted_ids}")
                 return deleted_ids
 
-            context_locals = {}
             context_globals = {
                 'Dataset': Dataset,
                 'Table': Table,
@@ -1593,20 +1290,30 @@ class Python(OpenAIBaseModel):
                 'delete_tables': delete_tables,
                 'normalize_event_date': normalize_event_date,
             }
-            combined_context = context_globals.copy()
-            combined_context.update(context_locals)
-            exec(code, combined_context, combined_context)  # See https://github.com/python/cpython/issues/86084
-            stdout_value = new_stdout.getvalue()
-            
-            if stdout_value:
-                result = stdout_value
+            if self._agent_id:
+                from api.models import Agent
+
+                dataset = Agent.objects.select_related('dataset').get(id=self._agent_id).dataset
+                context_globals['dataset'] = dataset
+                context_globals['sources'] = python_sessions.SourceFiles(dataset)
+                combined_context = {**python_sessions.load(self._agent_id), **context_globals}
             else:
-                result = f"Executed successfully without errors."
+                combined_context = context_globals.copy()
+            try:
+                exec(code, combined_context, combined_context)  # See https://github.com/python/cpython/issues/86084
+                result = new_stdout.getvalue() or "Executed successfully without errors."
+            except Exception as e:
+                result = new_stdout.getvalue() + repr(e)
+            if self._agent_id:
+                reserved = set(context_globals) | {'__builtins__'}
+                skipped = python_sessions.save(self._agent_id, combined_context, reserved)
+                if skipped:
+                    note = f"\n[Not kept for later calls: {', '.join(sorted(skipped))}]"
         except Exception as e:
             result = repr(e)
         finally:
             sys.stdout = old_stdout
-        return str(result)[:3000]
+        return str(result)[:3000] + note
 
 
 class NewTableInput(BaseModel):
@@ -2742,28 +2449,12 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
                 Task.PACKAGE_PREPARATION_TASK,
                 Task.PREPUBLICATION_QUALITY_TASK,
             }:
-                fingerprint = _dwc_dp_resource_fingerprint(agent.dataset, None)
-                cached = agent.dataset.dwc_dp_validation or {}
-                if (
-                    fingerprint is not None
-                    and cached.get("valid") is True
-                    and cached.get("resource_fingerprint") == fingerprint
-                ):
-                    # Already validated (by ValidateDwcDp or ExportDwcDp) with nothing
-                    # changed since -- reuse that result instead of re-validating on
-                    # every completion attempt.
-                    validation = cached
-                else:
-                    resources, mapping_errors = _dwc_dp_resources_from_mapping(agent.dataset, None)
-                    if mapping_errors:
-                        return (
-                            f"Error: Cannot complete '{task_name}' because the current DwC-DP "
-                            f"resource mapping is invalid: {'; '.join(mapping_errors)}"
-                        )
-                    validation = _validate_dwc_dp_for_dataset(agent.dataset, resources)
-                    validation["resource_fingerprint"] = fingerprint
-                    agent.dataset.dwc_dp_validation = validation
-                    agent.dataset.save(update_fields=["dwc_dp_validation"])
+                validation = current_dwc_dp_validation(agent.dataset)
+                if validation.get("mapping_errors"):
+                    return (
+                        f"Error: Cannot complete '{task_name}' because the current DwC-DP "
+                        f"resource mapping is invalid: {'; '.join(validation['mapping_errors'])}"
+                    )
                 if not validation["valid"]:
                     details = "; ".join(validation["errors"][:5])
                     return (
@@ -2801,6 +2492,11 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
                         "Error: Cannot complete the pre-publication quality gate because the "
                         "GBIF validator did not mark the archive as indexable."
                     )
+            if task_name == "Data validation and refinement":
+                from api import quality_report
+
+                if not quality_report.refinement_report_delivered(agent):
+                    return quality_report.start_refinement_report(agent)
             if task_name in {
                 "Data validation and refinement",
                 Task.PREPUBLICATION_QUALITY_TASK,
@@ -2999,6 +2695,13 @@ class UploadDwCA(OpenAIBaseModel):
             dataset.dwca_url = dwca_url
             dataset.dwca_validation = None
             dataset.save(update_fields=["dwc_core", "dwca_url", "dwca_validation"])
+            # Queryset updates skip Table.save, which would discard the new archive.
+            dataset.table_set.exclude(dwca_role='').update(dwca_role='')
+            dataset.table_set.filter(id=self.core_table_id).update(dwca_role='core')
+            for assignment in extension_assignments:
+                dataset.table_set.filter(id=assignment.table_id).update(
+                    dwca_role=getattr(assignment.extension_type, 'value', assignment.extension_type)
+                )
             return f'DwCA successfully created and uploaded: {dwca_url}'
         except DwcaExtensionLinkError as e:
             assignments = self.extension_tables or []
@@ -3047,6 +2750,76 @@ class UploadDwCA(OpenAIBaseModel):
             return repr(e)[:2000]
 
 
+def inspect_publication_artifacts(dataset):
+    """Summarize the current DwC-A, EML, table counts, and GBIF validator issues."""
+    uri = os.getenv("MINIO_URI", "")
+    bucket = os.getenv("MINIO_BUCKET", "")
+    folder = os.getenv("MINIO_BUCKET_FOLDER", "").strip("/")
+    prefix = f"https://{uri}/{bucket}/{folder}/"
+    url = dataset.dwca_url or ""
+    name = url.removeprefix(prefix) if url.startswith(prefix) else ""
+    if not re.fullmatch(r"output-\d{4}-\d{2}-\d{2}-\d{6}-\d{6}\.zip", name):
+        raise ValueError("The current DwC-A is missing or is not a ChatIPT archive in configured storage.")
+
+    client = Minio(
+        uri,
+        access_key=os.getenv("MINIO_ACCESS_KEY"),
+        secret_key=os.getenv("MINIO_SECRET_KEY"),
+    )
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = Path(temp_dir) / "archive.zip"
+        client.fget_object(bucket, f"{folder}/{name}", str(local_path))
+        report = inspect_dwca_archive(local_path)
+
+    intended_temporal = (dataset.eml or {}).get("temporal_scope")
+    if intended_temporal and not report["eml"].get("temporal_coverage"):
+        report["preflight"]["valid"] = False
+        report["preflight"]["errors"].append(
+            "The saved temporal_scope is absent from the exported EML. "
+            "Use an exportable date range and rebuild the archive."
+        )
+
+    for field in ("description", "methodology"):
+        value = report["eml"].get(field)
+        if value:
+            report["eml"][f"{field}_length"] = len(value)
+            report["eml"][field] = value[:600]
+
+    report["source_tables"] = [
+        {
+            "file": user_file.filename,
+            "tables": [
+                {"name": table.get("name"), "row_count": table.get("row_count")}
+                for table in (user_file.source_manifest or {}).get("tables", [])
+            ],
+        }
+        for user_file in dataset.user_files.all()
+    ]
+    report["dwc_dp_tables"] = [
+        {"name": table.title, "row_count": table.row_count}
+        for table in dataset.table_set.filter(title__in=DWC_DP_TABLE_NAMES)
+    ]
+    validation = dataset.dwca_validation or {}
+    report["gbif_validation"] = {
+        "status": validation.get("status", "NOT_RUN"),
+        "current_archive": validation.get("url") == url,
+        "key": validation.get("key"),
+        "indexable": (validation.get("metrics") or {}).get("indexeable"),
+        "issues": [
+            {
+                "file": file.get("fileName"),
+                "codes": [
+                    {"code": issue.get("issue"), "count": issue.get("count")}
+                    for issue in (file.get("issues") or [])
+                ],
+            }
+            for file in (validation.get("metrics") or {}).get("files", [])
+            if file.get("issues")
+        ],
+    }
+    return report
+
+
 class InspectPublicationArtifacts(OpenAIBaseModel):
     """Summarize the current DwC-A, EML, table counts, and GBIF validator issues."""
 
@@ -3056,74 +2829,10 @@ class InspectPublicationArtifacts(OpenAIBaseModel):
         from api.models import Agent
 
         try:
-            agent = Agent.objects.select_related("dataset").get(id=self.agent_id)
-            dataset = agent.dataset
-            uri = os.getenv("MINIO_URI", "")
-            bucket = os.getenv("MINIO_BUCKET", "")
-            folder = os.getenv("MINIO_BUCKET_FOLDER", "").strip("/")
-            prefix = f"https://{uri}/{bucket}/{folder}/"
-            url = dataset.dwca_url or ""
-            name = url.removeprefix(prefix) if url.startswith(prefix) else ""
-            if not re.fullmatch(r"output-\d{4}-\d{2}-\d{2}-\d{6}-\d{6}\.zip", name):
-                return "Error: The current DwC-A is missing or is not a ChatIPT archive in configured storage."
-
-            client = Minio(
-                uri,
-                access_key=os.getenv("MINIO_ACCESS_KEY"),
-                secret_key=os.getenv("MINIO_SECRET_KEY"),
-            )
-            with tempfile.TemporaryDirectory() as temp_dir:
-                local_path = Path(temp_dir) / "archive.zip"
-                client.fget_object(bucket, f"{folder}/{name}", str(local_path))
-                report = inspect_dwca_archive(local_path)
-
-            intended_temporal = (dataset.eml or {}).get("temporal_scope")
-            if intended_temporal and not report["eml"].get("temporal_coverage"):
-                report["preflight"]["valid"] = False
-                report["preflight"]["errors"].append(
-                    "The saved temporal_scope is absent from the exported EML. "
-                    "Use an exportable date range and rebuild the archive."
-                )
-
-            for field in ("description", "methodology"):
-                value = report["eml"].get(field)
-                if value:
-                    report["eml"][f"{field}_length"] = len(value)
-                    report["eml"][field] = value[:600]
-
-            report["source_tables"] = [
-                {
-                    "file": user_file.filename,
-                    "tables": [
-                        {"name": table.get("name"), "row_count": table.get("row_count")}
-                        for table in (user_file.source_manifest or {}).get("tables", [])
-                    ],
-                }
-                for user_file in dataset.user_files.all()
-            ]
-            report["dwc_dp_tables"] = [
-                {"name": table.title, "row_count": table.row_count}
-                for table in dataset.table_set.filter(title__in=DWC_DP_TABLE_NAMES)
-            ]
-            validation = dataset.dwca_validation or {}
-            report["gbif_validation"] = {
-                "status": validation.get("status", "NOT_RUN"),
-                "current_archive": validation.get("url") == url,
-                "key": validation.get("key"),
-                "indexable": (validation.get("metrics") or {}).get("indexeable"),
-                "issues": [
-                    {
-                        "file": file.get("fileName"),
-                        "codes": [
-                            {"code": issue.get("issue"), "count": issue.get("count")}
-                            for issue in (file.get("issues") or [])
-                        ],
-                    }
-                    for file in (validation.get("metrics") or {}).get("files", [])
-                    if file.get("issues")
-                ],
-            }
-            return json.dumps(report, ensure_ascii=False)
+            dataset = Agent.objects.select_related("dataset").get(id=self.agent_id).dataset
+            return json.dumps(inspect_publication_artifacts(dataset), ensure_ascii=False)
+        except ValueError as exc:
+            return f"Error: {exc}"
         except Exception as exc:
             return f"Error: Could not inspect the current publication archive: {exc}"
 
@@ -3206,20 +2915,142 @@ class PublishToGBIF(OpenAIBaseModel):
             return repr(e)[:2000]
 
 
+GBIF_TERMINAL_STATUSES = ('SUCCEEDED', 'FAILED', 'FINISHED')
+
+
+def _gbif_auth():
+    return HTTPBasicAuth(os.getenv('GBIF_USER'), os.getenv('GBIF_PASSWORD'))
+
+
+def _gbif_recheck_seconds():
+    return max(int(getattr(settings, 'GBIF_VALIDATION_RECHECK_SECONDS', 60)), 1)
+
+
+def _gbif_max_wait_seconds():
+    return max(int(getattr(settings, 'GBIF_VALIDATION_MAX_WAIT_SECONDS', 3 * 60 * 60)), 1)
+
+
+class GbifSubmissionError(RuntimeError):
+    pass
+
+
+def submit_gbif_validation(archive_url):
+    """Submit an archive URL to the GBIF validator and return the validation key."""
+    # The validator expects the URL as the multipart/form-data field "fileUrl".
+    response = requests.post(
+        'https://api.gbif.org/v1/validation/url',
+        auth=_gbif_auth(),
+        headers={'Accept': 'application/json'},
+        files={'fileUrl': (None, archive_url)},
+        timeout=30,
+    )
+    if response.status_code not in (200, 201, 202):
+        raise GbifSubmissionError(
+            f'Validator submission failed. Status: {response.status_code}, Body: {response.text}'
+        )
+    key = response.json().get('key')
+    if not key:
+        raise GbifSubmissionError(f'Validator response did not contain a key: {response.text}')
+    return key
+
+
+def get_gbif_validation(key):
+    resp = requests.get(f'https://api.gbif.org/v1/validation/{key}', auth=_gbif_auth(), timeout=30)
+    if resp.status_code != 200:
+        raise requests.HTTPError(f'Status fetch failed with {resp.status_code}')
+    return resp.json()
+
+
+def _fetch_gbif_validation(dataset, key, validation_url):
+    """One status request; saves and returns the current validation payload."""
+    validation = {**get_gbif_validation(key), 'url': validation_url, 'key': key}
+    previous = dataset.dwca_validation or {}
+    if previous.get('key') == key and previous.get('submitted_at'):
+        validation['submitted_at'] = previous['submitted_at']
+    dataset.dwca_validation = validation
+    dataset.save(update_fields=['dwca_validation'])
+    return validation
+
+
+def _gbif_waiting_payload(key, validation_url, last_payload, waiting_since, failed_checks=0):
+    return {
+        'status': 'RUNNING',
+        'message': (
+            'GBIF is still validating this archive. ChatIPT keeps checking and will replace '
+            'this result with the finished validation automatically; do not call ValidateDwCA '
+            'again for this archive.'
+        ),
+        'validation_key': key,
+        'url': validation_url,
+        'last_seen_status': (last_payload or {}).get('status'),
+        'waiting_since': waiting_since,
+        'failed_checks': failed_checks,
+        'next_recheck_at': (
+            timezone.now() + datetime.timedelta(seconds=_gbif_recheck_seconds())
+        ).isoformat(),
+    }
+
+
+def refresh_gbif_validation(dataset, waiting):
+    """Server-side recheck of a waiting validation, with no model turn.
+
+    Returns the tool-result text that should replace the waiting payload: the
+    finished validation, a new waiting payload, or an explanation the agent
+    must act on.
+    """
+    key = waiting.get('validation_key')
+    validation_url = waiting.get('url')
+    saved = dataset.dwca_validation or {}
+    if saved.get('key') != key or dataset.dwca_url != validation_url:
+        return json.dumps({
+            'status': 'SUPERSEDED',
+            'message': (
+                'This validation belongs to an archive that is no longer the current DwC-A. '
+                'Call ValidateDwCA for the current archive if it still needs validation.'
+            ),
+            'validation_key': key,
+            'url': validation_url,
+        })
+    waiting_since = waiting.get('waiting_since') or timezone.now().isoformat()
+    failed_checks = int(waiting.get('failed_checks') or 0)
+    try:
+        validation = _fetch_gbif_validation(dataset, key, validation_url)
+    except Exception as e:
+        failed_checks += 1
+        if failed_checks >= 5:
+            return json.dumps({
+                'status': 'CHECK_FAILED',
+                'message': f'Checking the GBIF validator failed repeatedly: {repr(e)[:500]}',
+                'validation_key': key,
+                'url': validation_url,
+            })
+        return json.dumps(_gbif_waiting_payload(key, validation_url, None, waiting_since, failed_checks))
+    if validation.get('status') in GBIF_TERMINAL_STATUSES:
+        return json.dumps(validation)
+    started = datetime.datetime.fromisoformat(waiting_since)
+    if (timezone.now() - started).total_seconds() >= _gbif_max_wait_seconds():
+        return json.dumps({
+            'status': 'TIMED_OUT',
+            'message': (
+                f'GBIF has not finished validating this archive after {_gbif_max_wait_seconds() // 60} '
+                'minutes. Tell the user validation is delayed; call ValidateDwCA with this '
+                'validation_key later to resume waiting.'
+            ),
+            'validation_key': key,
+            'url': validation_url,
+            'last_seen_status': validation.get('status'),
+        })
+    return json.dumps(_gbif_waiting_payload(key, validation_url, validation, waiting_since))
+
+
 class ValidateDwCA(OpenAIBaseModel):
     """
-    Submits the dataset's DwCA URL to the GBIF validator, then polls the validator until the job finishes.
+    Submits the dataset's current DwC-A to the GBIF validator and returns the finished validation.
 
-    This can take a long time (often >10 min). To avoid request stalls, polling is bounded by
-    `max_poll_attempts`. If validation is still running, this tool returns a resumable response
-    containing the validator key so the agent can poll again later.
+    GBIF validation often takes over 10 minutes. Call this once per archive, as the only tool call
+    in that turn: ChatIPT waits for GBIF and delivers the finished result as this call's output.
     """
     agent_id: PositiveInt = Field(...)
-    poll_interval_seconds: PositiveInt = Field(400, description="Seconds to wait between polling attempts.")
-    max_poll_attempts: PositiveInt = Field(
-        4,
-        description="Maximum status polls (initial + retries) before returning a resumable 'still running' response.",
-    )
     validation_key: Optional[str] = Field(
         None,
         description="Optional existing GBIF validator key to resume polling instead of creating a new job.",
@@ -3238,8 +3069,6 @@ class ValidateDwCA(OpenAIBaseModel):
 
     def run(self):
         from api.models import Agent
-        import requests, time
-        from requests.auth import HTTPBasicAuth
 
         try:
             agent = Agent.objects.get(id=self.agent_id)
@@ -3274,8 +3103,6 @@ class ValidateDwCA(OpenAIBaseModel):
             if not dataset.dwca_url:
                 if not recovering_archive:
                     return 'Error: No DwCA URL found. Run UploadDwCA first or recover an existing archive.'
-            auth = HTTPBasicAuth(os.getenv('GBIF_USER'), os.getenv('GBIF_PASSWORD'))
-
             key = self.validation_key
             validation_url = self.archive_url if recovering_archive else dataset.dwca_url
             if key:
@@ -3289,30 +3116,16 @@ class ValidateDwCA(OpenAIBaseModel):
                         'Start a new validation without validation_key.'
                     )
             else:
-                # Align with GBIF Validator API: send the DwCA URL as multipart/form-data field "fileUrl".
-                headers = {'Accept': 'application/json'}
-                files = {'fileUrl': (None, validation_url)}  # send as simple form field, not a local file upload
-                submit_resp = requests.post(
-                    'https://api.gbif.org/v1/validation/url',
-                    auth=auth,
-                    headers=headers,
-                    files=files,
-                    timeout=30,
-                )
-                if submit_resp.status_code not in (200, 201, 202):
-                    error_msg = f'Validator submission failed. Status: {submit_resp.status_code}, Body: {submit_resp.text}'
-                    discord_bot.send_discord_message(f"🚨 GBIF Validator Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
-                    return error_msg
-
-                key = submit_resp.json().get('key')
-                if not key:
-                    error_msg = f'Validator response did not contain a key: {submit_resp.text}'
-                    discord_bot.send_discord_message(f"⚠️ GBIF Validator Key Error: {error_msg}\nDataset: {dataset.name if hasattr(dataset, 'name') else 'Unknown'}\nAgent ID: {self.agent_id}")
-                    return error_msg
+                try:
+                    key = submit_gbif_validation(validation_url)
+                except GbifSubmissionError as exc:
+                    discord_bot.send_discord_message(f"🚨 GBIF Validator Error: {exc}\nAgent ID: {self.agent_id}")
+                    return str(exc)
                 dataset.dwca_validation = {
                     'url': validation_url,
                     'key': key,
                     'status': 'RUNNING',
+                    'submitted_at': timezone.now().isoformat(),
                 }
                 update_fields = ['dwca_validation']
                 if recovering_archive:
@@ -3326,45 +3139,14 @@ class ValidateDwCA(OpenAIBaseModel):
                     update_fields.extend(['dwca_url', 'dwc_core'])
                 dataset.save(update_fields=update_fields)
 
-            last_status = None
-            last_payload = None
-            for attempt in range(self.max_poll_attempts):
-                resp = requests.get(f'https://api.gbif.org/v1/validation/{key}', auth=auth, timeout=30)
-                if resp.status_code != 200:
-                    raise requests.HTTPError(f'Status fetch failed with {resp.status_code}')
-                data = resp.json()
-                last_payload = data
-                last_status = data.get('status')
-                validation = {
-                    **data,
-                    'url': validation_url,
-                    'key': key,
-                }
-                dataset.dwca_validation = validation
-                dataset.save(update_fields=['dwca_validation'])
-                if last_status in ('SUCCEEDED', 'FAILED', 'FINISHED'):
-                    return json.dumps(validation)
-                if attempt < self.max_poll_attempts - 1:
-                    time.sleep(self.poll_interval_seconds)
-
-            # GBIF validation of a real archive routinely takes well over 10 minutes.
-            # next_recheck_at tells the orchestrator (Agent.next_message) how long to
-            # wait before it's even worth spending another paid model turn just to
-            # call this tool again -- polling more often than GBIF can possibly have
-            # finished only burns tokens on "still running" round trips.
-            next_recheck_at = (
-                timezone.now() + datetime.timedelta(seconds=self.poll_interval_seconds)
-            ).isoformat()
-            running_msg = {
-                'status': 'RUNNING',
-                'message': 'Validation is still running. Call ValidateDwCA again with validation_key to continue polling.',
-                'validation_key': key,
-                'url': validation_url,
-                'last_seen_status': last_status,
-                'last_seen_payload': last_payload,
-                'next_recheck_at': next_recheck_at,
-            }
-            return json.dumps(running_msg)
+            validation = _fetch_gbif_validation(dataset, key, validation_url)
+            if validation.get('status') in GBIF_TERMINAL_STATUSES:
+                return json.dumps(validation)
+            # Agent.next_message rechecks this payload server-side, so waiting on
+            # GBIF costs no model turns.
+            return json.dumps(_gbif_waiting_payload(
+                key, validation_url, validation, timezone.now().isoformat(),
+            ))
 
         except Exception as e:
             error_msg = repr(e)[:2000]

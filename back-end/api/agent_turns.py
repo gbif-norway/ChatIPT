@@ -9,6 +9,7 @@ from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from api import python_sessions
 from api.models import Agent, AgentTurnJob, Dataset, Message
 
 
@@ -107,6 +108,7 @@ def _finish_claimed_job(job_id, claimed_at):
             job.delete()
             return
         if agent.completed_at:
+            python_sessions.clear(agent.id)
             next_agent = dataset.next_agent()
             if next_agent:
                 last_message = next_agent.message_set.last()

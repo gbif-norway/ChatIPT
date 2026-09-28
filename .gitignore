@@ -367,6 +367,7 @@ sketch
 secrets/
 gapi-secret.json
 user_files/
+python_sessions/
 .vscode/
 .next/
 .htpasswd
@@ -378,4 +379,6 @@ back-end/.env.prod
 back-end/.env.staging
 
 eml*
+!back-end/api/templates/xsd/eml-2.2.0/
+!back-end/api/templates/xsd/eml-2.2.0/**
 back-end/phylo-tree-examples/

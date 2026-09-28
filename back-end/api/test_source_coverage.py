@@ -108,6 +108,48 @@ class ReconcileTests(SimpleTestCase):
         result = reconcile([("source", source)], package)[0]
         self.assertEqual(result.columns[0].status, "not_found")
 
+    def test_structured_values_kept_only_in_remarks_are_open_items(self):
+        source = pd.DataFrame({
+            "projectID": ["OH4S-EE-2025", "OH4S-EE-2025"],
+            "samplingProtocol": ["BG Sentinel + CO2", "BG Sentinel + CO2"],
+            "fieldNotes": ["windy", "calm"],
+            "trap": ["1", "2"],
+        })
+        package = {
+            "event": pd.DataFrame({
+                "eventRemarks": [
+                    "projectID: OH4S-EE-2025; samplingProtocol: BG Sentinel + CO2; windy; trap 1",
+                    "projectID: OH4S-EE-2025; samplingProtocol: BG Sentinel + CO2; calm; trap 2",
+                ],
+            }),
+        }
+        result = reconcile([("source", source)], package, "Trapped with BG Sentinel + CO2")[0]
+        status = {column.name: column.status for column in result.columns}
+
+        self.assertEqual(status["projectID"], "remarks")  # identifier inside composite text
+        self.assertEqual(status["samplingProtocol"], "remarks")  # before the metadata match
+        self.assertEqual(status["fieldNotes"], "not_found")  # free-text sources may share remarks
+        self.assertEqual(status["trap"], "not_found")  # values too short to locate reliably
+        report = render_report([result], package)
+        self.assertIn(
+            "Only inside free-text remarks (2): projectID -> event.eventRemarks [inside composite values]; "
+            "samplingProtocol -> event.eventRemarks",
+            report,
+        )
+        open_line = next(line for line in report.splitlines() if line.startswith(OPEN_ITEMS_PREFIX))
+        self.assertIn("source: samplingProtocol", open_line)
+
+    def test_composite_identifier_in_a_structured_field_is_not_remarks_only(self):
+        source = pd.DataFrame({"parentEventID": ["P1", "P2"]})
+        package = {
+            "event": pd.DataFrame({
+                "eventID": ["site:P1", "site:P2"],
+                "eventRemarks": ["parent P1", "parent P2"],
+            }),
+        }
+        result = reconcile([("source", source)], package)[0]
+        self.assertEqual(result.columns[0].status, "mapped")
+
     def test_metadata_matching_does_not_accept_substrings_inside_words(self):
         source = pd.DataFrame({"countryCode": ["no", "no"]})
         package = {"occurrence": pd.DataFrame({"occurrence_pk": ["1", "2"]})}

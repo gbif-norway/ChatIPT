@@ -45,7 +45,6 @@ READ_ONLY_TOOLS = frozenset({
     DWC_TERM_TOOL,
     EXTENSION_TOOL,
     "PreviewDwcDpDescriptor",
-    "BasicValidationForSomeDwCTerms",
 })
 
 _FAILED_RESULT_PREFIXES = (

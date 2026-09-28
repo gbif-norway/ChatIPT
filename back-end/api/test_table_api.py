@@ -85,6 +85,55 @@ class TableApiTests(TestCase):
         self.assertEqual(response.data['results'][0]['occurrenceID'], 'occ-100')
         self.assertEqual(response.data['results'][-1]['occurrenceID'], 'occ-124')
 
+    def test_rows_search_matches_any_column_case_insensitively(self):
+        response = self.client.get(
+            reverse('table-rows', args=[self.table.id]),
+            {'search': 'taxon 12', 'limit': 5},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        # "Taxon 12" and "Taxon 120".."Taxon 129"
+        self.assertEqual(response.data['count'], 11)
+        self.assertEqual(response.data['total'], 250)
+        self.assertEqual(len(response.data['results']), 5)
+        self.assertEqual(response.data['results'][0]['occurrenceID'], 'occ-12')
+
+    def test_rows_exact_search_in_one_column_finds_a_linked_record(self):
+        response = self.client.get(
+            reverse('table-rows', args=[self.table.id]),
+            {'search': 'occ-12', 'column': 'occurrenceID', 'exact': 'true'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'], [{'occurrenceID': 'occ-12', 'scientificName': 'Taxon 12'}])
+
+    def test_rows_search_rejects_unknown_columns(self):
+        response = self.client.get(
+            reverse('table-rows', args=[self.table.id]),
+            {'search': 'occ-1', 'column': 'missing'},
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_list_names_the_package_each_table_belongs_to(self):
+        projection = Table.objects.create(
+            dataset=self.dataset,
+            title='dwca core',
+            df=pd.DataFrame({'occurrenceID': ['occ-1']}),
+        )
+        Table.objects.filter(pk=projection.pk).update(dwca_role='core')
+        Table.objects.create(dataset=self.dataset, title='source', df=pd.DataFrame({'a': [1]}))
+
+        response = self.client.get(reverse('table-list'), {'dataset': self.dataset.id})
+
+        packages = {table['title']: (table['package'], table['dwca_role']) for table in response.data}
+        self.assertEqual(packages, {
+            'occurrence': ('dwc-dp', ''),
+            'dwca core': ('dwca', 'core'),
+            'source': ('', ''),
+        })
+
     def test_rows_rejects_unbounded_page_sizes(self):
         response = self.client.get(
             reverse('table-rows', args=[self.table.id]),

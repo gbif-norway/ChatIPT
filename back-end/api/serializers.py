@@ -15,6 +15,8 @@ class TaskSerializer(serializers.ModelSerializer):
 
 
 class TableSerializer(serializers.ModelSerializer):
+    package = serializers.SerializerMethodField()
+
     class Meta:
         model = Table
         fields = [
@@ -26,13 +28,28 @@ class TableSerializer(serializers.ModelSerializer):
             'description',
             'row_count',
             'columns',
+            'dwca_role',
+            'package',
         ]
         read_only_fields = fields
+
+    def get_package(self, obj):
+        """Name the publication package a table belongs to, if any."""
+        from api.dwc_dp_specs import RESERVED_TABLE_NAMES
+
+        if obj.title in RESERVED_TABLE_NAMES:
+            return 'dwc-dp'
+        if obj.dwca_role:
+            return 'dwca'
+        return ''
 
 
 class TablePageQuerySerializer(serializers.Serializer):
     offset = serializers.IntegerField(default=0, min_value=0)
     limit = serializers.IntegerField(default=50, min_value=1, max_value=200)
+    search = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True, max_length=200)
+    column = serializers.CharField(required=False, allow_blank=False, max_length=500)
+    exact = serializers.BooleanField(default=False)
 
 
 class MessageSerializer(serializers.ModelSerializer):
@@ -167,6 +184,7 @@ class UserFileSerializer(serializers.ModelSerializer):
                         source_manifest = UserFile.build_source_manifest(
                             dfs,
                             excel_visibility=getattr(user_file, "_excel_visibility", None),
+                            excel_comments=getattr(user_file, "_excel_comments", None),
                         )
                         filtered_dfs = UserFile.filter_dataframes(dfs)
                     except ValueError as exc:

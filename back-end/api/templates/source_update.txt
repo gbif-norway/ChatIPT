@@ -9,6 +9,9 @@ Current uploaded files:
 Original upload manifest for {{ user_file.filename }}:
 {{ user_file.source_manifest_text|safe }}
 {% endfor %}
+{% for user_file in user_files %}{% with comments=user_file.cell_comments_text %}{% if comments %}
+{{ comments|safe }}
+{% endif %}{% endwith %}{% endfor %}
 {% else %}
 No source files are currently attached.
 {% endif %}

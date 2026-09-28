@@ -8,16 +8,20 @@ import math
 import os
 import tarfile
 import tempfile
-import xml.etree.ElementTree as ET
+import threading
 from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, Mapping
 
 import pandas as pd
 from frictionless import Package, Schema
+from jsonschema.validators import validator_for
+from lxml import etree
+from referencing import Registry, Resource
 
 from api.helpers.publish import make_eml, upload_file
 from api.publication_validation import (
@@ -30,6 +34,14 @@ from api.publication_validation import (
 _BASE_DIR = Path(__file__).resolve().parent
 _DWC_DP_ROOT = _BASE_DIR / "templates" / "dwc-dp"
 _TABLE_SCHEMA_ROOT = _DWC_DP_ROOT / "table-schemas"
+# The DwC-DP profile extends Frictionless Data Package v1 by URL; resolve it locally.
+_FRICTIONLESS_DATA_PACKAGE_SCHEMA = _BASE_DIR / "templates" / "frictionless" / "data-package-v1.json"
+FRICTIONLESS_DATA_PACKAGE_SCHEMA_URL = "https://specs.frictionlessdata.io/schemas/data-package.json"
+# EML 2.2.0 XSDs, vendored from gbif/dwc-dp-analyser (the same schemas GBIF's
+# DwC-DP analyser validates eml.xml against).
+_EML_XSD = _BASE_DIR / "templates" / "xsd" / "eml-2.2.0" / "eml.xsd"
+# Cap on reported errors per resource or file, so one systematic problem stays readable.
+_REPORTED_ERRORS_PER_SOURCE = 10
 
 DWC_DP_SCHEMA_REVISION = "76898192fd298c2aa170a7059e1bdadf3ee2a828"
 DWC_DP_SCHEMA_REPOSITORY = "https://github.com/tdwg/rs.tdwg.org"
@@ -406,10 +418,17 @@ def _validate_field_values(
             )
             numeric = None
         elif field_type == "integer":
-            non_integer = populated & ((numeric % 1) != 0)
+            if pd.api.types.is_float_dtype(series):
+                # pandas stores integer columns with blanks as floats; _serializable_resource
+                # writes whole-number floats as integers.
+                non_integer = populated & ((numeric % 1) != 0)
+            else:
+                # Frictionless needs plain digits: text such as '12.0' or '1e3' is not an integer.
+                non_integer = populated & ~_series_text(series).str.fullmatch(r"[+-]?\d+")
             if non_integer.any():
                 errors.append(
-                    f"Resource '{resource_name}' field '{field_name}' must contain integer values; "
+                    f"Resource '{resource_name}' field '{field_name}' must contain integer values "
+                    f"written as whole numbers without a decimal point or exponent; "
                     f"invalid examples: {_value_preview(series, non_integer)}."
                 )
                 numeric = None
@@ -447,6 +466,88 @@ def _foreign_key_values(df: pd.DataFrame, fields: list[str]) -> tuple[set[tuple[
             continue
         values.add(normalized)
     return values, partially_blank
+
+
+@lru_cache(maxsize=None)
+def _incoming_links(target_name: str) -> tuple[tuple[str, Dict[str, Any], bool], ...]:
+    """Keys from other resources that point at a shared resource, excluding its own satellites."""
+    links = []
+    for source_name in sorted(RESERVED_TABLE_NAMES):
+        # agent-identifier, protocol-reference and similar describe the entity itself.
+        if source_name == target_name or source_name.startswith(f"{target_name}-"):
+            continue
+        spec = get_table_spec(source_name)
+        for foreign_key, weak in [(key, False) for key in spec.foreign_keys] + [
+            (key, True) for key in spec.weak_foreign_keys
+        ]:
+            if (foreign_key.get("reference") or {}).get("resource") == target_name:
+                links.append((source_name, foreign_key, weak))
+    return tuple(links)
+
+
+def _unlinked_shared_rows(
+    resources: Mapping[str, pd.DataFrame],
+    valid_columns_by_resource: Mapping[str, set[str]],
+) -> list[str]:
+    """Warn about rows of shared resources (agent, protocol, ...) that no data resource uses."""
+    warnings = []
+    for target_name, target_df in resources.items():
+        spec = get_table_spec(target_name)
+        if any(
+            (key.get("reference") or {}).get("resource") not in ("", target_name)
+            for key in spec.foreign_keys
+        ):
+            continue  # it links itself to the data
+        links = _incoming_links(target_name)
+        primary_key = spec.primary_key
+        target_columns = valid_columns_by_resource[target_name]
+        if not links or len(primary_key) != 1 or primary_key[0] not in target_columns:
+            continue
+
+        referenced: Dict[str, set[str]] = {}
+        for source_name, foreign_key, weak in links:
+            source_df = resources.get(source_name)
+            source_fields = _as_field_list(foreign_key.get("fields"))
+            target_fields = _as_field_list((foreign_key.get("reference") or {}).get("fields"))
+            if (
+                source_df is None
+                or len(source_fields) != 1
+                or len(target_fields) != 1
+                or source_fields[0] not in valid_columns_by_resource[source_name]
+                or target_fields[0] not in target_columns
+            ):
+                continue
+            values = referenced.setdefault(target_fields[0], set())
+            for value in _series_text(source_df[source_fields[0]]):
+                # Weak ID fields such as identifiedByID may list several agents.
+                parts = value.split("|") if weak else [value]
+                values.update(part.strip() for part in parts if part.strip())
+
+        keys = _series_text(target_df[primary_key[0]])
+        linked = pd.Series(False, index=target_df.index)
+        for field_name, values in referenced.items():
+            linked |= _series_text(target_df[field_name]).isin(values)
+        unlinked = keys[(keys != "") & ~linked]
+        if unlinked.empty:
+            continue
+        examples = ", ".join(unlinked.head(5))
+        suffix = f" and {len(unlinked) - 5} more" if len(unlinked) > 5 else ""
+        # Suggest fields on resources already in the package, then their enforced link tables.
+        routes = sorted({
+            f"{source_name}.{_as_field_list(key.get('fields'))[0]}"
+            if source_name in resources else source_name
+            for source_name, key, weak in links
+            if source_name in resources
+            or (not weak and any(source_name.startswith(f"{name}-") for name in resources))
+        })[:8]
+        warnings.append(
+            f"Semantic review: resource '{target_name}' has {len(unlinked)} row(s) that no other "
+            f"resource references ({primary_key[0]}: {examples}{suffix}). A shared entity should be "
+            "linked to the records it describes"
+            + (f", for example through {', '.join(routes)}" if routes else "")
+            + ". Link each row, or remove it if the source gives it no role."
+        )
+    return warnings
 
 
 def validate_dwc_dp_resources(resources: Mapping[str, pd.DataFrame]) -> Dict[str, Any]:
@@ -596,6 +697,7 @@ def validate_dwc_dp_resources(resources: Mapping[str, pd.DataFrame]) -> Dict[str
                 )
 
     errors.extend(utf8_serialization_errors(normalized_resources))
+    warnings.extend(_unlinked_shared_rows(normalized_resources, valid_columns_by_resource))
     warnings.extend(validate_publication_safety(normalized_resources))
     warnings.extend(semantic_dwc_dp_warnings(normalized_resources))
 
@@ -644,6 +746,116 @@ def _resource_schema_for_dataframe(
     return schema
 
 
+@lru_cache(maxsize=None)
+def _dwc_dp_profile_validator():
+    """The vendored DwC-DP profile, with its base Data Package $ref resolved offline."""
+    profile = _load_json(_DWC_DP_ROOT / "dwc-dp-profile.json")
+    registry = Registry().with_resource(
+        FRICTIONLESS_DATA_PACKAGE_SCHEMA_URL,
+        Resource.from_contents(_load_json(_FRICTIONLESS_DATA_PACKAGE_SCHEMA)),
+    )
+    return validator_for(profile)(profile, registry=registry)
+
+
+def _dwc_dp_profile_errors(descriptor: Mapping[str, Any]) -> list[str]:
+    errors = []
+    for error in _dwc_dp_profile_validator().iter_errors(deepcopy(dict(descriptor))):
+        location = "/" + "/".join(str(part) for part in error.absolute_path)
+        message = error.message if len(error.message) <= 300 else error.message[:300] + "..."
+        errors.append(f"Descriptor does not match the DwC-DP profile at '{location}': {message}")
+    return errors
+
+
+# Field properties that must match the canonical DwC-DP table schema. The first
+# group must be present; the second is only compared when declared.
+_CANONICAL_FIELD_PROPERTIES = ("title", "description", "type", "dcterms:isVersionOf")
+_OPTIONAL_CANONICAL_FIELD_PROPERTIES = ("format", "namespace", "dcterms:references")
+
+
+def _foreign_key_signature(foreign_key: Mapping[str, Any]) -> tuple:
+    reference = foreign_key.get("reference") or {}
+    return (
+        tuple(_as_field_list(foreign_key.get("fields"))),
+        str(foreign_key.get("predicate") or ""),
+        str(reference.get("resource") or ""),
+        tuple(_as_field_list(reference.get("fields"))),
+    )
+
+
+def _canonical_table_schema_errors(
+    name: str,
+    schema: Mapping[str, Any],
+    fields_by_resource: Mapping[str, set[str]],
+) -> list[str]:
+    """Compare a reserved resource's schema with its canonical DwC-DP table schema."""
+    errors: list[str] = []
+    spec = get_table_spec(name)
+    canonical_fields = spec.field_descriptors
+    fields = [field for field in schema.get("fields") or [] if isinstance(field, Mapping)]
+    field_names = {str(field.get("name") or "") for field in fields}
+
+    counts = Counter(str(field.get("name") or "") for field in fields)
+    for field_name in sorted(field_name for field_name, count in counts.items() if count > 1):
+        errors.append(f"Resource '{name}' declares field '{field_name}' more than once.")
+
+    for field_name, canonical in canonical_fields.items():
+        if (canonical.get("constraints") or {}).get("required") is True and field_name not in field_names:
+            errors.append(f"Resource '{name}' schema is missing required field '{field_name}'.")
+
+    for field in fields:
+        field_name = str(field.get("name") or "<unnamed>")
+        missing = [key for key in ("name", *_CANONICAL_FIELD_PROPERTIES) if key not in field]
+        if missing:
+            errors.append(
+                f"Resource '{name}' field '{field_name}' is missing metadata: {', '.join(missing)}."
+            )
+        canonical = canonical_fields.get(field_name)
+        if canonical is None:
+            errors.append(
+                f"Resource '{name}' field '{field_name}' is not defined by its DwC-DP table schema."
+            )
+            continue
+        for key in _CANONICAL_FIELD_PROPERTIES + _OPTIONAL_CANONICAL_FIELD_PROPERTIES:
+            if key in field and field[key] != canonical.get(key):
+                errors.append(
+                    f"Resource '{name}' field '{field_name}' declares {key} {field[key]!r}, but the "
+                    f"DwC-DP table schema defines {canonical.get(key)!r}."
+                )
+
+    canonical_keys = {
+        _foreign_key_signature(foreign_key)
+        for foreign_key in spec.foreign_keys + spec.weak_foreign_keys
+    }
+    for property_name in ("foreignKeys", "weakForeignKeys"):
+        for foreign_key in schema.get(property_name) or []:
+            if not isinstance(foreign_key, Mapping):
+                continue
+            source_fields, _predicate, target_name, target_fields = _foreign_key_signature(foreign_key)
+            label = f"{property_name} '{', '.join(source_fields)}'"
+            for field_name in source_fields:
+                if field_name not in field_names:
+                    errors.append(f"Resource '{name}' {label} uses undeclared field '{field_name}'.")
+            target_name = target_name or name
+            target_field_names = fields_by_resource.get(target_name)
+            if target_field_names is None:
+                errors.append(
+                    f"Resource '{name}' {label} references resource '{target_name}', which is not in "
+                    "the package."
+                )
+            else:
+                for field_name in target_fields:
+                    if field_name not in target_field_names:
+                        errors.append(
+                            f"Resource '{name}' {label} references field '{field_name}', which "
+                            f"resource '{target_name}' does not declare."
+                        )
+            if _foreign_key_signature(foreign_key) not in canonical_keys:
+                errors.append(
+                    f"Resource '{name}' {label} does not match a relationship in its DwC-DP table schema."
+                )
+    return errors
+
+
 def validate_datapackage_descriptor(descriptor: Mapping[str, Any]) -> list[str]:
     """Validate generated metadata without fetching the currently undeployed profile URI."""
     errors: list[str] = []
@@ -651,6 +863,7 @@ def validate_datapackage_descriptor(descriptor: Mapping[str, Any]) -> list[str]:
         errors.append(f"Descriptor profile must be '{DWC_DP_PROFILE_URL}'.")
     if descriptor.get("dwcDpSchema") != dwc_dp_schema_snapshot():
         errors.append("Descriptor must identify the exact vendored DwC-DP schema snapshot.")
+    errors.extend(_dwc_dp_profile_errors(descriptor))
 
     frictionless_descriptor = deepcopy(dict(descriptor))
     frictionless_descriptor["profile"] = "data-package"
@@ -659,7 +872,18 @@ def validate_datapackage_descriptor(descriptor: Mapping[str, Any]) -> list[str]:
     except Exception as exc:
         errors.append(f"Descriptor is not a valid Frictionless Data Package: {exc}")
 
-    for resource in descriptor.get("resources") or []:
+    resources = [
+        resource for resource in descriptor.get("resources") or [] if isinstance(resource, Mapping)
+    ]
+    fields_by_resource = {
+        str(resource.get("name")): {
+            str(field.get("name") or "")
+            for field in (resource.get("schema") or {}).get("fields") or []
+            if isinstance(field, Mapping)
+        }
+        for resource in resources
+    }
+    for resource in resources:
         name = resource.get("name")
         if name in RESERVED_TABLE_NAMES:
             if resource.get("profile") != "tabular-data-resource":
@@ -669,17 +893,7 @@ def validate_datapackage_descriptor(descriptor: Mapping[str, Any]) -> list[str]:
                 Schema.from_descriptor(schema)
             except Exception as exc:
                 errors.append(f"Resource '{name}' has an invalid Frictionless table schema: {exc}")
-            for field in schema.get("fields") or []:
-                missing = [
-                    key
-                    for key in ("name", "title", "description", "type", "dcterms:isVersionOf")
-                    if key not in field
-                ]
-                if missing:
-                    errors.append(
-                        f"Resource '{name}' field '{field.get('name', '<unnamed>')}' is missing metadata: "
-                        f"{', '.join(missing)}."
-                    )
+            errors.extend(_canonical_table_schema_errors(name, schema, fields_by_resource))
     return errors
 
 
@@ -729,6 +943,25 @@ def build_datapackage_descriptor(
     return descriptor
 
 
+def _serializable_resource(name: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Write whole-number float columns of integer fields as integers ('2', not '2.0')."""
+    fields = get_table_spec(name).field_descriptors
+    columns = [
+        column
+        for column in df.columns
+        if isinstance(column, str)
+        and (fields.get(column) or {}).get("type") == "integer"
+        and pd.api.types.is_float_dtype(df[column])
+        and ((df[column].dropna() % 1) == 0).all()
+        and (df[column].dropna().abs() < 2**53).all()
+    ]
+    if not columns:
+        return df
+    df = df.copy()
+    df[columns] = df[columns].astype("Int64")
+    return df
+
+
 def _write_csv(df: pd.DataFrame, path: Path) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         df.to_csv(handle, index=False, lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
@@ -739,6 +972,65 @@ def _safe_archive_name(filename: str) -> str:
     if name.is_absolute() or ".." in name.parts or len(name.parts) != 1 or not name.name:
         raise ValueError(f"Unsafe ancillary archive filename: {filename!r}.")
     return name.name
+
+
+@lru_cache(maxsize=None)
+def _eml_xml_schema() -> etree.XMLSchema:
+    return etree.XMLSchema(etree.parse(str(_EML_XSD)))
+
+
+# XMLSchema keeps its error log on the instance, so validations must not overlap.
+_EML_SCHEMA_LOCK = threading.Lock()
+
+
+def validate_eml(content: bytes) -> list[str]:
+    """Check eml.xml as GBIF's DwC-DP analyser does: well-formed, titled, credited, EML 2.2.0-valid."""
+    try:
+        content.decode("utf-8", "strict")
+        root = etree.fromstring(
+            content, etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False)
+        )
+    except (UnicodeDecodeError, etree.XMLSyntaxError) as exc:
+        return [f"eml.xml cannot be parsed as strict UTF-8 XML: {exc}."]
+
+    errors = []
+    for element in ("title", "creator"):
+        node = root.find(f"dataset/{element}")
+        if node is None or not "".join(node.itertext()).strip():
+            errors.append(f"eml.xml has no non-empty dataset <{element}>.")
+
+    with _EML_SCHEMA_LOCK:
+        schema = _eml_xml_schema()
+        schema.validate(root)
+        schema_errors = list(schema.error_log)
+    for entry in schema_errors[:_REPORTED_ERRORS_PER_SOURCE]:
+        errors.append(f"eml.xml does not match the EML 2.2.0 schema (line {entry.line}): {entry.message}")
+    if len(schema_errors) > _REPORTED_ERRORS_PER_SOURCE:
+        errors.append(
+            f"eml.xml has {len(schema_errors) - _REPORTED_ERRORS_PER_SOURCE} more EML 2.2.0 schema errors."
+        )
+    return errors
+
+
+def _frictionless_data_errors(descriptor: Mapping[str, Any], files: Mapping[str, bytes]) -> list[str]:
+    """Run Frictionless validate() over the serialized package, checking every row of every resource."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        for path, content in files.items():
+            (Path(temp_dir) / path).write_bytes(content)
+        package_descriptor = deepcopy(dict(descriptor))
+        package_descriptor["profile"] = "data-package"
+        report = Package.from_descriptor(package_descriptor, basepath=temp_dir).validate()
+
+    errors = [f"Frictionless validation failed: {error.message}" for error in report.errors]
+    for task in report.tasks:
+        for error in task.errors[:_REPORTED_ERRORS_PER_SOURCE]:
+            errors.append(f"Resource '{task.name}' failed Frictionless validation: {error.message}")
+        if len(task.errors) > _REPORTED_ERRORS_PER_SOURCE:
+            errors.append(
+                f"Resource '{task.name}' has {len(task.errors) - _REPORTED_ERRORS_PER_SOURCE} more "
+                "Frictionless validation errors."
+            )
+    return errors
 
 
 def validate_dwc_dp_archive(
@@ -778,13 +1070,10 @@ def validate_dwc_dp_archive(
                 errors.append(f"datapackage.json cannot be parsed as strict UTF-8 JSON: {exc}.")
                 descriptor = {}
 
-            try:
-                ET.fromstring(archive.extractfile("eml.xml").read().decode("utf-8", "strict"))
-            except Exception as exc:
-                errors.append(f"eml.xml cannot be parsed as strict UTF-8 XML: {exc}.")
-
+            errors.extend(validate_eml(archive.extractfile("eml.xml").read()))
             errors.extend(validate_datapackage_descriptor(descriptor))
             serialized_resources: Dict[str, pd.DataFrame] = {}
+            resource_files: Dict[str, bytes] = {}
             for resource in descriptor.get("resources") or []:
                 resource_name = str(resource.get("name") or "")
                 resource_path = str(resource.get("path") or "")
@@ -796,8 +1085,15 @@ def validate_dwc_dp_archive(
                         f"Descriptor resource '{resource_name}' references missing file '{resource_path}'."
                     )
                     continue
+                if PurePosixPath(resource_path).name != resource_path:
+                    errors.append(
+                        f"Descriptor resource '{resource_name}' path '{resource_path}' must be a plain "
+                        "file name at the package root."
+                    )
+                    continue
                 try:
-                    text = archive.extractfile(resource_path).read().decode("utf-8", "strict")
+                    content = archive.extractfile(resource_path).read()
+                    text = content.decode("utf-8", "strict")
                     rows = list(csv.reader(io.StringIO(text, newline="")))
                 except Exception as exc:
                     errors.append(
@@ -822,6 +1118,7 @@ def validate_dwc_dp_archive(
                     continue
                 serialized_df = pd.DataFrame(rows[1:], columns=header)
                 serialized_resources[resource_name] = serialized_df
+                resource_files[resource_path] = content
 
                 expected_df = expected_resources.get(resource_name)
                 if expected_df is not None:
@@ -838,6 +1135,10 @@ def validate_dwc_dp_archive(
             serialized_validation = validate_dwc_dp_resources(serialized_resources)
             errors.extend(serialized_validation["errors"])
             warnings.extend(serialized_validation["warnings"])
+            # Row-level Frictionless errors would mostly repeat the checks above, so
+            # only run it over a package that already passes them.
+            if not errors:
+                errors.extend(_frictionless_data_errors(descriptor, resource_files))
     except Exception as exc:
         errors.append(f"DwC-DP archive cannot be opened: {exc}.")
 
@@ -846,6 +1147,10 @@ def validate_dwc_dp_archive(
         "errors": list(dict.fromkeys(errors)),
         "warnings": list(dict.fromkeys(warnings)),
     }
+
+
+class DwcDpArchiveValidationError(ValueError):
+    """The serialized package failed validation, so it must not be uploaded."""
 
 
 def create_dwc_dp_archive(
@@ -880,7 +1185,7 @@ def create_dwc_dp_archive(
         )
         for raw_name, df in resources.items():
             name = normalize_resource_name(raw_name)
-            _write_csv(df, package_root / f"{name}.csv")
+            _write_csv(_serializable_resource(name, df), package_root / f"{name}.csv")
 
         additional_names = []
         for filename, content in additional_files or []:
@@ -903,7 +1208,7 @@ def create_dwc_dp_archive(
         expected_additional_files=additional_names,
     )
     if not archive_validation["valid"]:
-        raise ValueError(
+        raise DwcDpArchiveValidationError(
             "Serialized DwC-DP archive validation failed: "
             + "; ".join(archive_validation["errors"])
         )

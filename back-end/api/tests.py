@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from django.test import SimpleTestCase, TestCase, override_settings
+from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 import openpyxl
 import httpx2
@@ -34,7 +35,6 @@ from .helpers.publish import (
     validate_dwca_archive,
 )
 from .agent_tools import (
-    BasicValidationForSomeDwCTerms,
     ExportDwcDp,
     GetDarwinCoreInfo,
     GetDwCExtensionInfo,
@@ -208,6 +208,55 @@ class DwcDpSpecTests(SimpleTestCase):
         self.assertTrue(any("surrounding whitespace" in error for error in validation['errors']))
         self.assertTrue(any("integer values" in error for error in validation['errors']))
         self.assertTrue(any("boolean values" in error for error in validation['errors']))
+
+    def test_warns_about_shared_rows_that_no_resource_references(self):
+        event = pd.DataFrame([{'event_pk': 'e1', 'eventCategory': 'occurrence'}])
+        occurrence = pd.DataFrame([{
+            'occurrence_pk': 'o1', 'event_fk': 'e1', 'occurrenceStatus': 'present',
+            'identifiedByID': 'https://orcid.org/0000-0001-9166-7617',
+        }])
+        agent = pd.DataFrame([
+            {'agent_pk': 'a1', 'agentID': 'https://orcid.org/0000-0001-9166-7617'},
+            {'agent_pk': 'a2', 'agentID': 'https://orcid.org/0000-0002-7901-6595'},
+            {'agent_pk': 'a3', 'agentID': 'https://orcid.org/0000-0002-1825-0097'},
+        ])
+        agent_role = pd.DataFrame([{'event_fk': 'e1', 'agent_fk': 'a2', 'agentRole': 'collector'}])
+        # An identifier row describes the agent itself, so it is not a link to the data.
+        agent_identifier = pd.DataFrame([{'agent_fk': 'a3', 'identifier': 'x'}])
+        protocol = pd.DataFrame([{'protocol_pk': 'p1', 'protocolName': 'BG Sentinel + CO2'}])
+
+        warnings = validate_dwc_dp_resources({
+            'event': event,
+            'occurrence': occurrence,
+            'agent': agent,
+            'event-agent-role': agent_role,
+            'agent-identifier': agent_identifier,
+            'protocol': protocol,
+        })['warnings']
+        unlinked = [warning for warning in warnings if 'no other resource references' in warning]
+
+        self.assertEqual(len(unlinked), 2)
+        self.assertIn("resource 'agent' has 1 row(s) that no other resource references (agent_pk: a3)", unlinked[0])
+        self.assertIn('occurrence.recordedByID', unlinked[0])
+        self.assertIn("resource 'protocol' has 1 row(s)", unlinked[1])
+        self.assertIn('event.eventProtocol_fk', unlinked[1])
+
+    def test_warns_about_bare_orcid_identifiers(self):
+        agent = pd.DataFrame([{'agent_pk': 'a1', 'agentID': '0000-0001-9166-7617'}])
+        identification = pd.DataFrame([{
+            'identification_pk': 'i1',
+            'identifiedByID': 'https://orcid.org/0000-0002-7901-6595 | 0000-0001-9166-7617',
+        }])
+
+        warnings = validate_dwc_dp_resources({'agent': agent, 'identification': identification})['warnings']
+
+        self.assertIn(
+            "Semantic review: resource 'agent' field 'agentID' has 1 bare ORCID value(s), "
+            "e.g. 0000-0001-9166-7617. Use the resolvable form https://orcid.org/0000-0001-9166-7617, "
+            "consistently in every field that refers to the same person.",
+            warnings,
+        )
+        self.assertTrue(any("'identification' field 'identifiedByID'" in warning for warning in warnings))
 
     def test_enforces_strong_foreign_keys_but_not_weak_foreign_keys(self):
         event = pd.DataFrame([
@@ -1627,22 +1676,6 @@ class EventDateNormalizationTests(SimpleTestCase):
             "2025-02-11T00:00:00+00:00",
         )
 
-    def test_basic_validation_does_not_invent_date_components(self):
-        df = pd.DataFrame(
-            {"eventDate": ["2010", "2010/2011", "March 2010", "not known"]}
-        )
-
-        normalized, failed, future = BasicValidationForSomeDwCTerms(
-            agent_id=1
-        ).validate_and_format_event_dates(df)
-
-        self.assertEqual(
-            normalized["eventDate"].tolist(),
-            ["2010", "2010/2011", "2010-03", "not known"],
-        )
-        self.assertEqual(failed, [3])
-        self.assertEqual(future, [])
-
 
 class SetEMLTemporalInferenceTests(SimpleTestCase):
     def test_infer_temporal_bounds_from_eventdate_column(self):
@@ -2067,11 +2100,9 @@ class ExcelWorkbookRepairTests(SimpleTestCase):
             def close(self):
                 pass
 
-        source = SimpleNamespace(
-            file=WorkbookFile(),
-            _load_workbook_with_xml_repair=UserFile._load_workbook_with_xml_repair,
-        )
-        dfs = UserFile._load_excel_workbook(source)
+        source = UserFile()
+        source.file = WorkbookFile()
+        dfs = source._load_excel_workbook()
         manifest = UserFile.build_source_manifest(dfs, source._excel_visibility)
 
         self.assertEqual(dfs["Imágenes"]["creator"].tolist(), ["Diana Muñiz"] * 2)
@@ -2081,6 +2112,236 @@ class ExcelWorkbookRepairTests(SimpleTestCase):
             "hidden_rows": [2],
         })
         self.assertEqual(manifest["tables"][1]["excel_visibility"]["sheet_state"], "hidden")
+
+    @staticmethod
+    def _load(workbook):
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+
+        class WorkbookFile:
+            name = "user_files/template.xlsx"
+
+            def open(self, mode):
+                pass
+
+            def read(self):
+                return buffer.getvalue()
+
+            def close(self):
+                pass
+
+        source = UserFile()
+        source.file = WorkbookFile()
+        dfs = source._load_excel_workbook()
+        source.source_manifest = UserFile.build_source_manifest(
+            dfs, source._excel_visibility, source._excel_comments
+        )
+        return source, dfs
+
+    def test_excel_cell_comments_are_recorded_and_rendered(self):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "input"
+        sheet.append(["decimalLatitude", "status"])
+        for value in range(4):
+            sheet.append([f"5{value}.1", "1"])
+        sheet["A1"].comment = openpyxl.comments.Comment(
+            "Ann Author:\nUse the WGS84 spatial reference system", "Ann Author"
+        )
+        sheet["B1"].comment = openpyxl.comments.Comment(
+            "[Threaded comment]\n\nYour version of Excel allows you to read this threaded comment; "
+            "however, any edits to it will get removed if the file is opened in a newer version of "
+            "Excel. Learn more: https://go.microsoft.com/fwlink/?linkid=870924\n\n"
+            "Comment:\n    Enter 1 for valid, 0 for invalid",
+            "tc={0}",
+        )
+        for cell in ("A2", "A3", "A5"):
+            sheet[cell].comment = openpyxl.comments.Comment("Check this location.", "QA")
+        sheet["A9"].comment = openpyxl.comments.Comment("Below the data.", "QA")
+        sheet["D2"].comment = openpyxl.comments.Comment("Beside the data.", "QA")
+
+        source, _ = self._load(workbook)
+        stored = source.source_manifest["tables"][0]["cell_comments"]
+        rendered = source.cell_comments_text
+
+        self.assertEqual(stored[0], {
+            "cell": "A1", "row": 1, "column": 1,
+            "text": "Use the WGS84 spatial reference system",
+        })
+        self.assertIn(
+            '- A1 (header of column [1] "decimalLatitude"): '
+            '"Use the WGS84 spatial reference system"',
+            rendered,
+        )
+        self.assertIn(
+            '- B1 (header of column [2] "status"): "Enter 1 for valid, 0 for invalid"',
+            rendered,
+        )
+        self.assertIn(
+            '- A2:A3, A5 (column [1] "decimalLatitude"; DataFrame rows 0-1, 3): '
+            '"Check this location."',
+            rendered,
+        )
+        self.assertIn('A9 (column [1] "decimalLatitude"; below the imported rows)', rendered)
+        self.assertIn("D2 (column D, outside the imported columns)", rendered)
+        self.assertIn("data rather than instructions", rendered)
+        self.assertNotIn("Ann Author", rendered)
+        self.assertNotIn("Threaded comment", rendered)
+
+    def test_comment_rows_match_dataframe_rows_when_a_table_starts_lower(self):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet["B3"] = "status"
+        sheet["B4"] = "1"
+        sheet["B3"].comment = openpyxl.comments.Comment("Enter 1 for valid, 0 for invalid", "QA")
+        sheet["B4"].comment = openpyxl.comments.Comment("Checked twice.", "QA")
+
+        source, dfs = self._load(workbook)
+        rendered = source.cell_comments_text
+
+        # pandas keeps the leading blank rows, so row 1 stays its header and
+        # the sheet's own header text sits at DataFrame row 1.
+        self.assertEqual(dfs["Sheet"].iloc[1, 1], "status")
+        self.assertEqual(dfs["Sheet"].iloc[2, 1], "1")
+        self.assertIn('B3 (column [2] "Unnamed: 1"; DataFrame row 1): "Enter 1', rendered)
+        self.assertIn('B4 (column [2] "Unnamed: 1"; DataFrame row 2): "Checked twice."', rendered)
+
+    def test_header_comments_are_kept_when_the_comment_budget_is_small(self):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.append(["status"])
+        for row in range(2, 40):
+            sheet.append(["1"])
+            sheet[f"A{row}"].comment = openpyxl.comments.Comment(f"Row flag {row}", "QA")
+        sheet["A1"].comment = openpyxl.comments.Comment("Enter 1 for valid, 0 for invalid", "QA")
+
+        source, _ = self._load(workbook)
+        with patch.object(UserFile, "CELL_COMMENT_PROMPT_BUDGET", 200):
+            rendered = source.cell_comments_text
+
+        self.assertIn("Enter 1 for valid, 0 for invalid", rendered)
+        self.assertIn("more cell comment(s) are not shown", rendered)
+        self.assertIn("sources.cell_comments('template.xlsx')", rendered)
+
+    def test_shortened_comments_are_flagged_and_not_merged(self):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.append(["code"])
+        sheet.append(["1"])
+        sheet["A1"].comment = openpyxl.comments.Comment("Codes: 1 valid, 0 invalid", "QA")
+        sheet["A2"].comment = openpyxl.comments.Comment("Codes: 1 valid, 0 unknown", "QA")
+
+        with patch.object(UserFile, "MAX_CELL_COMMENT_CHARS", 10):
+            source, _ = self._load(workbook)
+        rendered = source.cell_comments_text
+
+        self.assertIn('- A1 (header of column [1] "code"): "Codes: 1 v"', rendered)
+        self.assertIn('- A2 (column [1] "code"; DataFrame row 0): "Codes: 1 v"', rendered)
+        self.assertIn("[Long comments are shortened. Read every comment in full", rendered)
+
+    def test_manifest_caps_comments_but_the_loader_keeps_all_of_them(self):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.append(["status"])
+        for row in range(2, 6):
+            sheet.append(["1"])
+            sheet[f"A{row}"].comment = openpyxl.comments.Comment("x" * 50, "QA")
+
+        with patch.object(UserFile, "MAX_CELL_COMMENTS_PER_SHEET", 2), \
+                patch.object(UserFile, "MAX_CELL_COMMENT_CHARS", 10):
+            source, _ = self._load(workbook)
+        table = source.source_manifest["tables"][0]
+
+        self.assertEqual(len(source._excel_comments["Sheet"]), 4)
+        self.assertEqual(source._excel_comments["Sheet"][0]["text"], "x" * 50)
+        self.assertEqual(len(table["cell_comments"]), 2)
+        self.assertEqual(table["cell_comments"][0]["text"], "x" * 10)
+        self.assertEqual(table["cell_comments_omitted"], 2)
+        self.assertTrue(table["cell_comments"][0]["truncated"])
+
+        from api.python_sessions import SourceFiles
+
+        sources = SourceFiles.__new__(SourceFiles)
+        sources._files = {"template.xlsx": source}
+        sources._comments = {}
+        with patch.object(UserFile, "MAX_CELL_COMMENTS_PER_SHEET", 2):
+            recovered = sources.cell_comments("template.xlsx")
+        self.assertEqual([comment["cell"] for comment in recovered["Sheet"]], ["A2", "A3", "A4", "A5"])
+        self.assertEqual(recovered["Sheet"][3]["text"], "x" * 50)
+
+    def test_excel_date_cells_become_iso_text_without_added_precision(self):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.append(["value"])
+        cells = [
+            (datetime.datetime(2025, 7, 13), "yyyy-mm-dd", "2025-07-13"),
+            (datetime.datetime(2025, 7, 13, 13, 5), "yyyy-mm-dd", "2025-07-13T13:05"),
+            (datetime.datetime(2025, 7, 13), "yyyy-mm-dd hh:mm", "2025-07-13T00:00"),
+            (datetime.datetime(2025, 7, 1), "mmm-yy", "2025-07"),
+            (datetime.datetime(2025, 7, 1), "[$-409]mmmm yyyy", "2025-07"),
+            (datetime.datetime(2025, 7, 15), "mmm-yy", "2025-07-15"),
+            (datetime.datetime(2025, 1, 1), "yyyy", "2025"),
+            (datetime.datetime(2025, 7, 1), "yyyy", "2025-07-01"),
+            (datetime.datetime(2025, 7, 1), "d-mmm", "2025-07-01"),
+            (datetime.datetime(2025, 7, 1, 0, 5, 30), "mm:ss", "2025-07-01T00:05:30"),
+            (datetime.time(13, 5), "h:mm", "13:05"),
+        ]
+        for row, (value, number_format, _) in enumerate(cells, start=2):
+            sheet.cell(row=row, column=1, value=value).number_format = number_format
+
+        _, dfs = self._load(workbook)
+
+        self.assertEqual(
+            dfs["Sheet"]["value"].tolist(),
+            [expected for _, _, expected in cells],
+        )
+
+
+class CellCommentPromptTests(TestCase):
+    def test_every_stage_prompt_includes_cell_comments(self):
+        dataset = Dataset.objects.create(title="Commented workbook")
+        manifest = UserFile.build_source_manifest(
+            {"input": pd.DataFrame({"status": ["1", "0"]})},
+            excel_comments={"input": [{
+                "cell": "A1", "row": 1, "column": 1,
+                "text": "Enter 1 for valid, 0 for invalid",
+            }]},
+        )
+        UserFile.objects.create(
+            dataset=dataset,
+            file="user_files/template.xlsx",
+            source_manifest=manifest,
+        )
+        task = Task.objects.create(name="Data structure exploration", text="Explore", order=1)
+
+        agent = Agent.create_with_system_message(dataset=dataset, task=task, tables=[])
+        opening = agent.message_set.first().openai_obj["content"]
+
+        self.assertNotIn("ORIGINAL UPLOAD MANIFEST", opening)
+        self.assertIn('SPREADSHEET CELL COMMENTS in "template.xlsx"', opening)
+        self.assertIn(
+            '- A1 (header of column [1] "status"): "Enter 1 for valid, 0 for invalid"',
+            opening,
+        )
+
+    def test_omitted_comment_hint_uses_the_sources_key_for_a_repeated_filename(self):
+        dataset = Dataset.objects.create(title="Two uploads")
+        manifest = UserFile.build_source_manifest(
+            {"input": pd.DataFrame({"status": ["1", "0"]})},
+            excel_comments={"input": [
+                {"cell": f"A{row}", "row": row, "column": 1, "text": f"Flag {row}"}
+                for row in (2, 3)
+            ]},
+        )
+        UserFile.objects.create(dataset=dataset, file="user_files/template.xlsx", source_manifest=manifest)
+        second = UserFile.objects.create(
+            dataset=dataset, file="user_files/template.xlsx", source_manifest=manifest
+        )
+
+        with patch.object(UserFile, "CELL_COMMENT_PROMPT_BUDGET", 10):
+            rendered = second.cell_comments_text
+
+        self.assertIn(f"sources.cell_comments('template.xlsx (file {second.id})')", rendered)
 
 
 class LogBugWithDeveloperTests(SimpleTestCase):
@@ -3626,8 +3887,6 @@ class DwcaArtifactValidationTests(TestCase):
 
         result = json.loads(ValidateDwCA(
             agent_id=self.agent.id,
-            poll_interval_seconds=1,
-            max_poll_attempts=1,
         ).run())
 
         self.dataset.refresh_from_db()
@@ -3660,8 +3919,6 @@ class DwcaArtifactValidationTests(TestCase):
             agent_id=self.agent.id,
             archive_url=archive_url,
             core_type=DarwinCoreCoreType.OCCURRENCE,
-            poll_interval_seconds=1,
-            max_poll_attempts=1,
         ).run())
 
         self.dataset.refresh_from_db()
@@ -3670,6 +3927,89 @@ class DwcaArtifactValidationTests(TestCase):
         self.assertEqual(result["key"], "fresh-key")
         self.assertTrue(self.dataset.has_current_dwca_validation)
         self.assertEqual(post_mock.call_args.kwargs["files"]["fileUrl"], (None, archive_url))
+
+    @patch("api.agent_tools.requests.get")
+    @patch("api.agent_tools.requests.post")
+    def test_running_validation_returns_waiting_payload_without_sleeping(self, post_mock, get_mock):
+        post_mock.return_value.status_code = 202
+        post_mock.return_value.json.return_value = {"key": "validation-key"}
+        get_mock.return_value.status_code = 200
+        get_mock.return_value.json.return_value = {"status": "RUNNING"}
+
+        result = json.loads(ValidateDwCA(agent_id=self.agent.id).run())
+
+        self.assertEqual(result["status"], "RUNNING")
+        self.assertEqual(result["validation_key"], "validation-key")
+        self.assertGreater(datetime.datetime.fromisoformat(result["next_recheck_at"]), timezone.now())
+        self.assertEqual(get_mock.call_count, 1)
+
+    def _waiting_agent(self, key="validation-key"):
+        self.dataset.dwca_validation = {"url": self.dataset.dwca_url, "key": key, "status": "RUNNING"}
+        self.dataset.save(update_fields=["dwca_validation"])
+        agent = Agent.create_with_system_message(dataset=self.dataset, task=self.task, tables=[])
+        Message.objects.create(agent=agent, openai_obj={
+            "role": "system", "content": "QUALITY REPORT", "quality_report": True,
+        })
+        Message.objects.create(agent=agent, openai_obj={
+            "role": "assistant", "content": "",
+            "tool_calls": [{"id": "call-validate", "type": "function", "function": {
+                "name": "ValidateDwCA", "arguments": json.dumps({"agent_id": agent.id}),
+            }}],
+        })
+        waiting = Message.objects.create(agent=agent, openai_obj={
+            "role": "tool", "tool_call_id": "call-validate",
+            "content": json.dumps({
+                "status": "RUNNING", "validation_key": "validation-key",
+                "url": self.dataset.dwca_url,
+                "waiting_since": timezone.now().isoformat(),
+                "next_recheck_at": (timezone.now() - datetime.timedelta(seconds=1)).isoformat(),
+            }),
+        })
+        return agent, waiting
+
+    @patch("api.models.create_response_message")
+    @patch("api.agent_tools.requests.get")
+    def test_waiting_validation_is_rechecked_without_a_model_turn(self, get_mock, model_mock):
+        get_mock.return_value.status_code = 200
+        get_mock.return_value.json.return_value = {"status": "RUNNING"}
+        agent, waiting = self._waiting_agent()
+
+        agent.next_message()
+
+        model_mock.assert_not_called()
+        waiting.refresh_from_db()
+        payload = json.loads(waiting.openai_obj["content"])
+        self.assertEqual(payload["status"], "RUNNING")
+        self.assertGreater(datetime.datetime.fromisoformat(payload["next_recheck_at"]), timezone.now())
+
+    @patch("api.models.create_response_message")
+    @patch("api.agent_tools.requests.get")
+    def test_finished_validation_replaces_waiting_result_and_wakes_model(self, get_mock, model_mock):
+        get_mock.return_value.status_code = 200
+        get_mock.return_value.json.return_value = {"status": "FINISHED", "metrics": {"indexeable": True}}
+        model_mock.return_value = CompatAssistantMessage(content="Validation finished.")
+        agent, waiting = self._waiting_agent()
+
+        agent.next_message()
+
+        self.assertTrue(model_mock.called)
+        waiting.refresh_from_db()
+        self.assertEqual(json.loads(waiting.openai_obj["content"])["status"], "FINISHED")
+        self.dataset.refresh_from_db()
+        self.assertTrue(self.dataset.has_current_dwca_validation)
+
+    @patch("api.models.create_response_message")
+    @patch("api.agent_tools.requests.get")
+    def test_waiting_on_replaced_archive_hands_back_to_model(self, get_mock, model_mock):
+        model_mock.return_value = CompatAssistantMessage(content="Revalidating.")
+        agent, waiting = self._waiting_agent(key="newer-key")
+
+        agent.next_message()
+
+        get_mock.assert_not_called()
+        self.assertTrue(model_mock.called)
+        waiting.refresh_from_db()
+        self.assertEqual(json.loads(waiting.openai_obj["content"])["status"], "SUPERSEDED")
 
     @patch("api.agent_tools.requests.post")
     def test_recovery_does_not_replace_a_saved_current_archive(self, post_mock):
@@ -3694,8 +4034,6 @@ class DwcaArtifactValidationTests(TestCase):
         result = ValidateDwCA(
             agent_id=self.agent.id,
             validation_key="old-key",
-            poll_interval_seconds=1,
-            max_poll_attempts=1,
         ).run()
 
         self.assertIn("does not belong to the current DwC-A", result)
@@ -3726,6 +4064,8 @@ class DwcaArtifactValidationTests(TestCase):
         self.dataset.refresh_from_db()
         self.assertEqual(self.dataset.dwca_url, "https://example.org/replacement.zip")
         self.assertIsNone(self.dataset.dwca_validation)
+        core.refresh_from_db()
+        self.assertEqual(core.dwca_role, "core")
 
 
 class TableColumnManifestTests(TestCase):
@@ -4392,6 +4732,99 @@ class PythonToolTests(SimpleTestCase):
         self.assertEqual(result.strip(), "00000000-0000-0000-0000-000000000000")
 
 
+class PythonSessionTests(TestCase):
+    def setUp(self):
+        self.session_dir = tempfile.TemporaryDirectory()
+        self.settings_override = override_settings(PYTHON_SESSION_ROOT=self.session_dir.name)
+        self.settings_override.enable()
+        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+        self.dataset = Dataset.objects.create(title="Session test", description="Test")
+        self.agent = Agent.objects.create(dataset=self.dataset, task=task)
+        from api import python_sessions
+
+        python_sessions._upload_cache.clear()
+
+    def tearDown(self):
+        self.settings_override.disable()
+        self.session_dir.cleanup()
+
+    def run_code(self, code, agent=None):
+        return Python(code=code).bind_agent((agent or self.agent).id).run()
+
+    def test_variables_persist_between_calls_for_the_same_agent(self):
+        self.run_code("import json\nframe = pd.DataFrame({'a': [1, 2]})\ndef helper(): return 1")
+        result = self.run_code("print(frame['a'].sum())")
+
+        self.assertEqual(result.strip(), "3")
+
+    def test_functions_are_reported_as_not_kept_and_modules_are_not(self):
+        result = self.run_code("import json\ndef helper(): return 1\nprint('ok')")
+
+        self.assertIn("[Not kept for later calls: helper]", result)
+        self.assertNotIn("json", result)
+
+    def test_sessions_are_isolated_per_agent(self):
+        other = Agent.objects.create(dataset=self.dataset, task=self.agent.task)
+        self.run_code("secret = 1")
+
+        result = self.run_code("print('secret' in globals())", agent=other)
+
+        self.assertEqual(result.strip(), "False")
+
+    def test_variables_before_an_error_are_kept(self):
+        result = self.run_code("value = 5\nprint('before')\nraise ValueError('boom')")
+
+        self.assertIn("before", result)
+        self.assertIn("ValueError('boom')", result)
+        self.assertEqual(self.run_code("print(value)").strip(), "5")
+
+    @patch.object(UserFile, "extract_data")
+    def test_sources_and_dataset_are_preloaded(self, extract_mock):
+        UserFile.objects.create(dataset=self.dataset, file="user_files/records.csv")
+        extract_mock.return_value = (UserFile.FileType.TABULAR, {"records": pd.DataFrame({"x": [7]})})
+
+        result = self.run_code(
+            "print(list(sources), dataset.id)\n"
+            "print(sources['records.csv']['records']['x'].iloc[0])"
+        )
+
+        self.assertIn(f"['records.csv'] {self.dataset.id}", result)
+        self.assertIn("7", result)
+        self.assertNotIn("Not kept", result)
+
+    @patch.object(UserFile, "extract_data")
+    def test_uploads_are_parsed_once_and_edits_do_not_leak(self, extract_mock):
+        UserFile.objects.create(dataset=self.dataset, file="user_files/records.csv")
+        extract_mock.return_value = (UserFile.FileType.TABULAR, {"records": pd.DataFrame({"x": [7]})})
+
+        self.run_code("frame = sources['records.csv']['records']\nframe.loc[0, 'x'] = 99")
+        result = self.run_code("print(sources['records.csv']['records']['x'].iloc[0])")
+
+        self.assertEqual(result.strip(), "7")
+        self.assertEqual(extract_mock.call_count, 1)
+
+    def test_session_is_cleared_when_the_agent_completes(self):
+        from api import python_sessions
+        from api.agent_turns import queue_agent_turn, process_next_agent_turn
+
+        close_connections = patch("api.agent_turns.close_old_connections")
+        close_connections.start()
+        self.addCleanup(close_connections.stop)
+        self.run_code("kept = 1")
+        Message.objects.create(agent=self.agent, openai_obj={"role": "user", "content": "Go"})
+        queue_agent_turn(self.agent)
+
+        def complete(agent):
+            agent.completed_at = timezone.now()
+            agent.save(update_fields=["completed_at"])
+            Message.objects.create(agent=agent, openai_obj={"role": "tool", "content": "Complete"})
+
+        with patch.object(Agent, "next_message", complete), patch.object(Dataset, "next_agent", return_value=None):
+            process_next_agent_turn()
+
+        self.assertEqual(python_sessions.load(self.agent.id), {})
+
+
 class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
     @classmethod
     def setUpClass(cls):
@@ -4770,7 +5203,25 @@ class SetAgentTaskToCompleteTests(TestCase):
         Table.objects.create(dataset=dataset, title="join scratch", df=pd.DataFrame({"x": [1]}))
         agent = Agent.objects.create(dataset=dataset, task=task)
 
-        result = SetAgentTaskToComplete(agent_id=agent.id).run()
+        with patch("api.helpers.publish.upload_dwca", return_value="https://example.org/provisional.zip") as upload_mock, \
+                patch("api.agent_tools.submit_gbif_validation", return_value="prov-key"), \
+                patch("api.agent_tools.get_gbif_validation", return_value={"status": "FINISHED", "metrics": {}}), \
+                patch("api.quality_report._delete_archive") as delete_mock:
+            waiting = json.loads(SetAgentTaskToComplete(agent_id=agent.id).run())
+            self.assertEqual(waiting["kind"], "refinement_report")
+            self.assertTrue(dataset.table_set.filter(title="join scratch").exists())
+            core = upload_mock.call_args.args[0]
+            self.assertEqual(core["occurrenceID"].tolist(), ["occurrence-1"])
+            self.assertEqual(core["eventCategory"].tolist(), ["occurrence"])
+
+            from api.quality_report import refresh_refinement_report
+
+            dataset.refresh_from_db()
+            report = refresh_refinement_report(dataset, waiting)
+            self.assertTrue(report.startswith("QUALITY REPORT"))
+            delete_mock.assert_called_once_with("https://example.org/provisional.zip")
+
+            result = SetAgentTaskToComplete(agent_id=agent.id).run()
 
         self.assertIn("Task marked as complete", result)
         self.assertFalse(dataset.table_set.filter(title="join scratch").exists())

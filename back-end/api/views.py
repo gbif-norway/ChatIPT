@@ -816,12 +816,24 @@ class TableViewSet(viewsets.ReadOnlyModelViewSet):
         table = self.get_object()
         offset = query.validated_data['offset']
         limit = query.validated_data['limit']
+        search = query.validated_data.get('search', '')
+        rows = None
+        if search:
+            try:
+                rows = table.search_rows(
+                    search,
+                    column=query.validated_data.get('column'),
+                    exact=query.validated_data['exact'],
+                )
+            except ValueError as exc:
+                return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response({
-            'count': table.row_count,
+            'count': table.row_count if rows is None else len(rows.index),
+            'total': table.row_count,
             'offset': offset,
             'limit': limit,
             'columns': table.columns,
-            'results': table.row_page(offset, limit),
+            'results': table.row_page(offset, limit, rows),
         })
 
 

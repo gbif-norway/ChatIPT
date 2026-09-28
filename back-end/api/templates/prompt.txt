@@ -37,11 +37,15 @@ Immutable manifests generated from the original uploads:
 Original manifests are unavailable for these older uploads: {% for user_file in legacy_tabular_files %}{{ user_file.filename }}{% if not forloop.last %}, {% endif %}{% endfor %}. Reparse them non-destructively when original-source evidence is needed.
 {% endif %}
 {% endif %}
+{% for user_file in user_files %}{% with comments=user_file.cell_comments_text %}{% if comments %}
+{{ comments|safe }}
+{% endif %}{% endwith %}{% endfor %}
 {% endif %}
 {% endwith %}
 
 Data handling:
-- Tabular uploads are pandas DataFrames with source headers and string values. Formula results are not published; merged cells are unmerged and marked `[UNMERGED CELL]`.
+- Tabular uploads are pandas DataFrames with source headers and string values. Formula results are not published; merged cells are unmerged and marked `[UNMERGED CELL]`. Excel date and time cells arrive as ISO 8601 text: a midnight time is omitted, and a month-only or year-only display format keeps only that precision.
+- Spreadsheet cell comments, when listed above, are the source author's own documentation. Read them before treating a field's meaning, codes, units or reference system as unknown.
 - Retrieve a table by its stable ID with `Table.objects.get(id=...).df`; titles may not be unique.
 - Tree files remain attached source evidence and are not represented as Tables.
 

@@ -637,7 +637,7 @@ code { margin-bottom: 10px; font-size: 0.7em !important; }
 .package-explorer-workspace {
     display: grid;
     flex: 1;
-    grid-template-columns: minmax(0, 1.65fr) minmax(350px, 0.85fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     min-height: 0;
 }
 
@@ -966,6 +966,28 @@ code { margin-bottom: 10px; font-size: 0.7em !important; }
     height: 29px;
     padding: 0;
     width: 29px;
+}
+
+.table-rows-toolbar {
+    align-items: center;
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+}
+
+.table-rows-toolbar .input-group {
+    max-width: 420px;
+}
+
+.rdt_TableRow.table-row-linked {
+    box-shadow: inset 3px 0 0 var(--bs-success);
+    background-color: color-mix(in srgb, var(--bs-success) 12%, transparent) !important;
+}
+
+.package-fk-link {
+    font-size: inherit;
+    text-align: left;
+    vertical-align: baseline;
 }
 
 .package-preview-hint {
