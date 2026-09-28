@@ -464,9 +464,12 @@ _NON_EPITHET_WORDS = frozenset({
     'lato', 'stricto', 'of', 'in', 'from', 'with',
 })
 # Parentheticals like "(Diptera: Culicidae)" and lists after "including" or a
-# label such as "Genera:" are where descriptive scopes name their taxa.
+# label such as "Genera:" are where descriptive scopes name their taxa. Lists
+# are read with parentheticals removed, so "Culex pipiens (Linnaeus, 1758) and
+# Aedes" stays one list.
+_PARENTHETICAL_RE = re.compile(r"\(([^()]*)\)")
 _TAXON_LIST_RE = re.compile(
-    r"\(([^()]*)\)|(?:\b(?:including|includes|include|such as|e\.g\.)|:)\s*([^.;()]*)",
+    r"(?:\b(?:including|includes|include|such as|e\.g\.)|:)\s*([^.;]*)",
     flags=re.IGNORECASE,
 )
 
@@ -483,10 +486,14 @@ def _taxon_keywords_from_prose(scope: str | None) -> list[dict[str, str]]:
 
     names = []
     seen = set()
-    for match in _TAXON_LIST_RE.finditer(str(scope)):
-        if match.group(1) and re.search(r"\d{4}", match.group(1)):
-            continue  # an authorship such as "(Linnaeus, 1758)"
-        items = re.split(r"[,:;/]|\s+(?:and|or|&)\s+", match.group(1) or match.group(2) or "")
+    scope = str(scope)
+    parentheticals = [
+        text for text in _PARENTHETICAL_RE.findall(scope)
+        if not re.search(r"\d{4}", text)  # an authorship such as "(Linnaeus, 1758)"
+    ]
+    lists = _TAXON_LIST_RE.findall(_PARENTHETICAL_RE.sub(" ", scope))
+    for text in parentheticals + lists:
+        items = re.split(r"[,:;/]|\s+(?:and|or|&)\s+", text)
         for item in items:
             name = re.sub(r"^(?:and|or)\s+", "", item.strip(), flags=re.IGNORECASE)
             if not _SCIENTIFIC_NAME_RE.fullmatch(name):
@@ -515,7 +522,9 @@ def taxonomic_keywords_for_eml(eml_extra: dict | None) -> list[dict[str, str]]:
     if keywords:
         return keywords
     scope = clean_text(eml_extra.get('taxonomic_scope'))
-    return _fallback_taxonomic_keywords_from_scope(scope) or _taxon_keywords_from_prose(scope)
+    # Names in parentheses or "including ..." lists beat the comma split, which
+    # would take a leading common name such as "Mosquitoes" as a taxon.
+    return _taxon_keywords_from_prose(scope) or _fallback_taxonomic_keywords_from_scope(scope)
 
 
 def is_synthetic_orcid_email(value) -> bool:
