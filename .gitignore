@@ -367,6 +367,7 @@ sketch
 secrets/
 gapi-secret.json
 user_files/
+python_sessions/
 .vscode/
 .next/
 .htpasswd

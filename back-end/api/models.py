@@ -70,6 +70,8 @@ class Dataset(models.Model):
     published_at = models.DateTimeField(null=True, blank=True)
     dwca_url = models.CharField(max_length=2000, blank=True)
     dwca_validation = models.JSONField(null=True, blank=True)
+    # GBIF validation of a throwaway DwC-A built during refinement; never published.
+    provisional_dwca_validation = models.JSONField(null=True, blank=True)
     dwc_dp_url = models.CharField(max_length=2000, blank=True)
     dwc_dp_validation = models.JSONField(null=True, blank=True)
     gbif_url = models.CharField(max_length=2000, blank=True)
@@ -878,7 +880,6 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
             agent_tools.PreviewDwcDpDescriptor.__name__,
         ]
         package_preparation_functions = [
-            agent_tools.BasicValidationForSomeDwCTerms.__name__,
             agent_tools.GetDarwinCoreInfo.__name__,
             agent_tools.GetDwCExtensionInfo.__name__,
             agent_tools.ExportDwcDp.__name__,
@@ -1808,16 +1809,12 @@ class Agent(models.Model):
         gbif_poll = self._gbif_poll_status(last_message)
         if gbif_poll:
             next_recheck_at = gbif_poll.get('next_recheck_at')
-            if next_recheck_at:
-                try:
-                    recheck_time = datetime.datetime.fromisoformat(next_recheck_at)
-                except (TypeError, ValueError):
-                    recheck_time = None
-                if recheck_time and timezone.now() < recheck_time:
-                    # Not worth a full-context, full-price model turn just to be
-                    # told "still running" again before GBIF could plausibly be
-                    # done. The turn worker schedules the job for next_recheck_at.
-                    return last_message
+            try:
+                recheck_time = datetime.datetime.fromisoformat(next_recheck_at) if next_recheck_at else None
+            except (TypeError, ValueError):
+                recheck_time = None
+            if recheck_time and timezone.now() < recheck_time:
+                return last_message
 
         # Otherwise we need to send it to GPT, last message was from the user, was the return from a function, or was the starting system message.
         # Claim the turn atomically: before the turn worker, the front end polled refresh, and two overlapping
@@ -1833,6 +1830,36 @@ class Agent(models.Model):
             self.busy_thinking = False
             return None if latest_message.role == Message.Role.ASSISTANT else latest_message
         try:
+            # Server-side waiting on GBIF happens under the claim so concurrent
+            # callers cannot submit twice or overwrite a finished result.
+            if (
+                self.task.name == Task.PREPUBLICATION_QUALITY_TASK
+                and not self.message_set.filter(openai_obj__quality_report=True).exists()
+            ):
+                from api.quality_report import prepare_gate_report
+
+                self.dataset.refresh_from_db()
+                if not prepare_gate_report(self):
+                    return last_message
+                last_message = self.message_set.last()
+
+            gbif_poll = self._gbif_poll_status(last_message)
+            if gbif_poll:
+                # Waiting on GBIF is not worth a model turn: recheck here and only
+                # wake the model once the tool result is final. The turn worker
+                # reschedules for the refreshed next_recheck_at.
+                self.dataset.refresh_from_db()
+                if gbif_poll.get('kind') == 'refinement_report':
+                    from api.quality_report import refresh_refinement_report
+
+                    refreshed = refresh_refinement_report(self.dataset, gbif_poll)
+                else:
+                    refreshed = agent_tools.refresh_gbif_validation(self.dataset, gbif_poll)
+                last_message.openai_obj = {**last_message.openai_obj, 'content': refreshed}
+                last_message.save(update_fields=['openai_obj'])
+                if self._gbif_poll_status(last_message):
+                    return last_message
+
             recent_non_system_messages = list(
                 self.message_set.exclude(openai_obj__role=Message.Role.SYSTEM).order_by('-created_at')[:2]
             )
@@ -2068,6 +2095,8 @@ class Agent(models.Model):
                 return prefix
 
         function_model_obj = function_model_class(**fn_args)
+        if fn.name == agent_tools.Python.__name__:
+            function_model_obj.bind_agent(self.id)
         return prefix + function_model_obj.run()
 
 

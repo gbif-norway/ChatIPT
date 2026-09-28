@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from django.test import SimpleTestCase, TestCase, override_settings
+from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 import openpyxl
 import httpx2
@@ -32,7 +33,6 @@ from .helpers.publish import (
     validate_dwca_archive,
 )
 from .agent_tools import (
-    BasicValidationForSomeDwCTerms,
     ExportDwcDp,
     GetDarwinCoreInfo,
     GetDwCExtensionInfo,
@@ -1574,22 +1574,6 @@ class EventDateNormalizationTests(SimpleTestCase):
             normalize_event_date("2025-02-11T00:00:00Z"),
             "2025-02-11T00:00:00+00:00",
         )
-
-    def test_basic_validation_does_not_invent_date_components(self):
-        df = pd.DataFrame(
-            {"eventDate": ["2010", "2010/2011", "March 2010", "not known"]}
-        )
-
-        normalized, failed, future = BasicValidationForSomeDwCTerms(
-            agent_id=1
-        ).validate_and_format_event_dates(df)
-
-        self.assertEqual(
-            normalized["eventDate"].tolist(),
-            ["2010", "2010/2011", "2010-03", "not known"],
-        )
-        self.assertEqual(failed, [3])
-        self.assertEqual(future, [])
 
 
 class SetEMLTemporalInferenceTests(SimpleTestCase):
@@ -3574,8 +3558,6 @@ class DwcaArtifactValidationTests(TestCase):
 
         result = json.loads(ValidateDwCA(
             agent_id=self.agent.id,
-            poll_interval_seconds=1,
-            max_poll_attempts=1,
         ).run())
 
         self.dataset.refresh_from_db()
@@ -3608,8 +3590,6 @@ class DwcaArtifactValidationTests(TestCase):
             agent_id=self.agent.id,
             archive_url=archive_url,
             core_type=DarwinCoreCoreType.OCCURRENCE,
-            poll_interval_seconds=1,
-            max_poll_attempts=1,
         ).run())
 
         self.dataset.refresh_from_db()
@@ -3618,6 +3598,89 @@ class DwcaArtifactValidationTests(TestCase):
         self.assertEqual(result["key"], "fresh-key")
         self.assertTrue(self.dataset.has_current_dwca_validation)
         self.assertEqual(post_mock.call_args.kwargs["files"]["fileUrl"], (None, archive_url))
+
+    @patch("api.agent_tools.requests.get")
+    @patch("api.agent_tools.requests.post")
+    def test_running_validation_returns_waiting_payload_without_sleeping(self, post_mock, get_mock):
+        post_mock.return_value.status_code = 202
+        post_mock.return_value.json.return_value = {"key": "validation-key"}
+        get_mock.return_value.status_code = 200
+        get_mock.return_value.json.return_value = {"status": "RUNNING"}
+
+        result = json.loads(ValidateDwCA(agent_id=self.agent.id).run())
+
+        self.assertEqual(result["status"], "RUNNING")
+        self.assertEqual(result["validation_key"], "validation-key")
+        self.assertGreater(datetime.datetime.fromisoformat(result["next_recheck_at"]), timezone.now())
+        self.assertEqual(get_mock.call_count, 1)
+
+    def _waiting_agent(self, key="validation-key"):
+        self.dataset.dwca_validation = {"url": self.dataset.dwca_url, "key": key, "status": "RUNNING"}
+        self.dataset.save(update_fields=["dwca_validation"])
+        agent = Agent.create_with_system_message(dataset=self.dataset, task=self.task, tables=[])
+        Message.objects.create(agent=agent, openai_obj={
+            "role": "system", "content": "QUALITY REPORT", "quality_report": True,
+        })
+        Message.objects.create(agent=agent, openai_obj={
+            "role": "assistant", "content": "",
+            "tool_calls": [{"id": "call-validate", "type": "function", "function": {
+                "name": "ValidateDwCA", "arguments": json.dumps({"agent_id": agent.id}),
+            }}],
+        })
+        waiting = Message.objects.create(agent=agent, openai_obj={
+            "role": "tool", "tool_call_id": "call-validate",
+            "content": json.dumps({
+                "status": "RUNNING", "validation_key": "validation-key",
+                "url": self.dataset.dwca_url,
+                "waiting_since": timezone.now().isoformat(),
+                "next_recheck_at": (timezone.now() - datetime.timedelta(seconds=1)).isoformat(),
+            }),
+        })
+        return agent, waiting
+
+    @patch("api.models.create_response_message")
+    @patch("api.agent_tools.requests.get")
+    def test_waiting_validation_is_rechecked_without_a_model_turn(self, get_mock, model_mock):
+        get_mock.return_value.status_code = 200
+        get_mock.return_value.json.return_value = {"status": "RUNNING"}
+        agent, waiting = self._waiting_agent()
+
+        agent.next_message()
+
+        model_mock.assert_not_called()
+        waiting.refresh_from_db()
+        payload = json.loads(waiting.openai_obj["content"])
+        self.assertEqual(payload["status"], "RUNNING")
+        self.assertGreater(datetime.datetime.fromisoformat(payload["next_recheck_at"]), timezone.now())
+
+    @patch("api.models.create_response_message")
+    @patch("api.agent_tools.requests.get")
+    def test_finished_validation_replaces_waiting_result_and_wakes_model(self, get_mock, model_mock):
+        get_mock.return_value.status_code = 200
+        get_mock.return_value.json.return_value = {"status": "FINISHED", "metrics": {"indexeable": True}}
+        model_mock.return_value = CompatAssistantMessage(content="Validation finished.")
+        agent, waiting = self._waiting_agent()
+
+        agent.next_message()
+
+        self.assertTrue(model_mock.called)
+        waiting.refresh_from_db()
+        self.assertEqual(json.loads(waiting.openai_obj["content"])["status"], "FINISHED")
+        self.dataset.refresh_from_db()
+        self.assertTrue(self.dataset.has_current_dwca_validation)
+
+    @patch("api.models.create_response_message")
+    @patch("api.agent_tools.requests.get")
+    def test_waiting_on_replaced_archive_hands_back_to_model(self, get_mock, model_mock):
+        model_mock.return_value = CompatAssistantMessage(content="Revalidating.")
+        agent, waiting = self._waiting_agent(key="newer-key")
+
+        agent.next_message()
+
+        get_mock.assert_not_called()
+        self.assertTrue(model_mock.called)
+        waiting.refresh_from_db()
+        self.assertEqual(json.loads(waiting.openai_obj["content"])["status"], "SUPERSEDED")
 
     @patch("api.agent_tools.requests.post")
     def test_recovery_does_not_replace_a_saved_current_archive(self, post_mock):
@@ -3642,8 +3705,6 @@ class DwcaArtifactValidationTests(TestCase):
         result = ValidateDwCA(
             agent_id=self.agent.id,
             validation_key="old-key",
-            poll_interval_seconds=1,
-            max_poll_attempts=1,
         ).run()
 
         self.assertIn("does not belong to the current DwC-A", result)
@@ -4340,6 +4401,99 @@ class PythonToolTests(SimpleTestCase):
         self.assertEqual(result.strip(), "00000000-0000-0000-0000-000000000000")
 
 
+class PythonSessionTests(TestCase):
+    def setUp(self):
+        self.session_dir = tempfile.TemporaryDirectory()
+        self.settings_override = override_settings(PYTHON_SESSION_ROOT=self.session_dir.name)
+        self.settings_override.enable()
+        task = Task.objects.create(name="Data transformation", text="Transform", order=1)
+        self.dataset = Dataset.objects.create(title="Session test", description="Test")
+        self.agent = Agent.objects.create(dataset=self.dataset, task=task)
+        from api import python_sessions
+
+        python_sessions._upload_cache.clear()
+
+    def tearDown(self):
+        self.settings_override.disable()
+        self.session_dir.cleanup()
+
+    def run_code(self, code, agent=None):
+        return Python(code=code).bind_agent((agent or self.agent).id).run()
+
+    def test_variables_persist_between_calls_for_the_same_agent(self):
+        self.run_code("import json\nframe = pd.DataFrame({'a': [1, 2]})\ndef helper(): return 1")
+        result = self.run_code("print(frame['a'].sum())")
+
+        self.assertEqual(result.strip(), "3")
+
+    def test_functions_are_reported_as_not_kept_and_modules_are_not(self):
+        result = self.run_code("import json\ndef helper(): return 1\nprint('ok')")
+
+        self.assertIn("[Not kept for later calls: helper]", result)
+        self.assertNotIn("json", result)
+
+    def test_sessions_are_isolated_per_agent(self):
+        other = Agent.objects.create(dataset=self.dataset, task=self.agent.task)
+        self.run_code("secret = 1")
+
+        result = self.run_code("print('secret' in globals())", agent=other)
+
+        self.assertEqual(result.strip(), "False")
+
+    def test_variables_before_an_error_are_kept(self):
+        result = self.run_code("value = 5\nprint('before')\nraise ValueError('boom')")
+
+        self.assertIn("before", result)
+        self.assertIn("ValueError('boom')", result)
+        self.assertEqual(self.run_code("print(value)").strip(), "5")
+
+    @patch.object(UserFile, "extract_data")
+    def test_sources_and_dataset_are_preloaded(self, extract_mock):
+        UserFile.objects.create(dataset=self.dataset, file="user_files/records.csv")
+        extract_mock.return_value = (UserFile.FileType.TABULAR, {"records": pd.DataFrame({"x": [7]})})
+
+        result = self.run_code(
+            "print(list(sources), dataset.id)\n"
+            "print(sources['records.csv']['records']['x'].iloc[0])"
+        )
+
+        self.assertIn(f"['records.csv'] {self.dataset.id}", result)
+        self.assertIn("7", result)
+        self.assertNotIn("Not kept", result)
+
+    @patch.object(UserFile, "extract_data")
+    def test_uploads_are_parsed_once_and_edits_do_not_leak(self, extract_mock):
+        UserFile.objects.create(dataset=self.dataset, file="user_files/records.csv")
+        extract_mock.return_value = (UserFile.FileType.TABULAR, {"records": pd.DataFrame({"x": [7]})})
+
+        self.run_code("frame = sources['records.csv']['records']\nframe.loc[0, 'x'] = 99")
+        result = self.run_code("print(sources['records.csv']['records']['x'].iloc[0])")
+
+        self.assertEqual(result.strip(), "7")
+        self.assertEqual(extract_mock.call_count, 1)
+
+    def test_session_is_cleared_when_the_agent_completes(self):
+        from api import python_sessions
+        from api.agent_turns import queue_agent_turn, process_next_agent_turn
+
+        close_connections = patch("api.agent_turns.close_old_connections")
+        close_connections.start()
+        self.addCleanup(close_connections.stop)
+        self.run_code("kept = 1")
+        Message.objects.create(agent=self.agent, openai_obj={"role": "user", "content": "Go"})
+        queue_agent_turn(self.agent)
+
+        def complete(agent):
+            agent.completed_at = timezone.now()
+            agent.save(update_fields=["completed_at"])
+            Message.objects.create(agent=agent, openai_obj={"role": "tool", "content": "Complete"})
+
+        with patch.object(Agent, "next_message", complete), patch.object(Dataset, "next_agent", return_value=None):
+            process_next_agent_turn()
+
+        self.assertEqual(python_sessions.load(self.agent.id), {})
+
+
 class DwcDpAssertionRoutingPromptTests(SimpleTestCase):
     @classmethod
     def setUpClass(cls):
@@ -4718,7 +4872,25 @@ class SetAgentTaskToCompleteTests(TestCase):
         Table.objects.create(dataset=dataset, title="join scratch", df=pd.DataFrame({"x": [1]}))
         agent = Agent.objects.create(dataset=dataset, task=task)
 
-        result = SetAgentTaskToComplete(agent_id=agent.id).run()
+        with patch("api.helpers.publish.upload_dwca", return_value="https://example.org/provisional.zip") as upload_mock, \
+                patch("api.agent_tools.submit_gbif_validation", return_value="prov-key"), \
+                patch("api.agent_tools.get_gbif_validation", return_value={"status": "FINISHED", "metrics": {}}), \
+                patch("api.quality_report._delete_archive") as delete_mock:
+            waiting = json.loads(SetAgentTaskToComplete(agent_id=agent.id).run())
+            self.assertEqual(waiting["kind"], "refinement_report")
+            self.assertTrue(dataset.table_set.filter(title="join scratch").exists())
+            core = upload_mock.call_args.args[0]
+            self.assertEqual(core["occurrenceID"].tolist(), ["occurrence-1"])
+            self.assertEqual(core["eventCategory"].tolist(), ["occurrence"])
+
+            from api.quality_report import refresh_refinement_report
+
+            dataset.refresh_from_db()
+            report = refresh_refinement_report(dataset, waiting)
+            self.assertTrue(report.startswith("QUALITY REPORT"))
+            delete_mock.assert_called_once_with("https://example.org/provisional.zip")
+
+            result = SetAgentTaskToComplete(agent_id=agent.id).run()
 
         self.assertIn("Task marked as complete", result)
         self.assertFalse(dataset.table_set.filter(title="join scratch").exists())
