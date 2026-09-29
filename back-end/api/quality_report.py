@@ -359,6 +359,8 @@ def start_refinement_report(agent):
             dataset.title or 'Provisional validation',
             dataset.description or 'Provisional archive for GBIF validation only.',
             DarwinCoreCoreType.OCCURRENCE,
+            # The flattened core keeps DwC-DP keys that have no DwC-A term.
+            drop_unmapped_columns=True,
         )
         key = agent_tools.submit_gbif_validation(record['url'])
     except Exception as exc:

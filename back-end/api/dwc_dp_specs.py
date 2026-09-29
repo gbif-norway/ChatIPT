@@ -19,6 +19,7 @@ from typing import Any, Dict, Iterable, Mapping
 
 import pandas as pd
 from frictionless import Package, Schema
+from jsonschema.exceptions import best_match
 from jsonschema.validators import validator_for
 from lxml import etree
 from referencing import Registry, Resource
@@ -135,10 +136,24 @@ class DwcDpTableSpec:
         return list(self.schema.get("weakForeignKeys") or [])
 
 
+def _drop_placeholder_references(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop dcterms:references placeholders such as 'pending' that the DwC-DP profile rejects.
+
+    The 1.0_DEV table schemas mark some fields' references as 'pending', but the profile
+    requires the property to be an http URI when present. The vendored files stay
+    untouched so the snapshot hash still identifies the upstream revision.
+    """
+    for field in schema.get("fields") or []:
+        reference = field.get("dcterms:references")
+        if reference is not None and not str(reference).startswith("http"):
+            del field["dcterms:references"]
+    return schema
+
+
 def load_dwc_dp_table_specs() -> Dict[str, DwcDpTableSpec]:
     specs: Dict[str, DwcDpTableSpec] = {}
     for path in sorted(_TABLE_SCHEMA_ROOT.glob("*.json")):
-        schema = _load_json(path)
+        schema = _drop_placeholder_references(_load_json(path))
         name = path.stem
         specs[name] = DwcDpTableSpec(
             name=name,
@@ -760,6 +775,8 @@ def _dwc_dp_profile_validator():
 def _dwc_dp_profile_errors(descriptor: Mapping[str, Any]) -> list[str]:
     errors = []
     for error in _dwc_dp_profile_validator().iter_errors(deepcopy(dict(descriptor))):
+        # A oneOf failure's own message repeats the whole resource; report the branch error.
+        error = best_match([error])
         location = "/" + "/".join(str(part) for part in error.absolute_path)
         message = error.message if len(error.message) <= 300 else error.message[:300] + "..."
         errors.append(f"Descriptor does not match the DwC-DP profile at '{location}': {message}")

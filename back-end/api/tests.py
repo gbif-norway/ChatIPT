@@ -21,6 +21,7 @@ import pandas as pd
 import yaml
 from .helpers.publish import (
     DwcaExtensionLinkError,
+    DwcaPreflightError,
     EmlExportError,
     assert_case_insensitive_unique_identifier,
     gbif_dataset_type_for_core,
@@ -1100,26 +1101,11 @@ class EmlGenerationTests(SimpleTestCase):
         contact_tags = [child.tag for child in list(dataset.find('contact'))]
         self.assertLess(contact_tags.index('electronicMailAddress'), contact_tags.index('userId'))
 
-    def test_make_eml_omits_geographic_coverage_without_bounds(self):
-        class DummyUser:
-            first_name = 'Alice'
-            last_name = 'Smith'
-            orcid_id = '0000-0001-2345-6789'
-            email = 'alice@example.org'
-
-        xml_text = make_eml(
-            title='No geographic bounds',
-            description='Abstract text',
-            user=DummyUser(),
-            eml_extra={
+    def test_make_eml_rejects_geographic_scope_without_bounds(self):
+        with self.assertRaisesRegex(EmlExportError, 'geographic_scope has no bounding box'):
+            make_eml('No geographic bounds', 'Abstract text', eml_extra={
                 'geographic_scope': 'Norway',
-            },
-        )
-        root = ET.fromstring(xml_text.encode('utf-8'))
-        dataset = root.find('dataset')
-        self.assertIsNotNone(dataset)
-
-        self.assertIsNone(dataset.find('coverage/geographicCoverage'))
+            })
 
     def test_make_eml_extracts_geographic_bounds_from_scope_text(self):
         class DummyUser:
@@ -2021,7 +2007,7 @@ class SetEMLProjectTitleTests(TestCase):
         self.dataset.refresh_from_db()
 
         self.assertEqual(self.dataset.eml["geographic_scope"], "Gibraltar, United Kingdom")
-        self.assertIn("cannot be exported as geographicCoverage", result)
+        self.assertIn("will block export as geographicCoverage", result)
         self.assertIn("geographic_bounds", result)
 
 
@@ -3175,6 +3161,35 @@ class DwcaExportSanitizationTests(SimpleTestCase):
             row_types,
             {EXTENSION_SCHEMAS[extension_type].row_type for extension_type in extension_values},
         )
+
+    @patch("api.helpers.publish.upload_file")
+    def test_upload_dwca_rejects_populated_columns_the_schema_would_drop(self, upload_mock):
+        core = pd.DataFrame([
+            {
+                "taxonID": "t-1",
+                "scientificName": "Apus apus",
+                "dynamicProperties": '{"gbifTaxonKey": "https://www.gbif.org/species/5228676"}',
+                "internalNote": "",
+            },
+        ])
+        vernacular = pd.DataFrame([
+            {"taxonID": "t-1", "vernacularName": "Common swift", "vernacularNameID": "vn-1"},
+        ])
+
+        with self.assertRaises(DwcaPreflightError) as raised:
+            upload_dwca(
+                core,
+                "Test dataset",
+                "Test description",
+                core_type=DarwinCoreCoreType.TAXON,
+                extensions=[(vernacular, DarwinCoreExtensionType.VERNACULAR_NAME, "taxonID")],
+            )
+
+        message = str(raised.exception)
+        self.assertIn("taxon core column 'dynamicProperties' (1 populated rows)", message)
+        self.assertIn("column 'vernacularNameID' (1 populated rows)", message)
+        self.assertNotIn("internalNote", message)
+        upload_mock.assert_not_called()
 
     def test_upload_dwca_rejects_extension_incompatible_with_core(self):
         core = pd.DataFrame([

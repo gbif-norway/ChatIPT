@@ -213,6 +213,21 @@ class LocalSpecTable(DwcaWriterTable):
         self.dwc_fields = field_map
 
 
+def _unmapped_populated_columns(table: LocalSpecTable, label: str) -> list[str]:
+    """Describe populated columns that only_mapped_columns would silently drop from the archive."""
+    if table.dwc_fields is None:
+        table.update_spec()
+    issues = []
+    for index, column in enumerate(table.data.columns):
+        if index == table.id_index or column in table.dwc_fields:
+            continue
+        values = table.data[column].astype("string").fillna("").str.strip()
+        populated = int(values.ne("").sum())
+        if populated:
+            issues.append(f"{label} column '{column}' ({populated} populated rows)")
+    return issues
+
+
 def _replace_surrogateescape_chars(value: str) -> str:
     """Convert surrogateescape bytes into real Unicode so UTF-8 export cannot fail."""
     if not any(0xDC80 <= ord(char) <= 0xDCFF for char in value):
@@ -919,6 +934,14 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None, datas
     geographic_bounds = _normalize_geographic_bounds(eml_extra.get('geographic_bounds'))
     if geographic_bounds is None:
         geographic_bounds = _extract_geographic_bounds_from_text(geographic_scope)
+    if geographic_scope and not geographic_bounds:
+        # EML requires boundingCoordinates in geographicCoverage, so the scope
+        # would otherwise be dropped from the archive without notice.
+        raise EmlExportError(
+            "EML geographic_scope has no bounding box, so it cannot be exported as "
+            "geographicCoverage. Call SetEML with west, east, north, and south "
+            "geographic_bounds in decimal degrees that enclose the stated scope."
+        )
     if geographic_scope and geographic_bounds:
         geo = ET.SubElement(coverage, 'geographicCoverage')
         set_text(ET.SubElement(geo, 'geographicDescription'), geographic_scope)
@@ -1827,6 +1850,7 @@ def upload_dwca(
     eml_extra: dict | None = None,
     additional_files: list[tuple[str, bytes]] | None = None,
     dataset_id=None,
+    drop_unmapped_columns: bool = False,
 ):
     df_core = _sanitize_dataframe_for_utf8_export(df_core)
     if core_type == DarwinCoreCoreType.OCCURRENCE:
@@ -2053,6 +2077,19 @@ def upload_dwca(
             )
             discord_bot.send_discord_message(error_msg)
             raise
+
+    unmapped_columns = []
+    if not drop_unmapped_columns:
+        unmapped_columns = _unmapped_populated_columns(core_table, f"{core_type.value} core")
+        for (_, ext_type, _, _), ext_table in zip(prepared_extensions, archive.extensions):
+            unmapped_columns.extend(_unmapped_populated_columns(ext_table, f"{ext_type.value} extension"))
+    if unmapped_columns:
+        raise DwcaPreflightError(
+            "DwC-A preflight failed: these populated columns are not terms of their registered "
+            "core or extension schema and would be dropped from the archive: "
+            + "; ".join(unmapped_columns)
+            + ". Map each value to a registered term or extension, or remove the column."
+        )
 
     file_name = datetime.now().strftime('output-%Y-%m-%d-%H%M%S-%f') + '.zip'
     try:

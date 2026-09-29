@@ -2147,7 +2147,7 @@ class SetEML(OpenAIBaseModel):
             geographic_export_note = None
             if eml.get("geographic_scope") and not eml.get("geographic_bounds"):
                 geographic_export_note = (
-                    "Geographic scope was saved but cannot be exported as geographicCoverage until "
+                    "Geographic scope was saved but will block export as geographicCoverage until "
                     "west, east, north, and south geographic_bounds are supplied."
                 )
             notes = [

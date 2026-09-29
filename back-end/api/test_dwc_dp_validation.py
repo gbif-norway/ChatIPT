@@ -10,7 +10,10 @@ import pandas as pd
 from django.test import SimpleTestCase
 
 from api.dwc_dp_specs import (
+    DWC_DP_PROFILE_URL,
+    TABLE_SPECS,
     DwcDpArchiveValidationError,
+    _dwc_dp_profile_errors,
     _frictionless_data_errors,
     build_datapackage_descriptor,
     create_dwc_dp_archive,
@@ -67,6 +70,36 @@ class DwcDpProfileValidationTests(SimpleTestCase):
 
         self.assertTrue(
             any("does not match the DwC-DP profile at '/resources/0/name'" in error for error in errors),
+            errors,
+        )
+
+
+    def test_every_vendored_table_schema_matches_profile(self):
+        # identification-taxon.taxonSortOrder upstream has "dcterms:references": "pending".
+        for name, spec in TABLE_SPECS.items():
+            descriptor = {
+                "profile": DWC_DP_PROFILE_URL,
+                "resources": [
+                    {
+                        "name": name,
+                        "path": f"{name}.csv",
+                        "profile": "tabular-data-resource",
+                        "schema": {"fields": deepcopy(spec.schema["fields"])},
+                    }
+                ],
+            }
+            with self.subTest(table=name):
+                self.assertEqual(_dwc_dp_profile_errors(descriptor), [])
+
+    def test_reports_the_failing_field_rather_than_the_whole_resource(self):
+        descriptor = build_datapackage_descriptor(_resources())
+        _field(_resource(descriptor, "event"), "eventDate")["dcterms:references"] = "pending"
+
+        errors = validate_datapackage_descriptor(descriptor)
+
+        self.assertIn(
+            "Descriptor does not match the DwC-DP profile at "
+            "'/resources/0/schema/fields/3/dcterms:references': 'pending' does not match '^http.*$'",
             errors,
         )
 

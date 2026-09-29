@@ -190,3 +190,17 @@ class RefinementReportTests(TestCase):
         delete_mock.assert_called_once_with("https://example.org/provisional.zip")
         self.assertIn("Could not build or submit", report)
         self.assertIn("material records were not validated separately", report)
+
+    @patch("api.quality_report._delete_archive")
+    @patch("api.quality_report.agent_tools.submit_gbif_validation", return_value="k1")
+    @patch("api.helpers.publish.upload_file")
+    @patch("api.helpers.publish.Minio")
+    def test_provisional_archive_drops_dwc_dp_keys_instead_of_failing_preflight(
+        self, _minio, _upload, _submit, _delete
+    ):
+        from api.quality_report import start_refinement_report
+
+        start_refinement_report(self.agent)
+
+        self.dataset.refresh_from_db()
+        self.assertEqual(self.dataset.provisional_dwca_validation.get("key"), "k1")
