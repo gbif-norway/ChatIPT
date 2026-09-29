@@ -1,7 +1,7 @@
 from rest_framework import serializers, viewsets, status
 from rest_framework.exceptions import ValidationError
-from api.serializers import DatasetSerializer, DatasetListSerializer, OpenAIUsageSerializer, TablePageQuerySerializer, TableSerializer, MessageSerializer, AgentSerializer, TaskSerializer, UserFileSerializer
-from api.models import Dataset, Table, Message, Agent, Task, UserFile
+from api.serializers import DatasetSerializer, DatasetListSerializer, OpenAIUsageSerializer, TablePageQuerySerializer, TableSerializer, MessageSerializer, AgentSerializer, TaskSerializer, TaxonDecisionSerializer, TaxonNameMatchSerializer, UserFileSerializer
+from api.models import Dataset, Table, Message, Agent, Task, TaxonNameMatch, UserFile
 from rest_framework.response import Response
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny, BasePermission
@@ -884,6 +884,78 @@ class UserFileViewSet(viewsets.ModelViewSet):
                 dataset.rebuild_tables_from_user_files()
             dataset.handle_source_change()
             transaction.on_commit(lambda: storage.delete(file_name), robust=True)
+
+
+class TaxonNameMatchViewSet(viewsets.ReadOnlyModelViewSet):
+    """Taxon labels awaiting or holding a reviewer decision. Filter with ?dataset=<id>."""
+
+    serializer_class = TaxonNameMatchSerializer
+    permission_classes = [IsAuthenticatedOrSuperuser]
+    filterset_fields = ['dataset', 'decision', 'source_table', 'context_column']
+
+    def get_queryset(self):
+        queryset = TaxonNameMatch.objects.filter(record_count__gt=0)
+        if self.request.user.is_superuser:
+            return queryset
+        return queryset.filter(dataset__user=self.request.user)
+
+    @action(detail=True, methods=['post'])
+    def decide(self, request, *args, **kwargs):
+        from api import taxon_matching
+
+        row = self.get_object()
+        payload = TaxonDecisionSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        try:
+            taxon_matching.decide(
+                row,
+                data['decision'],
+                user=request.user,
+                usage_id=data.get('usage_id'),
+                name={
+                    key: data.get(key)
+                    for key in ('scientificName', 'scientificNameAuthorship', 'taxonRank')
+                },
+            )
+        except ValueError as exc:
+            raise ValidationError({'detail': str(exc)})
+        except taxon_matching.TaxonServiceError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response(self.get_serializer(row).data)
+
+    @action(detail=False, methods=['post'], url_path='accept-exact')
+    def accept_exact(self, request, *args, **kwargs):
+        """Accept pending EXACT matches of names written in the label, for one dataset."""
+        from api import taxon_matching
+
+        dataset_id = request.data.get('dataset')
+        datasets = Dataset.objects.all() if request.user.is_superuser else Dataset.objects.filter(user=request.user)
+        dataset = get_object_or_404(datasets, pk=dataset_id)
+        accepted = taxon_matching.accept_exact_matches(
+            dataset,
+            user=request.user,
+            source_table=request.data.get('source_table'),
+            context_column=request.data.get('context_column'),
+        )
+        return Response({
+            'accepted': len(accepted),
+            'records': sum(row.record_count for row in accepted),
+            'results': self.get_serializer(accepted, many=True).data,
+        })
+
+    @action(detail=False, methods=['get'])
+    def search(self, request, *args, **kwargs):
+        """COL XR name suggestions for a manual choice."""
+        from api import taxon_matching
+
+        text = (request.query_params.get('q') or '').strip()
+        if len(text) < 3:
+            return Response({'results': []})
+        try:
+            return Response({'results': taxon_matching.search_col(text)})
+        except taxon_matching.TaxonServiceError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
 
 class TaskViewSet(viewsets.ModelViewSet):

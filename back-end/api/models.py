@@ -1066,11 +1066,19 @@ class UserFile(models.Model):
         ordering = ['uploaded_at', 'id']
 
 
+# Tools that end the turn and wait for the user.
+PAUSING_TOOLS = {
+    agent_tools.RequestUserInput.__name__,
+    agent_tools.RequestTaxonReview.__name__,
+}
+
+
 class Task(models.Model):  # See tasks.yaml for the only objects this model is populated with
     PACKAGE_PREPARATION_TASK = "Publication package preparation"
     PREPUBLICATION_QUALITY_TASK = "Pre-publication quality gate"
     FINAL_PUBLICATION_TASK = "Final Review & Publication"
     MAINTENANCE_TASK = "Data maintenance"
+    VALIDATION_TASK = "Data validation and refinement"
     SUITABILITY_TASK = "Data suitability assessment"
 
     EFFICIENT_MODEL_TASKS = {
@@ -1128,6 +1136,11 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
             *package_preparation_functions,
             agent_tools.ValidateDwCA.__name__,
         ]
+        taxon_review_functions = [
+            agent_tools.MatchTaxonNames.__name__,
+            agent_tools.RequestTaxonReview.__name__,
+            agent_tools.ApplyTaxonDecisions.__name__,
+        ]
 
         functions = list(common_functions)
         if self.name in {
@@ -1136,6 +1149,8 @@ class Task(models.Model):  # See tasks.yaml for the only objects this model is p
             "Phylogenetic tree linking",
         }:
             functions.extend(dwc_dp_functions)
+        if self.name in {self.VALIDATION_TASK, self.MAINTENANCE_TASK}:
+            functions.extend(taxon_review_functions)
         if self.name == self.PACKAGE_PREPARATION_TASK:
             functions.extend(dwc_dp_functions)
             functions.extend(package_preparation_functions)
@@ -2206,7 +2221,7 @@ class Agent(models.Model):
                     usage_retry_reason="no_tool_call",
                 )
                 asks_for_user_input = any(
-                    tool_call.function.name == agent_tools.RequestUserInput.__name__
+                    tool_call.function.name in PAUSING_TOOLS
                     for tool_call in response_message.tool_calls
                 )
                 if (
@@ -2226,6 +2241,7 @@ class Agent(models.Model):
             # One or more tool calls requested – execute them in sequence
             messages = [message]
             requested_user_input = None
+            pause_marker = {}
             for tool_index, tool_call in enumerate(response_message.tool_calls):
                 try:
                     result = self.run_function(tool_call.function)
@@ -2244,20 +2260,29 @@ class Agent(models.Model):
                 )
                 messages.append(tool_message)
 
-                if tool_call.function.name == agent_tools.RequestUserInput.__name__:
+                if tool_call.function.name in PAUSING_TOOLS:
                     try:
-                        request = agent_tools.RequestUserInput(
-                            **json.loads(tool_call.function.arguments, strict=False)
-                        )
+                        arguments = json.loads(tool_call.function.arguments, strict=False)
                         parsed_result = json.loads(result)
-                        if (
-                            request.agent_id == self.id
-                            and parsed_result.get("status") == "awaiting_user_input"
-                        ):
-                            requested_user_input = request.user_message()
+                        if tool_call.function.name == agent_tools.RequestUserInput.__name__:
+                            request = agent_tools.RequestUserInput(**arguments)
+                            if (
+                                request.agent_id == self.id
+                                and parsed_result.get("status") == "awaiting_user_input"
+                            ):
+                                requested_user_input = request.user_message()
+                        else:
+                            request = agent_tools.RequestTaxonReview(**arguments)
+                            if (
+                                request.agent_id == self.id
+                                and parsed_result.get("status") == "awaiting_taxon_review"
+                            ):
+                                requested_user_input = request.message.strip()
+                                pause_marker = {"taxon_review": request.scope()}
                     except Exception:
                         requested_user_input = None
-                    # RequestUserInput is terminal for this turn.
+                        pause_marker = {}
+                    # Pausing tools are terminal for this turn.
                     # Record outputs for later calls without executing them so the
                     # Responses API receives a complete function-call/output pairing
                     # after the user answers.
@@ -2265,7 +2290,7 @@ class Agent(models.Model):
                         skipped_message = Message.create_function_message(
                             agent=self,
                             function_result=(
-                                "Skipped because RequestUserInput paused this turn. "
+                                f"Skipped because {tool_call.function.name} paused this turn. "
                                 "Reconsider this action after the user responds."
                             ),
                             tool_call_id=skipped_call.id,
@@ -2279,6 +2304,7 @@ class Agent(models.Model):
                     openai_obj={
                         "role": Message.Role.ASSISTANT,
                         "content": requested_user_input,
+                        **pause_marker,
                     },
                 )
                 messages.append(question_message)
@@ -2526,3 +2552,68 @@ class DatasetAttentionNotification(models.Model):
 
     def __str__(self):
         return f'Dataset {self.dataset_id}: {self.email} ({self.status})'
+
+
+class TaxonNameMatch(models.Model):
+    """One distinct verbatim taxon label (in one source context) and its COL XR review state.
+
+    The suggestion comes from GBIF's v2 matcher against Catalogue of Life XR. Only a reviewer
+    decision is ever written back to the data; verbatimIdentification itself is never changed.
+    COL ids are kept here as provenance and are not published.
+    """
+
+    class Decision(models.TextChoices):
+        PENDING = 'pending', _('Pending review')
+        ACCEPTED = 'accepted', _('Accepted a COL name')
+        NOT_IN_COL = 'not_in_col', _('Correct name, not in GBIF\'s COL copy')
+        KEEP_ORIGINAL = 'keep_original', _('Keep the original data unchanged')
+
+    dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, related_name='taxon_matches')
+    # Labels are matched per table (by resource title, which survives table replacement) and
+    # per context column; decisions are only ever applied under the same configuration.
+    source_table = models.CharField(max_length=200)
+    context_column = models.CharField(max_length=200, blank=True, default='')
+    verbatim_label = models.TextField()
+    # Distinguishes the same label meaning different taxa in different parts of the source,
+    # e.g. an abbreviated genus in two sheet blocks. Empty when the label alone is unambiguous.
+    context_key = models.CharField(max_length=200, blank=True, default='')
+    context_note = models.TextField(blank=True)
+    record_count = models.PositiveIntegerField(default=0)
+
+    query = models.JSONField(default=dict, help_text='Name and classification hints sent to the matcher.')
+    preprocessing_note = models.TextField(blank=True)
+    identification_qualifier = models.CharField(max_length=100, blank=True)
+
+    match = models.JSONField(default=dict, help_text='Summarised GBIF v2 COL XR match.')
+    review_aids = models.JSONField(default=dict, blank=True)
+    col_release = models.JSONField(default=dict, blank=True)
+    matched_at = models.DateTimeField(null=True, blank=True)
+
+    decision = models.CharField(max_length=20, choices=Decision.choices, default=Decision.PENDING)
+    decided_usage = models.JSONField(default=dict, blank=True)
+    # The query the reviewer saw; a new interpretation reopens the decision.
+    decided_query = models.JSONField(default=dict, blank=True)
+    decided_by = models.ForeignKey(
+        CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    applied_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-record_count', 'verbatim_label', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['dataset', 'source_table', 'context_column', 'verbatim_label', 'context_key'],
+                name='unique_taxon_label_per_source_context',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Dataset {self.dataset_id}: {self.verbatim_label} ({self.decision})'
+
+    @property
+    def suggestion_status(self):
+        return (self.match or {}).get('status') or 'none'

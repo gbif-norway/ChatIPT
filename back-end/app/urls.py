@@ -28,6 +28,7 @@ router.register(r'messages', api_views.MessageViewSet, basename='message')
 router.register(r'agents', api_views.AgentViewSet, basename='agent')  
 router.register(r'tasks', api_views.TaskViewSet, basename='task')  
 router.register(r'user-files', api_views.UserFileViewSet, basename='userfile')
+router.register(r'taxon-matches', api_views.TaxonNameMatchViewSet, basename='taxonnamematch')
 
 urlpatterns = [
     path('admin/', admin.site.urls),

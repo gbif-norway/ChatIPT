@@ -66,7 +66,7 @@ from .helpers.openai_helpers import (
     query_responses_api,
 )
 from .helpers import discord_bot
-from .models import Agent, CustomUser, Dataset, Message, OpenAIUsage, Table, Task, UserFile
+from .models import Agent, CustomUser, Dataset, Message, OpenAIUsage, Table, Task, TaxonNameMatch, UserFile
 from .openai_usage import record_response_usage, response_usage_defaults, usage_summary
 from .serializers import DatasetListSerializer, DatasetSerializer, UserFileSerializer
 from .dwc_dp_specs import (
@@ -5622,6 +5622,66 @@ class AgentWorkflowActionTests(TestCase):
         self.assertIn("call-complete", outputs)
         self.assertIn("Skipped because RequestUserInput", outputs["call-complete"])
         self.assertIsNone(agent.completed_at)
+
+    @patch("api.models.create_response_message")
+    def test_request_taxon_review_is_terminal_and_marks_the_message(
+        self,
+        create_response_message_mock,
+    ):
+        agent = self._agent_with_user_message()
+        table = Table.objects.create(
+            dataset=agent.dataset, title="occurrence", df=pd.DataFrame({"verbatimIdentification": ["Pająki"]}),
+        )
+        TaxonNameMatch.objects.create(
+            dataset=agent.dataset, source_table="occurrence", verbatim_label="Pająki", record_count=87,
+            matched_at=timezone.now(),
+        )
+        create_response_message_mock.return_value = CompatAssistantMessage(
+            tool_calls=[
+                CompatToolCall(
+                    id="call-review",
+                    function=CompatFunctionCall(
+                        name="RequestTaxonReview",
+                        arguments=json.dumps({
+                            "agent_id": agent.id,
+                            "table_id": table.id,
+                            "message": "Please review 142 taxon names.",
+                        }),
+                    ),
+                ),
+                CompatToolCall(
+                    id="call-apply",
+                    function=CompatFunctionCall(
+                        name="ApplyTaxonDecisions",
+                        arguments=json.dumps({"agent_id": agent.id, "table_id": 1}),
+                    ),
+                ),
+            ],
+        )
+
+        messages = agent.next_message()
+
+        self.assertEqual(messages[-1].role, Message.Role.ASSISTANT)
+        self.assertEqual(messages[-1].openai_obj["content"], "Please review 142 taxon names.")
+        self.assertEqual(
+            messages[-1].openai_obj["taxon_review"], {"source_table": "occurrence", "context_column": ""},
+        )
+        outputs = {
+            message.openai_obj.get("tool_call_id"): message.openai_obj.get("content")
+            for message in messages
+            if message.openai_obj.get("role") == Message.Role.TOOL
+        }
+        self.assertIn("Skipped because RequestTaxonReview", outputs["call-apply"])
+        self.assertIsNone(agent.next_message())
+
+    def test_taxon_review_tools_are_offered_in_validation_and_maintenance_only(self):
+        names = lambda task_name: {f.__name__ for f in Task(name=task_name).functions}
+        for task_name in ("Data validation and refinement", "Data maintenance"):
+            self.assertLessEqual(
+                {"MatchTaxonNames", "RequestTaxonReview", "ApplyTaxonDecisions"}, names(task_name),
+            )
+        self.assertNotIn("MatchTaxonNames", names("Data transformation"))
+        self.assertNotIn("MatchTaxonNames", names("Pre-publication quality gate"))
 
     def test_request_user_input_schema_allows_multiple_questions(self):
         schema = RequestUserInput.openai_schema()

@@ -1,4 +1,5 @@
 import Message from './Message';
+import TaxonReviewModal from './TaxonReviewModal';
 import { useState, useEffect, useRef } from 'react';
 import Accordion from 'react-bootstrap/Accordion';
 import Badge from 'react-bootstrap/Badge';
@@ -10,6 +11,7 @@ import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
 import { getLoadingText } from '../utils/loading.js';
 import { groupAgentMessages } from '../utils/agentMessageGroups.mjs';
+import { reviewSummaryMessage } from '../utils/taxonReview.mjs';
 import { useDataset } from '../contexts/DatasetContext.js';
 import {
   ALLOWED_FILE_EXTENSIONS,
@@ -73,6 +75,7 @@ const Agent = ({
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploadError, setUploadError] = useState(null);
   const [processingDetailsOpen, setProcessingDetailsOpen] = useState(false);
+  const [showTaxonReview, setShowTaxonReview] = useState(false);
   const fileInputRef = useRef(null);
   const { isDark } = useTheme();
   const { consumeNextUserMessagePrefix, queueNextUserMessagePrefix } = useDataset();
@@ -295,6 +298,53 @@ const Agent = ({
     }
   };
 
+  const postUserMessage = async (content) => {
+    const csrfToken = await getCsrfToken();
+    const headers = { 'Content-Type': 'application/json' };
+
+    if (csrfToken) {
+      headers['X-CSRFToken'] = csrfToken;
+    }
+
+    const response = await fetch(`${config.baseUrl}/api/messages/`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ openai_obj: { content, role: 'user' }, agent: agent.id }),
+      credentials: 'include'
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to send message.');
+    }
+  };
+
+  const sendTaxonReviewSummary = async (rows) => {
+    setShowTaxonReview(false);
+    const content = reviewSummaryMessage(rows);
+    setIsUserSending(true);
+    setIsLoading(true);
+    setUploadError(null);
+    setOptimisticMessage({
+      id: `optimistic-${Date.now()}`,
+      role: 'user',
+      openai_obj: { content }
+    });
+    try {
+      await postUserMessage(content);
+      await refreshDataset();
+      if (typeof refreshTables === 'function') {
+        await refreshTables();
+      }
+    } catch (error) {
+      console.error('Error sending taxon review summary:', error);
+      setOptimisticMessage(null);
+      setUploadError('Your decisions are saved, but the message to ChatIPT could not be sent. Please try again.');
+    } finally {
+      setIsLoading(false);
+      setIsUserSending(false);
+    }
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (isUserSending) {
@@ -383,23 +433,7 @@ const Agent = ({
           openai_obj: { content: composedMessageContent }
         });
 
-        const csrfToken = await getCsrfToken();
-        const headers = { 'Content-Type': 'application/json' };
-
-        if (csrfToken) {
-          headers['X-CSRFToken'] = csrfToken;
-        }
-
-        const response = await fetch(`${config.baseUrl}/api/messages/`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ openai_obj: { content: composedMessageContent, role: 'user' }, agent: agent.id }),
-          credentials: 'include'
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to send message.');
-        }
+        await postUserMessage(composedMessageContent);
 
         await refreshDataset();
         if (typeof refreshTables === 'function') {
@@ -467,6 +501,11 @@ const Agent = ({
   // Determine if the assistant is waiting for a reply from the user
   const lastMessage = (agent.message_set && agent.message_set.length > 0) ? agent.message_set[agent.message_set.length - 1] : null;
   const assistantWaitingForReply = lastMessage && lastMessage.role === 'assistant' && (!lastMessage.openai_obj.tool_calls || lastMessage.openai_obj.tool_calls.length === 0);
+  const taxonReviewScope = [...(agent.message_set || [])]
+    .reverse()
+    .find((message) => message.role === 'assistant' && message.openai_obj?.taxon_review)
+    ?.openai_obj.taxon_review;
+  const awaitingTaxonReview = Boolean(assistantWaitingForReply && lastMessage.openai_obj?.taxon_review);
   const composerClassName = [
     'chat-composer border rounded p-3 mt-3',
     isDark ? 'bg-dark border-secondary text-light' : 'bg-light'
@@ -522,6 +561,24 @@ const Agent = ({
             </div>
           )}
           
+          {taxonReviewScope && !agent.completed_at && (
+            <div className={`taxon-review-callout d-flex flex-wrap align-items-center gap-2 mt-2${awaitingTaxonReview ? '' : ' opacity-75'}`}>
+              <button
+                type="button"
+                className={`btn ${awaitingTaxonReview ? 'btn-primary' : 'btn-outline-primary'} btn-sm`}
+                onClick={() => setShowTaxonReview(true)}
+              >
+                <i className="bi bi-list-check me-1" aria-hidden="true"></i>
+                Review taxon names
+              </button>
+              {awaitingTaxonReview && (
+                <span className="small text-muted">
+                  Decide on the suggested names, then press “Done” to let ChatIPT apply them.
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Show optimistic user message immediately */}
           {optimisticMessage && (
             <Message key={optimisticMessage.id} message={optimisticMessage} />
@@ -639,6 +696,16 @@ const Agent = ({
           )}
         </Accordion.Body>
       </Accordion.Item>
+      {taxonReviewScope && (
+        <TaxonReviewModal
+          datasetId={currentDatasetId}
+          scope={typeof taxonReviewScope === 'object' ? taxonReviewScope : null}
+          show={showTaxonReview}
+          onClose={() => setShowTaxonReview(false)}
+          onDone={sendTaxonReviewSummary}
+          canSendSummary={awaitingTaxonReview && !isUserSending && !agent.busy_thinking}
+        />
+      )}
     </>
   );
 };

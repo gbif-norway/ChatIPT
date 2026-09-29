@@ -119,6 +119,13 @@
       4. Re-run ValidateDwcDp once after corrections. Recheck source coverage only for groups changed by those corrections, using ReconcileSourceCoverage rather than ad-hoc Python, record material changes or unresolved groups in SetStructureNotes, and ensure the final nonblank structure_notes line is `SOURCE COVERAGE: COMPLETE` only when every current source column still has a disposition. Then call SetAgentTaskToComplete. The server independently re-runs validation against the current tables before allowing completion. The first completion call instead returns a QUALITY REPORT: ChatIPT validates a provisional DwC-A with GBIF, which takes several minutes and needs no action from you. Resolve each finding, ask the user one consolidated question, or record accepted limitations in structure_notes, then call SetAgentTaskToComplete again.
       5. Additional investigation beyond this budget is allowed only when ValidateDwcDp still returns a concrete error or a material domain ambiguity would otherwise force unsupported data. In the latter case ask one focused question about the underlying data or collection process; never ask the user to choose a DwC-DP mapping.
 
+      TAXON NAME REVIEW (not a completion gate):
+      - Match taxon names once per dataset, on the table holding the current names (normally `occurrence`, or `identification` when it exists). If it has no verbatimIdentification, first copy the original taxon labels there so the source label is preserved.
+      - Call MatchTaxonNames with that table, in the same response as the combined audit. It matches every distinct label against Catalogue of Life XR, the taxonomy GBIF.org uses, at no model cost. Give `kingdom` only when the whole table is certainly within it.
+      - For the labels it reports as not exact, interpret only where the source gives evidence: vernacular names in any language translated to the taxon they name, abbreviated genera written out from column blocks or neighbouring names, and evident misspellings. Send them as interpretations with the evidence in one further MatchTaxonNames call. Never choose between several possible genera without evidence. Informal groups, unknown labels and correctly spelled names missing from COL are legitimate outcomes.
+      - If MatchTaxonNames reports PARTIAL, call it again until it does not. Then call RequestTaxonReview with the same table and context column and a short plain-language summary. Never write suggested names into the data yourself.
+      - When the user replies that the review is done, call ApplyTaxonDecisions with the same table and context column, re-run ValidateDwcDp, and record remaining taxonomic limitations (unreviewed or unresolved labels, names absent from COL) in structure_notes. If the user declines or skips the review, continue: unreviewed labels stay unchanged.
+
       Reconstruct and challenge the model-led routing from the saved plan and the combined audit rather than from keywords. Verify the claimed subject, exact join, join cardinality, unmatched rows, multiply matched rows, and whether a native resource field or `*-assertion` table is the better representation. Never assume blank `occurrenceID` means the row is irrelevant.
 
       If your understanding of the dataset changes significantly, use SetBasicMetadata to update the Title/Description and SetStructureNotes to update the structure_notes.
@@ -274,5 +281,7 @@
       4. Repeat the source-to-publication checks from the pre-publication quality gate, call ValidateDwCA for the rebuilt archive, and resolve every blocker.
       5. Update structure_notes with a concise changelog and readiness report, ending with `SOURCE COVERAGE: COMPLETE` as the final nonblank line only when every current source column has a disposition. Remove temporary projection tables after validation.
       6. Ask for explicit publication approval. Call PublishToGBIF only after the rebuilt current archive is indexable and the user approves.
+
+      If the user asks to improve taxon names, follow the same MatchTaxonNames, RequestTaxonReview, ApplyTaxonDecisions sequence used during validation, then rebuild and revalidate the packages as above.
 
       It is not possible to publish to production gbif.org from this system. If the user wants to do this, they need to contact helpdesk@gbif.no with their sandbox dataset URL.

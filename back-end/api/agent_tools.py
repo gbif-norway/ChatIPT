@@ -2384,6 +2384,299 @@ class RequestUserInput(OpenAIBaseModel):
             return repr(exc)[:2000]
 
 
+class TaxonNameInterpretation(BaseModel):
+    verbatim_label: str = Field(..., min_length=1, description="The label exactly as it appears in the verbatim column.")
+    context_key: str = Field(
+        default="",
+        description="The context column value for this label, when MatchTaxonNames was called with a context_column.",
+    )
+    query_name: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "The scientific name to match instead of the label: a vernacular name translated to its taxon, "
+            "an abbreviated genus written out, or a misspelling corrected. Include authorship when the label has it."
+        ),
+    )
+    kingdom: Optional[str] = None
+    phylum: Optional[str] = None
+    class_: Optional[str] = Field(default=None, alias="class")
+    order: Optional[str] = None
+    family: Optional[str] = None
+    genus: Optional[str] = None
+    note: str = Field(
+        ...,
+        min_length=1,
+        description="The evidence for this interpretation, e.g. the column block or source note it rests on.",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    def query(self):
+        hints = {
+            "kingdom": self.kingdom, "phylum": self.phylum, "class": self.class_,
+            "order": self.order, "family": self.family, "genus": self.genus,
+        }
+        return {"scientificName": " ".join(self.query_name.split()), **{k: v for k, v in hints.items() if v}}
+
+
+def _taxon_match_line(row):
+    match = row.match or {}
+    usage = match.get("usage") or {}
+    suggested = (
+        f"{usage.get('scientificName')} {usage.get('scientificNameAuthorship') or ''}".strip()
+        + f" [{usage.get('taxonRank')}, {usage.get('status')}]"
+        if usage else "no suggestion"
+    )
+    line = (
+        f"- {json.dumps(row.verbatim_label, ensure_ascii=False)}"
+        + (f" (context {json.dumps(row.context_key, ensure_ascii=False)})" if row.context_key else "")
+        + f", {row.record_count} rows: {match.get('matchType', 'NONE')} -> {suggested}"
+    )
+    if row.query.get("scientificName") != row.verbatim_label:
+        line += f"; matched as {json.dumps(row.query.get('scientificName'), ensure_ascii=False)}"
+    alternatives = [
+        f"{alt.get('scientificName')} [{alt.get('taxonRank')}, {alt.get('matchType')}]"
+        for alt in (match.get("alternatives") or [])[:3]
+    ]
+    if alternatives:
+        line += f"; alternatives: {', '.join(alternatives)}"
+    aids = row.review_aids or {}
+    for source, aid in (("Backbone", aids.get("gbifBackbone")), ("ChecklistBank XR", aids.get("checklistBankXR"))):
+        if aid and aid.get("status") in {"exact", "variant"}:
+            line += f"; {source}: {aid.get('scientificName')} [{aid.get('taxonRank')}]"
+    return line
+
+
+class MatchTaxonNames(OpenAIBaseModel):
+    """
+    Match every distinct taxon label in a table against Catalogue of Life XR, the taxonomy GBIF.org
+    uses to interpret published records, and store the suggestions for the user's review.
+
+    Matching is deterministic and costs no model tokens: you do not need to inspect labels one by one.
+    Your part is interpretation. Many unmatched labels are not taxonomy gaps but vernacular names,
+    abbreviated genera ("P. nitens", "N_silvestris") or misspellings. After a first call, pass
+    `interpretations` for such labels with the scientific name to match and the evidence (source
+    column blocks, neighbouring names, notes). Every interpretation is checked by the matcher and
+    still needs the user's confirmation. Never interpret a label you have no evidence for; an
+    informal group or an unknown label is a legitimate outcome.
+
+    Arguments: `table_id` and `verbatim_column` (default verbatimIdentification) locate the labels.
+    `context_column` is only for labels that mean different taxa in different parts of the source.
+    `kingdom` is a hint for every label; give it only when the whole table is certainly within it.
+    Each interpretation gives `verbatim_label` exactly as in the table, `query_name` (the scientific
+    name to match, with authorship when the label has it), optional classification hints (kingdom,
+    phylum, class, order, family, genus) that you are sure of, and a `note` with the evidence.
+    Labels matched before keep their interpretation unless you send a new one.
+
+    The verbatim column is only read. Suggestions are not written to the data: the user reviews
+    them, then ApplyTaxonDecisions writes the reviewed names.
+    """
+
+    agent_id: PositiveInt = Field(..., description="REQUIRED: The ID of the agent making this request")
+    table_id: PositiveInt = Field(..., description="The table holding the verbatim taxon labels.")
+    verbatim_column: str = Field(default="verbatimIdentification")
+    context_column: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional column that distinguishes the same label meaning different taxa in different "
+            "parts of the source. Omit unless such labels exist."
+        ),
+    )
+    kingdom: Optional[str] = Field(
+        default=None,
+        description="Kingdom hint for every label, only when the whole table is certainly within it.",
+    )
+    interpretations: List[TaxonNameInterpretation] = Field(default_factory=list, max_length=300)
+
+    def run(self):
+        from api.models import Agent, Table, TaxonNameMatch
+        from api import taxon_matching
+
+        agent = Agent.objects.get(id=self.agent_id)
+        try:
+            table = Table.objects.get(id=self.table_id, dataset=agent.dataset)
+        except Table.DoesNotExist:
+            return f"ERROR: table {self.table_id} does not belong to this dataset."
+        overrides = {
+            (" ".join(item.verbatim_label.split()), item.context_key): {
+                "query": item.query(), "note": item.note,
+            }
+            for item in self.interpretations
+        }
+        try:
+            present = taxon_matching.distinct_labels(table.df, self.verbatim_column, self.context_column)
+        except KeyError as exc:
+            return f"ERROR: {exc}"
+        unknown = [repr(key[0]) for key in overrides if key not in present]
+        try:
+            rows, finished = taxon_matching.record_matches(
+                agent.dataset,
+                normalize_resource_name(table.title),
+                table.df,
+                self.verbatim_column,
+                self.context_column,
+                overrides={key: value for key, value in overrides.items() if key in present},
+                hints={"kingdom": self.kingdom},
+            )
+        except taxon_matching.MatchScopeError as exc:
+            return f"ERROR: {exc}"
+        except taxon_matching.TaxonServiceError as exc:
+            return f"ERROR: the taxon matching service is unavailable ({exc}). Try again later."
+
+        by_status = {}
+        for row in rows:
+            label = "reviewed" if row.decision != TaxonNameMatch.Decision.PENDING else row.suggestion_status
+            labels, records = by_status.get(label, (0, 0))
+            by_status[label] = (labels + 1, records + row.record_count)
+        release = next((row.col_release for row in rows if row.col_release), {})
+        lines = [
+            f"TAXON MATCHING against {release.get('alias') or 'Catalogue of Life XR'} (GBIF v2 matcher): "
+            f"{len(rows)} distinct labels, {sum(row.record_count for row in rows)} rows.",
+            "By status (labels / rows): " + ", ".join(
+                f"{status} {labels}/{records}" for status, (labels, records) in sorted(by_status.items())
+            ),
+        ]
+        if not finished or not taxon_matching.matching_complete(rows):
+            unfinished = sum(1 for row in rows if not taxon_matching.matching_complete([row]))
+            lines.append(
+                f"PARTIAL: {unfinished} labels were not fully matched within this call's time budget. "
+                "Call MatchTaxonNames again (without repeating interpretations) before RequestTaxonReview."
+            )
+        if unknown:
+            lines.append("Interpretations ignored because the label is not in the table: " + ", ".join(unknown))
+        open_rows = [
+            row for row in rows
+            if row.decision == TaxonNameMatch.Decision.PENDING and row.matched_at
+            and row.suggestion_status != "exact"
+        ]
+        if open_rows:
+            lines.append("Not exact (interpret those you have evidence for, then call again):")
+            lines.extend(_taxon_match_line(row) for row in open_rows[:120])
+            if len(open_rows) > 120:
+                lines.append(f"... and {len(open_rows) - 120} more.")
+        lines.append(
+            "Suggestions are not applied. When your interpretations are done, call RequestTaxonReview so the "
+            "user can review them. A correctly spelled name missing from COL stays a species name: do not "
+            "replace it with the genus yourself."
+        )
+        return "\n".join(lines)
+
+
+class RequestTaxonReview(OpenAIBaseModel):
+    """
+    Pause the workflow and ask the user to review the taxon name suggestions from MatchTaxonNames in
+    ChatIPT's review table. Call it once matching (with no PARTIAL result outstanding) and your
+    evidence-backed interpretations are done, with the same `table_id` and `context_column` used for
+    MatchTaxonNames. `message` is shown to the user above the review button: in plain language, say
+    how many names matched, what kinds of labels you interpreted and why, and what remains
+    unresolved. The user's reply tells you when they are finished; then call ApplyTaxonDecisions with
+    the same table and context column.
+    """
+
+    agent_id: PositiveInt = Field(..., description="REQUIRED: The ID of the agent making this request")
+    table_id: PositiveInt
+    context_column: Optional[str] = None
+    message: str = Field(..., min_length=1)
+
+    def scope(self):
+        from api.models import Table
+
+        table = Table.objects.defer("df").get(id=self.table_id)
+        return {
+            "source_table": normalize_resource_name(table.title),
+            "context_column": self.context_column or "",
+        }
+
+    def run(self):
+        from api.models import Agent, Table, TaxonNameMatch
+        from api import taxon_matching
+
+        agent = Agent.objects.get(id=self.agent_id)
+        if agent.completed_at:
+            return "Error: This task is already complete."
+        if not Table.objects.filter(id=self.table_id, dataset=agent.dataset).exists():
+            return f"ERROR: table {self.table_id} does not belong to this dataset."
+        rows = list(TaxonNameMatch.objects.filter(dataset=agent.dataset, record_count__gt=0, **self.scope()))
+        if not rows:
+            return (
+                "ERROR: there are no matched taxon labels for this table and context column. "
+                "Call MatchTaxonNames first."
+            )
+        if not taxon_matching.matching_complete(rows):
+            return "ERROR: matching is not finished. Call MatchTaxonNames again before requesting review."
+        return json.dumps(
+            {
+                "status": "awaiting_taxon_review",
+                **self.scope(),
+                "labels": len(rows),
+                "pending_labels": sum(1 for row in rows if row.decision == TaxonNameMatch.Decision.PENDING),
+            },
+        )
+
+
+class ApplyTaxonDecisions(OpenAIBaseModel):
+    """
+    Write the user's reviewed taxon names onto a table: scientificName, scientificNameAuthorship,
+    taxonRank and, where the table has columns for them, higher classification and
+    identificationQualifier. Labels still pending review, and labels the user chose to keep
+    unchanged, are left as they are. verbatimIdentification is never modified.
+    Re-export and re-validate the package afterwards.
+    """
+
+    agent_id: PositiveInt = Field(..., description="REQUIRED: The ID of the agent making this request")
+    table_id: PositiveInt = Field(..., description="The table whose rows receive the reviewed names.")
+    verbatim_column: str = Field(default="verbatimIdentification")
+    context_column: Optional[str] = Field(
+        default=None, description="The same context column used with MatchTaxonNames, if any.",
+    )
+
+    def run(self):
+        from api.models import Agent, Table
+        from api import taxon_matching
+
+        agent = Agent.objects.get(id=self.agent_id)
+        try:
+            table = Table.objects.get(id=self.table_id, dataset=agent.dataset)
+        except Table.DoesNotExist:
+            return f"ERROR: table {self.table_id} does not belong to this dataset."
+        try:
+            result = taxon_matching.apply_decisions(
+                agent.dataset, table, self.verbatim_column, self.context_column,
+            )
+        except (KeyError, taxon_matching.MatchScopeError) as exc:
+            return f"ERROR: {exc}"
+        lines = [
+            f"Applied reviewed names for {result['labels_applied']} labels to {result['rows_updated']} rows "
+            f"of table {table.id}. {result['kept_labels']} labels were kept unchanged by the user.",
+        ]
+        if result["pending_labels"]:
+            lines.append(
+                f"{result['pending_labels']} labels ({result['pending_rows']} rows) are still pending "
+                "review and were left unchanged."
+            )
+        if result["unmatched_labels"]:
+            lines.append(
+                f"{result['unmatched_labels']} labels in this table have never been matched; "
+                "call MatchTaxonNames for this table first."
+            )
+        if result["qualifiers_not_written"]:
+            lines.append(
+                f"{result['qualifiers_not_written']} labels have an identification qualifier (e.g. sp., cf.) "
+                "that this table cannot hold; it remains in the verbatim identification."
+            )
+        ranks = [column for column in result["skipped_columns"] if column in taxon_matching.CLASSIFICATION_RANKS]
+        others = [column for column in result["skipped_columns"] if column not in ranks and column != "identificationQualifier"]
+        if ranks:
+            lines.append(
+                "Higher classification was not written: this table's DwC-DP schema has no columns for it, "
+                "and GBIF derives it from the name. This is expected."
+            )
+        if others:
+            lines.append("Not written because the table's DwC-DP schema has no such column: " + ", ".join(others))
+        return "\n".join(lines)
+
+
 class SetAgentTaskToComplete(OpenAIBaseModel):
     """Mark an Agent's task as complete"""
     agent_id: PositiveInt = Field(...)

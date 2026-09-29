@@ -1083,3 +1083,10 @@ code { margin-bottom: 10px; font-size: 0.7em !important; }
         grid-template-columns: 1fr;
     }
 }
+
+/* Taxon name review */
+.taxon-review-table th:nth-child(1) { width: 24%; }
+.taxon-review-table th:nth-child(2) { width: 40%; }
+.taxon-review-filter { max-width: 220px; }
+.taxon-search-results { max-height: 200px; overflow-y: auto; }
+.taxon-bulk-list { max-height: 200px; overflow-y: auto; }

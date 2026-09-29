@@ -1,4 +1,4 @@
-from api.models import Dataset, Table, Agent, Message, OpenAIUsage, Task, UserFile
+from api.models import Dataset, Table, Agent, Message, OpenAIUsage, Task, TaxonNameMatch, UserFile
 from django.db import transaction
 from rest_framework import serializers
 from api.helpers import discord_bot
@@ -36,6 +36,39 @@ class TableSerializer(serializers.ModelSerializer):
         from api.dwc_dp_specs import RESERVED_TABLE_NAMES
 
         return obj.title in RESERVED_TABLE_NAMES
+
+
+class TaxonNameMatchSerializer(serializers.ModelSerializer):
+    suggestion_status = serializers.CharField(read_only=True)
+    preprocessed = serializers.SerializerMethodField()
+    bulk_acceptable = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TaxonNameMatch
+        fields = [
+            'id', 'dataset', 'verbatim_label', 'context_key', 'context_note', 'record_count',
+            'source_table', 'context_column', 'query', 'preprocessing_note', 'preprocessed', 'bulk_acceptable',
+            'identification_qualifier',
+            'match', 'suggestion_status', 'review_aids', 'col_release', 'matched_at',
+            'decision', 'decided_usage', 'decided_by', 'decided_at', 'applied_at',
+        ]
+        read_only_fields = fields
+
+    def get_preprocessed(self, obj):
+        from api.taxon_matching import is_preprocessed
+        return is_preprocessed(obj)
+
+    def get_bulk_acceptable(self, obj):
+        from api.taxon_matching import bulk_acceptable
+        return bulk_acceptable(obj)
+
+
+class TaxonDecisionSerializer(serializers.Serializer):
+    decision = serializers.ChoiceField(choices=TaxonNameMatch.Decision.choices)
+    usage_id = serializers.CharField(required=False, allow_blank=False)
+    scientificName = serializers.CharField(required=False, allow_blank=True)
+    scientificNameAuthorship = serializers.CharField(required=False, allow_blank=True)
+    taxonRank = serializers.CharField(required=False, allow_blank=True)
 
 
 class TablePageQuerySerializer(serializers.Serializer):
