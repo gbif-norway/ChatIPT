@@ -907,22 +907,37 @@ class TaxonNameMatchViewSet(viewsets.ReadOnlyModelViewSet):
         payload = TaxonDecisionSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         data = payload.validated_data
-        try:
-            taxon_matching.decide(
-                row,
-                data['decision'],
-                user=request.user,
-                usage_id=data.get('usage_id'),
-                name={
-                    key: data.get(key)
-                    for key in ('scientificName', 'scientificNameAuthorship', 'taxonRank')
-                },
-            )
-        except ValueError as exc:
-            raise ValidationError({'detail': str(exc)})
-        except taxon_matching.TaxonServiceError as exc:
-            return Response({'detail': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        # Decisions and Done take the same dataset lock, so a decision cannot land after the
+        # review has been applied.
+        with transaction.atomic():
+            Dataset.objects.select_for_update().get(pk=row.dataset_id)
+            review = taxon_matching.open_review(row.dataset)
+            if not review or review[1] != {'source_table': row.source_table, 'context_column': row.context_column}:
+                return self._review_closed()
+            row.refresh_from_db()
+            try:
+                taxon_matching.decide(
+                    row,
+                    data['decision'],
+                    user=request.user,
+                    usage_id=data.get('usage_id'),
+                    name={
+                        key: data.get(key)
+                        for key in ('scientificName', 'scientificNameAuthorship', 'taxonRank')
+                    },
+                )
+            except ValueError as exc:
+                raise ValidationError({'detail': str(exc)})
+            except taxon_matching.TaxonServiceError as exc:
+                return Response({'detail': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         return Response(self.get_serializer(row).data)
+
+    @staticmethod
+    def _review_closed():
+        return Response(
+            {'detail': 'ChatIPT is not waiting for decisions on these names. Your earlier decisions are saved.'},
+            status=status.HTTP_409_CONFLICT,
+        )
 
     @action(detail=False, methods=['post'], url_path='accept-exact')
     def accept_exact(self, request, *args, **kwargs):
@@ -931,18 +946,73 @@ class TaxonNameMatchViewSet(viewsets.ReadOnlyModelViewSet):
 
         dataset_id = request.data.get('dataset')
         datasets = Dataset.objects.all() if request.user.is_superuser else Dataset.objects.filter(user=request.user)
-        dataset = get_object_or_404(datasets, pk=dataset_id)
-        accepted = taxon_matching.accept_exact_matches(
-            dataset,
-            user=request.user,
-            source_table=request.data.get('source_table'),
-            context_column=request.data.get('context_column'),
-        )
+        with transaction.atomic():
+            dataset = get_object_or_404(datasets.select_for_update(), pk=dataset_id)
+            review = taxon_matching.open_review(dataset)
+            if not review:
+                return self._review_closed()
+            accepted = taxon_matching.accept_exact_matches(dataset, user=request.user, **review[1])
         return Response({
             'accepted': len(accepted),
             'records': sum(row.record_count for row in accepted),
             'results': self.get_serializer(accepted, many=True).data,
         })
+
+    @action(detail=False, methods=['post'], url_path='finish-review')
+    def finish_review(self, request, *args, **kwargs):
+        """Apply a finished taxon review, then hand the outcome back to the paused agent.
+
+        Applying is deterministic, so ChatIPT does it here rather than spending an agent turn on
+        it. If it cannot, the note asks the agent to apply with ApplyTaxonDecisions instead, so the
+        user is never left waiting.
+        """
+        from api import taxon_matching
+
+        agents = Agent.objects.all() if request.user.is_superuser else Agent.objects.filter(dataset__user=request.user)
+        requested = get_object_or_404(agents, pk=request.data.get('agent'))
+        with transaction.atomic():
+            # Dataset before agent: the same lock order as the agent turn worker.
+            dataset = Dataset.objects.select_for_update().get(pk=requested.dataset_id)
+            review = taxon_matching.open_review(dataset, lock=True)
+            if not review or review[0].id != requested.id:
+                return Response(
+                    {'detail': 'ChatIPT is not waiting for this taxon review.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            agent, scope = review
+            source_table = scope['source_table']
+            context_column = scope['context_column']
+            rows = list(TaxonNameMatch.objects.filter(
+                dataset=agent.dataset,
+                source_table=source_table,
+                context_column=context_column,
+                record_count__gt=0,
+            ))
+            try:
+                table, result = taxon_matching.apply_review(agent.dataset, source_table, context_column)
+                applied = True
+                note = (
+                    "ChatIPT applied the reviewed taxon names itself; do not call ApplyTaxonDecisions for "
+                    f"this review. {taxon_matching.describe_apply_result(result, table)} "
+                    "Re-run ValidateDwcDp and record remaining taxonomic limitations in structure_notes."
+                )
+            except taxon_matching.ReviewApplyError as exc:
+                applied = False
+                note = (
+                    f"The reviewed taxon names could not be applied automatically ({exc}). Call "
+                    f"ApplyTaxonDecisions for the `{source_table}` table"
+                    + (f" with context column `{context_column}`" if context_column else "")
+                    + ", then re-run ValidateDwcDp."
+                )
+            message = Message.objects.create(
+                agent=agent,
+                openai_obj={
+                    'role': Message.Role.USER,
+                    'content': f"{taxon_matching.review_summary(rows)}\n\n[NOTE: {note}]",
+                },
+            )
+            transaction.on_commit(lambda: ensure_dataset_work(agent.dataset_id))
+        return Response({'applied': applied, 'message': MessageSerializer(message).data})
 
     @action(detail=False, methods=['get'])
     def search(self, request, *args, **kwargs):

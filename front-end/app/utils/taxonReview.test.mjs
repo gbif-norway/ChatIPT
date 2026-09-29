@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { filterRows, formatName, reviewSummaryMessage, splitScientificName, statusInfo } from './taxonReview.mjs'
+import { filterRows, formatName, splitScientificName, statusInfo } from './taxonReview.mjs'
 
 const rows = [
   { verbatim_label: 'N_silvestris', decision: 'pending', record_count: 55,
@@ -32,19 +32,6 @@ test('formats names and statuses', () => {
   assert.equal(formatName(null), '')
   assert.equal(statusInfo({ match: { status: 'higher_rank' } }).label, 'Higher rank only')
   assert.equal(statusInfo({}).label, 'No match')
-})
-
-test('summarises decisions for the assistant', () => {
-  assert.equal(
-    reviewSummaryMessage(rows),
-    'I have finished reviewing the taxon names: 1 name accepted, 1 name marked as correct but not in COL, '
-      + '1 name kept unchanged. 1 name (55 records) is left unreviewed; leave it unchanged. '
-      + 'Please apply the reviewed names.',
-  )
-  assert.equal(
-    reviewSummaryMessage([rows[1]]),
-    'I have finished reviewing the taxon names: 1 name accepted. Please apply the reviewed names.',
-  )
 })
 
 test('splits names from authorship to prefill the not-in-COL form', () => {

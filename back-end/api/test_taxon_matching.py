@@ -8,7 +8,7 @@ from rest_framework.test import APIClient
 
 from api import taxon_matching
 from api.agent_tools import ApplyTaxonDecisions, MatchTaxonNames, RequestTaxonReview
-from api.models import Agent, CustomUser, Dataset, Table, Task, TaxonNameMatch
+from api.models import Agent, CustomUser, Dataset, Message, Table, Task, TaxonNameMatch
 
 
 RELEASE = {"checklistKey": "col", "alias": "COL26.6 XR", "checklistBankDatasetKey": "315557"}
@@ -161,6 +161,7 @@ class RecordAndApplyTests(TestCase):
         rows = {row.verbatim_label: row for row in self.record()}
         self.assertEqual(set(rows), {"N_silvestris", "Neodiscopoma splendida (Kramer, 1882)", "Pająki", "Dinychus sp."})
         self.assertEqual(rows["N_silvestris"].record_count, 2)
+        self.assertEqual(rows["N_silvestris"].verbatim_column, "verbatimIdentification")
         self.assertEqual(rows["Dinychus sp."].query, {"kingdom": "Animalia", "scientificName": "Dinychus"})
         self.assertEqual(rows["Dinychus sp."].identification_qualifier, "sp.")
         self.assertEqual(rows["N_silvestris"].suggestion_status, "none")
@@ -197,6 +198,16 @@ class RecordAndApplyTests(TestCase):
         self.assertEqual(reopened.decided_usage, {})
         self.assertEqual(reopened.query["scientificName"], "Opiliones")
         self.assertEqual(match_col.call_args.args[0], [{"kingdom": "Animalia", "scientificName": "Opiliones"}])
+
+    def test_matching_the_same_labels_from_another_column_reopens_decisions(self, match_col, aids, release):
+        rows = {row.verbatim_label: row for row in self.record()}
+        taxon_matching.decide(rows["Dinychus sp."], TaxonNameMatch.Decision.ACCEPTED)
+        self.table.df["originalName"] = self.table.df["verbatimIdentification"]
+        self.table.save()
+        taxon_matching.record_matches(self.dataset, "occurrence", self.table.df, "originalName")
+        row = TaxonNameMatch.objects.get(verbatim_label="Dinychus sp.")
+        self.assertEqual(row.verbatim_column, "originalName")
+        self.assertEqual(row.decision, "pending")
 
     def test_labels_no_longer_in_the_table_drop_to_zero_records(self, match_col, aids, release):
         self.record()
@@ -481,6 +492,13 @@ class TaxonMatchApiTests(TestCase):
             **{**base, "query": {"scientificName": "Neodiscopoma splendida"}},
         )
         TaxonNameMatch.objects.create(verbatim_label="gone", **{**base, "record_count": 0})
+        self.agent = Agent.objects.create(
+            dataset=self.dataset, task=Task.objects.create(name="Data validation and refinement", text="x"),
+        )
+        Message.objects.create(agent=self.agent, openai_obj={
+            "role": "assistant", "content": "Please review.",
+            "taxon_review": {"source_table": "occurrence", "context_column": ""},
+        })
         self.client = APIClient()
 
     def test_owner_lists_current_labels_only(self):
@@ -519,6 +537,26 @@ class TaxonMatchApiTests(TestCase):
         self.exact.refresh_from_db()
         self.assertEqual(self.exact.decision, "accepted")
 
+    def test_decisions_are_refused_once_the_review_is_closed(self):
+        self.client.force_authenticate(self.owner)
+        Message.objects.create(agent=self.agent, openai_obj={"role": "user", "content": "Done"})
+        response = self.client.post(f"/api/taxon-matches/{self.exact.id}/decide/", {"decision": "accepted"})
+        self.assertEqual(response.status_code, 409)
+        response = self.client.post("/api/taxon-matches/accept-exact/", {"dataset": self.dataset.id})
+        self.assertEqual(response.status_code, 409)
+        self.exact.refresh_from_db()
+        self.assertEqual(self.exact.decision, "pending")
+
+    def test_decisions_are_refused_for_another_table_than_the_open_review(self):
+        self.client.force_authenticate(self.owner)
+        other = TaxonNameMatch.objects.create(
+            dataset=self.dataset, source_table="identification", verbatim_label="Dinychus", record_count=1,
+            query={"scientificName": "Dinychus"}, matched_at=timezone.now(),
+            match=summary("EXACT", "DNY", "Dinychus", rank="GENUS"),
+        )
+        response = self.client.post(f"/api/taxon-matches/{other.id}/decide/", {"decision": "accepted"})
+        self.assertEqual(response.status_code, 409)
+
     @patch("api.taxon_matching.search_col", return_value=[{"id": "C3DM4", "label": "Cryptognathidae"}])
     def test_search_requires_three_characters(self, search):
         self.client.force_authenticate(self.owner)
@@ -526,3 +564,110 @@ class TaxonMatchApiTests(TestCase):
         response = self.client.get("/api/taxon-matches/search/", {"q": "Cryptognath"})
         self.assertEqual(response.json()["results"][0]["id"], "C3DM4")
         search.assert_called_once_with("Cryptognath")
+
+
+@patch("api.views.ensure_dataset_work")
+class FinishReviewApiTests(TestCase):
+    def setUp(self):
+        self.owner = CustomUser.objects.create_user(username="owner", password="x")
+        self.dataset = Dataset.objects.create(title="Soil fauna", user=self.owner)
+        self.agent = Agent.objects.create(
+            dataset=self.dataset, task=Task.objects.create(name="Data validation and refinement", text="x"),
+        )
+        self.table = Table.objects.create(dataset=self.dataset, title="occurrence", df=pd.DataFrame({
+            "species": ["Dinychus", "Dinychus", "Pająki", "Zieminek"],
+        }))
+        base = {"dataset": self.dataset, "source_table": "occurrence", "verbatim_column": "species",
+                "matched_at": timezone.now()}
+        self.dinychus = TaxonNameMatch.objects.create(
+            verbatim_label="Dinychus", record_count=2, query={"scientificName": "Dinychus"},
+            match=summary("EXACT", "DNY", "Dinychus", rank="GENUS", authorship="Kramer, 1886"), **base,
+        )
+        TaxonNameMatch.objects.create(verbatim_label="Pająki", record_count=1, decision="keep_original", **base)
+        TaxonNameMatch.objects.create(verbatim_label="Zieminek", record_count=1, **base)
+        taxon_matching.decide(self.dinychus, TaxonNameMatch.Decision.ACCEPTED)
+        Message.objects.create(agent=self.agent, openai_obj={
+            "role": "assistant", "content": "Please review.",
+            "taxon_review": {"source_table": "occurrence", "context_column": ""},
+        })
+        self.client = APIClient()
+        self.client.force_authenticate(self.owner)
+
+    def finish(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            return self.client.post("/api/taxon-matches/finish-review/", {"agent": self.agent.id}, format="json")
+
+    def test_applies_decisions_and_hands_the_outcome_to_the_agent(self, ensure_work):
+        response = self.finish()
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.json()["applied"])
+        self.table.refresh_from_db()
+        self.assertEqual(list(self.table.df.scientificName[:2]), ["Dinychus", "Dinychus"])
+        self.assertEqual(list(self.table.df.species), ["Dinychus", "Dinychus", "Pająki", "Zieminek"])
+
+        message = self.agent.message_set.last()
+        self.assertEqual(message.role, Message.Role.USER)
+        content = message.openai_obj["content"]
+        self.assertTrue(content.startswith(
+            "I have finished reviewing the taxon names: 1 name accepted, 1 name kept unchanged. "
+            "1 name (1 record) is left unreviewed."
+        ))
+        self.assertIn("[NOTE: ChatIPT applied the reviewed taxon names itself", content)
+        self.assertIn("Applied reviewed names for 1 labels to 2 rows", content)
+        self.assertEqual(response.json()["message"]["id"], message.id)
+        ensure_work.assert_called_once_with(self.dataset.id)
+
+        # A second press does not apply or message again.
+        self.assertEqual(self.finish().status_code, 409)
+        self.assertEqual(ensure_work.call_count, 1)
+
+    def test_falls_back_to_the_agent_when_the_table_is_ambiguous(self, ensure_work):
+        Table.objects.create(dataset=self.dataset, title="occurrence", df=self.table.df.copy())
+        response = self.finish()
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["applied"])
+        content = self.agent.message_set.last().openai_obj["content"]
+        self.assertIn("could not be applied automatically (expected one `occurrence` table but found 2)", content)
+        self.assertIn("Call ApplyTaxonDecisions for the `occurrence` table", content)
+        ensure_work.assert_called_once()
+
+    def test_labels_matched_before_the_column_was_recorded_fall_back_to_the_agent(self, ensure_work):
+        TaxonNameMatch.objects.filter(dataset=self.dataset).update(verbatim_column="")
+        response = self.finish()
+        self.assertFalse(response.json()["applied"])
+        self.assertIn("do not record one source column", self.agent.message_set.last().openai_obj["content"])
+        self.table.refresh_from_db()
+        self.assertNotIn("scientificName", self.table.df.columns)
+
+    def test_reviewed_labels_missing_from_the_table_fall_back_without_writing(self, ensure_work):
+        self.table.df = pd.DataFrame({"species": ["Pająki", "Zieminek"], "scientificName": [None, None]})
+        self.table.save()
+        response = self.finish()
+        self.assertFalse(response.json()["applied"])
+        content = self.agent.message_set.last().openai_obj["content"]
+        self.assertIn("1 reviewed labels, e.g. 'Dinychus', are no longer in column `species`", content)
+        self.table.refresh_from_db()
+        self.assertTrue(self.table.df.scientificName.isna().all())
+
+    def test_a_decision_after_done_is_refused(self, ensure_work):
+        self.finish()
+        pending = TaxonNameMatch.objects.get(verbatim_label="Zieminek")
+        response = self.client.post(f"/api/taxon-matches/{pending.id}/decide/", {"decision": "keep_original"})
+        self.assertEqual(response.status_code, 409)
+        pending.refresh_from_db()
+        self.assertEqual(pending.decision, "pending")
+
+    def test_refuses_when_the_agent_is_not_waiting_for_this_review(self, ensure_work):
+        self.agent.busy_thinking = True
+        self.agent.save()
+        self.assertEqual(self.finish().status_code, 409)
+        self.agent.busy_thinking = False
+        self.agent.save()
+        Message.objects.create(agent=self.agent, openai_obj={"role": "assistant", "content": "Something else"})
+        self.assertEqual(self.finish().status_code, 409)
+        ensure_work.assert_not_called()
+
+    def test_other_users_cannot_finish(self, ensure_work):
+        self.client.force_authenticate(CustomUser.objects.create_user(username="other", password="x"))
+        self.assertEqual(self.finish().status_code, 404)
+        ensure_work.assert_not_called()

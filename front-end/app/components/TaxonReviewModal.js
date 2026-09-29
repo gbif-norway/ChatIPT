@@ -174,10 +174,20 @@ function Suggestion({ row }) {
   )
 }
 
-function DecisionCell({ row, busy, onDecide }) {
+function DecisionCell({ row, busy, onDecide, editable }) {
   const [mode, setMode] = useState(null)
   const alternatives = row.match?.alternatives || []
   const disabled = busy
+
+  if (!editable) {
+    const decided = row.decided_usage
+    return (
+      <div className="small">
+        <span className={`badge ${isPending(row) ? 'text-bg-secondary' : 'text-bg-primary'}`}>{DECISION_LABELS[row.decision]}</span>
+        {decided?.scientificName && <div>{formatName(decided)}{decided.taxonRank ? ` (${decided.taxonRank})` : ''}</div>}
+      </div>
+    )
+  }
 
   if (!isPending(row)) {
     const decided = row.decided_usage
@@ -244,7 +254,7 @@ function DecisionCell({ row, busy, onDecide }) {
   )
 }
 
-export default function TaxonReviewModal({ datasetId, scope, show, onClose, onDone, canSendSummary }) {
+export default function TaxonReviewModal({ datasetId, scope, show, onClose, onDone, editable }) {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -349,12 +359,7 @@ export default function TaxonReviewModal({ datasetId, scope, show, onClose, onDo
     setBulkBusy(true)
     setError(null)
     try {
-      const data = await postJson('/api/taxon-matches/accept-exact/', {
-        dataset: datasetId,
-        ...(scope?.source_table
-          ? { source_table: scope.source_table, context_column: scope.context_column || '' }
-          : {}),
-      })
+      const data = await postJson('/api/taxon-matches/accept-exact/', { dataset: datasetId })
       replaceRows(data.results || [])
       setConfirmBulk(false)
     } catch (err) {
@@ -415,13 +420,21 @@ export default function TaxonReviewModal({ datasetId, scope, show, onClose, onDo
                 <input type="search" className="form-control form-control-sm taxon-review-filter"
                   placeholder="Filter names" value={query} onChange={(event) => setQuery(event.target.value)}
                   aria-label="Filter names" />
-                <button type="button" className="btn btn-sm btn-success ms-auto"
-                  disabled={bulkRows.length === 0 || bulkBusy} onClick={() => setConfirmBulk(true)}>
-                  Accept {bulkRows.length} exact {bulkRows.length === 1 ? 'match' : 'matches'}…
-                </button>
+                {editable && (
+                  <button type="button" className="btn btn-sm btn-success ms-auto"
+                    disabled={bulkRows.length === 0 || bulkBusy} onClick={() => setConfirmBulk(true)}>
+                    Accept {bulkRows.length} exact {bulkRows.length === 1 ? 'match' : 'matches'}…
+                  </button>
+                )}
               </div>
 
-              {confirmBulk && (
+              {!editable && (
+                <div className="alert alert-secondary small py-2">
+                  This review is finished, so the decisions can no longer be changed here.
+                </div>
+              )}
+
+              {editable && confirmBulk && (
                 <div className="alert alert-success small">
                   <p className="mb-2">
                     These names are written exactly as in Catalogue of Life and have no qualifier such as
@@ -478,7 +491,7 @@ export default function TaxonReviewModal({ datasetId, scope, show, onClose, onDo
                             )}
                           </td>
                           <td><Suggestion row={row} /></td>
-                          <td><DecisionCell row={row} busy={busyIds.has(row.id)} onDecide={decide} /></td>
+                          <td><DecisionCell row={row} busy={busyIds.has(row.id)} onDecide={decide} editable={editable} /></td>
                         </tr>
                       ))}
                     </tbody>
@@ -507,10 +520,11 @@ export default function TaxonReviewModal({ datasetId, scope, show, onClose, onDo
               </span>
               <div className="d-flex gap-2">
                 <button type="button" className="btn btn-outline-secondary" onClick={onClose}>Close</button>
-                {canSendSummary && (
-                  <button type="button" className="btn btn-primary" disabled={loading || rows.length === 0}
-                    onClick={() => onDone(rows)}>
-                    Done, tell ChatIPT
+                {editable && (
+                  <button type="button" className="btn btn-primary"
+                    disabled={loading || rows.length === 0 || busyIds.size > 0 || bulkBusy}
+                    onClick={onDone}>
+                    Done, apply my decisions
                   </button>
                 )}
               </div>

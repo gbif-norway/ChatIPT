@@ -2589,7 +2589,7 @@ class MatchTaxonNames(OpenAIBaseModel):
                 lines.append(f"... and {len(open_rows) - 120} more.")
         lines.append(
             "Suggestions are not applied. When your interpretations are done, call RequestTaxonReview so the "
-            "user can review them. A correctly spelled name missing from COL stays a species name: do not "
+            "user can review them; ChatIPT applies their decisions when they finish. A correctly spelled name missing from COL stays a species name: do not "
             "replace it with the genus yourself."
         )
         return "\n".join(lines)
@@ -2602,8 +2602,8 @@ class RequestTaxonReview(OpenAIBaseModel):
     evidence-backed interpretations are done, with the same `table_id` and `context_column` used for
     MatchTaxonNames. `message` is shown to the user above the review button: in plain language, say
     how many names matched, what kinds of labels you interpreted and why, and what remains
-    unresolved. The user's reply tells you when they are finished; then call ApplyTaxonDecisions with
-    the same table and context column.
+    unresolved. When the user finishes, ChatIPT writes their decisions to the table itself and its
+    reply carries a note saying what changed.
     """
 
     agent_id: PositiveInt = Field(..., description="REQUIRED: The ID of the agent making this request")
@@ -2653,6 +2653,8 @@ class ApplyTaxonDecisions(OpenAIBaseModel):
     taxonRank and, where the table has columns for them, higher classification and
     identificationQualifier. Labels still pending review, and labels the user chose to keep
     unchanged, are left as they are. verbatimIdentification is never modified.
+    ChatIPT already applies a review when the user finishes it. Use this only when that note says the
+    names could not be applied, or to re-apply reviewed names after rebuilding the table.
     Re-export and re-validate the package afterwards.
     """
 
@@ -2678,35 +2680,7 @@ class ApplyTaxonDecisions(OpenAIBaseModel):
             )
         except (KeyError, taxon_matching.MatchScopeError) as exc:
             return f"ERROR: {exc}"
-        lines = [
-            f"Applied reviewed names for {result['labels_applied']} labels to {result['rows_updated']} rows "
-            f"of table {table.id}. {result['kept_labels']} labels were kept unchanged by the user.",
-        ]
-        if result["pending_labels"]:
-            lines.append(
-                f"{result['pending_labels']} labels ({result['pending_rows']} rows) are still pending "
-                "review and were left unchanged."
-            )
-        if result["unmatched_labels"]:
-            lines.append(
-                f"{result['unmatched_labels']} labels in this table have never been matched; "
-                "call MatchTaxonNames for this table first."
-            )
-        if result["qualifiers_not_written"]:
-            lines.append(
-                f"{result['qualifiers_not_written']} labels have an identification qualifier (e.g. sp., cf.) "
-                "that this table cannot hold; it remains in the verbatim identification."
-            )
-        ranks = [column for column in result["skipped_columns"] if column in taxon_matching.CLASSIFICATION_RANKS]
-        others = [column for column in result["skipped_columns"] if column not in ranks and column != "identificationQualifier"]
-        if ranks:
-            lines.append(
-                "Higher classification was not written: this table's DwC-DP schema has no columns for it, "
-                "and GBIF derives it from the name. This is expected."
-            )
-        if others:
-            lines.append("Not written because the table's DwC-DP schema has no such column: " + ", ".join(others))
-        return "\n".join(lines)
+        return taxon_matching.describe_apply_result(result, table)
 
 
 class SetAgentTaskToComplete(OpenAIBaseModel):

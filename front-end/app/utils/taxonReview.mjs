@@ -51,25 +51,6 @@ export const countByDecision = (rows) => rows.reduce((counts, row) => {
   return counts
 }, { records: {} })
 
-const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`
-
-// The message sent to the assistant when the reviewer is done.
-export const reviewSummaryMessage = (rows) => {
-  const counts = countByDecision(rows)
-  const parts = [
-    counts.accepted && `${plural(counts.accepted, 'name')} accepted`,
-    counts.not_in_col && `${plural(counts.not_in_col, 'name')} marked as correct but not in COL`,
-    counts.keep_original && `${plural(counts.keep_original, 'name')} kept unchanged`,
-  ].filter(Boolean)
-  let message = 'I have finished reviewing the taxon names'
-  message += parts.length ? `: ${parts.join(', ')}.` : '.'
-  if (counts.pending) {
-    message += ` ${plural(counts.pending, 'name')} (${plural(counts.records.pending, 'record')}) ` +
-      `${counts.pending === 1 ? 'is' : 'are'} left unreviewed; leave ${counts.pending === 1 ? 'it' : 'them'} unchanged.`
-  }
-  return `${message} Please apply the reviewed names.`
-}
-
 // Best-effort split of "Genus epithet (Author, 1882)" into name, authorship and rank, used only to
 // prefill the reviewer's form; the reviewer can correct every field.
 export const splitScientificName = (text) => {

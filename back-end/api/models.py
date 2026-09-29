@@ -2573,6 +2573,9 @@ class TaxonNameMatch(models.Model):
     # per context column; decisions are only ever applied under the same configuration.
     source_table = models.CharField(max_length=200)
     context_column = models.CharField(max_length=200, blank=True, default='')
+    # The column the labels were read from, so a finished review can be applied without the agent.
+    # Blank for labels matched before it was recorded; those reviews are applied by the agent.
+    verbatim_column = models.CharField(max_length=200, blank=True, default='')
     verbatim_label = models.TextField()
     # Distinguishes the same label meaning different taxa in different parts of the source,
     # e.g. an abbreviated genus in two sheet blocks. Empty when the label alone is unambiguous.

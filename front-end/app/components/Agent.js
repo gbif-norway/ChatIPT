@@ -11,7 +11,6 @@ import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
 import { getLoadingText } from '../utils/loading.js';
 import { groupAgentMessages } from '../utils/agentMessageGroups.mjs';
-import { reviewSummaryMessage } from '../utils/taxonReview.mjs';
 import { useDataset } from '../contexts/DatasetContext.js';
 import {
   ALLOWED_FILE_EXTENSIONS,
@@ -318,27 +317,38 @@ const Agent = ({
     }
   };
 
-  const sendTaxonReviewSummary = async (rows) => {
+  // ChatIPT applies the reviewed names itself, then hands the outcome back to the agent.
+  const finishTaxonReview = async () => {
     setShowTaxonReview(false);
-    const content = reviewSummaryMessage(rows);
     setIsUserSending(true);
     setIsLoading(true);
     setUploadError(null);
-    setOptimisticMessage({
-      id: `optimistic-${Date.now()}`,
-      role: 'user',
-      openai_obj: { content }
-    });
     try {
-      await postUserMessage(content);
+      const csrfToken = await getCsrfToken();
+      const headers = { 'Content-Type': 'application/json' };
+      if (csrfToken) {
+        headers['X-CSRFToken'] = csrfToken;
+      }
+      const response = await fetch(`${config.baseUrl}/api/taxon-matches/finish-review/`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ agent: agent.id }),
+        credentials: 'include'
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.detail || 'Your decisions are saved, but they could not be sent to ChatIPT. Please try again.');
+      }
+      if (data.message) {
+        setOptimisticMessage(data.message);
+      }
       await refreshDataset();
       if (typeof refreshTables === 'function') {
         await refreshTables();
       }
     } catch (error) {
-      console.error('Error sending taxon review summary:', error);
-      setOptimisticMessage(null);
-      setUploadError('Your decisions are saved, but the message to ChatIPT could not be sent. Please try again.');
+      console.error('Error finishing taxon review:', error);
+      setUploadError(error.message);
     } finally {
       setIsLoading(false);
       setIsUserSending(false);
@@ -573,7 +583,7 @@ const Agent = ({
               </button>
               {awaitingTaxonReview && (
                 <span className="small text-muted">
-                  Decide on the suggested names, then press “Done” to let ChatIPT apply them.
+                  Decide on the suggested names, then press “Done” to apply them.
                 </span>
               )}
             </div>
@@ -702,8 +712,8 @@ const Agent = ({
           scope={typeof taxonReviewScope === 'object' ? taxonReviewScope : null}
           show={showTaxonReview}
           onClose={() => setShowTaxonReview(false)}
-          onDone={sendTaxonReviewSummary}
-          canSendSummary={awaitingTaxonReview && !isUserSending && !agent.busy_thinking}
+          onDone={finishTaxonReview}
+          editable={awaitingTaxonReview && !isUserSending && !agent.busy_thinking}
         />
       )}
     </>

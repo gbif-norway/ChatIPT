@@ -459,6 +459,9 @@ def record_matches(dataset, source_table, df, verbatim_column, context_column=No
             verbatim_label=label, context_key=context_key,
         )
         row.record_count = count
+        # A decision was made on labels read from one column; the same text elsewhere is new evidence.
+        column_changed = row.pk is not None and row.verbatim_column != verbatim_column
+        row.verbatim_column = verbatim_column
         row.identification_qualifier = default_query(label)[1] or ""
         if key in overrides:
             query, note = {**hints, **overrides[key]["query"]}, overrides[key].get("note") or ""
@@ -466,8 +469,8 @@ def record_matches(dataset, source_table, df, verbatim_column, context_column=No
             query, note = row.query, row.preprocessing_note
         else:
             query, note = {**hints, **default_query(label)[0]}, ""
-        if row.decision != TaxonNameMatch.Decision.PENDING and query != row.decided_query:
-            # The reviewer decided on a different interpretation; ask again.
+        if row.decision != TaxonNameMatch.Decision.PENDING and (column_changed or query != row.decided_query):
+            # The reviewer decided on a different interpretation or column; ask again.
             _reset_decision(row)
         changed = query != row.query or not row.matched_at
         row.query, row.preprocessing_note = query, note
@@ -724,3 +727,140 @@ def apply_decisions(dataset, table, verbatim_column, context_column=None):
         TaxonNameMatch.objects.filter(id__in=applied).update(applied_at=timezone.now())
     written["skipped_columns"] = sorted(written["skipped_columns"])
     return written
+
+
+class ReviewApplyError(ValueError):
+    pass
+
+
+def current_table(dataset, source_table):
+    """The dataset's one current table for a resource title; the agent may have replaced it."""
+    from api.dwc_dp_specs import normalize_resource_name
+    from api.models import Table
+
+    tables = [
+        table for table in Table.objects.filter(dataset=dataset).defer("df").order_by("id")
+        if normalize_resource_name(table.title) == source_table
+    ]
+    if len(tables) != 1:
+        raise ReviewApplyError(
+            f"expected one `{source_table}` table but found {len(tables)}"
+        )
+    return Table.objects.get(id=tables[0].id)
+
+
+def apply_review(dataset, source_table, context_column=""):
+    """Apply a finished review to the table it was matched on. Returns (table, apply summary)."""
+    from api.models import TaxonNameMatch
+
+    rows = list(TaxonNameMatch.objects.filter(
+        dataset=dataset, source_table=source_table, context_column=context_column or "", record_count__gt=0,
+    ))
+    columns = {row.verbatim_column for row in rows}
+    if len(columns) != 1 or "" in columns:
+        raise ReviewApplyError(f"the reviewed labels for `{source_table}` do not record one source column")
+    column = columns.pop()
+    table = current_table(dataset, source_table)
+    try:
+        # Check before writing anything: every reviewed name must still be in the table.
+        present = set(_row_keys(table.df, column, context_column))
+        missing = [
+            row.verbatim_label for row in rows
+            if row.decision in {TaxonNameMatch.Decision.ACCEPTED, TaxonNameMatch.Decision.NOT_IN_COL}
+            and (row.verbatim_label, row.context_key) not in present
+        ]
+        if missing:
+            raise ReviewApplyError(
+                f"{len(missing)} reviewed labels, e.g. {missing[0]!r}, are no longer in column `{column}` "
+                f"of `{source_table}`"
+            )
+        return table, apply_decisions(dataset, table, column, context_column)
+    except (KeyError, MatchScopeError) as exc:
+        raise ReviewApplyError(str(exc).strip("'\"")) from exc
+
+
+def describe_apply_result(result, table):
+    """Plain sentences describing what apply_decisions did, for the agent."""
+    lines = [
+        f"Applied reviewed names for {result['labels_applied']:,} labels to {result['rows_updated']:,} rows "
+        f"of table {table.id} (`{table.title}`). {result['kept_labels']:,} labels were kept unchanged by the user.",
+    ]
+    if result["pending_labels"]:
+        lines.append(
+            f"{result['pending_labels']:,} labels ({result['pending_rows']:,} rows) are still pending "
+            "review and were left unchanged."
+        )
+    if result["unmatched_labels"]:
+        lines.append(
+            f"{result['unmatched_labels']} labels in this table have never been matched; "
+            "call MatchTaxonNames for this table first."
+        )
+    if result["qualifiers_not_written"]:
+        lines.append(
+            f"{result['qualifiers_not_written']} labels have an identification qualifier (e.g. sp., cf.) "
+            "that this table cannot hold; it remains in the verbatim identification."
+        )
+    ranks = [column for column in result["skipped_columns"] if column in CLASSIFICATION_RANKS]
+    others = [
+        column for column in result["skipped_columns"]
+        if column not in ranks and column != "identificationQualifier"
+    ]
+    if ranks:
+        lines.append(
+            "Higher classification was not written: this table's DwC-DP schema has no columns for it, "
+            "and GBIF derives it from the name. This is expected."
+        )
+    if others:
+        lines.append("Not written because the table's DwC-DP schema has no such column: " + ", ".join(others))
+    return " ".join(lines)
+
+
+def _plural(count, word):
+    return f"{count:,} {word}{'' if count == 1 else 's'}"
+
+
+def review_summary(rows):
+    """The user's closing message for a review, written from the saved decisions."""
+    from api.models import TaxonNameMatch
+
+    Decision = TaxonNameMatch.Decision
+    counts, records = {}, {}
+    for row in rows:
+        counts[row.decision] = counts.get(row.decision, 0) + 1
+        records[row.decision] = records.get(row.decision, 0) + row.record_count
+    parts = [
+        f"{_plural(counts[decision], 'name')} {outcome}"
+        for decision, outcome in (
+            (Decision.ACCEPTED, "accepted"),
+            (Decision.NOT_IN_COL, "marked as correct but not in COL"),
+            (Decision.KEEP_ORIGINAL, "kept unchanged"),
+        )
+        if counts.get(decision)
+    ]
+    message = "I have finished reviewing the taxon names" + (f": {', '.join(parts)}." if parts else ".")
+    pending = counts.get(Decision.PENDING, 0)
+    if pending:
+        message += (
+            f" {_plural(pending, 'name')} ({_plural(records[Decision.PENDING], 'record')}) "
+            f"{'is' if pending == 1 else 'are'} left unreviewed."
+        )
+    return message
+
+
+def open_review(dataset, lock=False):
+    """(agent, scope) when the dataset's current agent is paused waiting for a taxon review."""
+    from api.models import Agent, Message
+
+    agents = Agent.objects.filter(dataset=dataset, completed_at__isnull=True).order_by("id")
+    if lock:
+        agents = agents.select_for_update()
+    agent = agents.last()
+    if not agent or agent.busy_thinking:
+        return None
+    last_message = agent.message_set.last()
+    if not last_message or last_message.role != Message.Role.ASSISTANT:
+        return None
+    scope = (last_message.openai_obj or {}).get("taxon_review")
+    if not isinstance(scope, dict):
+        return None
+    return agent, {"source_table": scope.get("source_table") or "", "context_column": scope.get("context_column") or ""}
