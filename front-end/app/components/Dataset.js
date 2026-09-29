@@ -37,6 +37,8 @@ const creatorsFromDataset = (dataset, fallbackUser) => {
       orcid: person?.orcid || '',
     }));
   }
+  // The account holder did not create the data, so do not suggest them.
+  if (dataset?.eml?.creators_unknown) return [emptyCreator()];
 
   const profile = dataset?.user_info || fallbackUser;
   if (!profile) return [emptyCreator()];
@@ -71,7 +73,7 @@ const metadataFormFromDataset = (dataset, fallbackUser) => {
     publication_year: eml.publication_year ? String(eml.publication_year) : '',
     abstract_source: eml.abstract_source || '',
     methods_source: eml.methods_source || '',
-    creators_source: eml.creators_source || 'user_profile',
+    creators_source: eml.creators_source || (eml.creators_unknown ? 'unknown' : 'user_profile'),
     users: creatorsFromDataset(dataset, fallbackUser),
   };
 };
@@ -561,6 +563,9 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
         creators_source: metadataForm.creators_source.trim(),
         users: creators,
       };
+      if (creators.length > 0) {
+        delete updatedEml.creators_unknown;
+      }
 
       const response = await fetch(`${config.baseUrl}/api/datasets/${currentDatasetId}/`, {
         method: 'PATCH',
@@ -1127,7 +1132,11 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                     <div className="d-flex align-items-center justify-content-between mb-2">
                       <div>
                         <label className="form-label mb-0">Dataset Creators</label>
-                        <div className="form-text mt-0">Initially filled from your ORCID profile when no creator list has been saved.</div>
+                        <div className="form-text mt-0">
+                          {eml.creators_unknown && !(eml.users || []).length
+                            ? 'Creators are recorded as unknown. Add creators only if they are known.'
+                            : 'Initially filled from your ORCID profile when no creator list has been saved.'}
+                        </div>
                       </div>
                       <button
                         type="button"

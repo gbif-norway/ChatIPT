@@ -1469,7 +1469,9 @@ class EMLGeographicBounds(BaseModel):
 
 
 class SetEML(OpenAIBaseModel):
-    """Sets the EML (Metdata) for a Dataset via an Agent, returns a success or error message. Note that SetBasicMetadata should be used to set the dataset Title and Description."""
+    """Sets the EML (Metdata) for a Dataset via an Agent, returns a success or error message. Note that SetBasicMetadata should be used to set the dataset Title and Description.
+
+    Creators default to the account holder's profile. If the account holder did not create the data and the source's creators are unknown, pass creators_unknown=true and no users: the EML then names an unknown creator and keeps the account holder as metadataProvider and contact. Passing users or creators_unknown=false clears it."""
     agent_id: PositiveInt = Field(...)
     license: Optional[Literal["CC0 1.0", "CC BY 4.0", "CC BY-NC 4.0"]] = Field(
         None,
@@ -1507,6 +1509,15 @@ class SetEML(OpenAIBaseModel):
     abstract_source: Optional[str] = Field(None, description="Optional source of abstract text: user|manuscript|mixed.")
     methods_source: Optional[str] = Field(None, description="Optional source of methods text: user|manuscript|mixed.")
     creators_source: Optional[str] = Field(None, description="Optional source of creator list: user_profile|manuscript|mixed.")
+    creators_unknown: Optional[bool] = Field(
+        None,
+        description=(
+            "Set true when the source's creators are unknown and the account holder did not "
+            "create the data. The EML then names an unknown creator instead of the account "
+            "holder, who stays metadataProvider and contact. Clears the saved creator list; "
+            "cannot be combined with users. Pass false to clear."
+        ),
+    )
     users: Optional[List[EMLUser]] = Field(
         None,
         description="Optional list of people involved in the dataset. Each entry should be an object with first_name, last_name, email, and orcid keys."
@@ -1988,6 +1999,11 @@ class SetEML(OpenAIBaseModel):
         return chosen_text, None
 
     def run(self):
+        if self.creators_unknown and self.users:
+            return (
+                "Error: creators_unknown=true cannot be combined with a users list. "
+                "Nothing was saved."
+            )
         try:
             from api.models import Agent
             agent = Agent.objects.get(id=self.agent_id)
@@ -2103,12 +2119,26 @@ class SetEML(OpenAIBaseModel):
             if creators_source is not None:
                 eml["creators_source"] = creators_source
 
+            creators_unknown_note = None
+            if self.creators_unknown:
+                eml["creators_unknown"] = True
+                eml["users"] = []
+                if creators_source is None:
+                    eml["creators_source"] = "unknown"
+                creators_unknown_note = (
+                    "Creators are marked unknown: the EML creator is 'Unknown creator' and the "
+                    "account holder stays metadataProvider and contact."
+                )
+            elif self.creators_unknown is False or self.users:
+                if eml.pop("creators_unknown", None) and creators_source is None:
+                    eml.pop("creators_source", None)
+
             if self.users is not None:
                 # Ensure we store plain dicts, not Pydantic objects
                 eml["users"] = [
                     {**u.dict(), "orcid": normalize_orcid(u.orcid)} for u in self.users
                 ]
-            elif not eml.get("users") and dataset.user:
+            elif not eml.get("users") and not eml.get("creators_unknown") and dataset.user:
                 # ORCID is the authenticated profile and therefore the best
                 # available creator seed when no manuscript/user list exists.
                 # Placeholder names such as '[unknown]' are not verified authorship.
@@ -2122,7 +2152,8 @@ class SetEML(OpenAIBaseModel):
                         "email": profile_user.email or "",
                         "orcid": normalize_orcid(profile_user.orcid_id),
                     }]
-                    eml.setdefault("creators_source", "user_profile")
+                    if creators_source is None:
+                        eml["creators_source"] = "user_profile"
             creators_missing_surname = [
                 person.get("first_name") or "(no name)"
                 for person in eml.get("users") or []
@@ -2159,6 +2190,7 @@ class SetEML(OpenAIBaseModel):
                     taxonomic_note,
                     taxonomic_export_note,
                     methodology_note,
+                    creators_unknown_note,
                     profile_name_note,
                     (
                         "These creators have no verified surname and will block export until "

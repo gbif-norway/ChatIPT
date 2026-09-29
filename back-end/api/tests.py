@@ -577,6 +577,29 @@ class EmlGenerationTests(SimpleTestCase):
             'b13c5da2-d21a-4d25-af44-2f6a732c06a1',
         )
 
+    def test_make_eml_does_not_make_uploader_creator_when_creators_unknown(self):
+        class Uploader:
+            first_name = 'Rukaya'
+            last_name = 'Johaadien'
+            orcid_id = '0000-0002-1825-0097'
+            email = 'rukaya@example.org'
+
+        root = ET.fromstring(make_eml(
+            'Unknown creator', 'Description', user=Uploader(),
+            eml_extra={'users': [], 'creators_unknown': True},
+        ))
+        dataset = root.find('dataset')
+
+        creators = dataset.findall('creator')
+        self.assertEqual(len(creators), 1)
+        self.assertEqual(creators[0].findtext('positionName'), 'Unknown creator')
+        self.assertIsNone(creators[0].find('individualName'))
+        self.assertIsNone(creators[0].find('userId'))
+        for role in ('metadataProvider', 'contact'):
+            self.assertEqual(dataset.findtext(f'{role}/individualName/surName'), 'Johaadien')
+        tags = [child.tag for child in dataset]
+        self.assertLess(tags.index('creator'), tags.index('metadataProvider'))
+
     def test_make_eml_derives_unique_package_identifier_per_dataset(self):
         first = ET.fromstring(make_eml('Dataset', 'Description', dataset_id=534)).attrib['packageId']
         second = ET.fromstring(make_eml('Dataset', 'Description', dataset_id=534)).attrib['packageId']
@@ -1930,6 +1953,40 @@ class SetEMLProjectTitleTests(TestCase):
 
         self.assertNotIn("users", self.dataset.eml)
         self.assertNotIn("creators_source", self.dataset.eml)
+
+    def test_creators_unknown_keeps_owner_out_of_creators(self):
+        self.dataset.user = CustomUser.objects.create_user(
+            username="uploader", email="uploader@example.org",
+            first_name="Rukaya", last_name="Johaadien",
+        )
+        self.dataset.eml = {"users": [{"first_name": "Rukaya", "last_name": "Johaadien"}]}
+        self.dataset.save()
+
+        self.assertIn(
+            "cannot be combined",
+            SetEML(agent_id=self.agent.id, creators_unknown=True, users=[
+                {"first_name": "Jan", "last_name": "Kowalski", "email": "jan@example.org"},
+            ]).run(),
+        )
+        self.dataset.refresh_from_db()
+        self.assertEqual(self.dataset.eml["users"][0]["last_name"], "Johaadien")
+
+        self.assertIn(
+            "Unknown creator",
+            SetEML(agent_id=self.agent.id, creators_unknown=True).run(),
+        )
+        SetEML(agent_id=self.agent.id).run()
+        self.dataset.refresh_from_db()
+
+        self.assertTrue(self.dataset.eml["creators_unknown"])
+        self.assertEqual(self.dataset.eml["users"], [])
+        self.assertEqual(self.dataset.eml["creators_source"], "unknown")
+
+        SetEML(agent_id=self.agent.id, creators_unknown=False).run()
+        self.dataset.refresh_from_db()
+        self.assertNotIn("creators_unknown", self.dataset.eml)
+        self.assertEqual(self.dataset.eml["creators_source"], "user_profile")
+        self.assertEqual(self.dataset.eml["users"][0]["last_name"], "Johaadien")
 
     def test_set_user_name_updates_dataset_owner_profile(self):
         owner = CustomUser.objects.create_user(

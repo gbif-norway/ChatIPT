@@ -102,6 +102,11 @@ def normalize_orcid(value) -> str | None:
     return text if _ORCID_RE.fullmatch(text) else None
 
 
+# EML creator for a dataset whose creators are explicitly unknown. A position
+# rather than a person or organisation name keeps it out of author lists.
+UNKNOWN_CREATOR_POSITION = "Unknown creator"
+
+
 class EmlExportError(ValueError):
     """Metadata that cannot be represented in the exported EML."""
 
@@ -884,6 +889,14 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None, datas
     set_person(contact_node, contact_person)
 
     # Users array: add additional creators and (optionally) project personnel
+    if not users_list and eml_extra.get('creators_unknown'):
+        # The account holder uploaded the data but did not create it. The GBIF
+        # profile requires a creator, so name an unknown one instead of them.
+        for existing_creator in list(findall(dataset_node, 'creator')):
+            dataset_node.remove(existing_creator)
+        creator = ET.Element('creator')
+        set_text(ET.SubElement(creator, 'positionName'), UNKNOWN_CREATOR_POSITION)
+        dataset_node.insert(list(dataset_node).index(find(dataset_node, 'metadataProvider')), creator)
     if users_list:
         for existing_creator in list(findall(dataset_node, 'creator')):
             dataset_node.remove(existing_creator)
@@ -1766,13 +1779,17 @@ def inspect_dwca_archive(archive_path: str | Path) -> dict:
             for node in dataset_node:
                 role = _local_xml_name(node.tag)
                 if role in {"creator", "metadataProvider", "contact"}:
-                    people.append({
+                    person = {
                         "role": role,
                         "given_name": clean_text(node.findtext("individualName/givenName")),
                         "surname": clean_text(node.findtext("individualName/surName")),
                         "email": clean_text(node.findtext("electronicMailAddress")),
                         "orcid": clean_text(node.findtext("userId")),
-                    })
+                    }
+                    position = clean_text(node.findtext("positionName"))
+                    if position:
+                        person["position"] = position
+                    people.append(person)
             temporal = []
             for node in dataset_node.findall("coverage/temporalCoverage"):
                 temporal.append({
