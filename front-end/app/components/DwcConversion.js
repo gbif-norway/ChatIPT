@@ -195,7 +195,11 @@ export default function DwcConversion() {
   const scientificAudits = [...(scientific ? [['core', scientific]] : []), ...nestedScientific].filter(([, audit]) => audit)
   const notices = dedupeNotices(state, state?.status === 'complete' ? state.report?.warnings || [] : state?.plan?.warnings || [], selected)
   const cardProps = { state, decisions, disabled, onChoose: choose, selected }
-  const needsInputIssues = (state?.plan?.issues || []).filter(issue => needsInput.has(issue.id) && !retainedIssue(issue) && !(state?.review?.applied || []).includes(issue.id))
+  // scientificName questions are answered inside the name check when it has names to check.
+  const nameQuestionIds = new Set(state?.name_review?.question_ids || [])
+  const nameQuestions = (state?.plan?.issues || []).filter(issue => nameQuestionIds.has(issue.id) && !retainedIssue(issue))
+  const needsInputIssues = (state?.plan?.issues || []).filter(issue => needsInput.has(issue.id) && !nameQuestionIds.has(issue.id) &&
+    !retainedIssue(issue) && !(state?.review?.applied || []).includes(issue.id))
   // The questions panel (conversation and recommendations) and the choices list are two views of the same saved decisions.
   const showQuestions = chatVisible(state) || openQuestions(state).length > 0
   const title = conversionTitle(currentDataset, state)
@@ -266,10 +270,8 @@ export default function DwcConversion() {
       <p className="mb-1" role="status">{statusLine(state, outstanding, blockers.length)}</p>
       <p className="small text-body-secondary">Keeping something in your original files means its values are not lost. They just aren&apos;t mapped to a Darwin Core Data Package field.</p>
       <ConversionAiDecisions state={state} disabled={disabled} onChoose={choose} onKeep={keep} />
-      {(attention.length > 0 || needsInputIssues.length > 0) && <h3 className="h5 mt-3">Needs your input</h3>}
-      {attention.map(item => <ChoiceCard key={item.id} item={item} {...cardProps} />)}
-      {needsInputIssues.map(issue => <ChoiceCard key={issue.id} item={issue} {...cardProps} />)}
-      <ConversionNameReview state={state} send={send} disabled={disabled} datasetId={datasetId} onRefresh={load} />
+      <ConversionNameReview state={state} send={send} disabled={disabled} datasetId={datasetId} onRefresh={load}
+        questions={nameQuestions} decisions={decisions} onChoose={choose} />
       <div className="row g-3 align-items-start mb-3">
         {showQuestions && <div className="col-12 col-lg-6">
           <h3 className="h5">Questions about your data</h3>
@@ -277,11 +279,17 @@ export default function DwcConversion() {
           {chatVisible(state) && <ConversionChat state={state} send={send} disabled={busy || working} onFocusDecision={focusDecision} />}
         </div>}
         <div className={showQuestions ? 'col-12 col-lg-6' : 'col-12'}>
+          {/* Choices that need input lead the list, so each question appears once and links straight to its choice. */}
+          {(attention.length > 0 || needsInputIssues.length > 0) && <section className="mb-3" aria-labelledby="needs-input-heading">
+            <h3 className="h5" id="needs-input-heading">Needs your input</h3>
+            {attention.map(item => <ChoiceCard key={item.id} item={item} {...cardProps} />)}
+            {needsInputIssues.map(issue => <ChoiceCard key={issue.id} item={issue} {...cardProps} />)}
+          </section>}
           <details open={showQuestions} className="conversion-choices">
             <summary className="h5">All choices (advanced)</summary>
             <p className="small text-body-secondary mt-2">The same saved choices as the questions {showQuestions ? 'beside' : 'above'}. Change any of them here.</p>
             <div className={showQuestions ? 'conversion-choices-scroll' : ''}>
-        {(state.plan.issues || []).filter(issue => !needsInput.has(issue.id) && (!retainedIssue(issue) || issue.id === `table:${issue.table}`))
+        {(state.plan.issues || []).filter(issue => !needsInput.has(issue.id) && !nameQuestionIds.has(issue.id) && (!retainedIssue(issue) || issue.id === `table:${issue.table}`))
           .map(issue => <ChoiceCard key={issue.id} item={issue} {...cardProps} />)}
         {automaticChoices.filter(choice => !state.plan.columns.some(column => column.id === choice.id) && (!retainedIssue(choice) || choice.id === `table:${choice.table}`)).map(choice => <div className="my-3" key={choice.id} data-decision-id={choice.id}><label htmlFor={choice.id} className="small fw-semibold">{choice.title}</label><p className="small mb-1">{choice.reason}</p><select id={choice.id} className="form-select form-select-sm" disabled={disabled} value={selected(choice.id)} onChange={event => choose(choice.id, event.target.value)}>{choice.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>)}
         {state.plan.columns.filter(column => !column.review && selected(`table:${column.table}`) !== 'preserve').map(column => <div className="row align-items-center my-2" key={column.id} data-decision-id={column.id}><label htmlFor={column.id} className="col-md-6 small">{state.plan.tables[column.table].name} · {column.term.split('/').pop()}</label><div className="col-md-6"><select id={column.id} className="form-select form-select-sm" disabled={disabled} value={selected(column.id, column.default)} onChange={event => choose(column.id, event.target.value)}>{column.options.map(option => <option key={option.value} value={option.value}>{option.label}{optionState(state, column.id, option.value).available ? '' : ' (not available with your other choices)'}</option>)}</select></div></div>)}

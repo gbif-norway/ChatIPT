@@ -552,6 +552,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
                             conversion_names.set_decisions(conversion, request.data['name_decisions'])
                         if request.data.get('bulk'):
                             conversion_names.bulk_decide(conversion, request.data['bulk'])
+                        conversion_names.settle_name_questions(conversion)
                 except conversion_names.NameDecisionError as exc:
                     raise ValidationError(str(exc))
                 return Response(self._conversion_state(conversion))

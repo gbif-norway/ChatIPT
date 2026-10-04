@@ -154,9 +154,9 @@ test('occurrence-event details patch existing events or add child events', () =>
   assert.equal(kept.edges.some(edge => edge.target === 'event'), false)
 })
 
-test('a scientific name kept in originals mentions its verbatim copy', () => {
+test('a scientific name left empty says its text goes to verbatimIdentification', () => {
   const named = { plan: { tables: [{ name: 't', core: true }], columns: [{ id: 'c', table: 0, term: term('scientificName'), default: 'preserve', verbatim_copy: 'occurrence.verbatimIdentification', options: [{ value: 'preserve' }] }], automatic_choices: [] } }
-  assert.match(columnDetails(named, makeSelector(named, {}))[0].outcome, /copied to verbatimIdentification/)
+  assert.match(columnDetails(named, makeSelector(named, {}))[0].outcome, /goes to verbatimIdentification/)
 })
 
 test('event details on an occurrence table follow the occurrence-events choice in the diagram and summary', () => {
@@ -211,4 +211,15 @@ test('an unanswered occurrence-events question is not drawn or counted as mapped
   const summary = summariseColumns(asked, selected)
   assert.deepEqual([summary.mapped, summary.review], [0, 1])
   assert.match(columnDetails(asked, selected)[0].outcome, /Waiting for your choice/)
+})
+
+test('a scientificName left empty still counts as written to verbatimIdentification', () => {
+  const state = { plan: { tables: [{ name: 'occurrence.txt', core: true, rows: 1 }], automatic_choices: [], issues: [],
+    columns: [{ id: 'column:0:0', table: 0, term: 'http://rs.tdwg.org/dwc/terms/scientificName', default: 'occurrence.scientificName',
+      verbatim_copy: 'occurrence.verbatimIdentification', options: [{ value: 'occurrence.scientificName' }, { value: 'preserve' }] }] } }
+  const selected = (id, fallback) => (id === 'column:0:0' ? 'preserve' : fallback)
+  const summary = summariseColumns(state, selected)
+  assert.equal(summary.mapped, 1)
+  assert.deepEqual(summary.groups, {})
+  assert.deepEqual(planDiagram(state, selected).targets.map(target => target.name), ['occurrence'])
 })

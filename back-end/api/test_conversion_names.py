@@ -524,8 +524,10 @@ class NameDecisionAPITests(NamesCase):
         self.assertEqual(response.data['name_review']['labels'][0]['decision']['source'], 'col')
         self.post('names', name_decisions={'Eus sp.': None})
         self.assertNotIn('Eus sp.', self.conversion.name_review['decisions'])
-        # Name decisions are separate from the plan's decisions.
-        self.assertEqual(self.conversion.decisions, {})
+        # Deciding every name settled the scientificName fallback, which now applies to no row; withdrawing
+        # one decision later keeps that safe fallback (the text stays in verbatimIdentification).
+        self.assertEqual(self.conversion.decisions, {'column:0:1': 'preserve'})
+        self.assertEqual(self.state()['decision_sources']['column:0:1']['source'], 'system')
 
     def test_bulk_actions_decide_only_pending_labels_they_may(self):
         self.reviewed()
@@ -909,3 +911,33 @@ class OversizedNameTests(SimpleTestCase):
         self.assertEqual(state['skipped_long'], {'labels': 1, 'rows': 1})
         frames, section = apply_name_decisions({}, state, {})
         self.assertEqual(section['skipped_long'], {'labels': 1, 'rows': 1})
+
+
+class NameQuestionTests(SimpleTestCase):
+    def conversion(self, decisions):
+        from types import SimpleNamespace
+        plan = {'id': 'plan', 'issues': [{'id': 'column:1:16', 'kind': 'name-semantics', 'options': []},
+                                         {'id': 'event-category', 'kind': 'event-category', 'options': []}]}
+        state = {'plan_id': 'plan', 'labels': [{'label': 'Aus bus'}, {'label': 'Cus dus'}], 'decisions': decisions,
+                 'truncated': 0, 'skipped_long': {'labels': 0, 'rows': 0}}
+        return SimpleNamespace(plan=plan, name_review=state, decisions={})
+
+    @override_settings(CONVERSION_NAME_CHECKS_ENABLED=True)
+    def test_name_questions_are_answered_inside_the_name_check(self):
+        from api.conversion_names import name_question_ids
+        self.assertEqual(name_question_ids(self.conversion({})), ['column:1:16'])
+        empty = self.conversion({}); empty.name_review['labels'] = []
+        self.assertEqual(name_question_ids(empty), [])
+        with override_settings(CONVERSION_NAME_CHECKS_ENABLED=False):
+            self.assertEqual(name_question_ids(self.conversion({})), [])
+
+    @override_settings(CONVERSION_NAME_CHECKS_ENABLED=True)
+    def test_deciding_every_name_settles_the_fallback_question(self):
+        from api.conversion_names import settle_name_questions
+        partial = self.conversion({'Aus bus': {'decision': 'parsed'}})
+        with patch('api.conversion_review.apply_decision_changes') as apply:
+            self.assertEqual(settle_name_questions(partial), [])
+            apply.assert_not_called()
+            complete = self.conversion({'Aus bus': {'decision': 'parsed'}, 'Cus dus': {'decision': 'keep'}})
+            self.assertEqual(settle_name_questions(complete), ['column:1:16'])
+            self.assertEqual(apply.call_args.args[1:3], ({'column:1:16': 'preserve'}, 'system'))

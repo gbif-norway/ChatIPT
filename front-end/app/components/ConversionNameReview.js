@@ -64,7 +64,12 @@ function DecisionCell({ entry, editable, busy, onDecide }) {
   </div>
 }
 
-export default function ConversionNameReview({ state, send, disabled, datasetId, onRefresh }) {
+// The scientificName question asks what happens to names without a decision here; each option is phrased for that.
+const fallbackLabel = option => option.value === 'preserve'
+  ? 'Leave scientificName empty (the text stays in verbatimIdentification)'
+  : `Copy the supplied text into scientificName${option.value.startsWith('identification.') ? ' (identification)' : ''}`
+
+export default function ConversionNameReview({ state, send, disabled, datasetId, onRefresh, questions = [], decisions = {}, onChoose }) {
   const nameReview = state?.name_review
   const editable = isEditable(state)
   const [view, setView] = useState('pending')
@@ -124,7 +129,7 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
     <p className="small text-muted mt-2 mb-2">
       Your names are checked with the GBIF name parser and Catalogue of Life, the taxonomy GBIF.org uses{nameReview.checklist ? ` (${nameReview.checklist})` : ''}.
       A match shows that a name was found, not that the identification is right. Nothing changes unless you decide: the supplied text always stays in
-      verbatimIdentification, and names you do not review are converted as they are.
+      verbatimIdentification{questions.length ? ', and names you don\'t decide follow the choice at the end of this section' : ', and names you do not review are converted as they are'}.
       {' '}{summary.decided.toLocaleString()} of {summary.labels.toLocaleString()} names decided, covering {summary.rows.toLocaleString()} rows.
     </p>
     {skippedMessage(summary) && <p className="small text-warning-emphasis">{skippedMessage(summary)}</p>}
@@ -162,5 +167,20 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
       <span>Page {page + 1} of {pages}</span>
       <button type="button" className="btn btn-sm btn-outline-secondary" disabled={page >= pages - 1} onClick={() => setPage(page + 1)}>Next</button>
     </nav>}
+    {questions.map(question => <div key={question.id} className="border-top pt-2 mt-2" data-decision-id={question.id}>
+      <label htmlFor={question.id} className="small fw-semibold">
+        For names you don&apos;t decide above{questions.length > 1 ? ` (${state?.plan?.tables?.[question.table]?.name || 'table'})` : ''}
+      </label>
+      <p className="small text-muted mb-1">
+        {summary.decided >= summary.labels && !summary.truncated && !summary.skipped_long?.labels
+          ? 'Every name has a decision above, so this applies to no row.'
+          : 'A Data Package scientificName holds only the name, without its author. Decide names above where you can.'}
+      </p>
+      <select id={question.id} className="form-select form-select-sm" value={decisions[question.id] || ''} disabled={disabled || !onChoose}
+        onChange={event => onChoose(question.id, event.target.value)}>
+        {!decisions[question.id] && <option value="">Choose…</option>}
+        {question.options.map(option => <option key={option.value} value={option.value}>{fallbackLabel(option)}</option>)}
+      </select>
+    </div>)}
   </section>
 }

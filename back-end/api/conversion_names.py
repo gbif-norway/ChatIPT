@@ -112,6 +112,39 @@ def current(conversion):
     return state if plan_id and state.get('plan_id') == plan_id else {}
 
 
+def name_question_ids(conversion):
+    """The plan's scientificName questions; the name check answers them per name when it has names to check."""
+    state = current(conversion)
+    # Only a working name check takes over the question: checks enabled, or requested by the user.
+    if not state.get('labels') or not (enabled() or state.get('requested')):
+        return []
+    return [issue['id'] for issue in (conversion.plan or {}).get('issues', []) if issue.get('kind') == 'name-semantics']
+
+
+def every_name_decided(conversion):
+    state = current(conversion)
+    decisions = state.get('decisions') or {}
+    return (bool(state.get('labels')) and not state.get('truncated') and not (state.get('skipped_long') or {}).get('labels')
+            and all(record['label'] in decisions for record in state['labels']))
+
+
+def settle_name_questions(conversion):
+    """Once every name has a decision, the scientificName fallback applies to no row; record that instead of asking.
+
+    The caller holds the conversion lock. Withdrawing a name decision later leaves this safe fallback in place:
+    an undecided name keeps its text in verbatimIdentification.
+    """
+    if not every_name_decided(conversion):
+        return []
+    from api.conversion_review import apply_decision_changes
+    open_ids = [identifier for identifier in name_question_ids(conversion) if identifier not in conversion.decisions]
+    if open_ids:
+        apply_decision_changes(conversion, dict.fromkeys(open_ids, 'preserve'), 'system',
+                               rationale='Every scientific name has a decision in the name check, so this fallback applies to no row. '
+                                         'The supplied text stays in verbatimIdentification.')
+    return open_ids
+
+
 def pending(conversion):
     """True when name checks should (still) run: unchecked names, under the run limit, and wanted."""
     state = current(conversion)
@@ -429,6 +462,8 @@ def state_section(conversion, offset=0, limit=PAGE_SIZE, view='all'):
     checking = DwcConversionJob.objects.filter(conversion=conversion, action='names').exists()
     return {'status': state.get('status', 'none'), 'checking': checking, 'error': state.get('error', ''), 'runs': state.get('runs', 0),
             'plan_id': state.get('plan_id'), 'checklist': (state.get('col_release') or {}).get('alias'), 'summary': summary,
+            # scientificName questions shown inside the name check instead of as separate choices.
+            'question_ids': name_question_ids(conversion),
             'page': {'offset': offset, 'limit': limit, 'total': len(shown), 'view': view},
             'labels': [_entry(record, decisions) for record in shown[offset:offset + limit]]}
 

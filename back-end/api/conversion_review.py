@@ -319,11 +319,14 @@ def ai_applied(context):
 
 
 def reviewable_items(conversion, manual=False, context=None):
+    from api.conversion_names import name_question_ids
     context = context or Context(conversion)
     candidates = list(dict.fromkeys([*review_items(conversion, context), *ai_applied(context)]))
+    # The name check reviews each name with the parser and Catalogue of Life; a separate AI answer would compete with it.
+    by_name_check = set(name_question_ids(conversion))
     found = []
     for item_id in candidates:
-        if item_id in context.conflicts or context.deferred(item_id) or context.current(item_id):
+        if item_id in by_name_check or item_id in context.conflicts or context.deferred(item_id) or context.current(item_id):
             continue
         record = context.state['recommendations'].get(item_id)
         if not manual and record and record.get('reason') in RETRY_ONLY_MANUALLY:

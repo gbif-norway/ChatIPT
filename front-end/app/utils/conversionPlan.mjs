@@ -35,6 +35,9 @@ export function unmappedReason(column) {
   return 'no-mapping'
 }
 
+// A scientificName column always reaches verbatimIdentification, even when scientificName itself is left empty.
+const writtenTarget = (column, value) => value === 'preserve' && column.verbatim_copy ? column.verbatim_copy : value
+
 export function summariseColumns(state, selected) {
   const summary = { total: 0, mapped: 0, review: 0, groups: {}, retainedTables: [] }
   const plan = state?.plan
@@ -46,7 +49,7 @@ export function summariseColumns(state, selected) {
       retainedColumns[column.table] = (retainedColumns[column.table] || 0) + 1
       continue
     }
-    const value = selected(column.id, column.default)
+    const value = writtenTarget(column, selected(column.id, column.default))
     const events = value === 'preserve' ? null : eventDetailsChoice(state, selected, column, value)
     if (value !== 'preserve' && eventDetailsMapped(events)) {
       if (column.review) summary.review += 1; else summary.mapped += 1
@@ -109,7 +112,7 @@ export function columnDetails(state, selected) {
     let outcome
     if (retained) outcome = 'Kept in your original files with its table'
     else if (eventsKept) outcome = events === '' ? 'Waiting for your choice about event details on these rows' : 'Kept in your original files; event details on these rows are not copied'
-    else if (value === 'preserve' && column.verbatim_copy) outcome = `Kept in your original files, and the text is also copied to ${column.verbatim_copy.split('.').pop()}`
+    else if (value === 'preserve' && column.verbatim_copy) outcome = `The text goes to ${column.verbatim_copy.split('.').pop()}; scientificName comes from the name check or stays empty`
     else if (value === 'preserve') outcome = {
       'no-target': 'No Darwin Core Data Package field; kept in your original files',
       unsupported: "Can't be mapped yet; kept in your original files",
@@ -207,7 +210,7 @@ export function planDiagram(state, selected) {
   }
   for (const column of state?.plan?.columns || []) {
     if (retainedTable(state, selected, column.table)) continue
-    const value = selected(column.id, column.default)
+    const value = writtenTarget(column, selected(column.id, column.default))
     if (!eventDetailsMapped(eventDetailsChoice(state, selected, column, value))) continue
     const target = targetTable(value)
     if (target) add(column.table, target, 1)
