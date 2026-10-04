@@ -16,7 +16,8 @@ from api.models import DwcConversion, DwcConversionJob, Table
 from api.taxon_matching import TaxonServiceError
 from api import conversion_chat
 from api.test_conversion_review import AI, QUERY, ConversionTestCase, answer, reply, requested
-from api.test_dwca_conversion import decisions_for
+from api.dwca_conversion import build_plan, convert
+from api.test_dwca_conversion import DWC, decisions_for, manifest
 
 RELEASE = {'checklistKey': 'col-key', 'alias': 'COL26.6 XR', 'checklistBankDatasetKey': '315557'}
 # The converter copies each source name to verbatimIdentification itself.
@@ -639,6 +640,35 @@ class NameDecisionAPITests(NamesCase):
         identification = Table.objects.get(dataset_id=self.dataset_id, title='identification').df
         self.assertEqual(sorted(identification['scientificName']), ['', 'Aus bus', 'Aus bus'])
         self.assertTrue(self.conversion.report['validation']['valid'])
+
+
+class ExtensionNamesTests(SimpleTestCase):
+    def test_a_decision_for_an_occurrence_name_does_not_rewrite_its_identification_extension_row(self):
+        extension = ('<extension rowType="' + DWC + 'Identification" fieldsTerminatedBy="," ignoreHeaderLines="1">'
+                     '<files><location>identification.csv</location></files><coreid index="0"/>'
+                     '<field index="1" term="' + DWC + 'scientificName"/></extension>')
+        core_name = '<field index="2" term="' + DWC + 'scientificName"/>'
+        archive = read_inputs([('meta.xml', manifest(fields=core_name, extension=extension)),
+                               ('occ.csv', b'id,occurrenceID,name\nj1,o1,Species A\n'),
+                               ('identification.csv', b'link,name\nj1,Species B\n')])
+        state = names.collect_state(archive, {'id': 'plan'})
+        self.assertEqual({record['label']: record['tables'] for record in state['labels']},
+                         {'Species A': {'occurrence': 1}, 'Species B': {'identification': 1}})
+        plan = build_plan(archive)
+        frames, _ = convert(archive, plan, decisions_for(plan))
+
+        def converted(label, name):
+            decided = {**state, 'decisions': {label: decision('parsed', name)}}
+            result, section = names.apply_name_decisions(frames, decided)
+            return result['occurrence']['scientificName'].tolist(), result['identification']['scientificName'].tolist(), section
+
+        only_a = converted('Species A', 'Species Alpha')
+        self.assertEqual(only_a[0], ['Species Alpha'])
+        self.assertNotIn('Species Alpha', only_a[1])
+        only_b = converted('Species B', 'Species Beta')
+        self.assertEqual(only_b[0], ['Species A'])
+        self.assertEqual(only_b[1].count('Species Beta'), 1)
+        self.assertEqual(only_b[2]['entries'][0]['rows'], {'identification': 1})
 
 
 def respond(payload, max_retries=None):
