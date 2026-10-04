@@ -13,6 +13,17 @@ export function makeSelector(state, decisions) {
 
 const retainedTable = (state, selected, index) => !state.plan.tables[index]?.core && selected(`table:${index}`) === 'preserve'
 
+// Event details on an additional occurrence table are written only as its occurrence-events choice allows
+// ("patch" or "per-row"). Returns that choice for such a column, '' while it is unanswered, and null otherwise.
+function eventDetailsChoice(state, selected, column, value) {
+  if (!String(value).startsWith('event.') || state.plan.tables[column.table]?.core) return null
+  const id = `occurrence-events:${column.table}`
+  const exists = [...(state.plan.issues || []), ...(state.plan.automatic_choices || [])].some(item => item.id === id)
+  return exists ? selected(id) || '' : null
+}
+
+const eventDetailsMapped = choice => choice === null || choice === 'patch' || choice === 'per-row'
+
 const hasTarget = column => (column.options || []).some(option => !['preserve', 'join'].includes(option.value))
 
 // How a column that stays in the original files got there. The backend marks columns with `unmapped`
@@ -36,11 +47,14 @@ export function summariseColumns(state, selected) {
       continue
     }
     const value = selected(column.id, column.default)
-    if (value !== 'preserve') {
+    const events = value === 'preserve' ? null : eventDetailsChoice(state, selected, column, value)
+    if (value !== 'preserve' && eventDetailsMapped(events)) {
       if (column.review) summary.review += 1; else summary.mapped += 1
       continue
     }
-    const reason = unmappedReason(column)
+    // An unanswered occurrence-events question is covered by the choices below; "preserve" is the user's choice.
+    if (value !== 'preserve' && events === '') { summary.review += 1; continue }
+    const reason = value === 'preserve' ? unmappedReason(column) : 'chosen'
     const group = summary.groups[reason] ||= { count: 0, names: [] }
     group.count += 1
     const name = shortTerm(column.term)
@@ -87,10 +101,14 @@ export function columnDetails(state, selected) {
   return (plan?.columns || []).map(column => {
     const table = plan.tables[column.table]
     const retained = retainedTable(state, selected, column.table)
-    const value = retained ? 'preserve' : selected(column.id, column.default)
+    const chosen = selected(column.id, column.default)
+    const events = retained || chosen === 'preserve' ? null : eventDetailsChoice(state, selected, column, chosen)
+    const eventsKept = !eventDetailsMapped(events)
+    const value = retained || eventsKept ? 'preserve' : chosen
     const option = (column.options || []).find(item => item.value === value)
     let outcome
     if (retained) outcome = 'Kept in your original files with its table'
+    else if (eventsKept) outcome = events === '' ? 'Waiting for your choice about event details on these rows' : 'Kept in your original files; event details on these rows are not copied'
     else if (value === 'preserve' && column.verbatim_copy) outcome = `Kept in your original files, and the text is also copied to ${column.verbatim_copy.split('.').pop()}`
     else if (value === 'preserve') outcome = {
       'no-target': 'No Darwin Core Data Package field; kept in your original files',
@@ -189,7 +207,9 @@ export function planDiagram(state, selected) {
   }
   for (const column of state?.plan?.columns || []) {
     if (retainedTable(state, selected, column.table)) continue
-    const target = targetTable(selected(column.id, column.default))
+    const value = selected(column.id, column.default)
+    if (!eventDetailsMapped(eventDetailsChoice(state, selected, column, value))) continue
+    const target = targetTable(value)
     if (target) add(column.table, target, 1)
   }
   tables.forEach((table, index) => {

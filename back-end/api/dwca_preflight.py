@@ -246,6 +246,23 @@ class Preflight:
                         self.require(decision, 'patch', _requirement([{'type': 'unsatisfiable'}],
                             f'{name} on occurrence rows disagrees with the linked event in {self.core.name} for {len(bad)} events.',
                             {'events': len(bad), 'examples': bad[:EXAMPLES]}, when=[chosen(column, target), chosen(core_column, target)]))
+        # An event without a supplied category gets the missing-category choice before details are copied.
+        category = next((column for column in self.by_table[self.ci] if 'event.eventCategory' in self.targets(column)), None)
+        for column in extension:
+            if 'event.eventCategory' not in self.targets(column):
+                continue
+            for core_mapped in ([True, False] if category else [False]):
+                filled = [event for event in by_event if not (core_mapped and supplied(self.ci, category, 'event.eventCategory', event))]
+                values = sorted({value for event in filled for value in supplied(t, column, 'event.eventCategory', event)})
+                if not values:
+                    continue
+                when = [chosen(column, 'event.eventCategory')] + ([] if not category else [
+                    chosen(category, 'event.eventCategory') if core_mapped else
+                    {'type': 'target_not_in', 'column': category['id'], 'targets': ['event.eventCategory']}])
+                self.require(decision, 'patch', _requirement(
+                    [{'type': 'decision_in', 'id': 'event-category', 'values': values}] if len(values) == 1 else [{'type': 'unsatisfiable'}],
+                    f'Occurrence rows give the event category {" or ".join(values)} for events without one; the missing-category choice must agree.',
+                    {'events': len(filled), 'categories': values}, when=when))
         # A year must agree with the eventDate it ends up beside, wherever each comes from.
         years = [(origin, column) for origin, column in sources if 'event.year' in self.targets(column)]
         dates = [(origin, column) for origin, column in sources if 'event.eventDate' in self.targets(column)]

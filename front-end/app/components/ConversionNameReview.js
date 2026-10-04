@@ -117,7 +117,7 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
   const unfinished = summary.checked < summary.labels
   return <section className="card card-body mb-3" aria-labelledby="scientific-names-heading">
     <div className="d-flex flex-wrap align-items-center gap-2">
-      <h2 className="fs-4 mb-0 me-auto" id="scientific-names-heading">Scientific names</h2>
+      <h3 className="h5 mb-0 me-auto" id="scientific-names-heading">Scientific names</h3>
       {editable && (unfinished || nameReview.status === 'error') && !checking && <button type="button" className="btn btn-sm btn-outline-secondary" disabled={locked}
         onClick={() => act({ action: 'check_names', plan_id: planId })}>Check names again</button>}
     </div>

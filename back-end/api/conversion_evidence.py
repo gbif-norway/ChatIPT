@@ -90,27 +90,46 @@ def _all(root, path):
     return root.xpath(f'.//{steps}')
 
 
-def extract_eml(archive):
-    """The bounded EML sections from §4.1, or {'available': False, 'reason': ...}."""
+def _eml_dataset(archive):
+    """(dataset element, None) for the single declared or supplied EML document, or (None, reason)."""
     files = archive.files
     declares, declared = _metadata_name(files)
     if declares and declared is None:
-        return {'available': False, 'reason': 'meta.xml names a metadata document that was not supplied.'}
+        return None, 'meta.xml names a metadata document that was not supplied.'
     candidates = [declared] if declared else sorted(name for name in files if PurePosixPath(name).name.lower() == 'eml.xml')
     if len(candidates) != 1:
-        return {'available': False, 'reason': 'No metadata document was supplied.' if not candidates
-                else 'Several metadata documents were supplied.'}
+        return None, 'No metadata document was supplied.' if not candidates else 'Several metadata documents were supplied.'
     content = files[candidates[0]]
     if len(content) > EML_MAX_BYTES:
-        return {'available': False, 'reason': 'The metadata document is too large to summarise.'}
+        return None, 'The metadata document is too large to summarise.'
     try:
         root = etree.fromstring(content, parser=_parser())
     except (etree.XMLSyntaxError, ValueError) as exc:
-        return {'available': False, 'reason': f'The metadata document could not be read ({type(exc).__name__}).'}
+        return None, f'The metadata document could not be read ({type(exc).__name__}).'
     datasets = _all(root, 'dataset')
     if not datasets:
-        return {'available': False, 'reason': 'The metadata document has no dataset section.'}
-    dataset = datasets[0]
+        return None, 'The metadata document has no dataset section.'
+    return datasets[0], None
+
+
+def publication_metadata(archive, limit):
+    """The EML title and abstract in full for dataset fields, with whether either exceeded the field limit."""
+    dataset, _ = _eml_dataset(archive)
+    if dataset is None:
+        return {'title': '', 'description': '', 'truncated': {}}
+    title = next((text for element in _all(dataset, 'title') if (text := _text(element))), '')
+    paragraphs = [text for abstract in _all(dataset, 'abstract')[:1]
+                  for text in ([_text(para) for para in _all(abstract, 'para')] or [_text(abstract)]) if text]
+    description = '\n\n'.join(paragraphs)
+    return {'title': title[:limit], 'description': description[:limit],
+            'truncated': {key: True for key, value in (('title', title), ('description', description)) if len(value) > limit}}
+
+
+def extract_eml(archive):
+    """The bounded EML sections from §4.1, or {'available': False, 'reason': ...}."""
+    dataset, reason = _eml_dataset(archive)
+    if dataset is None:
+        return {'available': False, 'reason': reason}
 
     def joined(path, limit, count=None):
         values = [_text(element) for element in _all(dataset, path)]
