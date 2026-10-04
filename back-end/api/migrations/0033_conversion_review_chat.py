@@ -4,6 +4,15 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
+def retire_suggest_jobs(apps, schema_editor):
+    """Jobs queued by the removed advice action cannot run; return their conversions to review."""
+    Job = apps.get_model('api', 'DwcConversionJob')
+    Conversion = apps.get_model('api', 'DwcConversion')
+    for job in Job.objects.filter(action='suggest'):
+        Conversion.objects.filter(pk=job.conversion_id, status='reviewing').update(status='review')
+        job.delete()
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -85,4 +94,5 @@ class Migration(migrations.Migration):
                 'ordering': ['id'],
             },
         ),
+        migrations.RunPython(retire_suggest_jobs, migrations.RunPython.noop),
     ]

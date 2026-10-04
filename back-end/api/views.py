@@ -639,6 +639,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
             )
 
         from api.openai_usage import usage_summary
+        from api.models import ConversionSpendReservation
 
         dataset = self.get_object()
         records = dataset.openai_usage_records.select_related('agent').all()
@@ -677,6 +678,11 @@ class DatasetViewSet(viewsets.ModelViewSet):
             'by_service_tier': by_service_tier,
             'by_task_and_model': by_task_and_model,
             'requests': OpenAIUsageSerializer(records, many=True).data,
+            # Conversion calls whose spend could not be confirmed stay reserved against the dataset limit.
+            'conversion_reservations': [
+                {'id': reservation.id, 'amount_usd': reservation.amount, 'response_id': reservation.response_id,
+                 'created_at': reservation.created_at}
+                for reservation in ConversionSpendReservation.objects.filter(conversion__dataset=dataset).order_by('id')],
         })
 
     @action(

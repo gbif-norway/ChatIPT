@@ -119,6 +119,10 @@ class ChatTests(ConversionTestCase):
         changed = session.set_decision('column:0:2', 'occurrence.scientificName', first.id, 'Keep the names')
         self.assertIn('already answered', changed['error'])
         self.assertEqual(self.conversion.decisions['column:0:2'], 'preserve')
+        # A question from an earlier plan never authorises an answer, even when ids repeat.
+        DwcConversionMessage.objects.filter(role='assistant').update(plan_id='earlier-plan')
+        stale = session.set_decision('column:0:2', 'occurrence.scientificName', first.id, 'Keep the names')
+        self.assertIn('Ask the user', stale['error'])
         # A superseded worker cannot write.
         DwcConversionJob.objects.filter(pk=job.pk).delete()
         with self.assertRaises(chat.review.Fenced):

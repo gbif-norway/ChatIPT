@@ -153,6 +153,37 @@ class ReviewerFlowTests(ConversionTestCase):
         self.assertEqual(saved.data['decision_sources']['column:0:2']['source'], 'user')
         self.assertNotIn('column:0:2', review.reviewable_items(conversion, manual=True))
 
+    def test_adoption_is_recorded_only_for_a_matching_shown_recommendation(self):
+        self.inspect_only()
+        conversion = self.conversion
+        review.apply_decision_changes(conversion, {'loose-links': 'confirm'}, 'user')
+        conversion.review['recommendations']['status:0'] = {'plan_id': conversion.plan['id'], 'outcome': 'escalated',
+                                                            'reason': 'assertion', 'option': 'present'}
+        conversion.save(update_fields=['review'])
+        self.post('save', changes={'status:0': 'absent', 'column:0:2': 'preserve'}, accepted_recommendations=['status:0', 'column:0:2'])
+        self.assertEqual(self.events('status:0')[-1].evidence, [])
+        self.assertEqual(self.events('column:0:2')[-1].evidence, [])
+        self.post('save', changes={'status:0': 'present'}, accepted_recommendations=['status:0'])
+        self.assertEqual(self.events('status:0')[-1].evidence, [{'accepted_recommendation': True}])
+
+    def test_legacy_suggest_jobs_are_retired(self):
+        import importlib
+        from django.apps import apps
+        self.inspect_only()
+        conversion = self.conversion
+        DwcConversionJob.objects.create(conversion=conversion, action='suggest')
+        DwcConversion.objects.filter(pk=conversion.pk).update(status='reviewing')
+        importlib.import_module('api.migrations.0033_conversion_review_chat').retire_suggest_jobs(apps, None)
+        self.assertFalse(DwcConversionJob.objects.exists())
+        self.assertEqual(self.conversion.status, 'review')
+
+    def test_administrators_see_retained_reservations(self):
+        self.inspect_only()
+        ConversionSpendReservation.objects.create(conversion=self.conversion, amount=Decimal('0.25'), response_id='timeout')
+        self.client.force_authenticate(CustomUser.objects.create_superuser(username='admin', password='x'))
+        data = self.client.get(f'/api/datasets/{self.dataset_id}/openai-usage/').data
+        self.assertEqual([item['response_id'] for item in data['conversion_reservations']], ['timeout'])
+
     def test_partial_saves_keep_ai_choices_made_meanwhile(self):
         self.inspect_only()
         conversion = self.conversion

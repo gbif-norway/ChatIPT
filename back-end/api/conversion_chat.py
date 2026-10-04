@@ -367,7 +367,8 @@ class Session:
             if option.get('assertion'):
                 return {'ok': False, 'error': 'This option adds information that is not in the files. Put it in proposals so the user can confirm it.'}
             prior = conversion.messages.filter(role='assistant', id__lt=message.id).order_by('-id').first()
-            asked = set(prior.asked or []) if prior else set()
+            # Only a question asked on the current plan can authorise an answer; ids may repeat across plans.
+            asked = set(prior.asked or []) if prior and prior.plan_id == self.plan_id else set()
             if id not in asked and group not in asked:
                 return {'ok': False, 'error': 'Ask the user about this choice before recording an answer.'}
             context = review.Context(conversion)
