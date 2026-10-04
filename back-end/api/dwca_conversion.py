@@ -595,9 +595,9 @@ def build_plan(archive):
             if not options and not join_only:
                 # Distinguish a term the Data Package has no field for from one this converter does not map yet.
                 item['unmapped'] = 'unsupported' if term in SCHEMA_TERMS else 'no-target'
-            if term == NAME and own == 'occurrence' and (table.is_core or family == 'occurrence') and VERBATIM_NAME not in table.terms:
+            if term == NAME and ((own == 'occurrence' and (table.is_core or family == 'occurrence')) or family == 'identification'):
                 # The supplied name text is always copied to verbatimIdentification, whatever is chosen here.
-                item['verbatim_copy'] = 'occurrence.verbatimIdentification'
+                item['verbatim_copy'] = ('identification' if family == 'identification' else 'occurrence') + '.verbatimIdentification'
                 item['options'] = [{**option, 'label': 'Leave scientificName empty; the name text is kept in verbatimIdentification'}
                                    if option['value'] == 'preserve' else option for option in item['options']]
             columns.append(item); profile["columns"].append({key: item[key] for key in ("term", "nonempty", "distinct", "samples")})
@@ -1008,7 +1008,7 @@ def convert(archive, plan, decisions):
         """Keep the supplied name text verbatim and remove an exactly matching supplied authorship."""
         table = archive.tables[t]
         name = table.rows[n][table.terms.index(NAME)] if NAME in table.terms else ''
-        if name and VERBATIM_NAME not in table.terms and not record.get('verbatimIdentification'):
+        if name and not record.get('verbatimIdentification'):
             record['verbatimIdentification'] = name
             column_consumption[(t, NAME)].add(n)
         if record.get('scientificName'):
@@ -1122,7 +1122,8 @@ def convert(archive, plan, decisions):
                     if details == 'per-row':
                         # Each row is its own event inside the linked event; the shared eventID stays with the parent.
                         child = {field: value for field, value in supplied.items() if field != 'eventID'}
-                        child.update(event_pk=_key(archive, 'occurrence-event', t, n), parentEvent_fk=event_key, eventCategory='occurrence')
+                        child.update(event_pk=_key(archive, 'occurrence-event', t, n), parentEvent_fk=event_key)
+                        child.setdefault('eventCategory', 'occurrence')  # A supplied category is kept, never replaced.
                         add('event', child, t, n)
                         event_key = child['event_pk']
                         consumed_fields = set(child)
@@ -1137,7 +1138,9 @@ def convert(archive, plan, decisions):
                             column_consumption[(t, column['term'])].add(n)
                     occurrence_row(t, n, f"{source_id}:{n}", mapped, event_key)
                 elif role == "identification":
-                    record = {**mapped.get("identification", {}), "identification_pk": _key(archive, "identification", t, n), "occurrence_fk": occurrence_keys[source_id]}
+                    # Each identification keeps its own name text, never its occurrence's.
+                    record = name_values(t, n, {**mapped.get("identification", {}), "identification_pk": _key(archive, "identification", t, n),
+                                                "occurrence_fk": occurrence_keys[source_id]})
                     add("identification", record, t, n)
                 elif role.endswith("-assertion") or role == 'declared-assertions':
                     record = dict(mapped.get("occurrence-assertion", {}))
@@ -1347,7 +1350,7 @@ def convert(archive, plan, decisions):
         extension_events = family == 'occurrence' and not archive.tables[column['table']].is_core and target.startswith('event.')
         special = family == 'humboldt' or family in GERMPLASM_FAMILIES.values() or family in LEGACY_FAMILIES.values() or extension_events
         if column['term'] == NAME and target == 'preserve' and column_consumption[(column['table'], NAME)]:
-            target = 'derived verbatim copy → occurrence.verbatimIdentification'
+            target = 'derived verbatim copy → ' + column.get('verbatim_copy', 'occurrence.verbatimIdentification')
             special = True
         if family == 'germplasm-score' and column['term'] == G + 'measurementTraitID' and column_consumption[(column['table'], column['term'])]:
             target = 'derived protocol link'

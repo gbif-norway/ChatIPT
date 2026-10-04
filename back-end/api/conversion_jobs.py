@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from api.dwca_import import ConversionError, ImportFailure, read_inputs, source_zip
 from api.dwca_conversion import build_plan, convert
-from api.conversion_evidence import extract_eml
+from api.conversion_evidence import publication_metadata
 from api.conversion_names import LEASE_SECONDS
 from api.dwc_dp_specs import create_dwc_dp_archive, validate_dwc_dp_archive, validate_dwc_dp_resources, validate_eml
 from api.models import DwcConversion, DwcConversionJob, Table
@@ -21,19 +21,15 @@ logger = logging.getLogger(__name__)
 
 
 def _eml_dataset_metadata(archive):
-    extracted = extract_eml(archive)
-    sections = extracted.get('sections', {}) if extracted.get('available') else {}
-    return {
-        'title': ' '.join(sections.get('eml:title', '').split())[:5000],
-        'description': ' '.join(sections.get('eml:abstract', '').split())[:5000],
-    }
+    # Dataset title and description hold up to 5,000 characters; the evidence summaries are shorter.
+    return publication_metadata(archive, 5000)
 
 
 def _metadata_source(value, eml_value):
-    value = ' '.join((value or '').split())
+    value = (value or '').strip()
     if not value:
         return 'none'
-    return 'eml' if eml_value and value == eml_value else 'user'
+    return 'eml' if eml_value and value == eml_value.strip() else 'user'
 
 
 def classify_failure(exc):
@@ -139,6 +135,7 @@ def process_next_conversion():
                 'eml': 'original EML 2.2.0 included' if eml else 'original metadata retained in source-originals.zip; no replacement metadata invented',
                 'title_source': _metadata_source(conversion.dataset.title, eml_metadata['title']),
                 'description_source': _metadata_source(conversion.dataset.description, eml_metadata['description']),
+                **({'truncated_from_eml': sorted(eml_metadata['truncated'])} if eml_metadata['truncated'] else {}),
             }
             from api.conversion_review import report_section
             report.update(report_section(conversion))

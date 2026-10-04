@@ -120,3 +120,54 @@ class ScientificNameTests(SimpleTestCase):
         flags = {column['term'].rsplit('/', 1)[-1]: column.get('unmapped') for column in plan['columns']}
         self.assertEqual((flags['basisOfRecord'], flags['dynamicProperties']), ('no-target', 'no-target'))
         self.assertFalse(any(warning['id'].startswith('column:') and 'basisOfRecord' in warning['title'] for warning in plan['warnings']))
+
+
+class ReviewFindingTests(SimpleTestCase):
+    """Fixes from the joint review of the conversion-fixes branch."""
+
+    def test_child_events_keep_a_supplied_category(self):
+        source = archive(b'eventID,occurrenceID,occurrenceStatus,eventCategory\ne1,o1,present,survey\n')
+        plan = build_plan(source)
+        frames, report = convert(source, plan, {**answers(plan), 'occurrence-events:1': 'per-row'})
+        child = frames['event'][frames['event']['parentEvent_fk'] != ''].iloc[0]
+        self.assertEqual(child['eventCategory'], 'survey')
+
+    def test_blank_verbatim_cells_are_filled_from_the_row_name(self):
+        source = read_inputs([('occurrence.csv', b'occurrenceID,occurrenceStatus,scientificName,verbatimIdentification\n'
+                                                 b'o1,present,Aus bus,A. bus (field note)\no2,present,Cus dus,\n')])
+        plan = build_plan(source)
+        frames, _ = convert(source, plan, answers(plan))
+        verbatim = frames['occurrence'].set_index('occurrenceID')['verbatimIdentification']
+        self.assertEqual((verbatim['o1'], verbatim['o2']), ('A. bus (field note)', 'Cus dus'))
+
+    def test_identification_rows_keep_their_own_name_text(self):
+        source = read_inputs([('occurrence.csv', b'occurrenceID,occurrenceStatus,scientificName\no1,present,Aus bus\n'),
+                              ('identification.csv', b'occurrenceID,scientificName,identifiedBy\no1,Cus dus,Ann\n')])
+        plan = build_plan(source)
+        frames, _ = convert(source, plan, answers(plan))
+        texts = set(frames['identification']['verbatimIdentification'])
+        self.assertIn('Cus dus', texts)
+        self.assertEqual(frames['occurrence'].iloc[0]['verbatimIdentification'], 'Aus bus')
+
+    def test_copied_category_must_agree_with_the_missing_category_choice(self):
+        events = b'eventID\ne1\ne2\n'
+        source = archive(b'eventID,occurrenceID,occurrenceStatus,eventCategory\ne1,o1,present,survey\ne2,o2,present,survey\n', events)
+        plan = build_plan(source)
+        status = option_status(plan, {'event-category': 'occurrence', 'occurrence-events:1': 'patch'})
+        self.assertFalse(status['occurrence-events:1']['patch']['available'])
+        self.assertTrue(option_status(plan, {'event-category': 'survey', 'occurrence-events:1': 'patch'})['occurrence-events:1']['patch']['available'])
+        frames, _ = convert(source, plan, {**answers(plan), 'event-category': 'survey', 'occurrence-events:1': 'patch'})
+        self.assertEqual(set(frames['event']['eventCategory']), {'survey'})
+
+
+class PublicationMetadataTests(SimpleTestCase):
+    def test_long_abstracts_are_not_shortened_to_the_evidence_limit(self):
+        from api.conversion_evidence import publication_metadata
+        abstract = 'Long abstract sentence. ' * 200
+        eml = f'<eml:eml xmlns:eml="https://eml.ecoinformatics.org/eml-2.2.0"><dataset><title>Birds</title><abstract><para>{abstract}</para><para>Second.</para></abstract></dataset></eml:eml>'
+        source = read_inputs([('occurrence.csv', b'occurrenceID,occurrenceStatus\no1,present\n'), ('eml.xml', eml.encode())])
+        metadata = publication_metadata(source, 5000)
+        self.assertEqual(metadata['title'], 'Birds')
+        self.assertTrue(metadata['description'].endswith('Second.') or len(metadata['description']) == 5000)
+        self.assertGreater(len(metadata['description']), 2000)
+        self.assertNotIn('…', metadata['description'])
