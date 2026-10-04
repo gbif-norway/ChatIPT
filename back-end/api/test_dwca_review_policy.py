@@ -44,7 +44,9 @@ class StreamlinedReviewTests(SimpleTestCase):
         frames, report = convert(archive, plan, {})
         self.assertTrue(report['validation']['valid'])
         self.assertEqual(report['columns'][-1]['disposition'], 'retained-unmapped')
-        self.assertTrue(any(warning['id'] == column(plan, 'urn:unknown:term')['id'] for warning in report['warnings']))
+        # Unmapped columns are summarised from their flag rather than repeated as notices.
+        self.assertEqual(column(plan, 'urn:unknown:term')['unmapped'], 'no-target')
+        self.assertFalse(any(warning['id'] == column(plan, 'urn:unknown:term')['id'] for warning in report['warnings']))
         self.assertEqual(archive.files['occ.csv'], b'key,occurrenceID,unknown\nk,o,untouched\n')
 
     def test_nested_surveys_preserve_flags_and_links_with_no_user_choices(self):
@@ -82,7 +84,7 @@ class StreamlinedReviewTests(SimpleTestCase):
         archive = read_inputs([('occurrence.csv', b'occurrenceID,organismQuantity,organismQuantityType\no,0,reads\n')])
         plan = build_plan(archive)
         status = next(issue for issue in plan['issues'] if issue['id'] == 'status:0')
-        self.assertIn('1 rows', status['reason'])
+        self.assertIn('1 of those rows', status['reason'])
         self.assertEqual({option['value'] for option in status['options']}, {'present', 'absent'})
         chosen = choices(plan)
         chosen.pop('status:0')

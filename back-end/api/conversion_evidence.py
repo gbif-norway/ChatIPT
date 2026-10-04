@@ -19,7 +19,7 @@ from api.dwca_review import effective_decisions, option_status
 LEVELS = {
     'layout': 0, 'taxonomy-package': 0,
     'event-grain': 1, 'event-category': 1, 'occurrence-status': 1, 'extension-role': 1, 'taxon-occurrences': 1,
-    'material-identity': 2, 'survey-classification': 2,
+    'material-identity': 2, 'survey-classification': 2, 'occurrence-events': 2,
     'column-mapping': 3, 'name-semantics': 3, 'external-identifier': 3, 'trait-link': 3, 'row-handling': 3,
     'survey-completeness': 3,
 }
@@ -42,6 +42,7 @@ KIND_TERMS = {
                           'occurrenceID'),
     'event-category': ('eventID', 'eventCategory', 'eventType', 'samplingProtocol', 'parentEventID'),
     'event-grain': ('eventID',),
+    'occurrence-events': ('eventID', 'eventDate', 'year', 'decimalLatitude', 'decimalLongitude', 'locality'),
 }
 
 

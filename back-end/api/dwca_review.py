@@ -26,6 +26,8 @@ ISSUE_POLICY = {
     'trait-link': (),
     'survey-classification': ('confirm',),
     'survey-completeness': ALL,
+    # Treating every occurrence row as its own event asserts those events exist; copying agreeing values does not.
+    'occurrence-events': ('per-row',),
 }
 _PREFIX_KINDS = (
     ('loose-links', 'layout'), ('taxonomy-package', 'taxonomy-package'), ('event-grain', 'event-grain'),
@@ -33,6 +35,7 @@ _PREFIX_KINDS = (
     ('material:', 'material-identity'), ('column:', 'column-mapping'), ('row-group:', 'row-handling'),
     ('row:', 'row-handling'), ('trait-link:', 'trait-link'), ('hum-category:', 'survey-classification'),
     ('hum-scope-group:', 'survey-completeness'), ('hum-scope:', 'survey-completeness'),
+    ('occurrence-events:', 'occurrence-events'),
 )
 GROUP_PREFIXES = {'row': 'row-group', 'hum-scope': 'hum-scope-group'}
 SKIPPED_TARGETS = {'preserve', 'join', 'derive'}

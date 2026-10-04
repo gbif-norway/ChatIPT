@@ -84,7 +84,9 @@ def ai_available():
 
 def apply_kinds():
     configured = setting('CONVERSION_AI_APPLY_KINDS', None)
-    return set(configured) if configured is not None else set(ISSUE_POLICY) - {'event-grain'}
+    # Event merging waits for its benchmark bar. Event details on occurrence rows are only asked when copying is
+    # impossible, leaving a confirmation (each row its own event) or dropping the details, so a person decides.
+    return set(configured) if configured is not None else set(ISSUE_POLICY) - {'event-grain', 'occurrence-events'}
 
 
 def review_model():

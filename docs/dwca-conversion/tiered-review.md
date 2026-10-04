@@ -48,6 +48,7 @@ closed set. Every option gets `assertion: true|false` from
 | `trait-link` | `trait-link:t` | none (exact identifier match) |
 | `survey-classification` | `hum-category:t` | `confirm` (fills categories); `require` is not |
 | `survey-completeness` | `hum-scope:t:n`, `hum-scope-group:t:k` | `reported-true`, `reported-false` |
+| `occurrence-events` | `occurrence-events:t` (rule 11) | `per-row` (each occurrence row becomes its own child event) |
 
 Nested Taxon-core occurrence issues keep the inner issue's kind and option flags.
 

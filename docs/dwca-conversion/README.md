@@ -108,6 +108,16 @@ other or invalid dates are withheld with reasons. Neither family invents absence
 coordinate uncertainty, survey completeness, agents or organisms. All non-exact
 aliases and derived rules in these families require individual approval.
 
+Rule version 11 fixes two silent losses found on a production archive. Event details (dates,
+places, coordinates) supplied on Occurrence extension rows of an Event core are copied onto the
+linked event when every occurrence of that event agrees with the others and with the event itself
+(including year against eventDate and complete coordinate pairs); otherwise each occurrence row can
+become its own event inside the linked event (a confirmed choice), or the details stay in the
+originals. The report counts only values actually written. The supplied scientificName text is
+always kept in verbatimIdentification; an exactly matching supplied scientificNameAuthorship is
+removed from scientificName. Columns without a target are flagged `no-target` (the Data Package has
+no field) or `unsupported` (not mapped yet) and are summarised rather than repeated as notices.
+
 Rule version 10 adds the [tiered review contract](tiered-review.md): every question has a
 kind and per-option assertion flags, row questions with identical meaning are grouped,
 convert-time failures are precomputed as option requirements evaluated against the
