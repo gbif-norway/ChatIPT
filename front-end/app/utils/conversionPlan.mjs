@@ -39,7 +39,8 @@ export function unmappedReason(column) {
 // When the table's own verbatimIdentification is converted, only rows without one receive the copy, so it is not counted.
 const partialCopy = (state, column, selected) => {
   const source = column.verbatim_source && (state?.plan?.columns || []).find(item => item.id === column.verbatim_source)
-  return Boolean(source) && !retainedTable(state, selected, source.table) && selected(source.id, source.default) !== 'preserve'
+  // Only the file's own text in the same destination field takes precedence over the copy.
+  return Boolean(source) && !retainedTable(state, selected, source.table) && selected(source.id, source.default) === column.verbatim_copy
 }
 const writtenTarget = (state, column, value, selected) =>
   value === 'preserve' && column.verbatim_copy && !partialCopy(state, column, selected) ? column.verbatim_copy : value

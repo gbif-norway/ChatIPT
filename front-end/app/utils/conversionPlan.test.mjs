@@ -236,4 +236,7 @@ test('a partial verbatim copy follows whether the file\'s own verbatimIdentifica
   const retained = (id, fallback) => (id === 'column:0:1' ? 'preserve' : fallback)
   assert.equal(summariseColumns(state, retained).mapped, 1)
   assert.doesNotMatch(columnDetails(state, retained)[0].outcome, /where your file leaves it empty/)
+  const elsewhere = (id, fallback) => (id === 'column:0:1' ? 'identification.verbatimIdentification' : fallback)
+  assert.equal(summariseColumns(state, elsewhere).mapped, 2)
+  assert.doesNotMatch(columnDetails(state, elsewhere)[0].outcome, /where your file leaves it empty/)
 })
