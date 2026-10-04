@@ -1,0 +1,1637 @@
+{
+  "rule_version": "5",
+  "model_calls": 0,
+  "database_writes": 0,
+  "cases": [
+    {
+      "case": "akagera",
+      "evidence": "local real source tables; no meta.xml",
+      "schema": {
+        "version": "1.0_DEV",
+        "issued": "2026-07-07",
+        "revision": "76898192fd298c2aa170a7059e1bdadf3ee2a828",
+        "sha256": "641ec867fe4ce4f0359d13488ac0731dee4b96418c72689fc751d06bb8a59c77",
+        "source": "https://github.com/tdwg/rs.tdwg.org/tree/76898192fd298c2aa170a7059e1bdadf3ee2a828/dwc-dp/1.0_DEV"
+      },
+      "fingerprint": "dbd8cb44f7674015f34f119e3e493f36bd4bac555dc886d994efb10e829babd7",
+      "source_bytes": 17853322,
+      "has_meta": false,
+      "files": 5,
+      "tables": [
+        {
+          "name": "377__occurrence.csv",
+          "rows": 10365,
+          "columns": 47,
+          "row_type": "http://rs.tdwg.org/dwc/terms/Occurrence",
+          "join_basis": "http://rs.tdwg.org/dwc/terms/occurrenceID",
+          "unique_join_ids": 10365,
+          "orphans": 0
+        },
+        {
+          "name": "377__dnaderiveddata.csv",
+          "rows": 10365,
+          "columns": 19,
+          "row_type": "http://rs.gbif.org/terms/1.0/DNADerivedData",
+          "join_basis": "http://rs.tdwg.org/dwc/terms/occurrenceID",
+          "unique_join_ids": 10365,
+          "orphans": 0
+        },
+        {
+          "name": "377__extendedmeasurementorfact.csv",
+          "rows": 31095,
+          "columns": 3,
+          "row_type": "http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact",
+          "join_basis": "http://rs.tdwg.org/dwc/terms/occurrenceID",
+          "unique_join_ids": 10365,
+          "orphans": 0
+        },
+        {
+          "name": "377__identificationhistory.csv",
+          "rows": 11155,
+          "columns": 7,
+          "row_type": "http://rs.tdwg.org/dwc/terms/Identification",
+          "join_basis": "http://rs.tdwg.org/dwc/terms/occurrenceID",
+          "unique_join_ids": 10365,
+          "orphans": 0
+        },
+        {
+          "name": "377__resourcerelationship.csv",
+          "rows": 9575,
+          "columns": 6,
+          "row_type": "http://rs.tdwg.org/dwc/terms/ResourceRelationship",
+          "join_basis": "http://rs.tdwg.org/dwc/terms/resourceID",
+          "unique_join_ids": 788,
+          "orphans": 0
+        }
+      ],
+      "nonempty_cells": 768709,
+      "null_tokens": [],
+      "review": {
+        "total": 31,
+        "by_kind": {
+          "loose-links": 1,
+          "event-grain": 1,
+          "material": 1,
+          "column": 24,
+          "table": 4
+        },
+        "by_title": {
+          "Confirm the loose-file layout": 1,
+          "How should occurrence events be represented?": 1,
+          "377__occurrence.csv: material identifiers are present": 1,
+          "materialSampleID": 1,
+          "basisOfRecord": 1,
+          "organismQuantity": 1,
+          "organismQuantityType": 1,
+          "sampleSizeValue": 1,
+          "sampleSizeUnit": 1,
+          "recordedBy": 1,
+          "identifiedBy": 2,
+          "identificationRemarks": 2,
+          "habitat": 1,
+          "associatedSequences": 1,
+          "scientificName": 2,
+          "377__dnaderiveddata.csv: choose its meaning": 1,
+          "0000012": 1,
+          "0000013": 1,
+          "0000014": 1,
+          "377__extendedmeasurementorfact.csv: choose its meaning": 1,
+          "measurementType": 1,
+          "measurementValue": 1,
+          "377__identificationhistory.csv: choose its meaning": 1,
+          "identificationID": 1,
+          "377__resourcerelationship.csv: choose its meaning": 1,
+          "resourceID": 1,
+          "relationshipOfResource": 1,
+          "relationshipAccordingTo": 1
+        },
+        "single_option": 4,
+        "column_mapping": 24,
+        "automatic_nonempty_columns": 51,
+        "beyond_ai_first_40": 0
+      },
+      "event_grouping_evidence": {
+        "identifier": "http://rs.tdwg.org/dwc/terms/eventID",
+        "missing": 0,
+        "groups": 790,
+        "conflicting_fields": {
+          "event.coordinateUncertaintyInMeters": 788
+        },
+        "checks_passed": false
+      },
+      "semantic_probes": {
+        "float_shaped_dates": 0,
+        "repeated_genus_names": 0
+      },
+      "simulated_review": {
+        "physical_material": "per source row",
+        "event_grain": "per occurrence source row",
+        "missing_occurrence_status": "explicit simulated presence assertion",
+        "extensions": "first declared meaning; supplied joins retained",
+        "columns": "approved default mappings; unsupported terms preserved",
+        "additional_preserved_targets": [],
+        "publisher_approval": false
+      },
+      "resources": {
+        "event": 10365,
+        "occurrence": 10365,
+        "material": 10365,
+        "identification": 21520,
+        "nucleotide-sequence": 997,
+        "molecular-protocol": 14,
+        "nucleotide-analysis": 10365,
+        "occurrence-assertion": 31095,
+        "resource-relationship": 9575
+      },
+      "valid": true,
+      "validation_error_count": 0,
+      "validation_warning_count": 3,
+      "withheld_value_count": 0,
+      "preserved_extension_row_count": 0,
+      "plan_rebuild_identical": true,
+      "crosswalk": {
+        "entries": 124380,
+        "source_row_out_of_bounds": 0,
+        "untraced_target_rows": {
+          "event": 0,
+          "occurrence": 0,
+          "material": 0,
+          "identification": 0,
+          "nucleotide-sequence": 0,
+          "molecular-protocol": 0,
+          "nucleotide-analysis": 0,
+          "occurrence-assertion": 0,
+          "resource-relationship": 0
+        },
+        "columns_reported": 82,
+        "columns_expected": 82,
+        "columns_with_explicit_copied_counts": 0,
+        "column_copied_counts": [],
+        "column_dispositions": {
+          "mapped+retained": 75,
+          "retained-unmapped": 4,
+          "derived": 3
+        },
+        "retained_only_nonempty_cells": 31095,
+        "mapped_nonempty_cells_verified_verbatim": 684999,
+        "mapped_nonempty_cells_unmatched": [],
+        "copied_count_disagreements": [],
+        "extension_join_checks": {
+          "nucleotide-analysis": 10365,
+          "occurrence-assertion": 31095,
+          "identification": 11155
+        },
+        "extension_join_failures": {
+          "nucleotide-analysis": 0,
+          "occurrence-assertion": 0,
+          "identification": 0
+        },
+        "reported_file_checksums_match_sources": true
+      },
+      "deterministic_resources": {
+        "event": true,
+        "occurrence": true,
+        "material": true,
+        "identification": true,
+        "nucleotide-sequence": true,
+        "molecular-protocol": true,
+        "nucleotide-analysis": true,
+        "occurrence-assertion": true,
+        "resource-relationship": true
+      },
+      "source_evidence": {
+        "occurrence_records": 10365,
+        "occurrence_physical_lines": 10520,
+        "distinct_events": 790,
+        "distinct_material_identifiers": 790,
+        "event_to_material_not_one_to_one": 0,
+        "dna_join_set_equals_core": true,
+        "relationship_rows_same_event": 9575,
+        "relationship_rows_same_material": 9575,
+        "samples_with_multiple_relationship_subjects": 0,
+        "samples_with_no_relationship_rows": 2,
+        "relationship_related_kingdom": {
+          "Plantae": 9423,
+          "Animalia": 152
+        },
+        "fact_type_counts": {
+          "faecal sample age": 10365,
+          "faecal texture": 10365,
+          "latrine site": 10365
+        },
+        "sample_fact_groups": 2370,
+        "sample_fact_groups_with_conflicting_values": 0,
+        "read_groups": 1570,
+        "read_groups_denominator_inconsistent": 0,
+        "read_groups_sum_mismatch": 0,
+        "history_rows": 11155,
+        "history_id_unique": true,
+        "history_rows_dna_suffix": 10365,
+        "history_rows_field_suffix": 790
+      },
+      "identification_accepted_flags_nonempty": 0,
+      "invented_organism_or_interaction_resources": false,
+      "analysis_links": {
+        "rows": 10365,
+        "collection_event_links": 10365,
+        "material_links": 0,
+        "readCount_present": false,
+        "processedTotalReadCount_present": false
+      },
+      "event_merge_probe_rejected": true,
+      "serialized": {
+        "valid": true,
+        "errors": 0,
+        "warnings": 3,
+        "archive_bytes": 8584110,
+        "original_file_bytes_equal": true,
+        "uploaded_zip_bytes_equal": "not applicable",
+        "eml": "metadata retained only in originals",
+        "eml_bytes_equal": "original-only",
+        "descriptor_resources": 11
+      },
+      "seconds": 18.05
+    },
+    {
+      "case": "akagera-environment-preserved",
+      "evidence": "same real tables; sample environment values explicitly preserved outside protocol records",
+      "schema": {
+        "version": "1.0_DEV",
+        "issued": "2026-07-07",
+        "revision": "76898192fd298c2aa170a7059e1bdadf3ee2a828",
+        "sha256": "641ec867fe4ce4f0359d13488ac0731dee4b96418c72689fc751d06bb8a59c77",
+        "source": "https://github.com/tdwg/rs.tdwg.org/tree/76898192fd298c2aa170a7059e1bdadf3ee2a828/dwc-dp/1.0_DEV"
+      },
+      "fingerprint": "dbd8cb44f7674015f34f119e3e493f36bd4bac555dc886d994efb10e829babd7",
+      "source_bytes": 17853322,
+      "has_meta": false,
+      "files": 5,
+      "tables": [
+        {
+          "name": "377__occurrence.csv",
+          "rows": 10365,
+          "columns": 47,
+          "row_type": "http://rs.tdwg.org/dwc/terms/Occurrence",
+          "join_basis": "http://rs.tdwg.org/dwc/terms/occurrenceID",
+          "unique_join_ids": 10365,
+          "orphans": 0
+        },
+        {
+          "name": "377__dnaderiveddata.csv",
+          "rows": 10365,
+          "columns": 19,
+          "row_type": "http://rs.gbif.org/terms/1.0/DNADerivedData",
+          "join_basis": "http://rs.tdwg.org/dwc/terms/occurrenceID",
+          "unique_join_ids": 10365,
+          "orphans": 0
+        },
+        {
+          "name": "377__extendedmeasurementorfact.csv",
+          "rows": 31095,
+          "columns": 3,
+          "row_type": "http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact",
+          "join_basis": "http://rs.tdwg.org/dwc/terms/occurrenceID",
+          "unique_join_ids": 10365,
+          "orphans": 0
+        },
+        {
+          "name": "377__identificationhistory.csv",
+          "rows": 11155,
+          "columns": 7,
+          "row_type": "http://rs.tdwg.org/dwc/terms/Identification",
+          "join_basis": "http://rs.tdwg.org/dwc/terms/occurrenceID",
+          "unique_join_ids": 10365,
+          "orphans": 0
+        },
+        {
+          "name": "377__resourcerelationship.csv",
+          "rows": 9575,
+          "columns": 6,
+          "row_type": "http://rs.tdwg.org/dwc/terms/ResourceRelationship",
+          "join_basis": "http://rs.tdwg.org/dwc/terms/resourceID",
+          "unique_join_ids": 788,
+          "orphans": 0
+        }
+      ],
+      "nonempty_cells": 768709,
+      "null_tokens": [],
+      "review": {
+        "total": 31,
+        "by_kind": {
+          "loose-links": 1,
+          "event-grain": 1,
+          "material": 1,
+          "column": 24,
+          "table": 4
+        },
+        "by_title": {
+          "Confirm the loose-file layout": 1,
+          "How should occurrence events be represented?": 1,
+          "377__occurrence.csv: material identifiers are present": 1,
+          "materialSampleID": 1,
+          "basisOfRecord": 1,
+          "organismQuantity": 1,
+          "organismQuantityType": 1,
+          "sampleSizeValue": 1,
+          "sampleSizeUnit": 1,
+          "recordedBy": 1,
+          "identifiedBy": 2,
+          "identificationRemarks": 2,
+          "habitat": 1,
+          "associatedSequences": 1,
+          "scientificName": 2,
+          "377__dnaderiveddata.csv: choose its meaning": 1,
+          "0000012": 1,
+          "0000013": 1,
+          "0000014": 1,
+          "377__extendedmeasurementorfact.csv: choose its meaning": 1,
+          "measurementType": 1,
+          "measurementValue": 1,
+          "377__identificationhistory.csv: choose its meaning": 1,
+          "identificationID": 1,
+          "377__resourcerelationship.csv: choose its meaning": 1,
+          "resourceID": 1,
+          "relationshipOfResource": 1,
+          "relationshipAccordingTo": 1
+        },
+        "single_option": 4,
+        "column_mapping": 24,
+        "automatic_nonempty_columns": 51,
+        "beyond_ai_first_40": 0
+      },
+      "event_grouping_evidence": {
+        "identifier": "http://rs.tdwg.org/dwc/terms/eventID",
+        "missing": 0,
+        "groups": 790,
+        "conflicting_fields": {
+          "event.coordinateUncertaintyInMeters": 788
+        },
+        "checks_passed": false
+      },
+      "semantic_probes": {
+        "float_shaped_dates": 0,
+        "repeated_genus_names": 0
+      },
+      "simulated_review": {
+        "physical_material": "per source row",
+        "event_grain": "per occurrence source row",
+        "missing_occurrence_status": "explicit simulated presence assertion",
+        "extensions": "first declared meaning; supplied joins retained",
+        "columns": "approved default mappings; unsupported terms preserved",
+        "additional_preserved_targets": [
+          "molecular-protocol.env_broad_scale",
+          "molecular-protocol.env_local_scale",
+          "molecular-protocol.env_medium"
+        ],
+        "publisher_approval": false
+      },
+      "resources": {
+        "event": 10365,
+        "occurrence": 10365,
+        "material": 10365,
+        "identification": 21520,
+        "nucleotide-sequence": 997,
+        "molecular-protocol": 2,
+        "nucleotide-analysis": 10365,
+        "occurrence-assertion": 31095,
+        "resource-relationship": 9575
+      },
+      "valid": true,
+      "validation_error_count": 0,
+      "validation_warning_count": 3,
+      "withheld_value_count": 0,
+      "preserved_extension_row_count": 0,
+      "plan_rebuild_identical": true,
+      "crosswalk": {
+        "entries": 124380,
+        "source_row_out_of_bounds": 0,
+        "untraced_target_rows": {
+          "event": 0,
+          "occurrence": 0,
+          "material": 0,
+          "identification": 0,
+          "nucleotide-sequence": 0,
+          "molecular-protocol": 0,
+          "nucleotide-analysis": 0,
+          "occurrence-assertion": 0,
+          "resource-relationship": 0
+        },
+        "columns_reported": 82,
+        "columns_expected": 82,
+        "columns_with_explicit_copied_counts": 0,
+        "column_copied_counts": [],
+        "column_dispositions": {
+          "mapped+retained": 72,
+          "retained-unmapped": 7,
+          "derived": 3
+        },
+        "retained_only_nonempty_cells": 62190,
+        "mapped_nonempty_cells_verified_verbatim": 653904,
+        "mapped_nonempty_cells_unmatched": [],
+        "copied_count_disagreements": [],
+        "extension_join_checks": {
+          "nucleotide-analysis": 10365,
+          "occurrence-assertion": 31095,
+          "identification": 11155
+        },
+        "extension_join_failures": {
+          "nucleotide-analysis": 0,
+          "occurrence-assertion": 0,
+          "identification": 0
+        },
+        "reported_file_checksums_match_sources": true
+      },
+      "deterministic_resources": {
+        "event": true,
+        "occurrence": true,
+        "material": true,
+        "identification": true,
+        "nucleotide-sequence": true,
+        "molecular-protocol": true,
+        "nucleotide-analysis": true,
+        "occurrence-assertion": true,
+        "resource-relationship": true
+      },
+      "source_evidence": {
+        "occurrence_records": 10365,
+        "occurrence_physical_lines": 10520,
+        "distinct_events": 790,
+        "distinct_material_identifiers": 790,
+        "event_to_material_not_one_to_one": 0,
+        "dna_join_set_equals_core": true,
+        "relationship_rows_same_event": 9575,
+        "relationship_rows_same_material": 9575,
+        "samples_with_multiple_relationship_subjects": 0,
+        "samples_with_no_relationship_rows": 2,
+        "relationship_related_kingdom": {
+          "Plantae": 9423,
+          "Animalia": 152
+        },
+        "fact_type_counts": {
+          "faecal sample age": 10365,
+          "faecal texture": 10365,
+          "latrine site": 10365
+        },
+        "sample_fact_groups": 2370,
+        "sample_fact_groups_with_conflicting_values": 0,
+        "read_groups": 1570,
+        "read_groups_denominator_inconsistent": 0,
+        "read_groups_sum_mismatch": 0,
+        "history_rows": 11155,
+        "history_id_unique": true,
+        "history_rows_dna_suffix": 10365,
+        "history_rows_field_suffix": 790
+      },
+      "identification_accepted_flags_nonempty": 0,
+      "invented_organism_or_interaction_resources": false,
+      "analysis_links": {
+        "rows": 10365,
+        "collection_event_links": 10365,
+        "material_links": 0,
+        "readCount_present": false,
+        "processedTotalReadCount_present": false
+      },
+      "event_merge_probe_rejected": true,
+      "serialized": {
+        "valid": true,
+        "errors": 0,
+        "warnings": 3,
+        "archive_bytes": 8564443,
+        "original_file_bytes_equal": true,
+        "uploaded_zip_bytes_equal": "not applicable",
+        "eml": "metadata retained only in originals",
+        "eml_bytes_equal": "original-only",
+        "descriptor_resources": 11
+      },
+      "seconds": 17.01
+    },
+    {
+      "case": "akagera-grouped-reviewed",
+      "evidence": "same real tables; explicit event/material grouping after coordinate-uncertainty and environment preservation",
+      "schema": {
+        "version": "1.0_DEV",
+        "issued": "2026-07-07",
+        "revision": "76898192fd298c2aa170a7059e1bdadf3ee2a828",
+        "sha256": "641ec867fe4ce4f0359d13488ac0731dee4b96418c72689fc751d06bb8a59c77",
+        "source": "https://github.com/tdwg/rs.tdwg.org/tree/76898192fd298c2aa170a7059e1bdadf3ee2a828/dwc-dp/1.0_DEV"
+      },
+      "fingerprint": "dbd8cb44f7674015f34f119e3e493f36bd4bac555dc886d994efb10e829babd7",
+      "source_bytes": 17853322,
+      "has_meta": false,
+      "files": 5,
+      "tables": [
+        {
+          "name": "377__occurrence.csv",
+          "rows": 10365,
+          "columns": 47,
+          "row_type": "http://rs.tdwg.org/dwc/terms/Occurrence",
+          "join_basis": "http://rs.tdwg.org/dwc/terms/occurrenceID",
+          "unique_join_ids": 10365,
+          "orphans": 0
+        },
+        {
+          "name": "377__dnaderiveddata.csv",
+          "rows": 10365,
+          "columns": 19,
+          "row_type": "http://rs.gbif.org/terms/1.0/DNADerivedData",
+          "join_basis": "http://rs.tdwg.org/dwc/terms/occurrenceID",
+          "unique_join_ids": 10365,
+          "orphans": 0
+        },
+        {
+          "name": "377__extendedmeasurementorfact.csv",
+          "rows": 31095,
+          "columns": 3,
+          "row_type": "http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact",
+          "join_basis": "http://rs.tdwg.org/dwc/terms/occurrenceID",
+          "unique_join_ids": 10365,
+          "orphans": 0
+        },
+        {
+          "name": "377__identificationhistory.csv",
+          "rows": 11155,
+          "columns": 7,
+          "row_type": "http://rs.tdwg.org/dwc/terms/Identification",
+          "join_basis": "http://rs.tdwg.org/dwc/terms/occurrenceID",
+          "unique_join_ids": 10365,
+          "orphans": 0
+        },
+        {
+          "name": "377__resourcerelationship.csv",
+          "rows": 9575,
+          "columns": 6,
+          "row_type": "http://rs.tdwg.org/dwc/terms/ResourceRelationship",
+          "join_basis": "http://rs.tdwg.org/dwc/terms/resourceID",
+          "unique_join_ids": 788,
+          "orphans": 0
+        }
+      ],
+      "nonempty_cells": 768709,
+      "null_tokens": [],
+      "review": {
+        "total": 31,
+        "by_kind": {
+          "loose-links": 1,
+          "event-grain": 1,
+          "material": 1,
+          "column": 24,
+          "table": 4
+        },
+        "by_title": {
+          "Confirm the loose-file layout": 1,
+          "How should occurrence events be represented?": 1,
+          "377__occurrence.csv: material identifiers are present": 1,
+          "materialSampleID": 1,
+          "basisOfRecord": 1,
+          "organismQuantity": 1,
+          "organismQuantityType": 1,
+          "sampleSizeValue": 1,
+          "sampleSizeUnit": 1,
+          "recordedBy": 1,
+          "identifiedBy": 2,
+          "identificationRemarks": 2,
+          "habitat": 1,
+          "associatedSequences": 1,
+          "scientificName": 2,
+          "377__dnaderiveddata.csv: choose its meaning": 1,
+          "0000012": 1,
+          "0000013": 1,
+          "0000014": 1,
+          "377__extendedmeasurementorfact.csv: choose its meaning": 1,
+          "measurementType": 1,
+          "measurementValue": 1,
+          "377__identificationhistory.csv: choose its meaning": 1,
+          "identificationID": 1,
+          "377__resourcerelationship.csv: choose its meaning": 1,
+          "resourceID": 1,
+          "relationshipOfResource": 1,
+          "relationshipAccordingTo": 1
+        },
+        "single_option": 4,
+        "column_mapping": 24,
+        "automatic_nonempty_columns": 51,
+        "beyond_ai_first_40": 0
+      },
+      "event_grouping_evidence": {
+        "identifier": "http://rs.tdwg.org/dwc/terms/eventID",
+        "missing": 0,
+        "groups": 790,
+        "conflicting_fields": {
+          "event.coordinateUncertaintyInMeters": 788
+        },
+        "checks_passed": false
+      },
+      "semantic_probes": {
+        "float_shaped_dates": 0,
+        "repeated_genus_names": 0
+      },
+      "simulated_review": {
+        "physical_material": "combine supplied identifiers",
+        "event_grain": "combine supplied eventID",
+        "missing_occurrence_status": "explicit simulated presence assertion",
+        "extensions": "first declared meaning; supplied joins retained",
+        "columns": "approved default mappings; unsupported terms preserved",
+        "additional_preserved_targets": [
+          "event.coordinateUncertaintyInMeters",
+          "molecular-protocol.env_broad_scale",
+          "molecular-protocol.env_local_scale",
+          "molecular-protocol.env_medium"
+        ],
+        "publisher_approval": false
+      },
+      "resources": {
+        "event": 790,
+        "occurrence": 10365,
+        "material": 790,
+        "identification": 21520,
+        "nucleotide-sequence": 997,
+        "molecular-protocol": 2,
+        "nucleotide-analysis": 10365,
+        "occurrence-assertion": 31095,
+        "resource-relationship": 9575
+      },
+      "valid": true,
+      "validation_error_count": 0,
+      "validation_warning_count": 1,
+      "withheld_value_count": 0,
+      "preserved_extension_row_count": 0,
+      "plan_rebuild_identical": true,
+      "crosswalk": {
+        "entries": 124380,
+        "source_row_out_of_bounds": 0,
+        "untraced_target_rows": {
+          "event": 0,
+          "occurrence": 0,
+          "material": 0,
+          "identification": 0,
+          "nucleotide-sequence": 0,
+          "molecular-protocol": 0,
+          "nucleotide-analysis": 0,
+          "occurrence-assertion": 0,
+          "resource-relationship": 0
+        },
+        "columns_reported": 82,
+        "columns_expected": 82,
+        "columns_with_explicit_copied_counts": 0,
+        "column_copied_counts": [],
+        "column_dispositions": {
+          "mapped+retained": 71,
+          "retained-unmapped": 8,
+          "derived": 3
+        },
+        "retained_only_nonempty_cells": 72555,
+        "mapped_nonempty_cells_verified_verbatim": 643539,
+        "mapped_nonempty_cells_unmatched": [],
+        "copied_count_disagreements": [],
+        "extension_join_checks": {
+          "nucleotide-analysis": 10365,
+          "occurrence-assertion": 31095,
+          "identification": 11155
+        },
+        "extension_join_failures": {
+          "nucleotide-analysis": 0,
+          "occurrence-assertion": 0,
+          "identification": 0
+        },
+        "reported_file_checksums_match_sources": true
+      },
+      "deterministic_resources": {
+        "event": true,
+        "occurrence": true,
+        "material": true,
+        "identification": true,
+        "nucleotide-sequence": true,
+        "molecular-protocol": true,
+        "nucleotide-analysis": true,
+        "occurrence-assertion": true,
+        "resource-relationship": true
+      },
+      "source_evidence": {
+        "occurrence_records": 10365,
+        "occurrence_physical_lines": 10520,
+        "distinct_events": 790,
+        "distinct_material_identifiers": 790,
+        "event_to_material_not_one_to_one": 0,
+        "dna_join_set_equals_core": true,
+        "relationship_rows_same_event": 9575,
+        "relationship_rows_same_material": 9575,
+        "samples_with_multiple_relationship_subjects": 0,
+        "samples_with_no_relationship_rows": 2,
+        "relationship_related_kingdom": {
+          "Plantae": 9423,
+          "Animalia": 152
+        },
+        "fact_type_counts": {
+          "faecal sample age": 10365,
+          "faecal texture": 10365,
+          "latrine site": 10365
+        },
+        "sample_fact_groups": 2370,
+        "sample_fact_groups_with_conflicting_values": 0,
+        "read_groups": 1570,
+        "read_groups_denominator_inconsistent": 0,
+        "read_groups_sum_mismatch": 0,
+        "history_rows": 11155,
+        "history_id_unique": true,
+        "history_rows_dna_suffix": 10365,
+        "history_rows_field_suffix": 790
+      },
+      "identification_accepted_flags_nonempty": 0,
+      "invented_organism_or_interaction_resources": false,
+      "analysis_links": {
+        "rows": 10365,
+        "collection_event_links": 10365,
+        "material_links": 0,
+        "readCount_present": false,
+        "processedTotalReadCount_present": false
+      },
+      "event_merge_probe_rejected": false,
+      "serialized": {
+        "valid": true,
+        "errors": 0,
+        "warnings": 1,
+        "archive_bytes": 7568363,
+        "original_file_bytes_equal": true,
+        "uploaded_zip_bytes_equal": "not applicable",
+        "eml": "metadata retained only in originals",
+        "eml_bytes_equal": "original-only",
+        "descriptor_resources": 11
+      },
+      "seconds": 17.67
+    },
+    {
+      "case": "gaynor",
+      "evidence": "local real meta.xml archive",
+      "schema": {
+        "version": "1.0_DEV",
+        "issued": "2026-07-07",
+        "revision": "76898192fd298c2aa170a7059e1bdadf3ee2a828",
+        "sha256": "641ec867fe4ce4f0359d13488ac0731dee4b96418c72689fc751d06bb8a59c77",
+        "source": "https://github.com/tdwg/rs.tdwg.org/tree/76898192fd298c2aa170a7059e1bdadf3ee2a828/dwc-dp/1.0_DEV"
+      },
+      "fingerprint": "d2486018cb5f66df154f9918ec900feea794afa8351873586b07173a99130480",
+      "source_bytes": 21789,
+      "has_meta": true,
+      "files": 4,
+      "tables": [
+        {
+          "name": "occurrence.csv",
+          "rows": 31,
+          "columns": 15,
+          "row_type": "http://rs.tdwg.org/dwc/terms/Occurrence",
+          "join_basis": "meta.xml archive join ID",
+          "unique_join_ids": 31,
+          "orphans": 0
+        }
+      ],
+      "nonempty_cells": 465,
+      "null_tokens": [
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/collectionCode",
+          "rows": 1,
+          "review": false,
+          "default": "material.collectionCode"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/eventDate",
+          "rows": 1,
+          "review": true,
+          "default": "event.eventDate"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/decimalLatitude",
+          "rows": 1,
+          "review": true,
+          "default": "event.decimalLatitude"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/decimalLongitude",
+          "rows": 1,
+          "review": true,
+          "default": "event.decimalLongitude"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/locality",
+          "rows": 11,
+          "review": false,
+          "default": "event.locality"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/associatedSequences",
+          "rows": 5,
+          "review": true,
+          "default": "material.associatedSequences"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://https://www.ebi.ac.uk/terms/study",
+          "rows": 5,
+          "review": true,
+          "default": "preserve"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://https://www.ebi.ac.uk/terms/bioproject_accession",
+          "rows": 5,
+          "review": true,
+          "default": "preserve"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/materialSampleID",
+          "rows": 5,
+          "review": true,
+          "default": "material.materialEntityID"
+        }
+      ],
+      "review": {
+        "total": 12,
+        "by_kind": {
+          "event-grain": 1,
+          "material": 1,
+          "column": 9,
+          "status": 1
+        },
+        "by_title": {
+          "How should occurrence events be represented?": 1,
+          "occurrence.csv: material identifiers are present": 1,
+          "dynamicProperties": 1,
+          "eventDate": 1,
+          "decimalLatitude": 1,
+          "decimalLongitude": 1,
+          "associatedSequences": 1,
+          "study": 1,
+          "bioproject_accession": 1,
+          "materialSampleID": 1,
+          "basisOfRecord": 1,
+          "occurrence.csv: occurrence status is missing": 1
+        },
+        "single_option": 4,
+        "column_mapping": 9,
+        "automatic_nonempty_columns": 6,
+        "beyond_ai_first_40": 0
+      },
+      "event_grouping_evidence": null,
+      "semantic_probes": {
+        "float_shaped_dates": 0,
+        "repeated_genus_names": 0
+      },
+      "simulated_review": {
+        "physical_material": "preserved only",
+        "event_grain": "per occurrence source row",
+        "missing_occurrence_status": "explicit simulated presence assertion",
+        "extensions": "first declared meaning; supplied joins retained",
+        "columns": "approved default mappings; unsupported terms preserved",
+        "additional_preserved_targets": [],
+        "publisher_approval": false
+      },
+      "resources": {
+        "event": 31,
+        "occurrence": 31
+      },
+      "valid": true,
+      "validation_error_count": 0,
+      "validation_warning_count": 1,
+      "withheld_value_count": 2,
+      "preserved_extension_row_count": 0,
+      "plan_rebuild_identical": true,
+      "crosswalk": {
+        "entries": 62,
+        "source_row_out_of_bounds": 0,
+        "untraced_target_rows": {
+          "event": 0,
+          "occurrence": 0
+        },
+        "columns_reported": 15,
+        "columns_expected": 15,
+        "columns_with_explicit_copied_counts": 2,
+        "column_copied_counts": [
+          {
+            "table": "occurrence.csv",
+            "term": "http://rs.tdwg.org/dwc/terms/decimalLatitude",
+            "mapped_rows": 30,
+            "retained_only_rows": 1
+          },
+          {
+            "table": "occurrence.csv",
+            "term": "http://rs.tdwg.org/dwc/terms/decimalLongitude",
+            "mapped_rows": 30,
+            "retained_only_rows": 1
+          }
+        ],
+        "column_dispositions": {
+          "mapped+retained": 7,
+          "retained-unmapped": 8
+        },
+        "retained_only_nonempty_cells": 248,
+        "mapped_nonempty_cells_verified_verbatim": 215,
+        "mapped_nonempty_cells_unmatched": [],
+        "copied_count_disagreements": [],
+        "extension_join_checks": {},
+        "extension_join_failures": {},
+        "reported_file_checksums_match_sources": true
+      },
+      "deterministic_resources": {
+        "event": true,
+        "occurrence": true
+      },
+      "serialized": {
+        "valid": true,
+        "errors": 0,
+        "warnings": 1,
+        "archive_bytes": 18181,
+        "original_file_bytes_equal": true,
+        "uploaded_zip_bytes_equal": "not applicable",
+        "eml": "metadata retained only in originals",
+        "eml_bytes_equal": "original-only",
+        "descriptor_resources": 4
+      },
+      "seconds": 0.08
+    },
+    {
+      "case": "gaynor-preserved-coordinates",
+      "evidence": "same real archive; explicit coordinate-column preservation workaround",
+      "schema": {
+        "version": "1.0_DEV",
+        "issued": "2026-07-07",
+        "revision": "76898192fd298c2aa170a7059e1bdadf3ee2a828",
+        "sha256": "641ec867fe4ce4f0359d13488ac0731dee4b96418c72689fc751d06bb8a59c77",
+        "source": "https://github.com/tdwg/rs.tdwg.org/tree/76898192fd298c2aa170a7059e1bdadf3ee2a828/dwc-dp/1.0_DEV"
+      },
+      "fingerprint": "d2486018cb5f66df154f9918ec900feea794afa8351873586b07173a99130480",
+      "source_bytes": 21789,
+      "has_meta": true,
+      "files": 4,
+      "tables": [
+        {
+          "name": "occurrence.csv",
+          "rows": 31,
+          "columns": 15,
+          "row_type": "http://rs.tdwg.org/dwc/terms/Occurrence",
+          "join_basis": "meta.xml archive join ID",
+          "unique_join_ids": 31,
+          "orphans": 0
+        }
+      ],
+      "nonempty_cells": 465,
+      "null_tokens": [
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/collectionCode",
+          "rows": 1,
+          "review": false,
+          "default": "material.collectionCode"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/eventDate",
+          "rows": 1,
+          "review": true,
+          "default": "event.eventDate"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/decimalLatitude",
+          "rows": 1,
+          "review": true,
+          "default": "event.decimalLatitude"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/decimalLongitude",
+          "rows": 1,
+          "review": true,
+          "default": "event.decimalLongitude"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/locality",
+          "rows": 11,
+          "review": false,
+          "default": "event.locality"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/associatedSequences",
+          "rows": 5,
+          "review": true,
+          "default": "material.associatedSequences"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://https://www.ebi.ac.uk/terms/study",
+          "rows": 5,
+          "review": true,
+          "default": "preserve"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://https://www.ebi.ac.uk/terms/bioproject_accession",
+          "rows": 5,
+          "review": true,
+          "default": "preserve"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/materialSampleID",
+          "rows": 5,
+          "review": true,
+          "default": "material.materialEntityID"
+        }
+      ],
+      "review": {
+        "total": 12,
+        "by_kind": {
+          "event-grain": 1,
+          "material": 1,
+          "column": 9,
+          "status": 1
+        },
+        "by_title": {
+          "How should occurrence events be represented?": 1,
+          "occurrence.csv: material identifiers are present": 1,
+          "dynamicProperties": 1,
+          "eventDate": 1,
+          "decimalLatitude": 1,
+          "decimalLongitude": 1,
+          "associatedSequences": 1,
+          "study": 1,
+          "bioproject_accession": 1,
+          "materialSampleID": 1,
+          "basisOfRecord": 1,
+          "occurrence.csv: occurrence status is missing": 1
+        },
+        "single_option": 4,
+        "column_mapping": 9,
+        "automatic_nonempty_columns": 6,
+        "beyond_ai_first_40": 0
+      },
+      "event_grouping_evidence": null,
+      "semantic_probes": {
+        "float_shaped_dates": 0,
+        "repeated_genus_names": 0
+      },
+      "simulated_review": {
+        "physical_material": "preserved only",
+        "event_grain": "per occurrence source row",
+        "missing_occurrence_status": "explicit simulated presence assertion",
+        "extensions": "first declared meaning; supplied joins retained",
+        "columns": "approved default mappings; unsupported terms preserved",
+        "additional_preserved_targets": [
+          "event.decimalLatitude",
+          "event.decimalLongitude"
+        ],
+        "publisher_approval": false
+      },
+      "resources": {
+        "event": 31,
+        "occurrence": 31
+      },
+      "valid": true,
+      "validation_error_count": 0,
+      "validation_warning_count": 0,
+      "withheld_value_count": 0,
+      "preserved_extension_row_count": 0,
+      "plan_rebuild_identical": true,
+      "crosswalk": {
+        "entries": 62,
+        "source_row_out_of_bounds": 0,
+        "untraced_target_rows": {
+          "event": 0,
+          "occurrence": 0
+        },
+        "columns_reported": 15,
+        "columns_expected": 15,
+        "columns_with_explicit_copied_counts": 0,
+        "column_copied_counts": [],
+        "column_dispositions": {
+          "mapped+retained": 5,
+          "retained-unmapped": 10
+        },
+        "retained_only_nonempty_cells": 310,
+        "mapped_nonempty_cells_verified_verbatim": 155,
+        "mapped_nonempty_cells_unmatched": [],
+        "copied_count_disagreements": [],
+        "extension_join_checks": {},
+        "extension_join_failures": {},
+        "reported_file_checksums_match_sources": true
+      },
+      "deterministic_resources": {
+        "event": true,
+        "occurrence": true
+      },
+      "serialized": {
+        "valid": true,
+        "errors": 0,
+        "warnings": 0,
+        "archive_bytes": 17076,
+        "original_file_bytes_equal": true,
+        "uploaded_zip_bytes_equal": "not applicable",
+        "eml": "metadata retained only in originals",
+        "eml_bytes_equal": "original-only",
+        "descriptor_resources": 4
+      },
+      "seconds": 0.05
+    },
+    {
+      "case": "gaynor-zip",
+      "evidence": "real local records wrapped as ZIP for upload-byte retention",
+      "schema": {
+        "version": "1.0_DEV",
+        "issued": "2026-07-07",
+        "revision": "76898192fd298c2aa170a7059e1bdadf3ee2a828",
+        "sha256": "641ec867fe4ce4f0359d13488ac0731dee4b96418c72689fc751d06bb8a59c77",
+        "source": "https://github.com/tdwg/rs.tdwg.org/tree/76898192fd298c2aa170a7059e1bdadf3ee2a828/dwc-dp/1.0_DEV"
+      },
+      "fingerprint": "d2486018cb5f66df154f9918ec900feea794afa8351873586b07173a99130480",
+      "source_bytes": 21789,
+      "has_meta": true,
+      "files": 4,
+      "tables": [
+        {
+          "name": "occurrence.csv",
+          "rows": 31,
+          "columns": 15,
+          "row_type": "http://rs.tdwg.org/dwc/terms/Occurrence",
+          "join_basis": "meta.xml archive join ID",
+          "unique_join_ids": 31,
+          "orphans": 0
+        }
+      ],
+      "nonempty_cells": 465,
+      "null_tokens": [
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/collectionCode",
+          "rows": 1,
+          "review": false,
+          "default": "material.collectionCode"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/eventDate",
+          "rows": 1,
+          "review": true,
+          "default": "event.eventDate"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/decimalLatitude",
+          "rows": 1,
+          "review": true,
+          "default": "event.decimalLatitude"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/decimalLongitude",
+          "rows": 1,
+          "review": true,
+          "default": "event.decimalLongitude"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/locality",
+          "rows": 11,
+          "review": false,
+          "default": "event.locality"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/associatedSequences",
+          "rows": 5,
+          "review": true,
+          "default": "material.associatedSequences"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://https://www.ebi.ac.uk/terms/study",
+          "rows": 5,
+          "review": true,
+          "default": "preserve"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://https://www.ebi.ac.uk/terms/bioproject_accession",
+          "rows": 5,
+          "review": true,
+          "default": "preserve"
+        },
+        {
+          "table": "occurrence.csv",
+          "term": "http://rs.tdwg.org/dwc/terms/materialSampleID",
+          "rows": 5,
+          "review": true,
+          "default": "material.materialEntityID"
+        }
+      ],
+      "review": {
+        "total": 12,
+        "by_kind": {
+          "event-grain": 1,
+          "material": 1,
+          "column": 9,
+          "status": 1
+        },
+        "by_title": {
+          "How should occurrence events be represented?": 1,
+          "occurrence.csv: material identifiers are present": 1,
+          "dynamicProperties": 1,
+          "eventDate": 1,
+          "decimalLatitude": 1,
+          "decimalLongitude": 1,
+          "associatedSequences": 1,
+          "study": 1,
+          "bioproject_accession": 1,
+          "materialSampleID": 1,
+          "basisOfRecord": 1,
+          "occurrence.csv: occurrence status is missing": 1
+        },
+        "single_option": 4,
+        "column_mapping": 9,
+        "automatic_nonempty_columns": 6,
+        "beyond_ai_first_40": 0
+      },
+      "event_grouping_evidence": null,
+      "semantic_probes": {
+        "float_shaped_dates": 0,
+        "repeated_genus_names": 0
+      },
+      "simulated_review": {
+        "physical_material": "preserved only",
+        "event_grain": "per occurrence source row",
+        "missing_occurrence_status": "explicit simulated presence assertion",
+        "extensions": "first declared meaning; supplied joins retained",
+        "columns": "approved default mappings; unsupported terms preserved",
+        "additional_preserved_targets": [
+          "event.decimalLatitude",
+          "event.decimalLongitude"
+        ],
+        "publisher_approval": false
+      },
+      "resources": {
+        "event": 31,
+        "occurrence": 31
+      },
+      "valid": true,
+      "validation_error_count": 0,
+      "validation_warning_count": 0,
+      "withheld_value_count": 0,
+      "preserved_extension_row_count": 0,
+      "plan_rebuild_identical": true,
+      "crosswalk": {
+        "entries": 62,
+        "source_row_out_of_bounds": 0,
+        "untraced_target_rows": {
+          "event": 0,
+          "occurrence": 0
+        },
+        "columns_reported": 15,
+        "columns_expected": 15,
+        "columns_with_explicit_copied_counts": 0,
+        "column_copied_counts": [],
+        "column_dispositions": {
+          "mapped+retained": 5,
+          "retained-unmapped": 10
+        },
+        "retained_only_nonempty_cells": 310,
+        "mapped_nonempty_cells_verified_verbatim": 155,
+        "mapped_nonempty_cells_unmatched": [],
+        "copied_count_disagreements": [],
+        "extension_join_checks": {},
+        "extension_join_failures": {},
+        "reported_file_checksums_match_sources": true
+      },
+      "deterministic_resources": {
+        "event": true,
+        "occurrence": true
+      },
+      "serialized": {
+        "valid": true,
+        "errors": 0,
+        "warnings": 0,
+        "archive_bytes": 17156,
+        "original_file_bytes_equal": true,
+        "uploaded_zip_bytes_equal": true,
+        "eml": "metadata retained only in originals",
+        "eml_bytes_equal": "original-only",
+        "descriptor_resources": 5
+      },
+      "seconds": 0.05
+    },
+    {
+      "case": "bigtree",
+      "evidence": "additional local meta.xml archive; source provenance not independently verified",
+      "schema": {
+        "version": "1.0_DEV",
+        "issued": "2026-07-07",
+        "revision": "76898192fd298c2aa170a7059e1bdadf3ee2a828",
+        "sha256": "641ec867fe4ce4f0359d13488ac0731dee4b96418c72689fc751d06bb8a59c77",
+        "source": "https://github.com/tdwg/rs.tdwg.org/tree/76898192fd298c2aa170a7059e1bdadf3ee2a828/dwc-dp/1.0_DEV"
+      },
+      "fingerprint": "a4a131d8413f052a05a7d5782ee47b7647ab0073a0bfc09f503a74e2a17f5766",
+      "source_bytes": 4148619,
+      "has_meta": true,
+      "files": 4,
+      "tables": [
+        {
+          "name": "occurrence.txt",
+          "rows": 9524,
+          "columns": 15,
+          "row_type": "http://rs.tdwg.org/dwc/terms/Occurrence",
+          "join_basis": "meta.xml archive join ID",
+          "unique_join_ids": 9524,
+          "orphans": 0
+        }
+      ],
+      "nonempty_cells": 122461,
+      "null_tokens": [],
+      "review": {
+        "total": 9,
+        "by_kind": {
+          "event-grain": 1,
+          "column": 7,
+          "status": 1
+        },
+        "by_title": {
+          "How should occurrence events be represented?": 1,
+          "scientificName": 1,
+          "institutionCode": 1,
+          "catalogNumber": 1,
+          "recordNumber": 1,
+          "dynamicProperties": 1,
+          "associatedSequences": 1,
+          "basisOfRecord": 1,
+          "occurrence.txt: occurrence status is missing": 1
+        },
+        "single_option": 6,
+        "column_mapping": 7,
+        "automatic_nonempty_columns": 8,
+        "beyond_ai_first_40": 0
+      },
+      "event_grouping_evidence": null,
+      "semantic_probes": {
+        "float_shaped_dates": 0,
+        "repeated_genus_names": 0
+      },
+      "simulated_review": {
+        "physical_material": "preserved only",
+        "event_grain": "per occurrence source row",
+        "missing_occurrence_status": "explicit simulated presence assertion",
+        "extensions": "first declared meaning; supplied joins retained",
+        "columns": "approved default mappings; unsupported terms preserved",
+        "additional_preserved_targets": [],
+        "publisher_approval": false
+      },
+      "resources": {
+        "event": 9524,
+        "occurrence": 9524,
+        "identification": 9524
+      },
+      "valid": true,
+      "validation_error_count": 0,
+      "validation_warning_count": 0,
+      "withheld_value_count": 0,
+      "preserved_extension_row_count": 0,
+      "plan_rebuild_identical": true,
+      "crosswalk": {
+        "entries": 28572,
+        "source_row_out_of_bounds": 0,
+        "untraced_target_rows": {
+          "event": 0,
+          "occurrence": 0,
+          "identification": 0
+        },
+        "columns_reported": 15,
+        "columns_expected": 15,
+        "columns_with_explicit_copied_counts": 0,
+        "column_copied_counts": [],
+        "column_dispositions": {
+          "mapped+retained": 9,
+          "retained-unmapped": 6
+        },
+        "retained_only_nonempty_cells": 46621,
+        "mapped_nonempty_cells_verified_verbatim": 75840,
+        "mapped_nonempty_cells_unmatched": [],
+        "copied_count_disagreements": [],
+        "extension_join_checks": {},
+        "extension_join_failures": {},
+        "reported_file_checksums_match_sources": true
+      },
+      "deterministic_resources": {
+        "event": true,
+        "occurrence": true,
+        "identification": true
+      },
+      "serialized": {
+        "valid": true,
+        "errors": 0,
+        "warnings": 0,
+        "archive_bytes": 3151453,
+        "original_file_bytes_equal": true,
+        "uploaded_zip_bytes_equal": "not applicable",
+        "eml": "metadata retained only in originals",
+        "eml_bytes_equal": "original-only",
+        "descriptor_resources": 5
+      },
+      "seconds": 2.88
+    },
+    {
+      "case": "newick",
+      "evidence": "local synthetic/anomaly-handling fixture",
+      "schema": {
+        "version": "1.0_DEV",
+        "issued": "2026-07-07",
+        "revision": "76898192fd298c2aa170a7059e1bdadf3ee2a828",
+        "sha256": "641ec867fe4ce4f0359d13488ac0731dee4b96418c72689fc751d06bb8a59c77",
+        "source": "https://github.com/tdwg/rs.tdwg.org/tree/76898192fd298c2aa170a7059e1bdadf3ee2a828/dwc-dp/1.0_DEV"
+      },
+      "fingerprint": "e49476447152d1488a87d551220d112509cb21d84b25b23f1d0531285a681cf9",
+      "source_bytes": 1959278,
+      "has_meta": false,
+      "files": 2,
+      "tables": [
+        {
+          "name": "occurrence.txt",
+          "rows": 9833,
+          "columns": 11,
+          "row_type": "http://rs.tdwg.org/dwc/terms/Occurrence",
+          "join_basis": "http://rs.tdwg.org/dwc/terms/occurrenceID",
+          "unique_join_ids": 9833,
+          "orphans": 0
+        }
+      ],
+      "nonempty_cells": 92393,
+      "null_tokens": [],
+      "review": {
+        "total": 7,
+        "by_kind": {
+          "loose-links": 1,
+          "event-grain": 1,
+          "column": 4,
+          "status": 1
+        },
+        "by_title": {
+          "Confirm the loose-file layout": 1,
+          "How should occurrence events be represented?": 1,
+          "catalogNumber": 1,
+          "scientificName": 1,
+          "eventDate": 1,
+          "preparations": 1,
+          "occurrence.txt: occurrence status is missing": 1
+        },
+        "single_option": 3,
+        "column_mapping": 4,
+        "automatic_nonempty_columns": 7,
+        "beyond_ai_first_40": 0
+      },
+      "event_grouping_evidence": null,
+      "semantic_probes": {
+        "float_shaped_dates": 3756,
+        "repeated_genus_names": 9830
+      },
+      "simulated_review": {
+        "physical_material": "preserved only",
+        "event_grain": "per occurrence source row",
+        "missing_occurrence_status": "explicit simulated presence assertion",
+        "extensions": "first declared meaning; supplied joins retained",
+        "columns": "approved default mappings; unsupported terms preserved",
+        "additional_preserved_targets": [],
+        "publisher_approval": false
+      },
+      "resources": {
+        "event": 9833,
+        "occurrence": 9833,
+        "identification": 9833
+      },
+      "valid": true,
+      "validation_error_count": 0,
+      "validation_warning_count": 1,
+      "withheld_value_count": 0,
+      "preserved_extension_row_count": 0,
+      "plan_rebuild_identical": true,
+      "crosswalk": {
+        "entries": 29499,
+        "source_row_out_of_bounds": 0,
+        "untraced_target_rows": {
+          "event": 0,
+          "occurrence": 0,
+          "identification": 0
+        },
+        "columns_reported": 11,
+        "columns_expected": 11,
+        "columns_with_explicit_copied_counts": 0,
+        "column_copied_counts": [],
+        "column_dispositions": {
+          "mapped+retained": 9,
+          "retained-unmapped": 2
+        },
+        "retained_only_nonempty_cells": 16928,
+        "mapped_nonempty_cells_verified_verbatim": 75465,
+        "mapped_nonempty_cells_unmatched": [],
+        "copied_count_disagreements": [],
+        "extension_join_checks": {},
+        "extension_join_failures": {},
+        "reported_file_checksums_match_sources": true
+      },
+      "deterministic_resources": {
+        "event": true,
+        "occurrence": true,
+        "identification": true
+      },
+      "serialized": {
+        "valid": true,
+        "errors": 0,
+        "warnings": 1,
+        "archive_bytes": 3323047,
+        "original_file_bytes_equal": true,
+        "uploaded_zip_bytes_equal": "not applicable",
+        "eml": "metadata retained only in originals",
+        "eml_bytes_equal": "original-only",
+        "descriptor_resources": 5
+      },
+      "seconds": 3.21
+    }
+  ],
+  "synthetic_repros": {
+    "numeric_na_review_gap": {
+      "input": "occurrenceID,decimalLatitude,decimalLongitude,occurrenceStatus\\nexample,NA,NA,present\\n",
+      "review_ids": [
+        "loose-links",
+        "event-grain",
+        "column:0:1",
+        "column:0:2"
+      ],
+      "coordinate_columns_reviewed": [
+        true,
+        true
+      ],
+      "conversion_valid": true,
+      "expected": "invalid numeric values need a preservation decision before export; never assume NA is null"
+    },
+    "molecular_event_context_without_analysis_event": {
+      "analysis_event_fk_populated": true,
+      "table_choice": "Sequence, protocol and analysis records in linked event context",
+      "classification": "declared contextual-link behavior; source supplies no distinct analysis event"
+    },
+    "nbn_row_review_beyond_ai_window": {
+      "synthetic_rows": 50,
+      "issues": 53,
+      "row_issues": 50,
+      "beyond_first_40": 13
+    },
+    "loose_input_order_reproducibility": {
+      "source_fingerprint_equal": true,
+      "plan_id_equal": true,
+      "occurrence_uuid_equal": true,
+      "expected": "report upload order if ordering is part of identity; otherwise canonicalize loose table order"
+    }
+  },
+  "prior_comparison": {
+    "gold_standard": false,
+    "scope": "aggregate structural comparison only",
+    "tables": {
+      "event.csv": {
+        "rows": 790,
+        "columns": 21
+      },
+      "material.csv": {
+        "rows": 790,
+        "columns": 9
+      },
+      "identification.csv": {
+        "rows": 11155,
+        "columns": 12
+      },
+      "material-assertion.csv": {
+        "rows": 4740,
+        "columns": 5
+      },
+      "molecular-protocol.csv": {
+        "rows": 2,
+        "columns": 17
+      },
+      "nucleotide-analysis.csv": {
+        "rows": 10365,
+        "columns": 8
+      },
+      "nucleotide-sequence.csv": {
+        "rows": 997,
+        "columns": 3
+      },
+      "occurrence_VTCMS0k.csv": {
+        "rows": 10365,
+        "columns": 18
+      },
+      "resource-relationship.csv": {
+        "rows": 9575,
+        "columns": 9
+      }
+    }
+  }
+}

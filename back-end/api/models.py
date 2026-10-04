@@ -92,6 +92,11 @@ class Dataset(models.Model):
         default=SourceMode.TABULAR_ONLY,
     )
 
+    class WorkflowType(models.TextChoices):
+        PUBLICATION = 'publication', _('Publish a dataset')
+        DWCA_CONVERSION = 'dwca_conversion', _('Convert a Darwin Core Archive')
+    workflow_type = models.CharField(max_length=30, choices=WorkflowType.choices, default=WorkflowType.PUBLICATION)
+
     MANUSCRIPT_TASK_NAME = "Manuscript extraction and dataset scoping"
 
     @staticmethod
@@ -236,6 +241,9 @@ class Dataset(models.Model):
 
     @property
     def package_ready(self):
+        if self.workflow_type == self.WorkflowType.DWCA_CONVERSION:
+            conversion = DwcConversion.objects.filter(dataset=self).first()
+            return bool(conversion and conversion.status == 'complete' and conversion.output_file and (conversion.report or {}).get('archive_validation', {}).get('valid'))
         validation = self.dwc_dp_validation or {}
         quality_gate_complete = self.agent_set.filter(
             task__name=Task.PREPUBLICATION_QUALITY_TASK,
@@ -261,6 +269,8 @@ class Dataset(models.Model):
 
     def next_agent(self):
         self.refresh_from_db()
+        if self.workflow_type == self.WorkflowType.DWCA_CONVERSION:
+            return None
 
         next_agent = self.agent_set.filter(completed_at=None).first()
         if next_agent:
@@ -435,6 +445,35 @@ class Dataset(models.Model):
     class Meta:
         get_latest_by = 'created_at'
         ordering = ['created_at']
+
+
+class DwcConversion(models.Model):
+    class Status(models.TextChoices):
+        QUEUED = 'queued'
+        INSPECTING = 'inspecting'
+        REVIEW = 'review'
+        REVIEWING = 'reviewing'
+        CONVERTING = 'converting'
+        COMPLETE = 'complete'
+        FAILED = 'failed'
+
+    dataset = models.OneToOneField(Dataset, on_delete=models.CASCADE, related_name='conversion')
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.QUEUED)
+    plan = models.JSONField(default=dict)
+    decisions = models.JSONField(default=dict)
+    suggestions = models.JSONField(default=list)
+    advice_reviewed = models.JSONField(default=list)
+    report = models.JSONField(default=dict)
+    error = models.TextField(blank=True)
+    output_file = models.FileField(upload_to='user_files/conversions', blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class DwcConversionJob(models.Model):
+    conversion = models.OneToOneField(DwcConversion, on_delete=models.CASCADE, related_name='job')
+    action = models.CharField(max_length=20, default='inspect')
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
 
 class UserFile(models.Model):
@@ -2434,6 +2473,8 @@ class OpenAIUsage(models.Model):
         Agent,
         on_delete=models.CASCADE,
         related_name='openai_usage_records',
+        null=True,
+        blank=True,
     )
     task_name = models.CharField(max_length=300, blank=True)
     response_id = models.CharField(max_length=200, unique=True)

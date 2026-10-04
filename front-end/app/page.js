@@ -2,6 +2,7 @@
 
 import DatasetsGrid from './components/DatasetsGrid'
 import NewDatasetComposer from './components/NewDatasetComposer'
+import { ConversionUpload } from './components/DwcConversion'
 import ProtectedRoute from './components/ProtectedRoute'
 import { useAuth } from './contexts/AuthContext'
 import { DatasetProvider } from './contexts/DatasetContext'
@@ -27,6 +28,11 @@ const HomeContent = () => {
     router.push('/?mode=upload')
   }, [router])
 
+  const handleConversion = useCallback(() => {
+    setMode('convert')
+    router.push('/?mode=convert')
+  }, [router])
+
   const handleBackToDashboard = useCallback(() => {
     setMode('dashboard')
     router.push('/')
@@ -34,8 +40,8 @@ const HomeContent = () => {
 
   useEffect(() => {
     const requestedMode = new URLSearchParams(window.location.search).get('mode')
-    if (requestedMode === 'upload') {
-      setMode('upload')
+    if (['upload', 'convert'].includes(requestedMode)) {
+      setMode(requestedMode)
       return
     }
     setMode('dashboard')
@@ -90,6 +96,7 @@ const HomeContent = () => {
           });
           break;
         case 'upload':
+        case 'convert':
           updateNavigation({
             showNavigation: true,
             onNewDataset: null,
@@ -124,6 +131,7 @@ const HomeContent = () => {
             <DatasetsGrid
               onOpenDataset={handleDatasetSelect}
               onNewDataset={handleNewDataset}
+              onConvertArchive={handleConversion}
               onShowWelcome={() => showWelcomeModal(true)}
             />
           </div>
@@ -132,6 +140,8 @@ const HomeContent = () => {
         {mode === 'upload' && (
           <NewDatasetComposer onDatasetCreated={handleDatasetCreated} />
         )}
+
+        {mode === 'convert' && <ConversionUpload onDatasetCreated={handleDatasetCreated} />}
 
         <div className="modal modal-lg fade" id="myModal" tabIndex="-1" aria-labelledby="welcomeModalLabel" aria-hidden="true">
           <div className="modal-dialog modal-dialog-centered modal-dialog-scrollable">

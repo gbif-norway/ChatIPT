@@ -1,0 +1,296 @@
+{
+  "schema_revision": "76898192fd298c2aa170a7059e1bdadf3ee2a828",
+  "cases": [
+    {
+      "id": "akagera-import-and-joins",
+      "sources": [
+        "back-end/user_files/377__occurrence.csv",
+        "back-end/user_files/377__extendedmeasurementorfact.csv",
+        "back-end/user_files/377__resourcerelationship.csv",
+        "back-end/user_files/377__identificationhistory.csv",
+        "back-end/user_files/377__dnaderiveddata.csv"
+      ],
+      "checks": [
+        "Row counts come from a CSV parser; occurrence physical line count exceeds record count because occurrenceRemarks contains quoted newlines (e.g. S079636_ESV_110941)",
+        "occurrenceID is unique and non-empty in 377__occurrence.csv",
+        "The set of occurrenceIDs in occurrence equals the set in dnaderiveddata (profiled: 10365 records)",
+        "Every occurrenceID in extendedmeasurementorfact, identificationhistory and dnaderiveddata exists in occurrence (zero orphans)",
+        "extendedmeasurementorfact has exactly 3 measurementType values (faecal sample age, faecal texture, latrine site), each present once per occurrenceID (profiled: 31095 rows)",
+        "identificationhistory has one *_dna row per occurrence (profiled 10365) and *_field rows only on subject occurrences (profiled 790)",
+        "Every resourceID and relatedResourceID resolves to an occurrenceID sharing the same materialSampleID and eventID",
+        "Each materialSampleID has exactly one relationship subject; relationships = occurrences - samples (profiled 10365 - 790 = 9575)",
+        "eventID to materialSampleID cardinality is reported (expected 1:1, 790 each)",
+        "Every source column across the five files has a disposition in the plan; residuals.csv lists every retained-unmapped cell"
+      ],
+      "review_triggers": [
+        "Any orphan extension row or duplicate occurrenceID",
+        "Any sample with zero or more than one relationship subject",
+        "eventID:materialSampleID not 1:1"
+      ],
+      "expected_outcomes": [
+        "One material row per distinct materialSampleID with materialEntityID = materialSampleID verbatim",
+        "One event row per distinct eventID with eventID verbatim",
+        "One occurrence row per source occurrence with occurrenceID verbatim",
+        "Crosswalk links every target row to its source file and parser record index"
+      ],
+      "limitations": [
+        "Profiled counts were taken with line-based tools on 2026-10-02 and must be recomputed with the parser before being fixed as test constants",
+        "basisOfRecord (MaterialSample) has no occurrence field in 1.0_DEV; its disposition (derived: implies material row) must be recorded, not silently dropped"
+      ]
+    },
+    {
+      "id": "akagera-read-quantities",
+      "sources": [
+        "back-end/user_files/377__occurrence.csv",
+        "back-end/user_files/377__dnaderiveddata.csv"
+      ],
+      "checks": [
+        "organismQuantityType and sampleSizeUnit equal 'DNA sequence reads' on every row",
+        "E5: within each (materialSampleID, target_gene) sampleSizeValue is constant and equals sum(organismQuantity); e.g. S081760 12S: 21663 + 127 = 21790, trnL denominator 23768",
+        "Host-only 12S samples have organismQuantity == sampleSizeValue (e.g. S079328_ESV_015820: 13162)",
+        "nucleotide-analysis.readCount equals source organismQuantity for every occurrence",
+        "nucleotide-analysis.processedTotalReadCount equals source sampleSizeValue only if E5 passes for that group; otherwise empty and sampleSizeValue retained as residual",
+        "No read count is written to material.objectQuantity, survey.sampleSizeValue, or any organism count"
+      ],
+      "review_triggers": [
+        "E5 fails for any group",
+        "Decision on retaining occurrence.organismQuantity alongside readCount (policy §11.1)",
+        "occurrenceRemarks states reads do not represent individuals"
+      ],
+      "expected_outcomes": [
+        "One nucleotide-analysis per occurrence with molecularProtocol_fk and nucleotideSequence_fk populated and materialEntity_fk = the sample's material",
+        "occurrence.organismQuantity handling follows the recorded user answer or the flagged default"
+      ],
+      "limitations": [
+        "E5 has been hand-verified only for S081760 and S079328; it is unverified for the whole file",
+        "processedTotalReadCount definition in 1.0_DEV is per processed sequence and wording is ambiguous; mapping remains a user-confirmed interpretation"
+      ]
+    },
+    {
+      "id": "akagera-molecular-protocol-and-sequences",
+      "sources": [
+        "back-end/user_files/377__dnaderiveddata.csv"
+      ],
+      "checks": [
+        "E7: protocol columns (target_gene, target_subfragment, pcr_primer_*, pcr_cond, lib_layout, seq_meth, otu_*) are constant within target_gene",
+        "Exactly 2 molecular-protocol rows: 12S rRNA (12SVertF/12SVertR, 45 cycles, 52C) and trnL intron (trnL-c/trnL-h, 40 cycles, 55C)",
+        "pcr_cond copied verbatim; annealingTemp/annealingTempUnit remain empty",
+        "DNA_sequence is written only to nucleotide-sequence.sequence, never to molecular-protocol.DNA_sequence",
+        "nucleotide-sequence rows = distinct DNA_sequence values (prior upload: 997); nucleotideSequenceID is a deterministic content hash",
+        "E6 result reported: identical sequence <=> identical ESV suffix",
+        "env_broad_scale/env_local_scale/env_medium are not placed on molecular-protocol (they vary per sample, e.g. agriculture field / grassland area / woodland area)",
+        "env_* go to material-assertion only if E3 passes on materialSampleID; assertionValue keeps the verbatim 'label [ENVO:n]' string and assertionValueIRI is filled only if E12 passes",
+        "otu_seq_comp_appr copied verbatim ('UNOISE3 via vsearch; minimum identity 95%')",
+        "Empty sop yields no value; BioProject URL in associatedSequences is not written to any sequence field"
+      ],
+      "review_triggers": [
+        "E7 fails (protocol fields vary within a marker)",
+        "E3 fails for env_* within a sample",
+        "E6 fails (same ESV label, different sequence or vice versa)",
+        "otu_seq_comp_appr mixes denoising and identity clustering"
+      ],
+      "expected_outcomes": [
+        "2 protocols, deduplicated sequences, env_* as material-assertion with verbatimAssertionType = source column name"
+      ],
+      "limitations": [
+        "No nucleic-acid extraction, negative control, or sequencing run information exists in source; none may be inferred",
+        "No analysis event exists; nucleotide-analysis.event_fk stays empty unless the user supplies one"
+      ]
+    },
+    {
+      "id": "akagera-identification-multiplicity",
+      "sources": [
+        "back-end/user_files/377__identificationhistory.csv",
+        "back-end/user_files/377__occurrence.csv"
+      ],
+      "checks": [
+        "One identification row per source identificationhistory row; identificationID verbatim",
+        "Field identification codes (impala, buffalo_cape, hyaena_spotted, elephant_savanna) appear only in identification.verbatimIdentification, never in scientificName",
+        "Conflicts are preserved: S079316 has DNA Damaliscus lunatus and field impala; S081760_ESV_009512 has DNA Panthera pardus and field hyaena_spotted",
+        "E8 computed: for every occurrence exactly one history row's scientificName equals core scientificName",
+        "isAcceptedIdentification is empty unless a recorded user answer sets it",
+        "dateIdentified empty for *_dna rows (never back-filled from eventDate)",
+        "_dna rows link nucleotideAnalysis_fk to the occurrence's analysis and occurrence_fk to the occurrence",
+        "Core occurrence.verbatimIdentification on non-subject rows (e.g. 'sheep' on Fabaceae, 'hyaena_spotted' on Jasminum) is flagged by E13 and not presented as an identification of the diet taxon"
+      ],
+      "review_triggers": [
+        "Field and DNA identifications disagree on the same occurrence",
+        "E8 fails",
+        "Non-name string in scientificName column",
+        "identificationType for field identifications (policy §11.6)",
+        "Attachment target of field identifications (policy §11.7)"
+      ],
+      "expected_outcomes": [
+        "Both identifications retained per host occurrence; report lists every field/DNA disagreement with counts"
+      ],
+      "limitations": [
+        "Whether a field identification of scat refers to the host occurrence, the material, or an organism is a user decision; benchmark only asserts that it is not lost and not assigned a scientificName"
+      ]
+    },
+    {
+      "id": "akagera-material-organism-identity",
+      "sources": [
+        "back-end/user_files/377__occurrence.csv",
+        "back-end/user_files/377__extendedmeasurementorfact.csv"
+      ],
+      "checks": [
+        "material rows = distinct materialSampleID; materialEntityType 'faecal' verbatim",
+        "E3: each eMoF measurementType is constant within materialSampleID before moving to material-assertion; material-assertion rows = samples x types (expected 790 x 3 for eMoF), never occurrences x types",
+        "eMoF values copied verbatim (<24hr, 3-7_days, observed, soft, hard, diarrhea, yes, no); assertionUnit empty",
+        "E13: sex/lifeStage on non-subject rows equal to the subject row (e.g. Tragelaphus scriptus row in S081760 carries unknown/adult) are not published as prey attributes without a user answer",
+        "No organism rows minted by default; if minted after user answer, at most one per sample and only for the relationship subject",
+        "Free-text host uncertainty ('might also be from the goat...') preserved in occurrenceRemarks"
+      ],
+      "review_triggers": [
+        "E3 fails for any measurementType",
+        "E13 detects subject attributes copied to non-subject rows",
+        "'observed' value in 'faecal sample age'"
+      ],
+      "expected_outcomes": [
+        "Sample-level properties attached once per material; occurrence attributes not duplicated across detections"
+      ],
+      "limitations": [
+        "No source evidence links samples to the same individual; organisms must never be merged across samples"
+      ]
+    },
+    {
+      "id": "akagera-relationships",
+      "sources": [
+        "back-end/user_files/377__resourcerelationship.csv",
+        "back-end/user_files/377__occurrence.csv"
+      ],
+      "checks": [
+        "resourceRelationshipID unique and preserved verbatim",
+        "relationshipType 'preys on' and relationshipTypeIRI http://purl.obolibrary.org/obo/RO_0002439 copied verbatim by default",
+        "subjectResourceID/relatedResourceID equal source resourceID/relatedResourceID; subject/related resource type 'Occurrence'",
+        "relationshipAccordingTo copied verbatim; relationshipAccordingToID filled only if a whole-column name+ORCID pattern check passes and the user approves splitting",
+        "No organism-interaction rows created without a user answer and a real event_fk",
+        "relationshipRemarks contains no converter-authored text unless labelled as such in the crosswalk"
+      ],
+      "review_triggers": [
+        "Predicate 'preys on' with a plant (kingdom Plantae) related occurrence, e.g. S079328 Loxodonta -> Fabaceae, S081760 Panthera -> Jasminum",
+        "Predicate correction or table change proposed (policy §11.4)"
+      ],
+      "expected_outcomes": [
+        "9575 resource-relationship rows (profiled) unless the user approves a different interpretation; report counts relationships by related kingdom"
+      ],
+      "limitations": [
+        "Structural validation cannot detect predicate misuse; only the kingdom-based trigger and user review can"
+      ]
+    },
+    {
+      "id": "akagera-location-uncertainty",
+      "sources": [
+        "back-end/user_files/377__occurrence.csv"
+      ],
+      "checks": [
+        "E11 computed per eventID for decimalLatitude, decimalLongitude, coordinateUncertaintyInMeters, dataGeneralizations, georeferenceRemarks, habitat",
+        "E11 is expected to fail for coordinateUncertaintyInMeters: ANP_24_LOAF_55 has 7901 on the subject row and 21504 on diet rows",
+        "On failure no single value is chosen silently and remarks are not concatenated with ' | '",
+        "Generalized coordinates (e.g. -1.9, 30.7) are never replaced with more precise values from other rows",
+        "year equals eventDate year (E10) before year is treated as derived"
+      ],
+      "review_triggers": [
+        "E11 fails",
+        "'placeholder ... (pending project review)' text present in georeferenceRemarks"
+      ],
+      "expected_outcomes": [
+        "Event location follows the user answer for §11.3, or the default with the variant uncertainty retained as residual and reported per event"
+      ],
+      "limitations": [
+        "DwC-DP 1.0_DEV occurrence has no location fields, so per-detection uncertainty has no lossless home without user-approved modelling"
+      ]
+    },
+    {
+      "id": "dataset68-prior-dp-regressions",
+      "sources": [
+        "back-end/user_files/event.csv",
+        "back-end/user_files/material.csv",
+        "back-end/user_files/identification.csv",
+        "back-end/user_files/material-assertion.csv",
+        "back-end/user_files/molecular-protocol.csv",
+        "back-end/user_files/nucleotide-analysis.csv",
+        "back-end/user_files/nucleotide-sequence.csv",
+        "back-end/user_files/occurrence_VTCMS0k.csv",
+        "back-end/user_files/resource-relationship.csv"
+      ],
+      "checks": [
+        "Used as comparison only: converter output from the 377__ sources is diffed against these tables and every difference is classified as intended or regression",
+        "Negative: no event.dataGeneralizations value is a ' | '-joined concatenation of distinct source statements (prior: ANP_24_PAPA_18, ANP_24_LOAF_31)",
+        "Negative: no event has coordinateUncertaintyInMeters contradicting its own remarks (prior: ANP_24_DALU_47 has 30 with a 20 km placeholder remark)",
+        "Negative: isAcceptedIdentification and identificationType are not set without evidence id or user answer (prior set True/False and 'features')",
+        "Negative: nucleotide-analysis.event_fk does not reuse the collection event unless the user approved it",
+        "Negative: relationshipRemarks contain no unlabelled converter-authored text",
+        "Positive parity: 2 molecular protocols, 790 materials/events, deduplicated sequences, env_* and eMoF as material-assertion keyed per material (prior: 790 x 6 = 4740)"
+      ],
+      "review_triggers": [
+        "Converter output differs from dataset68 in a way not explained by a rule or decision"
+      ],
+      "expected_outcomes": [
+        "Diff report with each difference attributed to a rule id, decision id, or flagged as unexplained"
+      ],
+      "limitations": [
+        "dataset68 is not a gold standard; parity is not correctness"
+      ]
+    },
+    {
+      "id": "gaynor-simple-dwca",
+      "sources": [
+        "back-end/api/templates/examples/gaynor_et_al_v3/meta.xml",
+        "back-end/api/templates/examples/gaynor_et_al_v3/occurrence.csv",
+        "back-end/api/templates/examples/gaynor_et_al_v3/eml.xml",
+        "back-end/api/templates/examples/gaynor_et_al_v3/above50_genes.nex"
+      ],
+      "checks": [
+        "Dialect taken from meta.xml: tab-separated despite .csv extension, no enclosure, 1 header line",
+        "basisOfRecord recorded as a meta.xml default (MaterialCitation), not as a data column",
+        "Malformed term URIs http://https://www.ebi.ac.uk/terms/study and .../bioproject_accession are flagged and their values retained (not dropped)",
+        "'NA' is not converted to null without a user answer; it is reported per column (locality, associatedSequences, study, bioproject_accession, materialSampleID)",
+        "dynamicProperties JSON (phyloTreeTipLabel, phyloTreeFileName) retained as residual; no tree table is invented",
+        "catalogNumber values kept verbatim ('CAS 1089812' and 'CAS1199187' not normalised)",
+        "materialSampleID (SAMN BioSample) is not asserted as physical material identity without a user answer; if mapped, it is a typed material-identifier",
+        "occurrenceID unique and verbatim; package passes structural validation",
+        "eml.xml preserved and validated against EML 2.2.0"
+      ],
+      "review_triggers": [
+        "Non-DwC or malformed term URIs",
+        "NA null token",
+        "dynamicProperties with no supported target",
+        "Repository accession used as materialSampleID"
+      ],
+      "expected_outcomes": [
+        "occurrence, event and (if approved) material rows; all non-DwC columns accounted for as residuals or approved mappings"
+      ],
+      "limitations": [
+        "Phylogeny linkage cannot be represented in DwC-DP 1.0_DEV"
+      ]
+    },
+    {
+      "id": "newick-loose-occurrence",
+      "sources": [
+        "back-end/api/templates/examples/newick/occurrence.txt",
+        "back-end/api/templates/examples/newick/phylo.newick"
+      ],
+      "checks": [
+        "Recognised as loose tables (no meta.xml); terms from header only",
+        "scientificName with repeated genus (e.g. 'Pleocarphus Pleocarphus revolutus') copied verbatim and flagged; not repaired",
+        "eventDate float artefacts (e.g. '2015.0') and blanks flagged; not converted",
+        "preparations values copied verbatim ('Herbarium', 'Silica dried'); 'Herbarium' flagged as not a preparation",
+        "Coordinates copied without rounding; taxon/location plausibility surfaced via taxon review, not altered",
+        "phylo.newick preserved as original, reported as unsupported",
+        "occurrenceID uniqueness checked before use as key"
+      ],
+      "review_triggers": [
+        "Repeated-genus name pattern",
+        "Float-shaped date values",
+        "No meta.xml"
+      ],
+      "expected_outcomes": [
+        "Structurally valid occurrence/event/material package with every anomaly listed in the report and no silent repair"
+      ],
+      "limitations": [
+        "Data appear synthetic; useful for anomaly handling, not for semantic correctness"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+occurrenceID	siteCount	eventDurationValue	eventDurationUnit	targetTaxonomicScope	isTaxonomicScopeFullyReported	isAbsenceReported	hasNonTargetTaxa	inventoryTypes	protocolNames	isAbundanceReported	isAbundanceCapReported	hasVouchers	samplingPerformedBy	isSamplingEffortReported	samplingEffortValue	samplingEffortUnit
+PLOT7-2025-001	1	20	minutes	Bombus	true	false	false	restrictedSearch	transectWalk	true	false	false	F. Counter	true	20	personMinutes
+PLOT7-2025-002	1	20	minutes	Bombus	true	false	false	restrictedSearch	transectWalk	true	false	false	F. Counter	true	20	personMinutes
+PLOT8-2025-001	1	20	minutes	Bombus	true	false	false	restrictedSearch	transectWalk	true	false	false	F. Counter	true	20	personMinutes
+PLOT8-2025-002	1	20	minutes	Bombus	true	false	false	restrictedSearch	transectWalk	true	false	false	F. Counter	true	30	personMinutes
+PLOT9-2025-002	1	20	minutes	Bombus	true	false	false	restrictedSearch	transectWalk	true	false	false	F. Counter	true	20	personMinutes
+INC-2025-017	1	20	minutes	Bombus	true	false	false	restrictedSearch	transectWalk	true	false	false	F. Counter	true	20	personMinutes

@@ -1,0 +1,8 @@
+eventID	parentEventID	eventType	eventDate	samplingProtocol	locality	decimalLatitude	decimalLongitude	geodeticDatum	countryCode
+BBS-2025-R12		Survey	2025-06-02/2025-06-03	point count	Breeding bird route 12	60.8123	11.0841	EPSG:4326	NO
+BBS-2025-R12-P01	BBS-2025-R12	Point count	2025-06-02T04:30/2025-06-02T04:35	point count	Route 12 point 01	60.8123	11.0841	EPSG:4326	NO
+BBS-2025-R12-P02	BBS-2025-R12	Point count	2025-06-02T04:50/2025-06-02T04:55	point count	Route 12 point 02	60.8151	11.0902	EPSG:4326	NO
+MOTH-2025-L03		Light trap night	2025-07-14/2025-07-15	MV light trap	Garden light trap 3	59.9205	10.7342	EPSG:4326	NO
+VEG-2025-Q17		Vegetation quadrat	2025-07-02	2 x 2 m quadrat	Grazed hillside quadrat 17	61.1042	9.0611	EPSG:4326	NO
+POND-2025-07		Pond survey	2025-05-20	dip netting	Pond 7	59.2611	10.4122	EPSG:4326	NO
+POND-2025-08		Pond survey	2025-05-21	dip netting	Pond 8	59.2648	10.4199	EPSG:4326	NO

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<archive xmlns="http://rs.tdwg.org/dwc/text/">
+  <core encoding="UTF-8" fieldsTerminatedBy="\t" linesTerminatedBy="\n" fieldsEnclosedBy="" ignoreHeaderLines="1" rowType="http://rs.tdwg.org/dwc/terms/Occurrence">
+    <files><location>occurrence.txt</location></files>
+    <id index="0"/>
+    <field index="0" term="http://rs.tdwg.org/dwc/terms/occurrenceID"/>
+    <field index="1" term="http://rs.tdwg.org/dwc/terms/eventID"/>
+    <field index="2" term="http://rs.tdwg.org/dwc/terms/basisOfRecord"/>
+    <field index="3" term="http://rs.tdwg.org/dwc/terms/eventDate"/>
+    <field index="4" term="http://rs.tdwg.org/dwc/terms/scientificName"/>
+    <field index="5" term="http://rs.tdwg.org/dwc/terms/individualCount"/>
+    <field index="6" term="http://rs.tdwg.org/dwc/terms/occurrenceStatus"/>
+    <field index="7" term="http://rs.tdwg.org/dwc/terms/decimalLatitude"/>
+    <field index="8" term="http://rs.tdwg.org/dwc/terms/decimalLongitude"/>
+    <field index="9" term="http://rs.tdwg.org/dwc/terms/geodeticDatum"/>
+    <field index="10" term="http://rs.tdwg.org/dwc/terms/countryCode"/>
+    <field index="11" term="http://rs.tdwg.org/dwc/terms/recordedBy"/>
+  </core>
+  <extension encoding="UTF-8" fieldsTerminatedBy="\t" linesTerminatedBy="\n" fieldsEnclosedBy="" ignoreHeaderLines="1" rowType="http://rs.tdwg.org/eco/terms/Event">
+    <files><location>humboldt.txt</location></files>
+    <coreid index="0"/>
+    <field index="1" term="http://rs.tdwg.org/eco/terms/siteCount"/>
+    <field index="2" term="http://rs.tdwg.org/eco/terms/eventDurationValue"/>
+    <field index="3" term="http://rs.tdwg.org/eco/terms/eventDurationUnit"/>
+    <field index="4" term="http://rs.tdwg.org/eco/terms/targetTaxonomicScope"/>
+    <field index="5" term="http://rs.tdwg.org/eco/terms/isTaxonomicScopeFullyReported"/>
+    <field index="6" term="http://rs.tdwg.org/eco/terms/isAbsenceReported"/>
+    <field index="7" term="http://rs.tdwg.org/eco/terms/hasNonTargetTaxa"/>
+    <field index="8" term="http://rs.tdwg.org/eco/terms/inventoryTypes"/>
+    <field index="9" term="http://rs.tdwg.org/eco/terms/protocolNames"/>
+    <field index="10" term="http://rs.tdwg.org/eco/terms/isAbundanceReported"/>
+    <field index="11" term="http://rs.tdwg.org/eco/terms/isAbundanceCapReported"/>
+    <field index="12" term="http://rs.tdwg.org/eco/terms/hasVouchers"/>
+    <field index="13" term="http://rs.tdwg.org/eco/terms/samplingPerformedBy"/>
+    <field index="14" term="http://rs.tdwg.org/eco/terms/isSamplingEffortReported"/>
+    <field index="15" term="http://rs.tdwg.org/eco/terms/samplingEffortValue"/>
+    <field index="16" term="http://rs.tdwg.org/eco/terms/samplingEffortUnit"/>
+  </extension>
+</archive>

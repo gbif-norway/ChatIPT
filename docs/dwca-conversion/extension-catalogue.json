@@ -1,0 +1,2864 @@
+{
+  "catalogue_version": "2",
+  "schema_revision": "76898192fd298c2aa170a7059e1bdadf3ee2a828",
+  "field_audits": [
+    "cloud-audits/humboldt.json",
+    "cloud-audits/remaining-fields.json",
+    "cloud-audits/references.md",
+    "cloud-audits/coordinator-review.md"
+  ],
+  "families": [
+    {
+      "row_type": "http://rs.tdwg.org/ac/terms/Multimedia",
+      "name": "Audiovisual Media Description (Audubon/Audiovisual Core); versions audubon (2015), audubon_2020_10_06, audiovisual_2023-09-05, audiovisual_2024_11_07, audiovisual_2026-02-24 (latest)",
+      "registry": "production",
+      "disposition": "conditional",
+      "target_tables": ["media", "occurrence-media", "event-media", "usage-policy", "provenance"],
+      "criteria": [
+        "Detect version by term set, not row type: 157-term sets (2023-09-05, 2026-01-23 sandbox, 2026-02-24) carry ac:hasROI/isROIOf/xFrac/startTime/mediaDuration/freqHigh; 96-term sets (audubon 2015, audubon 2020-10-06, audiovisual 2024_11_07) do not.",
+        "Emit exactly one media row per extension row; media_pk is minted deterministically from archive file + row number unless dcterms:identifier is non-empty and unique across the extension file.",
+        "Media fields are filled only where the source term IRI equals the target field's dcterms:isVersionOf (see rule av-media-direct-fields).",
+        "Link row to its core record with occurrence-media when the archive core row type is dwc:Occurrence and coreid resolves to exactly one emitted occurrence; with event-media when the core is dwc:Event and coreid resolves to exactly one emitted event.",
+        "Rights terms go to one usage-policy row per distinct tuple of rights values, referenced by media.usagePolicy_fk; attribution/source/creator terms go to one provenance row per distinct tuple, referenced by media.provenance_fk.",
+        "When the core is dwc:Taxon there is no target join table; preserve the whole row as unsupported and do not emit an orphan media row."
+      ],
+      "ambiguities": [
+        "Attachment to an occurrence does not establish what is depicted: a specimen photo is evidence of a material (material-media), a habitat photo depicts an event (event-media), a sound file may cover several occurrences. ac:associatedSpecimenReference / ac:associatedObservationReference values, ac:subjectCategory values and dwc:preparations on the media row are review triggers.",
+        "AC taxonomic, identification and location terms (dwc:scientificName, dwc:identifiedBy, dwc:decimalLatitude, Iptc4xmpExt:LocationShown, etc.) have no media field; turning them into identification.media_fk rows or event rows would assert new facts.",
+        "dc:type (literal) and dcterms:type (IRI) both exist in AC; media has only mediaType (isVersionOf dcterms:type).",
+        "media.subjectCategory/subjectCategoryIRI are versions of ac:CVtermLiteral/ac:CVterm while the extension uses Iptc4xmpExt:CVterm.",
+        "audiovisual_2024_11_07 is registered later than audiovisual_2023-09-05 but carries the older 96-term set; registry order is not term-set order.",
+        "ac:hasROI (parent lists child) is the inverse of media.isPartOfMediaID (child lists parent)."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/60275908a547-audiovisual_2026-02-24.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/7c4157bf9994-audiovisual_2023-09-05.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/91094b55b561-audiovisual_2024_11_07.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/ab1368ba5b8b-audubon_2020_10_06.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/2f62f57e6949-audubon.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/media.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-media.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event-media.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/usage-policy.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/provenance.json"
+      ]
+    },
+    {
+      "row_type": "http://rs.gbif.org/terms/1.0/TypesAndSpecimen",
+      "name": "Types and Specimen; versions typesandspecimen (2015), typesandspecimen_2026-03-09 (sandbox), typesandspecimen_2026-05-05 (latest)",
+      "registry": "production",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": [
+        "Registered subject is dwc:Taxon; the pinned 79 tables contain no taxon table, so a row has no subject to attach to.",
+        "Preserve every row and column verbatim and list the file in the unsupported section of the conversion report.",
+        "Do not create material, occurrence or identification rows from typeStatus, catalogNumber or occurrenceID."
+      ],
+      "ambiguities": [
+        "dwc:occurrenceID, institutionCode/ID, collectionCode/ID and catalogNumber identify a specimen that normally lives in another dataset; if an occurrenceID resolves inside the same archive a reviewer could decide to set material.typeStatus/typeDesignationType or identification.typeStatus/typeDesignationType on that record, but that is a human decision.",
+        "2026-05-05 adds dwc:institutionID and dwc:collectionID to the 2015 term set; no semantic change to the remaining terms was found."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/b92ff8e092f2-typesandspecimen_2026-05-05.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/c7bd1bb3bc16-typesandspecimen.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/index.json"
+      ]
+    },
+    {
+      "row_type": "http://rs.tdwg.org/dwc/terms/Event",
+      "name": "Darwin Core Event (core); latest production dwc_event_2025-07-10, sandbox dwc_event_2026-05-26",
+      "registry": "production",
+      "disposition": "conditional",
+      "target_tables": ["event"],
+      "criteria": [
+        "Core-term mapping is owned by the core-term catalogue, not this file; this entry exists so the 38-family count is complete.",
+        "As a core it is the attachment point for MoF, eMoF, Humboldt, DNA, ChronometricAge, Audiovisual, Releve and ResourceRelationship rows.",
+        "If dwc:Event appears as an extension row type (not a core) the archive is unusual; route to review."
+      ],
+      "ambiguities": [
+        "Event cores are frequently used for Humboldt surveys; whether a given event is the survey's event or a sampling sub-event is decided by Humboldt attachment, not by the event row itself."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/0571aa5b20ab-dwc_event_2025-07-10.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/f32e31d5a4e3-dwc_event_2026-05-26.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"
+      ]
+    },
+    {
+      "row_type": "http://rs.tdwg.org/dwc/terms/Occurrence",
+      "name": "Darwin Core Occurrence (core or extension); latest production dwc_occurrence_2025-07-10, sandbox dwc_occurrence_2026-05-26",
+      "registry": "production",
+      "disposition": "conditional",
+      "target_tables": ["occurrence", "event", "material", "identification", "organism"],
+      "criteria": [
+        "Core-term mapping is owned by the core-term catalogue.",
+        "When used as an extension of an Event core, occurrence.event_fk is the coreid only if coreid resolves to exactly one emitted event (rule occ-extension-on-event-core)."
+      ],
+      "ambiguities": [
+        "Extensions attached to an Occurrence core may concern the occurrence, the organism, the specimen (material) or the collecting event; see per-family rules."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/1f9b1219d50f-dwc_occurrence_2025-07-10.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/127ed4a950cb-dwc_occurrence_2026-05-26.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json"
+      ]
+    },
+    {
+      "row_type": "http://rs.tdwg.org/dwc/terms/Taxon",
+      "name": "Darwin Core Taxon (checklist core); latest production dwc_taxon_2025-07-10, sandbox dwc_taxon_2026-05-26",
+      "registry": "production",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": [
+        "The pinned 1.0_DEV index has 79 tables and none is a taxon or name-usage table; identification-taxon is a component of an Identification, not a checklist entry.",
+        "Preserve the checklist (core and all extensions attached to it) verbatim and report the archive as unsupported for DwC-DP conversion.",
+        "Never synthesise identification, occurrence or event rows from taxon records."
+      ],
+      "ambiguities": [
+        "A checklist's taxa could be represented only as identifications if there were an organism/occurrence/material to identify; there is none, so any such conversion would fabricate subjects."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/1c9a770f7e57-dwc_taxon_2025-07-10.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/71f10ee767e1-dwc_taxon_2026-05-26.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/index.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification-taxon.json"
+      ]
+    },
+    {
+      "row_type": "http://rs.tdwg.org/dwc/terms/Identification",
+      "name": "Darwin Core Identification History; versions identification (2015), 2022-02-02, 2024-02-19, 2025-07-10 (latest), 2026-05-26 (sandbox)",
+      "registry": "production",
+      "disposition": "conditional",
+      "target_tables": ["identification"],
+      "criteria": [
+        "Archive core row type is dwc:Occurrence and coreid resolves to exactly one emitted occurrence; set identification.occurrence_fk to it.",
+        "One identification row per extension row; same-named terms copy verbatim (rule idh-direct-fields).",
+        "Set isAcceptedIdentification only from an explicit dwc:isAcceptedIdentification value (2026 sandbox term) or from an exact identificationID match with the core record's identificationID; never write false by inference.",
+        "Coordinate with the core mapping so the core's current determination is not emitted twice (rule idh-core-duplicate)."
+      ],
+      "ambiguities": [
+        "identification.occurrence_fk means 'based on' the occurrence; for preserved specimens the evidence may be the material (identification.materialEntity_fk) and that choice needs review.",
+        "dwc:identificationQualifier has no field; dwc:taxonFormula is a formula pattern, so deriving it from a qualifier is interpretive.",
+        "Name-usage terms (acceptedNameUsage, parentNameUsage, originalNameUsage, taxonomicStatus, higherClassification, verbatimTaxonRank and their IDs, nameAccordingToID, namePublishedInID, taxonConceptID) have no field.",
+        "Version differences: 2015 lacks verbatimIdentification, identifiedByID and several ranks; 2025-07-10 adds superfamily, tribe, subtribe to 2022; 2026-05-26 sandbox adds dwc:identificationType and dwc:isAcceptedIdentification. Registry subject was 'dwc:Occurrence MaterialSample' in 2015 and 'dwc:Occurrence' thereafter."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/04f59612b392-identification_history_2025-07-10.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/ad28fdcad23f-identification_history_2026-05-26.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/abdf25ec00f4-identification_history_2022-02-02.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/e4aae984f1b9-identification_history_2024-02-19.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/3dbfb54bd0a0-identification.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification.json"
+      ]
+    },
+    {
+      "row_type": "http://rs.tdwg.org/dwc/terms/MeasurementOrFact",
+      "name": "Darwin Core Measurement or Facts; versions measurements_or_facts (2015), 2022-02-02, 2024-02-19, 2025-07-10 (latest), 2026-05-26 (sandbox)",
+      "registry": "production",
+      "disposition": "conditional",
+      "target_tables": ["occurrence-assertion", "event-assertion"],
+      "criteria": [
+        "Occurrence core and coreid resolves to exactly one emitted occurrence: occurrence-assertion with occurrence_fk = that occurrence.",
+        "Event core and coreid resolves to exactly one emitted event: event-assertion with event_fk = that event.",
+        "Taxon core: unsupported (no taxon-assertion table).",
+        "Every placed row records subject_basis=core_attachment in the conversion log; re-targeting to material-, organism-, survey-, media- or other assertion tables is review-only.",
+        "parentMeasurementID (added 2024-02-19) has no field in any assertion table and is preserved as unsupported."
+      ],
+      "ambiguities": [
+        "Attachment to a core establishes only which record the publisher linked the fact to. Occurrence-core facts are often about the specimen (material), the organism's permanent traits (organism), or the collecting conditions (event).",
+        "Event-core facts may describe the survey design (survey-assertion) or a protocol rather than the event.",
+        "2025-07-10 adds verbatimMeasurementType; 2015 and 2022 lack parentMeasurementID."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/7a9ee2a21351-measurements_or_facts_2025-07-10.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/62bb814ad195-measurements_or_facts_2026-05-26.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/b8faadbbb106-measurements_or_facts_2024-02-19.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/dd42b358a3ab-measurements_or_facts_2022-02-02.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/0611fbcef39c-measurements_or_facts.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event-assertion.json"
+      ]
+    },
+    {
+      "row_type": "http://rs.tdwg.org/dwc/terms/ResourceRelationship",
+      "name": "Darwin Core Resource Relationship; versions resource_relation (2015), resource_relation_2018_01_18, 2022-02-02, 2024-02-19, 2025-07-10 (latest), 2026-05-26 (sandbox)",
+      "registry": "production",
+      "disposition": "conditional",
+      "target_tables": ["resource-relationship"],
+      "criteria": [
+        "Every row whose dwc:resourceID is non-empty goes to resource-relationship with subjectResourceID = resourceID, relationshipType = relationshipOfResource verbatim, relationshipTypeIRI = relationshipOfResourceID when it is an absolute IRI.",
+        "relatedResourceID goes to relatedResourceID if it equals an identifier emitted in this package, otherwise to externalRelatedResourceID.",
+        "subjectResourceType/relatedResourceType are filled only when the identifier resolves to exactly one emitted record type.",
+        "Rows with empty resourceID go to review; coreid is not assumed to be the subject.",
+        "Promotion to organism-interaction, organism-relationship or material derivation is review-only."
+      ],
+      "ambiguities": [
+        "relationshipOfResource is free text in most archives; strings such as 'host of', 'eaten by' or 'associated with' can describe observed interactions, habitual taxon-level associations, or record cross-references.",
+        "organism-interaction is restricted to primary observed interactions between two occurrences during an event; taxon-level or habitual relations must not be promoted.",
+        "organism-relationship requires permanent relations between organisms (e.g. 'mother of') and organism rows that may not exist.",
+        "2015 and 2018 versions lack relationshipOfResourceID; 2015 lacks resourceID and has dwc:scientificName (relation to a taxon by name), which is unsupported."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/07e6f571c8a1-resource_relationship_2025-07-10.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/ba0a369c4eb0-resource_relationship_2026-05-26.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/305eb3b9bcdf-resource_relation_2018_01_18.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/f8159360815c-resource_relation.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/resource-relationship.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/organism-interaction.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/organism-relationship.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md"
+      ]
+    },
+    {
+      "row_type": "http://rs.tdwg.org/eco/terms/Event",
+      "name": "Humboldt Ecological Inventory; versions Humboldt_2024-04-16, humboldt_2025-07-10 (latest), humboldt_2026-05-26 (sandbox)",
+      "registry": "production",
+      "disposition": "conditional",
+      "target_tables": ["survey", "survey-target", "survey-target-descriptor", "survey-survey-target"],
+      "criteria": [
+        "Archive core is dwc:Event and coreid resolves to exactly one emitted event: one survey row per Humboldt row with survey.event_fk = that event.",
+        "43 of 57 terms copy to the survey field whose dcterms:isVersionOf equals the term IRI (rule hum-survey-direct-fields).",
+        "Target/excluded scope terms become survey targets only when exactly one scope dimension is populated in the row (rule hum-scope-single-dimension); otherwise review.",
+        "occurrence.surveyTarget_fk is never filled automatically."
+      ],
+      "ambiguities": [
+        "Humboldt scope dimensions combine as a conjunction (target taxa AND target life stages) with one fully-reported flag per dimension, whereas survey-target has one isSurveyTargetFullyReported per target; there is no habitat fully-reported flag.",
+        "Humboldt rows on nested events yield nested surveys; the pinned survey table has no parent-survey link, so hierarchy is only through event.parentEvent_fk.",
+        "All three versions share the same 57-term set; differences are in definitions/vocabulary bindings, not structure."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/f16a0de0c5bd-humboldt_2025-07-10.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/ae99b9f7c33c-humboldt_2026-05-26.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/0989d3de604f-Humboldt_2024-04-16.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/survey.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/survey-target.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/survey-target-descriptor.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/survey-survey-target.json"
+      ]
+    },
+    {
+      "row_type": "http://rs.gbif.org/terms/1.0/DNADerivedData",
+      "name": "DNA derived data; versions 2021-07-05, 2022-02-23, 2024-04-17, 2024-07-11 (latest), 2026-04-14 (sandbox)",
+      "registry": "production",
+      "disposition": "conditional",
+      "target_tables": ["molecular-protocol", "nucleotide-sequence", "nucleotide-analysis"],
+      "criteria": [
+        "Each row produces one molecular-protocol row (exact-duplicate protocol tuples within the archive may share one row), one nucleotide-sequence row and one nucleotide-analysis row linking them.",
+        "121 of 123 terms map to the molecular-protocol field whose dcterms:isVersionOf equals the term IRI; gbif:dna_sequence goes to nucleotide-sequence.sequence.",
+        "nucleotide-analysis.event_fk = coreid for an Event core, or the resolved occurrence's event_fk for an Occurrence core.",
+        "2021-07-05 and 2022-02-23 use https://w3id.org/gensc/terms/MIXS:NNNNNNN IRIs; normalise to https://w3id.org/mixs/NNNNNNN only for the 88 accessions listed in rule dna-legacy-gensc-fields.",
+        "Links to identification (nucleotideAnalysis_fk / nucleotideSequence_fk) and to material (materialEntity_fk) are review-only."
+      ],
+      "ambiguities": [
+        "molecular-protocol in the pinned schema also has DNA_sequence (isVersionOf gbif dna_sequence); a sequence is not a protocol property, so this catalogue targets nucleotide-sequence.sequence and leaves molecular-protocol.DNA_sequence empty. Confirm before implementation.",
+        "Many molecular-protocol fields are sample-level (samp_name, source_mat_id, samp_size, concentration, quantificationCycle, estimatedNumberOfCopies); deduplicating protocols across rows is only safe for exact tuple equality.",
+        "nucleotide-analysis has no occurrence_fk; the occurrence-to-sequence link exists only via identification, which asserts that the identification was based on the sequence.",
+        "dwc:occurrenceID was added in 2024-07-11; 2024-04-17 lacks it; 2021/2022 also lack samp_taxon_id, neg_cont_type, pos_cont_type. 2026-04-14 sandbox has the same 123-term set as 2024-07-11."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/c8b9c339b589-dna_derived_data_2024-07-11.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/1c97c7259077-dna_derived_data_2026-04-14.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/882e03a1bcf1-dna_derived_data_2024-04-17.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/6b74ac780da0-dna_derived_data_2022-02-23.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/ab4c6bea9178-dna_derived_data_2021-07-05.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/molecular-protocol.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/nucleotide-sequence.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/nucleotide-analysis.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md"
+      ]
+    },
+    {
+      "row_type": "http://rs.tdwg.org/chrono/terms/ChronometricAge",
+      "name": "ChronometricAge; versions zooarchnet ChronometricAge_2020-10-06 (deprecated), ChronometricAge_2021-03-27, ChronometricAge_2024-03-11 (latest), chronometric_age_2026-05-26 (sandbox)",
+      "registry": "production",
+      "disposition": "conditional",
+      "target_tables": ["chronometric-age"],
+      "criteria": [
+        "chronometric-age.event_fk is required: Event core uses coreid; Occurrence core uses the resolved occurrence's event_fk.",
+        "All 18 extension terms copy to the identically named field (isVersionOf equality).",
+        "chronometricAge_pk minted unless chronometricAgeID is non-empty and unique."
+      ],
+      "ambiguities": [
+        "For an Occurrence core the age describes the material/organism in deep time while event_fk points at the collecting event; the pinned table offers no material link apart from materialDated/materialDatedID text.",
+        "2026-05-26 sandbox widens subject from dwc:Occurrence to 'dwc:Event dwc:Occurrence' with an unchanged term set."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/b62128535760-ChronometricAge_2024-03-11.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/362f49e28e97-chronometric_age_2026-05-26.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/9e700f97a9ea-ChronometricAge_2021-03-27.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/41b992a577e1-ChronometricAge_2020-10-06.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/chronometric-age.json"
+      ]
+    },
+    {
+      "row_type": "http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact",
+      "name": "Extended Measurement Or Facts (OBIS eMoF); versions extended_measurement_or_fact (2016), 2023-08-28 (latest)",
+      "registry": "production",
+      "disposition": "conditional",
+      "target_tables": ["occurrence-assertion", "event-assertion"],
+      "criteria": [
+        "Non-empty dwc:occurrenceID that equals exactly one emitted occurrence's occurrenceID: occurrence-assertion for that occurrence.",
+        "Empty occurrenceID with an Event core and resolvable coreid: event-assertion.",
+        "Occurrence core with empty occurrenceID (or occurrenceID equal to the coreid's occurrence): occurrence-assertion.",
+        "Non-empty occurrenceID that does not resolve: review; never create an occurrence for it.",
+        "measurementTypeID/ValueID/UnitID go to assertionTypeIRI/assertionValueIRI/assertionUnitIRI only when the value is an absolute IRI."
+      ],
+      "ambiguities": [
+        "OBIS uses eMoF for sampling-gear and effort facts (e.g. sampling instrument, mesh size, sampled volume) that DwC-DP models as protocol or survey properties; re-targeting is review-only.",
+        "Biotic eMoF rows on occurrences can be organism-level or specimen-level.",
+        "2016 and 2023-08-28 share the same 13-term set."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/8eec6306652f-extended_measurement_or_fact_2023-08-28.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/98a164f3c48a-extended_measurement_or_fact.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event-assertion.json"
+      ]
+    },
+    {
+      "row_type": "http://data.ggbn.org/schemas/ggbn/terms/Permit",
+      "name": "GGBN Permit Extension; versions permit (2016), permit_2022-08-08 (latest)",
+      "registry": "production",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": [
+        "No permit, legal-document or access-and-benefit-sharing table exists in the pinned schema.",
+        "Preserve and report; do not fold permit text into usage-policy (usage policy is about rights to use data/media, not collecting permits)."
+      ],
+      "ambiguities": [
+        "Both registered versions carry the same five terms (permitType, permitStatus, permitStatusQualifier, permitURI, permitText)."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/f43f0488fce6-permit_2022-08-08.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/7f3078ff48b9-permit.xml"
+      ]
+    },
+    {
+      "row_type": "http://rs.gbif.org/terms/1.0/Distribution",
+      "name": "Species Distribution; versions distribution (2015), 2020-07-15, 2022-02-02 (latest)",
+      "registry": "production",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": [
+        "Subject is a taxon in an area; there is no taxon or taxon-distribution table.",
+        "Never create event, occurrence, or survey rows from distribution rows, even though eventDate, occurrenceStatus, establishmentMeans and countryCode look like occurrence terms.",
+        "Preserve and report."
+      ],
+      "ambiguities": [
+        "2022-02-02 adds degreeOfEstablishment and pathway with vocabularies; occurrenceStatus vocabulary location changed in 2020-07-15."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/10bcdc218647-distribution_2022-02-02.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/253157a133ec-distribution_2020-07-15.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/3f066d79bac6-distribution.xml"
+      ]
+    },
+    {
+      "row_type": "http://rs.gbif.org/terms/1.0/SpeciesProfile",
+      "name": "Species Profile; versions speciesprofile (2015), speciesprofile_2019-01-29 (latest)",
+      "registry": "production",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": [
+        "Taxon-level traits (isMarine, isExtinct, lifeForm, habitat, massInGrams); no taxon-assertion table.",
+        "Preserve and report."
+      ],
+      "ambiguities": [],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/36a3462d3f18-speciesprofile_2019-01-29.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/31c6a971e623-speciesprofile.xml"
+      ]
+    },
+    {
+      "row_type": "http://zooarchnet.org/dwc/terms/ChronometricAge",
+      "name": "ChronometricAge (deprecated ZooArchNet namespace), 2018-11-13",
+      "registry": "production",
+      "disposition": "review",
+      "target_tables": ["chronometric-age"],
+      "criteria": [
+        "Deprecated; terms are in the zooarchnet namespace, so IRI equality with chrono:* fails.",
+        "Only verbatimChronometricAge, chronometricAgeUncertaintyInYears, chronometricAgeUncertaintyMethod, materialDated, materialDatedID, chronometricAgeProtocol, chronometricAgeReferences, chronometricAgeRemarks have same-named chrono targets; a reviewer must confirm definitions are unchanged.",
+        "maximum/minimumChronometricAge(ReferenceSystem) vs earliest/latestChronometricAge(ReferenceSystem) is a semantic re-interpretation (oldest/youngest) and needs review."
+      ],
+      "ambiguities": [
+        "verbatimChronometricAgeConversionProtocol has no exact field (chronometricAgeConversionProtocol is not verbatim)."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/c3dd3ce1ae1d-ChronometricAge_2018-11-13.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/chronometric-age.json"
+      ]
+    },
+    {
+      "row_type": "http://zooarchnet.org/dwc/terms/ChronometricDate",
+      "name": "ChronometricDate (deprecated ZooArchNet), chronometricDate.xml",
+      "registry": "production",
+      "disposition": "review",
+      "target_tables": ["chronometric-age"],
+      "criteria": [
+        "Deprecated predecessor of ChronometricAge; same term pattern as the 2018 zooarchnet ChronometricAge with chronometricDate* names.",
+        "Any mapping to chronometric-age requires human confirmation of each term's meaning."
+      ],
+      "ambiguities": [
+        "maximum/minimum vs earliest/latest semantics; chronometricDateProtocol vs chronometricAgeProtocol."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/70a6b5ea6d4a-chronometricDate.xml"
+      ]
+    },
+    {
+      "row_type": "http://rs.gbif.org/terms/1.0/Releve",
+      "name": "GBIF Relevé 2016-05-10",
+      "registry": "production",
+      "disposition": "conditional",
+      "target_tables": ["event-assertion"],
+      "criteria": [
+        "Registered subject is dwc:Event; with an Event core and resolvable coreid, each populated numeric/boolean column becomes one event-assertion row (rule releve-event-assertions).",
+        "assertionUnit is taken from the unit fixed in the term name/definition (InPercentage -> %, InMeters -> m, InCentimeters -> cm, InDegrees -> degrees); otherwise blank.",
+        "project and syntaxonName are not converted (rule releve-project-syntaxon)."
+      ],
+      "ambiguities": [
+        "syntaxonName is a vegetation-unit classification of the plot; identification cannot target an event in the pinned schema.",
+        "project could be provenance.projectTitle but that changes the record's provenance scope."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/f6bfd6ba228d-releve_2016-05-10.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event-assertion.json"
+      ]
+    },
+    {
+      "row_type": "http://data.ggbn.org/schemas/ggbn/terms/Amplification",
+      "name": "GGBN Amplification Extension (2016-01-13)",
+      "registry": "production",
+      "disposition": "review",
+      "target_tables": ["molecular-protocol", "nucleotide-sequence", "nucleotide-analysis"],
+      "criteria": [
+        "Designed for a Material Sample core; requires that the core record became a material row before any nucleotide-analysis.materialEntity_fk can be set.",
+        "Candidate field matches are by meaning, not IRI: primerSequenceForward/Reverse vs pcr_primer_forward/reverse, primerNameForward/Reverse vs pcr_primer_name_forward/reverse, consensusSequence/barcodeSequence vs nucleotide-sequence.sequence, marker vs target_gene, markerSubfragment vs target_subfragment.",
+        "MIxS terms use legacy http://gensc.org/ns/mixs/ IRIs that do not equal the pinned w3id IRIs."
+      ],
+      "ambiguities": [
+        "A row may contain two sequences (consensus and barcode) and accession numbers (geneticAccessionNumber, BOLDProcessID) with no identifier field on nucleotide-sequence other than nucleotideSequenceID.",
+        "amplificationSuccess, GC-content, haplotype, chromatogram URI have no field."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/9ba1e766131d-amplification.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/molecular-protocol.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/nucleotide-sequence.json"
+      ]
+    },
+    {
+      "row_type": "http://data.ggbn.org/schemas/ggbn/terms/Cloning",
+      "name": "GGBN DNA Cloning Extension (2016-01-13)",
+      "registry": "production",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": [
+        "16 cloning-process terms; no cloning or lab-process table. Preserve and report."
+      ],
+      "ambiguities": [],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/95b63b04c6a2-cloning.xml"
+      ]
+    },
+    {
+      "row_type": "http://data.ggbn.org/schemas/ggbn/terms/GelImage",
+      "name": "GGBN Gel Image Extension (2016-01-13)",
+      "registry": "production",
+      "disposition": "review",
+      "target_tables": ["media", "material-media"],
+      "criteria": [
+        "A gel image is a media resource of an amplification product, not of the specimen; a reviewer must decide whether material-media to the core material is acceptable.",
+        "Requires the core record to have become a material row."
+      ],
+      "ambiguities": [
+        "Gel-specific terms (ladder, voltage, run time) have no media fields."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/d40c19c53f7e-gelimage.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material-media.json"
+      ]
+    },
+    {
+      "row_type": "http://data.ggbn.org/schemas/ggbn/terms/Loan",
+      "name": "GGBN Loan Extension (2016-01-13)",
+      "registry": "production",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": [
+        "Loan transactions (loanIdentifier, loanDate, loanDestination, blocked, blockedUntil) have no table. Preserve and report."
+      ],
+      "ambiguities": [
+        "dcterms:disposition in this extension is not the same IRI as material.disposition (dwc:disposition); do not merge."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/921c64a4620f-loan.xml"
+      ]
+    },
+    {
+      "row_type": "http://data.ggbn.org/schemas/ggbn/terms/MaterialSample",
+      "name": "GGBN Material Sample Extension (2016-01-13)",
+      "registry": "production",
+      "disposition": "review",
+      "target_tables": ["material", "material-assertion"],
+      "criteria": [
+        "Only applicable when the core record (Material Sample / Occurrence with basisOfRecord MaterialSample) was emitted as exactly one material row.",
+        "Quantities (concentration, volume, weight, ratios, DNA melting point) are candidates for material-assertion rows with assertionTypeIRI = source term IRI and units from the paired *Unit column.",
+        "materialSampleType is a candidate for material.materialEntityType but GGBN vocabulary vs DwC-DP usage must be confirmed."
+      ],
+      "ambiguities": [
+        "MIxS terms use legacy http://gensc.org/ns/mixs/ IRIs.",
+        "quality/qualityCheckDate/qualityRemarks describe a QC event, not a static property."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/fd370de48fbc-materialsample.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material-assertion.json"
+      ]
+    },
+    {
+      "row_type": "http://data.ggbn.org/schemas/ggbn/terms/Preparation",
+      "name": "GGBN Preparation Extension (2016-01-13)",
+      "registry": "production",
+      "disposition": "review",
+      "target_tables": ["material", "protocol", "material-protocol"],
+      "criteria": [
+        "Preparation steps (type, process, materials, preparedBy, date) are process records; material.preparations is a summary string and protocol/material-protocol has no date or agent.",
+        "Requires a resolvable material row."
+      ],
+      "ambiguities": [
+        "A preparation can create a derived material (e.g. DNA extract) which DwC-DP models as a new material with derivedFromMaterialEntityID and derivationEvent_fk."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/562146f37ea9-preparation.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material.json"
+      ]
+    },
+    {
+      "row_type": "http://data.ggbn.org/schemas/ggbn/terms/Preservation",
+      "name": "GGBN Preservation Extension (2016-01-13)",
+      "registry": "production",
+      "disposition": "review",
+      "target_tables": ["material-assertion"],
+      "criteria": [
+        "preservationType/Temperature/DateBegin are candidates for material-assertion rows on a resolvable material; ordering (ggbn:sequence) has no field."
+      ],
+      "ambiguities": [],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/55f9a5676d11-preservation.xml"
+      ]
+    },
+    {
+      "row_type": "http://rs.gbif.org/terms/1.0/Description",
+      "name": "Taxon Description (2015)",
+      "registry": "production",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": ["Taxon-level text; no taxon table. Preserve and report."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/c0127fcf3585-description.xml"]
+    },
+    {
+      "row_type": "http://rs.gbif.org/terms/1.0/Identifier",
+      "name": "Alternative Identifiers (2015)",
+      "registry": "production",
+      "disposition": "conditional",
+      "target_tables": ["occurrence-identifier", "event-identifier"],
+      "criteria": [
+        "Occurrence core with resolvable coreid: occurrence-identifier(occurrence_fk, identifier).",
+        "Event core with resolvable coreid: event-identifier(event_fk, identifier).",
+        "Taxon core: unsupported.",
+        "dcterms:title, dcterms:subject, dcterms:format and dwc:datasetID have no identifier-table field and are preserved."
+      ],
+      "ambiguities": [
+        "dcterms:format describes the identified resource's format, not the identifier scheme; it must not populate identifierType."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/e4e4b0b7aaaa-identifier.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-identifier.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event-identifier.json"
+      ]
+    },
+    {
+      "row_type": "http://rs.gbif.org/terms/1.0/Image",
+      "name": "Simple Images (deprecated, 2015)",
+      "registry": "production",
+      "disposition": "conditional",
+      "target_tables": ["media", "occurrence-media", "event-media", "usage-policy", "provenance"],
+      "criteria": [
+        "Same handling as Simple Multimedia (rules gbif-mm-*) for the shared terms.",
+        "dcterms:spatial, geo:latitude, geo:longitude have no media field and are preserved.",
+        "Registered subject is 'dwc:Taxon dwc:Occurrence'; Taxon-core files are unsupported."
+      ],
+      "ambiguities": ["Same subject ambiguity as Audiovisual."],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/e2c7fd2e9688-images.xml"]
+    },
+    {
+      "row_type": "http://rs.gbif.org/terms/1.0/Multimedia",
+      "name": "Simple Multimedia (2015)",
+      "registry": "production",
+      "disposition": "conditional",
+      "target_tables": ["media", "occurrence-media", "event-media", "usage-policy", "provenance"],
+      "criteria": [
+        "One media row per row; dcterms:identifier (the media file URL in this extension) -> media.accessURI when it is an absolute http(s) URL.",
+        "Link to occurrence-media / event-media by core type as for Audiovisual; Taxon core unsupported.",
+        "dcterms:contributor, dcterms:publisher, dcterms:audience have no literal field and are preserved."
+      ],
+      "ambiguities": [
+        "dcterms:creator is used as a literal name here; it maps to provenance.creator (dc:creator literal) and must not become an agent row without an identity policy.",
+        "Same subject ambiguity as Audiovisual."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/94571ca69f7d-multimedia.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/media.json"
+      ]
+    },
+    {
+      "row_type": "http://rs.gbif.org/terms/1.0/Reference",
+      "name": "Literature References (2015)",
+      "registry": "production",
+      "disposition": "conditional",
+      "target_tables": ["bibliographic-resource", "occurrence-reference", "event-reference"],
+      "criteria": [
+        "Occurrence or Event core with resolvable coreid: one bibliographic-resource per distinct reference (by identifier if present, else by exact bibliographicCitation) plus one occurrence-reference/event-reference row.",
+        "relationshipType is left blank; do not invent 'cited in'.",
+        "Taxon core: unsupported."
+      ],
+      "ambiguities": [
+        "dcterms:source (the containing work) has no literal field; isPartOfReferenceID needs an identifier for a second bibliographic-resource row.",
+        "dcterms:date is generic; mapping it to issued assumes it is the publication date as the extension documents."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/a6d313919dbb-references.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/bibliographic-resource.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-reference.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event-reference.json"
+      ]
+    },
+    {
+      "row_type": "http://rs.gbif.org/terms/1.0/VernacularName",
+      "name": "Vernacular Names (2015)",
+      "registry": "production",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": [
+        "Taxon-level names with language/locality; identification.vernacularName is a property of a determination, not a list of taxon names. Preserve and report."
+      ],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/f6865b45fa37-vernacularname.xml"]
+    },
+    {
+      "row_type": "http://rs.nordgen.org/dwc/germplasm/0.1/terms/GermplasmSample",
+      "name": "Germplasm 0.1 (deprecated draft)",
+      "registry": "production",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": ["Deprecated draft superseded by the purl.org/germplasm extensions. Preserve and report."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/a1b2a0145608-germplasm.xml"]
+    },
+    {
+      "row_type": "http://purl.org/germplasm/germplasmTerm#GermplasmAccession",
+      "name": "Germplasm accession (v20140515)",
+      "registry": "production",
+      "disposition": "review",
+      "target_tables": ["material"],
+      "criteria": [
+        "A genebank accession is a material entity; MCPD passport terms overlapping material fields (institution, catalogue/accession number) need term-by-term confirmation.",
+        "Not audited term-by-term in this catalogue."
+      ],
+      "ambiguities": ["MCPD codes (biological status, acquisition source) have no fields."],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/ae90e94b2293-GermplasmAccession.xml"]
+    },
+    {
+      "row_type": "http://purl.org/germplasm/germplasmTerm#MeasurementScore",
+      "name": "Trait measurement score (v20140515)",
+      "registry": "production",
+      "disposition": "review",
+      "target_tables": ["material-assertion"],
+      "criteria": [
+        "Scores link to germplasm by g.germplasmID, possibly external to the archive; a material-assertion requires a resolvable material row."
+      ],
+      "ambiguities": ["Trait and trial definitions live in sibling extensions or external resources."],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/2dadad759a37-MeasurementScore.xml"]
+    },
+    {
+      "row_type": "http://purl.org/germplasm/germplasmTerm#MeasurementTrait",
+      "name": "Trait descriptor (v20140508)",
+      "registry": "production",
+      "disposition": "review",
+      "target_tables": ["protocol"],
+      "criteria": ["Trait method descriptors resemble protocol rows; needs review of identifiers and scale definitions."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/e3c2cb4ff61a-MeasurementTrait.xml"]
+    },
+    {
+      "row_type": "http://purl.org/germplasm/germplasmTerm#MeasurementTrial",
+      "name": "Trait measurement trial (v20140508)",
+      "registry": "production",
+      "disposition": "review",
+      "target_tables": ["event"],
+      "criteria": ["A field/greenhouse trial is event-like; creating event rows from it is a modelling decision."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/5014798f62ff-MeasurementTrial.xml"]
+    },
+    {
+      "row_type": "http://eol.org/schema/media/Document",
+      "name": "EOL Media Extension 1.0",
+      "registry": "production",
+      "disposition": "review",
+      "target_tables": ["media"],
+      "criteria": [
+        "Designed for taxon pages (text and multimedia keyed to taxa); taxon-linked rows are unsupported.",
+        "Rows attached to an Occurrence core could follow the Audiovisual path only after a term-by-term audit (not done here)."
+      ],
+      "ambiguities": ["Text documents may be bibliographic resources rather than media."],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/c34fa59ea7e7-media_extension.xml"]
+    },
+    {
+      "row_type": "http://eol.org/schema/reference/Reference",
+      "name": "EOL References Extension 1.0",
+      "registry": "production",
+      "disposition": "review",
+      "target_tables": ["bibliographic-resource"],
+      "criteria": ["Bibliographic records referenced by EOL media/taxa; only convertible when the referencing record is itself convertible."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/650d0e7712e0-reference_extension.xml"]
+    },
+    {
+      "row_type": "http://purl.org/plic/terms/3.2.1/PlinianCore",
+      "name": "Plinian Core Simple Extension (sandbox, deprecated path)",
+      "registry": "sandbox",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": ["Taxon-level species information; no taxon table. Preserve and report."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/11b5c0fbae31-PliC1_generic.xml"]
+    },
+    {
+      "row_type": "http://purl.org/plic/terms/3.2.1/Distribution",
+      "name": "Plinian Distribution Extension (sandbox)",
+      "registry": "sandbox",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": ["Taxon distribution; never converted to occurrences. Preserve and report."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/eaa216ecbf9e-PliC3_distribution.xml"]
+    },
+    {
+      "row_type": "http://purl.org/plic/terms/3.2.1/Legislation",
+      "name": "Plinian Legislation Extension (sandbox)",
+      "registry": "sandbox",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": ["Taxon-level legal status. Preserve and report."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/b6ce47b16277-PliC6_legislation.xml"]
+    },
+    {
+      "row_type": "http://purl.org/plic/terms/3.2.1/Uses",
+      "name": "Plinian Uses Extension (sandbox)",
+      "registry": "sandbox",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": ["Taxon-level uses. Preserve and report."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/a5edee587870-PliC8_uses.xml"]
+    },
+    {
+      "row_type": "http://purl.org/plic/terms/3.2.1/Synonyms",
+      "name": "Plinian Synonym Extension (sandbox)",
+      "registry": "sandbox",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": ["Name relations of a taxon. Preserve and report."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/f4e04eaef672-PliC2_synonyms.xml"]
+    },
+    {
+      "row_type": "http://purl.org/plic/terms/3.2.1/Endemicity",
+      "name": "Plinian Endemicity Extension (sandbox)",
+      "registry": "sandbox",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": ["Taxon-area endemism. Preserve and report."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/7150a6fbfc09-PliC4_endemicity.xml"]
+    },
+    {
+      "row_type": "http://purl.org/plic/terms/3.2.1/ThreatStatus",
+      "name": "Plinian ThreatStatus Extension (sandbox)",
+      "registry": "sandbox",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": ["Taxon conservation status. Preserve and report."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/376990d3f51c-PliC5_threatStatus.xml"]
+    },
+    {
+      "row_type": "http://purl.org/plic/terms/3.2.1/ManagementAndConservation",
+      "name": "Plinian ManagementAndConservation Extension (sandbox)",
+      "registry": "sandbox",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": ["Taxon-level management actions. Preserve and report."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/284dc28f0ecb-PliC7_managementAndConservation.xml"]
+    },
+    {
+      "row_type": "https://terms.catalogueoflife.org/NameRelation",
+      "name": "COL Name Relation Extension (sandbox, 2022-12-14)",
+      "registry": "sandbox",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": [
+        "Nomenclatural relations between names (relatedNameID, type); no name table. Must not be copied into resource-relationship because subject/related identifiers are name IDs with no emitted record. Preserve and report."
+      ],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/55ff8fd8b42c-col-name-relation.xml"]
+    },
+    {
+      "row_type": "http://rs.gbif.org/sandbox/terms/tcs/tcrel.rdf#TaxonConceptRelationship",
+      "name": "Taxon Concept Relationship (sandbox, 2017-08-25)",
+      "registry": "sandbox",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": ["Set-theory relations between taxon concepts; no taxon table. Preserve and report."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/d3b1be31bf12-tcrel.xml"]
+    },
+    {
+      "row_type": "http://rs.gbif.org/issg/terms/Distribution",
+      "name": "Invasive Species Distribution (ISSG, sandbox)",
+      "registry": "sandbox",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": ["Checklist distribution with invasiveness; never converted to occurrences. Preserve and report."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/6e52159e4e9d-issg-distribution.xml"]
+    },
+    {
+      "row_type": "http://rs.gbif.org/issg/terms/Pathways",
+      "name": "Invasive Species Pathways (ISSG, sandbox)",
+      "registry": "sandbox",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": ["Taxon-level introduction pathways; occurrence.pathway is per-occurrence and must not be filled from them. Preserve and report."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/d55c55c481ee-issg-pathway.xml"]
+    },
+    {
+      "row_type": "http://rs.gbif.org/terms/1.0/Chromosomes",
+      "name": "Chromosomes Count (sandbox)",
+      "registry": "sandbox",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": ["Taxon-level karyology. Preserve and report."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/4481b9e476cb-chromosomes.xml"]
+    },
+    {
+      "row_type": "http://rs.gbif.org/terms/1.0/Ellenberg",
+      "name": "Ellenberg ecological indicators (sandbox)",
+      "registry": "sandbox",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": ["Taxon-level indicator values. Preserve and report."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/359d486264a6-gbif_ellenberg_indicator.xml"]
+    },
+    {
+      "row_type": "http://www.gisin.org/IASProfile/SpeciesStatus",
+      "name": "GISIN Species Status (sandbox)",
+      "registry": "sandbox",
+      "disposition": "unsupported",
+      "target_tables": [],
+      "criteria": ["Taxon status profile. Preserve and report."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/1c416ff66454-gisin_2.0_species_status.xml"]
+    },
+    {
+      "row_type": "http://rs.gbif.org/terms/1.0/Links",
+      "name": "Web Links (sandbox)",
+      "registry": "sandbox",
+      "disposition": "review",
+      "target_tables": ["bibliographic-resource", "occurrence-reference"],
+      "criteria": [
+        "Taxon-core files: unsupported.",
+        "Occurrence-core files: a web page is a documentary resource, but whether it is a reference about the occurrence (occurrence-reference) or general further information needs review."
+      ],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/0b3f97f2d0d9-links.xml"]
+    },
+    {
+      "row_type": "https://tdwg.github.io/attribution/people/dwc/AgentActions",
+      "name": "AgentActions (sandbox, 2020-09-08)",
+      "registry": "sandbox",
+      "disposition": "conditional",
+      "target_tables": ["agent", "occurrence-agent-role", "identification-agent-role"],
+      "criteria": [
+        "Occurrence core with resolvable coreid: one occurrence-agent-role per row; if dwc:identificationID is non-empty and resolves to an emitted identification, use identification-agent-role instead.",
+        "agent rows: agentID = dcterms:identifier when non-empty; agent_pk deterministic from agentID; never merge agents by name.",
+        "agentRoleOrder is required: use getty displayOrder when present, else row order within the coreid."
+      ],
+      "ambiguities": [
+        "action (what was done) and role (capacity) are separate source terms but agentRole is one field; map role and preserve action unless role is empty.",
+        "prov:startedAtTime/endedAtTime vs single agentRoleDate."
+      ],
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/3492b8278565-agent_actions_v2020-09-08.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-agent-role.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/agent.json"
+      ]
+    },
+    {
+      "row_type": "http://www.birdscanada.org/bmde/Observation",
+      "name": "Bird Monitoring Data Exchange (sandbox, 2020-10-19)",
+      "registry": "sandbox",
+      "disposition": "review",
+      "target_tables": [],
+      "criteria": [
+        "Occurrence-level bird-monitoring terms, many duplicating DwC core terms; not audited term-by-term here. Preserve until audited."
+      ],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/7977dd7db803-bmde_2020_10_19.xml"]
+    },
+    {
+      "row_type": "http://rs.nbn.org.uk/dwc/nxf/0.1/terms/nxfOccurrence",
+      "name": "NBN eXchange Format (sandbox draft)",
+      "registry": "sandbox",
+      "disposition": "review",
+      "target_tables": [],
+      "criteria": ["UK-specific draft occurrence terms; not audited term-by-term. Preserve until audited."],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/f12e834ca1b0-NBNeXchangeFormat.xml"]
+    },
+    {
+      "row_type": "http://rs.tdwg.org/ac/terms/Multimedia#ServiceAccessPointVocabulary",
+      "name": "Audubon Service Access Point (sandbox)",
+      "registry": "sandbox",
+      "disposition": "review",
+      "target_tables": ["media"],
+      "criteria": [
+        "Each row is an alternative representation of a media resource; DwC-DP media has variantLiteral/variantIRI/accessURI per row, so each access point could be its own media row with derivedFromMediaID, but that changes record cardinality and needs review."
+      ],
+      "ambiguities": [],
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/0a84b1f51130-audubon_serviceaccesspoint.xml"]
+    }
+  ],
+  "rules": [
+    {
+      "id": "gen-preserve-unconsumed",
+      "source_row_types": [],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "unsupported",
+      "conditions": [
+        "Applies to every source file, row and column in the archive.",
+        "Any column not consumed by an applied rule, any row whose row-level rule did not fire, and any file whose row type is not in this catalogue is preserved verbatim (original archive retained) and listed in the conversion report with file, row type, term IRI, row count and non-empty value count."
+      ],
+      "rationale": "Model or rule recommendations never authorise dropping data; unsupported content must be visible to the user.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/docs/dwca-conversion/README.md"]
+    },
+    {
+      "id": "gen-version-by-term-set",
+      "source_row_types": [],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "automatic",
+      "conditions": [
+        "Identify an extension's version by comparing meta.xml field term IRIs with the registered term sets, not by row type alone; record the matched version URL in the conversion log.",
+        "When no registered version matches exactly, apply rules term-by-term (rules are term-keyed) and report unknown terms under gen-preserve-unconsumed."
+      ],
+      "rationale": "Several families keep one row type across materially different term sets (Audiovisual 96 vs 157 terms; DNA legacy gensc IRIs; ResourceRelationship before/after resourceID).",
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/registry-files.json"]
+    },
+    {
+      "id": "gen-coreid-resolution",
+      "source_row_types": [],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "An extension row whose coreid does not resolve to exactly one emitted core record (missing, duplicated, or core row itself unconverted) is not placed; it goes to the review queue and is preserved."
+      ],
+      "rationale": "Every row-level rule in this catalogue depends on an unambiguous attachment record.",
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/dp/index.md"]
+    },
+    {
+      "id": "gen-attachment-is-not-subject",
+      "source_row_types": [],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "Placing an extension row on the table matching its core is recorded with subject_basis=core_attachment.",
+        "Moving a row to a different subject (material, organism, survey, protocol, media, identification) requires an explicit source signal named in a family rule, or human approval of a model recommendation; the recommendation and approver are logged."
+      ],
+      "rationale": "DwC-A star schemas link everything to the core row; DwC-DP distinguishes occurrence, organism, material, event and survey subjects.",
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md"]
+    },
+    {
+      "id": "gen-weak-key-uniqueness",
+      "source_row_types": [],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "conditional",
+      "conditions": [
+        "Source identifiers (measurementID, identificationID, resourceRelationshipID, chronometricAgeID, dcterms:identifier of media) are copied to the target ID field only when non-empty and unique within the target table after conversion; otherwise the ID field stays empty and the collision is reported.",
+        "Required *_pk fields are minted deterministically (stable hash of archive checksum, file name and row number) when no unique source ID exists."
+      ],
+      "rationale": "assertionID, resourceRelationshipID and similar weak primary keys are declared unique in the pinned schemas.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/resource-relationship.json"
+      ]
+    },
+    {
+      "id": "occ-extension-on-event-core",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": [],
+      "targets": [{"table": "occurrence", "field": "event_fk"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Archive core row type is dwc:Event and the Occurrence extension row's coreid resolves to exactly one emitted event.",
+        "All other occurrence terms are handled by the core-term catalogue."
+      ],
+      "rationale": "Event-core archives attach occurrences to the event in which they were recorded.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json"]
+    },
+    {
+      "id": "mof-subject-occurrence-core",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/MeasurementOrFact"],
+      "source_terms": [],
+      "targets": [{"table": "occurrence-assertion", "field": "occurrence_fk"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Archive core row type is dwc:Occurrence.",
+        "coreid resolves to exactly one emitted occurrence; occurrence_fk = its occurrence_pk.",
+        "Log subject_basis=core_attachment.",
+        "No trigger of mof-subject-retarget-review is applied automatically; triggers only add the row to the review queue after placement."
+      ],
+      "rationale": "Every MoF field has an exact home in occurrence-assertion, so placement is lossless and faithful to the publisher's link; semantic re-targeting is a separate decision.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/7a9ee2a21351-measurements_or_facts_2025-07-10.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json"
+      ]
+    },
+    {
+      "id": "mof-subject-event-core",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/MeasurementOrFact"],
+      "source_terms": [],
+      "targets": [{"table": "event-assertion", "field": "event_fk"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Archive core row type is dwc:Event.",
+        "coreid resolves to exactly one emitted event; event_fk = its event_pk.",
+        "Log subject_basis=core_attachment."
+      ],
+      "rationale": "Same as mof-subject-occurrence-core for Event cores.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event-assertion.json"]
+    },
+    {
+      "id": "mof-subject-taxon-core",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/MeasurementOrFact"],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "unsupported",
+      "conditions": ["Archive core row type is dwc:Taxon."],
+      "rationale": "Taxon traits have no assertion table in the pinned schema; converting them to occurrence or event assertions would invent subjects.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/index.json"]
+    },
+    {
+      "id": "mof-subject-retarget-review",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/MeasurementOrFact", "http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/measurementType"],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "Queue for review (row stays where the subject rule placed it until approved) when any of: the occurrence was also emitted as a material row and measurementType/measurementMethod refers to specimen handling or preservation; the occurrence carries organismID and the type is a permanent trait; an Event-core row's event has a survey and the type describes design or effort; measurementType names gear, mesh, volume, duration or effort.",
+        "Candidate destinations: material-assertion.materialEntity_fk, organism-assertion.organism_fk, survey-assertion.survey_fk, protocol rows. A move is applied only with human approval."
+      ],
+      "rationale": "Attachment to a core does not establish the semantic subject of an assertion.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material-assertion.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/organism-assertion.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/survey-assertion.json"
+      ]
+    },
+    {
+      "id": "mof-measurement-id",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/MeasurementOrFact", "http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/measurementID"],
+      "targets": [{"table": "occurrence-assertion", "field": "assertionID"}, {"table": "event-assertion", "field": "assertionID"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Write to the one assertion table chosen by the row's subject rule.",
+        "Non-empty and unique within that table (gen-weak-key-uniqueness)."
+      ],
+      "rationale": "assertionID is a unique weak primary key.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json"]
+    },
+    {
+      "id": "mof-measurement-type",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/MeasurementOrFact", "http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/measurementType"],
+      "targets": [{"table": "occurrence-assertion", "field": "assertionType"}, {"table": "event-assertion", "field": "assertionType"}],
+      "disposition": "automatic",
+      "conditions": ["Write verbatim to the assertion table chosen by the row's subject rule."],
+      "rationale": "assertionType is the DwC-DP name for the MoF type (table isVersionOf dwc:MeasurementOrFact).",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json"]
+    },
+    {
+      "id": "mof-verbatim-measurement-type",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/MeasurementOrFact"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/verbatimMeasurementType"],
+      "targets": [{"table": "occurrence-assertion", "field": "verbatimAssertionType"}, {"table": "event-assertion", "field": "verbatimAssertionType"}],
+      "disposition": "automatic",
+      "conditions": ["Present from measurements_or_facts_2025-07-10; write verbatim to the chosen assertion table."],
+      "rationale": "Same definition (original-record type string).",
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/7a9ee2a21351-measurements_or_facts_2025-07-10.xml"]
+    },
+    {
+      "id": "mof-measurement-value",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/MeasurementOrFact", "http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/measurementValue"],
+      "targets": [{"table": "occurrence-assertion", "field": "assertionValue"}, {"table": "event-assertion", "field": "assertionValue"}],
+      "disposition": "automatic",
+      "conditions": ["Write verbatim (no numeric coercion) to the chosen assertion table."],
+      "rationale": "Direct equivalent.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json"]
+    },
+    {
+      "id": "mof-measurement-accuracy",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/MeasurementOrFact", "http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/measurementAccuracy"],
+      "targets": [{"table": "occurrence-assertion", "field": "assertionError"}, {"table": "event-assertion", "field": "assertionError"}],
+      "disposition": "automatic",
+      "conditions": ["Write verbatim to the chosen assertion table."],
+      "rationale": "Both are 'a description of the potential error' of the value (identical examples in definitions).",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json"]
+    },
+    {
+      "id": "mof-measurement-unit",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/MeasurementOrFact", "http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/measurementUnit"],
+      "targets": [{"table": "occurrence-assertion", "field": "assertionUnit"}, {"table": "event-assertion", "field": "assertionUnit"}],
+      "disposition": "automatic",
+      "conditions": ["Write verbatim to the chosen assertion table."],
+      "rationale": "Direct equivalent.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json"]
+    },
+    {
+      "id": "mof-determined-by",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/MeasurementOrFact", "http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/measurementDeterminedBy"],
+      "targets": [{"table": "occurrence-assertion", "field": "assertionBy"}, {"table": "event-assertion", "field": "assertionBy"}],
+      "disposition": "automatic",
+      "conditions": ["Write verbatim (keep ' | ' list separators) to the chosen assertion table; do not create agent rows."],
+      "rationale": "assertionBy is the list of names responsible for the assertion.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json"]
+    },
+    {
+      "id": "mof-determined-date",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/MeasurementOrFact", "http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/measurementDeterminedDate"],
+      "targets": [{"table": "occurrence-assertion", "field": "assertionMadeDate"}, {"table": "event-assertion", "field": "assertionMadeDate"}],
+      "disposition": "automatic",
+      "conditions": ["Write verbatim to the chosen assertion table; leave assertionEffectiveDate empty."],
+      "rationale": "measurementDeterminedDate is when the measurement/fact was made, i.e. when the assertion was created.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json"]
+    },
+    {
+      "id": "mof-method",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/MeasurementOrFact", "http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/measurementMethod"],
+      "targets": [{"table": "occurrence-assertion", "field": "assertionProtocols"}, {"table": "event-assertion", "field": "assertionProtocols"}],
+      "disposition": "automatic",
+      "conditions": ["Write verbatim to the chosen assertion table; do not mint protocol rows or assertionProtocol_fk from free text."],
+      "rationale": "assertionProtocols holds names/references/descriptions of protocols.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json"]
+    },
+    {
+      "id": "mof-remarks",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/MeasurementOrFact", "http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/measurementRemarks"],
+      "targets": [{"table": "occurrence-assertion", "field": "assertionRemarks"}, {"table": "event-assertion", "field": "assertionRemarks"}],
+      "disposition": "automatic",
+      "conditions": ["Write verbatim to the chosen assertion table."],
+      "rationale": "Direct equivalent.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json"]
+    },
+    {
+      "id": "mof-parent-measurement",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/MeasurementOrFact"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/parentMeasurementID"],
+      "targets": [],
+      "disposition": "unsupported",
+      "conditions": ["Any non-empty value."],
+      "rationale": "No assertion table in the pinned schema has a parent-assertion field; nested facts would be flattened if dropped, so the value is preserved and reported.",
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/b8faadbbb106-measurements_or_facts_2024-02-19.xml"]
+    },
+    {
+      "id": "emof-subject-explicit-occurrence",
+      "source_row_types": ["http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/occurrenceID"],
+      "targets": [{"table": "occurrence-assertion", "field": "occurrence_fk"}],
+      "disposition": "conditional",
+      "conditions": [
+        "occurrenceID is non-empty and equals the occurrenceID of exactly one emitted occurrence.",
+        "For an Event core, that occurrence's event is the coreid event or one of its descendants; otherwise review.",
+        "Log subject_basis=explicit_occurrenceID."
+      ],
+      "rationale": "eMoF's occurrenceID is an explicit publisher link from the fact to an occurrence.",
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/8eec6306652f-extended_measurement_or_fact_2023-08-28.xml"]
+    },
+    {
+      "id": "emof-subject-event-core",
+      "source_row_types": ["http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact"],
+      "source_terms": [],
+      "targets": [{"table": "event-assertion", "field": "event_fk"}],
+      "disposition": "conditional",
+      "conditions": [
+        "occurrenceID is empty, archive core is dwc:Event and coreid resolves to exactly one emitted event.",
+        "Log subject_basis=core_attachment."
+      ],
+      "rationale": "eMoF documents event-core rows without occurrenceID as event-level facts.",
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/8eec6306652f-extended_measurement_or_fact_2023-08-28.xml"]
+    },
+    {
+      "id": "emof-subject-occurrence-core",
+      "source_row_types": ["http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact"],
+      "source_terms": [],
+      "targets": [{"table": "occurrence-assertion", "field": "occurrence_fk"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Archive core is dwc:Occurrence, coreid resolves to exactly one emitted occurrence, and occurrenceID is empty or equal to that occurrence's occurrenceID.",
+        "Log subject_basis=core_attachment."
+      ],
+      "rationale": "Same as MoF on an Occurrence core.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json"]
+    },
+    {
+      "id": "emof-unresolved-occurrence",
+      "source_row_types": ["http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/occurrenceID"],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "occurrenceID is non-empty and matches zero or several emitted occurrences, or matches an occurrence outside the coreid event subtree."
+      ],
+      "rationale": "Never create an occurrence to satisfy a dangling link, and never silently fall back to the event.",
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/8eec6306652f-extended_measurement_or_fact_2023-08-28.xml"]
+    },
+    {
+      "id": "emof-iri-columns",
+      "source_row_types": ["http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact"],
+      "source_terms": [
+        "http://rs.iobis.org/obis/terms/measurementTypeID",
+        "http://rs.iobis.org/obis/terms/measurementValueID",
+        "http://rs.iobis.org/obis/terms/measurementUnitID"
+      ],
+      "targets": [
+        {"table": "occurrence-assertion", "field": "assertionTypeIRI"},
+        {"table": "occurrence-assertion", "field": "assertionValueIRI"},
+        {"table": "occurrence-assertion", "field": "assertionUnitIRI"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Pairwise source_terms[i] -> targets[i]; for event-placed rows use the identically named event-assertion fields.",
+        "Value is an absolute IRI (scheme http, https or urn); otherwise leave the IRI field empty and preserve the value.",
+        "Do not derive assertionTypeSource/ValueSource/UnitSource from the IRI host."
+      ],
+      "rationale": "The DwC-DP *IRI fields are versions of dwciri measurementType/measurementValue/assertionUnit and only accept IRIs.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event-assertion.json"
+      ]
+    },
+    {
+      "id": "rr-row",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/ResourceRelationship"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/resourceID"],
+      "targets": [{"table": "resource-relationship", "field": "subjectResourceID"}],
+      "disposition": "conditional",
+      "conditions": [
+        "resourceID is non-empty; copy verbatim.",
+        "If resourceID differs from the coreid record's identifier, keep resourceID (explicit) and log the difference."
+      ],
+      "rationale": "resource-relationship is the generic, lossless home for DwC-A relationships; subjectResourceID is required.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/07e6f571c8a1-resource_relationship_2025-07-10.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/resource-relationship.json"
+      ]
+    },
+    {
+      "id": "rr-missing-resource-id",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/ResourceRelationship"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/resourceID"],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "resourceID is empty or absent (always the case for the 2015 resource_relation.xml term set).",
+        "A reviewer may approve using the coreid record as subject for the whole file; the approval is logged."
+      ],
+      "rationale": "The core attachment does not by itself say which resource is the subject of the relationship.",
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/f8159360815c-resource_relation.xml"]
+    },
+    {
+      "id": "rr-related-internal",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/ResourceRelationship"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/relatedResourceID"],
+      "targets": [{"table": "resource-relationship", "field": "relatedResourceID"}],
+      "disposition": "conditional",
+      "conditions": ["Value equals the source identifier of at least one record emitted in this package."],
+      "rationale": "relatedResourceID is for objects within the dataset.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/resource-relationship.json"]
+    },
+    {
+      "id": "rr-related-external",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/ResourceRelationship"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/relatedResourceID"],
+      "targets": [{"table": "resource-relationship", "field": "externalRelatedResourceID"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Value is non-empty and matches no emitted record.",
+        "Leave externalRelatedResourceSource empty unless a source column exists in the archive."
+      ],
+      "rationale": "externalRelatedResourceID is for objects outside the dataset.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/resource-relationship.json"]
+    },
+    {
+      "id": "rr-direct-fields",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/ResourceRelationship"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/relationshipOfResource",
+        "http://rs.tdwg.org/dwc/terms/relationshipAccordingTo",
+        "http://rs.tdwg.org/dwc/terms/relationshipEstablishedDate",
+        "http://rs.tdwg.org/dwc/terms/relationshipRemarks"
+      ],
+      "targets": [
+        {"table": "resource-relationship", "field": "relationshipType"},
+        {"table": "resource-relationship", "field": "relationshipAccordingTo"},
+        {"table": "resource-relationship", "field": "relationshipEstablishedDate"},
+        {"table": "resource-relationship", "field": "relationshipRemarks"}
+      ],
+      "disposition": "automatic",
+      "conditions": ["Pairwise source_terms[i] -> targets[i]; copy verbatim on rows placed by rr-row. relationshipType is never normalised or translated."],
+      "rationale": "Same definitions; relationshipType keeps the publisher's string so no meaning is added.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/resource-relationship.json"]
+    },
+    {
+      "id": "rr-relationship-iri",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/ResourceRelationship"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/relationshipOfResourceID"],
+      "targets": [{"table": "resource-relationship", "field": "relationshipTypeIRI"}],
+      "disposition": "conditional",
+      "conditions": ["Value is an absolute IRI; otherwise preserve and report."],
+      "rationale": "relationshipTypeIRI accepts only IRIs.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/resource-relationship.json"]
+    },
+    {
+      "id": "rr-relationship-id",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/ResourceRelationship"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/resourceRelationshipID"],
+      "targets": [{"table": "resource-relationship", "field": "resourceRelationshipID"}],
+      "disposition": "conditional",
+      "conditions": ["Non-empty and unique (gen-weak-key-uniqueness)."],
+      "rationale": "Weak primary key; must be preserved in aggregation.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/resource-relationship.json"]
+    },
+    {
+      "id": "rr-resource-types",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/ResourceRelationship"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/resourceID", "http://rs.tdwg.org/dwc/terms/relatedResourceID"],
+      "targets": [
+        {"table": "resource-relationship", "field": "subjectResourceType"},
+        {"table": "resource-relationship", "field": "relatedResourceType"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Pairwise; fill with the DwC class name of the emitted table (e.g. dwc:Occurrence, dwc:MaterialEntity) only when the identifier resolves to records of exactly one table.",
+        "Otherwise leave empty."
+      ],
+      "rationale": "Derived from package structure, not from the relationship string.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/resource-relationship.json"]
+    },
+    {
+      "id": "rr-promote-organism-interaction",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/ResourceRelationship"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/relationshipOfResource",
+        "http://rs.tdwg.org/dwc/terms/relationshipOfResourceID"
+      ],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "Eligible for review only if resourceID and relatedResourceID each resolve to exactly one emitted occurrence and both occurrences share an event (or a reviewer supplies one).",
+        "The relationship string or IRI must state an observed act (e.g. 'visited', 'was eating'); habitual or taxon-level predicates ('host of', 'parasitoid of', 'pollinator of members of taxon') are not promoted.",
+        "Approved rows populate organism-interaction (event_fk, subjectOccurrence_fk, organismInteractionType, relatedOccurrenceID); the resource-relationship row is retained."
+      ],
+      "rationale": "organism-interaction supports only primary observed interactions; a string match cannot establish that.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/organism-interaction.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md"
+      ]
+    },
+    {
+      "id": "rr-promote-organism-relationship",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/ResourceRelationship"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/relationshipOfResource"],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "Both identifiers resolve to emitted organism rows and the relation is permanent (kinship, clone-of).",
+        "Approved rows populate organism-relationship (subjectOrganism_fk, relationshipType, relatedOrganismID); the resource-relationship row is retained."
+      ],
+      "rationale": "organism-relationship must be a permanent relationship between organisms.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/organism-relationship.json"]
+    },
+    {
+      "id": "rr-promote-material-derivation",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/ResourceRelationship"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/relationshipOfResource"],
+      "targets": [],
+      "disposition": "review",
+      "conditions": ["Both identifiers resolve to emitted material rows and the relation states derivation or part-of (e.g. 'subsample of', 'tissue from')."],
+      "rationale": "material.derivedFromMaterialEntityID / isPartOfMaterialEntityID are structural assertions that should be confirmed.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material.json"]
+    },
+    {
+      "id": "rr-legacy-scientific-name",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/ResourceRelationship"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/scientificName"],
+      "targets": [],
+      "disposition": "unsupported",
+      "conditions": ["Present only in resource_relation.xml (2015)."],
+      "rationale": "A relation to a taxon by name has no subject record; it must not be turned into an identification.",
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/f8159360815c-resource_relation.xml"]
+    },
+    {
+      "id": "idh-row-occurrence-core",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Identification"],
+      "source_terms": [],
+      "targets": [{"table": "identification", "field": "occurrence_fk"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Archive core is dwc:Occurrence and coreid resolves to exactly one emitted occurrence.",
+        "identification_pk minted per gen-weak-key-uniqueness (identificationID used only if unique)."
+      ],
+      "rationale": "The extension's registered subject is dwc:Occurrence; the pinned identification table links an identification 'based on' an occurrence.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/04f59612b392-identification_history_2025-07-10.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification.json"
+      ]
+    },
+    {
+      "id": "idh-row-other-core",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Identification"],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "review",
+      "conditions": ["Archive core is not dwc:Occurrence (Event core, or MaterialSample-style core in 2015-era archives)."],
+      "rationale": "An identification must be based on an occurrence, organism, material, media or sequence; an event is not a valid basis.",
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/3dbfb54bd0a0-identification.xml"]
+    },
+    {
+      "id": "idh-direct-fields",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Identification"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/identificationID",
+        "http://rs.tdwg.org/dwc/terms/identificationType",
+        "http://rs.tdwg.org/dwc/terms/verbatimIdentification",
+        "http://rs.tdwg.org/dwc/terms/isAcceptedIdentification",
+        "http://rs.tdwg.org/dwc/terms/typeStatus",
+        "http://rs.tdwg.org/dwc/terms/identifiedBy",
+        "http://rs.tdwg.org/dwc/terms/identifiedByID",
+        "http://rs.tdwg.org/dwc/terms/dateIdentified",
+        "http://rs.tdwg.org/dwc/terms/identificationReferences",
+        "http://rs.tdwg.org/dwc/terms/identificationVerificationStatus",
+        "http://rs.tdwg.org/dwc/terms/identificationRemarks",
+        "http://rs.tdwg.org/dwc/terms/taxonID",
+        "http://rs.tdwg.org/dwc/terms/scientificNameID",
+        "http://rs.tdwg.org/dwc/terms/scientificName",
+        "http://rs.tdwg.org/dwc/terms/scientificNameAuthorship",
+        "http://rs.tdwg.org/dwc/terms/vernacularName",
+        "http://rs.tdwg.org/dwc/terms/taxonRank",
+        "http://rs.tdwg.org/dwc/terms/kingdom",
+        "http://rs.tdwg.org/dwc/terms/phylum",
+        "http://rs.tdwg.org/dwc/terms/class",
+        "http://rs.tdwg.org/dwc/terms/order",
+        "http://rs.tdwg.org/dwc/terms/superfamily",
+        "http://rs.tdwg.org/dwc/terms/family",
+        "http://rs.tdwg.org/dwc/terms/subfamily",
+        "http://rs.tdwg.org/dwc/terms/tribe",
+        "http://rs.tdwg.org/dwc/terms/subtribe",
+        "http://rs.tdwg.org/dwc/terms/genus",
+        "http://rs.tdwg.org/dwc/terms/genericName",
+        "http://rs.tdwg.org/dwc/terms/subgenus",
+        "http://rs.tdwg.org/dwc/terms/infragenericEpithet",
+        "http://rs.tdwg.org/dwc/terms/specificEpithet",
+        "http://rs.tdwg.org/dwc/terms/infraspecificEpithet",
+        "http://rs.tdwg.org/dwc/terms/cultivarEpithet",
+        "http://rs.tdwg.org/dwc/terms/nameAccordingTo",
+        "http://rs.tdwg.org/dwc/terms/nomenclaturalCode",
+        "http://rs.tdwg.org/dwc/terms/nomenclaturalStatus",
+        "http://rs.tdwg.org/dwc/terms/namePublishedIn",
+        "http://rs.tdwg.org/dwc/terms/namePublishedInYear",
+        "http://rs.tdwg.org/dwc/terms/taxonRemarks"
+      ],
+      "targets": [
+        {"table": "identification", "field": "identificationID"},
+        {"table": "identification", "field": "identificationType"},
+        {"table": "identification", "field": "verbatimIdentification"},
+        {"table": "identification", "field": "isAcceptedIdentification"},
+        {"table": "identification", "field": "typeStatus"},
+        {"table": "identification", "field": "identifiedBy"},
+        {"table": "identification", "field": "identifiedByID"},
+        {"table": "identification", "field": "dateIdentified"},
+        {"table": "identification", "field": "identificationReferences"},
+        {"table": "identification", "field": "identificationVerificationStatus"},
+        {"table": "identification", "field": "identificationRemarks"},
+        {"table": "identification", "field": "taxonID"},
+        {"table": "identification", "field": "scientificNameID"},
+        {"table": "identification", "field": "scientificName"},
+        {"table": "identification", "field": "scientificNameAuthorship"},
+        {"table": "identification", "field": "vernacularName"},
+        {"table": "identification", "field": "taxonRank"},
+        {"table": "identification", "field": "kingdom"},
+        {"table": "identification", "field": "phylum"},
+        {"table": "identification", "field": "class"},
+        {"table": "identification", "field": "order"},
+        {"table": "identification", "field": "superfamily"},
+        {"table": "identification", "field": "family"},
+        {"table": "identification", "field": "subfamily"},
+        {"table": "identification", "field": "tribe"},
+        {"table": "identification", "field": "subtribe"},
+        {"table": "identification", "field": "genus"},
+        {"table": "identification", "field": "genericName"},
+        {"table": "identification", "field": "subgenus"},
+        {"table": "identification", "field": "infragenericEpithet"},
+        {"table": "identification", "field": "specificEpithet"},
+        {"table": "identification", "field": "infraspecificEpithet"},
+        {"table": "identification", "field": "cultivarEpithet"},
+        {"table": "identification", "field": "nameAccordingTo"},
+        {"table": "identification", "field": "nomenclaturalCode"},
+        {"table": "identification", "field": "nomenclaturalStatus"},
+        {"table": "identification", "field": "namePublishedIn"},
+        {"table": "identification", "field": "namePublishedInYear"},
+        {"table": "identification", "field": "taxonRemarks"}
+      ],
+      "disposition": "automatic",
+      "conditions": [
+        "Pairwise source_terms[i] -> targets[i], verbatim, on rows placed by idh-row-occurrence-core.",
+        "identificationID still subject to gen-weak-key-uniqueness for use as identification_pk.",
+        "identificationType and isAcceptedIdentification only exist in the 2026-05-26 sandbox version.",
+        "Do not run name matching or fill higher ranks that are absent in the source (taxon matching is a separate, logged step)."
+      ],
+      "rationale": "Identical local names and DwC term IRIs in source and target.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/ad28fdcad23f-identification_history_2026-05-26.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification.json"
+      ]
+    },
+    {
+      "id": "idh-accepted-inferred",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Identification"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/identificationID"],
+      "targets": [{"table": "identification", "field": "isAcceptedIdentification"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Source has no isAcceptedIdentification column.",
+        "Set 'true' only when identificationID is non-empty and equals the core occurrence's dwc:identificationID; never write 'false'."
+      ],
+      "rationale": "The extension documents that the current identification is repeated in the core; an exact ID match is a deterministic signal, absence of a match is not.",
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/production-extensions.json"]
+    },
+    {
+      "id": "idh-core-duplicate",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Identification"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/identificationID", "http://rs.tdwg.org/dwc/terms/scientificName", "http://rs.tdwg.org/dwc/terms/dateIdentified"],
+      "targets": [],
+      "disposition": "conditional",
+      "conditions": [
+        "If the core mapping also emits an identification for the same occurrence and the history row has the same identificationID, emit one identification (history values win only where the core value is empty; conflicts go to review).",
+        "Without an identificationID match, do not merge on name/date similarity; emit both and flag possible duplication for review."
+      ],
+      "rationale": "Avoid duplicate determinations without guessing equivalence.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification.json"]
+    },
+    {
+      "id": "idh-qualifier",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Identification"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/identificationQualifier"],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "Preserve always.",
+        "A reviewer may set identification.taxonFormula (e.g. 'A cf.', 'A aff.') for an approved qualifier vocabulary; values outside it stay unsupported."
+      ],
+      "rationale": "taxonFormula is a pattern for constructing an identification; deriving it from a free-text qualifier is interpretive.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification.json"]
+    },
+    {
+      "id": "idh-name-usage-terms",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Identification"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/acceptedNameUsageID",
+        "http://rs.tdwg.org/dwc/terms/parentNameUsageID",
+        "http://rs.tdwg.org/dwc/terms/originalNameUsageID",
+        "http://rs.tdwg.org/dwc/terms/nameAccordingToID",
+        "http://rs.tdwg.org/dwc/terms/namePublishedInID",
+        "http://rs.tdwg.org/dwc/terms/taxonConceptID",
+        "http://rs.tdwg.org/dwc/terms/acceptedNameUsage",
+        "http://rs.tdwg.org/dwc/terms/parentNameUsage",
+        "http://rs.tdwg.org/dwc/terms/originalNameUsage",
+        "http://rs.tdwg.org/dwc/terms/higherClassification",
+        "http://rs.tdwg.org/dwc/terms/verbatimTaxonRank",
+        "http://rs.tdwg.org/dwc/terms/taxonomicStatus"
+      ],
+      "targets": [],
+      "disposition": "unsupported",
+      "conditions": ["Any non-empty value."],
+      "rationale": "No corresponding identification or identification-taxon field exists in the pinned schema.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification-taxon.json"
+      ]
+    },
+    {
+      "id": "dna-row-structure",
+      "source_row_types": ["http://rs.gbif.org/terms/1.0/DNADerivedData"],
+      "source_terms": [],
+      "targets": [
+        {"table": "nucleotide-analysis", "field": "molecularProtocol_fk"},
+        {"table": "nucleotide-analysis", "field": "nucleotideSequence_fk"},
+        {"table": "nucleotide-analysis", "field": "event_fk"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "coreid resolves to exactly one emitted event (Event core) or occurrence (Occurrence core).",
+        "Emit molecular-protocol (molecularProtocol_pk minted; rows with identical protocol-field tuples may share one), nucleotide-sequence (nucleotideSequence_pk minted) and nucleotide-analysis linking them.",
+        "event_fk = coreid event for Event cores, or the resolved occurrence's event_fk for Occurrence cores.",
+        "materialEntity_fk left empty unless dna-material-link is approved."
+      ],
+      "rationale": "nucleotide-analysis requires molecularProtocol_fk and nucleotideSequence_fk and is the DwC-DP link between sequence, protocol, event and material.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/nucleotide-analysis.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md"
+      ]
+    },
+    {
+      "id": "dna-mixs-fields",
+      "source_row_types": ["http://rs.gbif.org/terms/1.0/DNADerivedData"],
+      "source_terms": [
+        "https://w3id.org/mixs/0001107", "https://w3id.org/mixs/0000092", "https://w3id.org/mixs/0000008", "https://w3id.org/mixs/0001320", "https://w3id.org/mixs/0001321", "https://w3id.org/mixs/0001322", "https://w3id.org/mixs/0000012", "https://w3id.org/mixs/0000013", "https://w3id.org/mixs/0000014", "https://w3id.org/mixs/0000020",
+        "https://w3id.org/mixs/0000021", "https://w3id.org/mixs/0000022", "https://w3id.org/mixs/0000023", "https://w3id.org/mixs/0000024", "https://w3id.org/mixs/0000025", "https://w3id.org/mixs/0000026", "https://w3id.org/mixs/0000027", "https://w3id.org/mixs/0000028", "https://w3id.org/mixs/0000029", "https://w3id.org/mixs/0000030",
+        "https://w3id.org/mixs/0000031", "https://w3id.org/mixs/0000032", "https://w3id.org/mixs/0000033", "https://w3id.org/mixs/0000034", "https://w3id.org/mixs/0000015", "https://w3id.org/mixs/0000003", "https://w3id.org/mixs/0000002", "https://w3id.org/mixs/0001225", "https://w3id.org/mixs/0000016", "https://w3id.org/mixs/0000017",
+        "https://w3id.org/mixs/0000001", "https://w3id.org/mixs/0000111", "https://w3id.org/mixs/0000035", "https://w3id.org/mixs/0000036", "https://w3id.org/mixs/0000037", "https://w3id.org/mixs/0000038", "https://w3id.org/mixs/0000039", "https://w3id.org/mixs/0000040", "https://w3id.org/mixs/0000041", "https://w3id.org/mixs/0000042",
+        "https://w3id.org/mixs/0000043", "https://w3id.org/mixs/0000044", "https://w3id.org/mixs/0000045", "https://w3id.org/mixs/0000046", "https://w3id.org/mixs/0000047", "https://w3id.org/mixs/0000048", "https://w3id.org/mixs/0000049", "https://w3id.org/mixs/0000050", "https://w3id.org/mixs/0000051", "https://w3id.org/mixs/0000052",
+        "https://w3id.org/mixs/0000053", "https://w3id.org/mixs/0000056", "https://w3id.org/mixs/0000057", "https://w3id.org/mixs/0000058", "https://w3id.org/mixs/0000059", "https://w3id.org/mixs/0000060", "https://w3id.org/mixs/0000061", "https://w3id.org/mixs/0000062", "https://w3id.org/mixs/0000063", "https://w3id.org/mixs/0000064",
+        "https://w3id.org/mixs/0000065", "https://w3id.org/mixs/0000066", "https://w3id.org/mixs/0000067", "https://w3id.org/mixs/0000068", "https://w3id.org/mixs/0000069", "https://w3id.org/mixs/0000070", "https://w3id.org/mixs/0000071", "https://w3id.org/mixs/0000072", "https://w3id.org/mixs/0000005", "https://w3id.org/mixs/0000073",
+        "https://w3id.org/mixs/0000074", "https://w3id.org/mixs/0000075", "https://w3id.org/mixs/0000076", "https://w3id.org/mixs/0000054", "https://w3id.org/mixs/0000055", "https://w3id.org/mixs/0000006", "https://w3id.org/mixs/0000077", "https://w3id.org/mixs/0000078", "https://w3id.org/mixs/0000079", "https://w3id.org/mixs/0000080",
+        "https://w3id.org/mixs/0000081", "https://w3id.org/mixs/0000082", "https://w3id.org/mixs/0000083", "https://w3id.org/mixs/0000084", "https://w3id.org/mixs/0000085", "https://w3id.org/mixs/0000086", "https://w3id.org/mixs/0000087", "https://w3id.org/mixs/0000088", "https://w3id.org/mixs/0000089", "https://w3id.org/mixs/0000091",
+        "https://w3id.org/mixs/0000090"
+      ],
+      "targets": [
+        {"table": "molecular-protocol", "field": "samp_name"}, {"table": "molecular-protocol", "field": "project_name"}, {"table": "molecular-protocol", "field": "experimental_factor"}, {"table": "molecular-protocol", "field": "samp_taxon_id"}, {"table": "molecular-protocol", "field": "neg_cont_type"}, {"table": "molecular-protocol", "field": "pos_cont_type"}, {"table": "molecular-protocol", "field": "env_broad_scale"}, {"table": "molecular-protocol", "field": "env_local_scale"}, {"table": "molecular-protocol", "field": "env_medium"}, {"table": "molecular-protocol", "field": "subspecf_gen_lin"},
+        {"table": "molecular-protocol", "field": "ploidy"}, {"table": "molecular-protocol", "field": "num_replicons"}, {"table": "molecular-protocol", "field": "extrachrom_elements"}, {"table": "molecular-protocol", "field": "estimated_size"}, {"table": "molecular-protocol", "field": "ref_biomaterial"}, {"table": "molecular-protocol", "field": "source_mat_id"}, {"table": "molecular-protocol", "field": "pathogenicity"}, {"table": "molecular-protocol", "field": "biotic_relationship"}, {"table": "molecular-protocol", "field": "specific_host"}, {"table": "molecular-protocol", "field": "host_spec_range"},
+        {"table": "molecular-protocol", "field": "host_disease_stat"}, {"table": "molecular-protocol", "field": "trophic_level"}, {"table": "molecular-protocol", "field": "propagation"}, {"table": "molecular-protocol", "field": "encoded_traits"}, {"table": "molecular-protocol", "field": "rel_to_oxygen"}, {"table": "molecular-protocol", "field": "isol_growth_condt"}, {"table": "molecular-protocol", "field": "samp_collect_device"}, {"table": "molecular-protocol", "field": "samp_collect_method"}, {"table": "molecular-protocol", "field": "samp_mat_process"}, {"table": "molecular-protocol", "field": "size_frac"},
+        {"table": "molecular-protocol", "field": "samp_size"}, {"table": "molecular-protocol", "field": "samp_vol_we_dna_ext"}, {"table": "molecular-protocol", "field": "source_uvig"}, {"table": "molecular-protocol", "field": "virus_enrich_appr"}, {"table": "molecular-protocol", "field": "nucl_acid_ext"}, {"table": "molecular-protocol", "field": "nucl_acid_amp"}, {"table": "molecular-protocol", "field": "lib_size"}, {"table": "molecular-protocol", "field": "lib_reads_seqd"}, {"table": "molecular-protocol", "field": "lib_layout"}, {"table": "molecular-protocol", "field": "lib_vector"},
+        {"table": "molecular-protocol", "field": "lib_screen"}, {"table": "molecular-protocol", "field": "target_gene"}, {"table": "molecular-protocol", "field": "target_subfragment"}, {"table": "molecular-protocol", "field": "pcr_primers"}, {"table": "molecular-protocol", "field": "mid"}, {"table": "molecular-protocol", "field": "adapters"}, {"table": "molecular-protocol", "field": "pcr_cond"}, {"table": "molecular-protocol", "field": "seq_meth"}, {"table": "molecular-protocol", "field": "seq_quality_check"}, {"table": "molecular-protocol", "field": "chimera_check"},
+        {"table": "molecular-protocol", "field": "tax_ident"}, {"table": "molecular-protocol", "field": "assembly_qual"}, {"table": "molecular-protocol", "field": "assembly_name"}, {"table": "molecular-protocol", "field": "assembly_software"}, {"table": "molecular-protocol", "field": "annot"}, {"table": "molecular-protocol", "field": "number_contig"}, {"table": "molecular-protocol", "field": "feat_pred"}, {"table": "molecular-protocol", "field": "ref_db"}, {"table": "molecular-protocol", "field": "sim_search_meth"}, {"table": "molecular-protocol", "field": "tax_class"},
+        {"table": "molecular-protocol", "field": "_16s_recover"}, {"table": "molecular-protocol", "field": "_16s_recover_software"}, {"table": "molecular-protocol", "field": "trnas"}, {"table": "molecular-protocol", "field": "trna_ext_software"}, {"table": "molecular-protocol", "field": "compl_score"}, {"table": "molecular-protocol", "field": "compl_software"}, {"table": "molecular-protocol", "field": "compl_appr"}, {"table": "molecular-protocol", "field": "contam_score"}, {"table": "molecular-protocol", "field": "contam_screen_input"}, {"table": "molecular-protocol", "field": "contam_screen_param"},
+        {"table": "molecular-protocol", "field": "decontam_software"}, {"table": "molecular-protocol", "field": "sort_tech"}, {"table": "molecular-protocol", "field": "single_cell_lysis_appr"}, {"table": "molecular-protocol", "field": "single_cell_lysis_prot"}, {"table": "molecular-protocol", "field": "wga_amp_appr"}, {"table": "molecular-protocol", "field": "wga_amp_kit"}, {"table": "molecular-protocol", "field": "bin_param"}, {"table": "molecular-protocol", "field": "bin_software"}, {"table": "molecular-protocol", "field": "reassembly_bin"}, {"table": "molecular-protocol", "field": "mag_cov_software"},
+        {"table": "molecular-protocol", "field": "vir_ident_software"}, {"table": "molecular-protocol", "field": "pred_genome_type"}, {"table": "molecular-protocol", "field": "pred_genome_struc"}, {"table": "molecular-protocol", "field": "detec_type"}, {"table": "molecular-protocol", "field": "otu_class_appr"}, {"table": "molecular-protocol", "field": "otu_seq_comp_appr"}, {"table": "molecular-protocol", "field": "otu_db"}, {"table": "molecular-protocol", "field": "host_pred_appr"}, {"table": "molecular-protocol", "field": "host_pred_est_acc"}, {"table": "molecular-protocol", "field": "associated_resource"},
+        {"table": "molecular-protocol", "field": "sop"}
+      ],
+      "disposition": "automatic",
+      "conditions": [
+        "Pairwise source_terms[i] -> targets[i]; each target field's dcterms:isVersionOf equals the source IRI (91 one-to-one matches checked against the pinned molecular-protocol.json).",
+        "Copy verbatim on rows placed by dna-row-structure."
+      ],
+      "rationale": "Exact term-IRI equality between the extension and the pinned table.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/c8b9c339b589-dna_derived_data_2024-07-11.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/molecular-protocol.json"
+      ]
+    },
+    {
+      "id": "dna-gbif-ggbn-miqe-fields",
+      "source_row_types": ["http://rs.gbif.org/terms/1.0/DNADerivedData"],
+      "source_terms": [
+        "http://rs.gbif.org/terms/pcr_primer_forward",
+        "http://rs.gbif.org/terms/pcr_primer_reverse",
+        "http://rs.gbif.org/terms/pcr_primer_name_forward",
+        "http://rs.gbif.org/terms/pcr_primer_name_reverse",
+        "http://rs.gbif.org/terms/pcr_primer_reference",
+        "http://data.ggbn.org/schemas/ggbn/terms/concentration",
+        "http://data.ggbn.org/schemas/ggbn/terms/concentrationUnit",
+        "http://data.ggbn.org/schemas/ggbn/terms/methodDeterminationConcentrationAndRatios",
+        "http://data.ggbn.org/schemas/ggbn/terms/ratioOfAbsorbance260_230",
+        "http://data.ggbn.org/schemas/ggbn/terms/ratioOfAbsorbance260_280",
+        "http://rs.gbif.org/terms/miqe/annealingTemp",
+        "http://rs.gbif.org/terms/miqe/annealingTempUnit",
+        "http://rs.gbif.org/terms/miqe/probeReporter",
+        "http://rs.gbif.org/terms/miqe/probeQuencher",
+        "http://rs.gbif.org/terms/miqe/ampliconSize",
+        "http://rs.gbif.org/terms/miqe/thresholdQuantificationCycle",
+        "http://rs.gbif.org/terms/miqe/baselineValue",
+        "http://rs.gbif.org/terms/miqe/quantificationCycle",
+        "http://rs.gbif.org/terms/miqe/automaticThresholdQuantificationCycle",
+        "http://rs.gbif.org/terms/miqe/automaticBaselineValue",
+        "http://rs.gbif.org/terms/miqe/contaminationAssessment",
+        "http://rs.gbif.org/terms/miqe/partitionVolume",
+        "http://rs.gbif.org/terms/miqe/partitionVolumeUnit",
+        "http://rs.gbif.org/terms/miqe/estimatedNumberOfCopies",
+        "http://rs.gbif.org/terms/miqe/amplificationReactionVolume",
+        "http://rs.gbif.org/terms/miqe/amplificationReactionVolumeUnit",
+        "http://rs.gbif.org/terms/miqe/pcr_analysis_software",
+        "http://rs.gbif.org/terms/miqe/experimentalVariance",
+        "http://rs.gbif.org/terms/miqe/pcr_primer_lod",
+        "http://rs.gbif.org/terms/miqe/pcr_primer_loq"
+      ],
+      "targets": [
+        {"table": "molecular-protocol", "field": "pcr_primer_forward"},
+        {"table": "molecular-protocol", "field": "pcr_primer_reverse"},
+        {"table": "molecular-protocol", "field": "pcr_primer_name_forward"},
+        {"table": "molecular-protocol", "field": "pcr_primer_name_reverse"},
+        {"table": "molecular-protocol", "field": "pcr_primer_reference"},
+        {"table": "molecular-protocol", "field": "concentration"},
+        {"table": "molecular-protocol", "field": "concentrationUnit"},
+        {"table": "molecular-protocol", "field": "methodDeterminationConcentrationAndRatios"},
+        {"table": "molecular-protocol", "field": "ratioOfAbsorbance260_230"},
+        {"table": "molecular-protocol", "field": "ratioOfAbsorbance260_280"},
+        {"table": "molecular-protocol", "field": "annealingTemp"},
+        {"table": "molecular-protocol", "field": "annealingTempUnit"},
+        {"table": "molecular-protocol", "field": "probeReporter"},
+        {"table": "molecular-protocol", "field": "probeQuencher"},
+        {"table": "molecular-protocol", "field": "ampliconSize"},
+        {"table": "molecular-protocol", "field": "thresholdQuantificationCycle"},
+        {"table": "molecular-protocol", "field": "baselineValue"},
+        {"table": "molecular-protocol", "field": "quantificationCycle"},
+        {"table": "molecular-protocol", "field": "automaticThresholdQuantificationCycle"},
+        {"table": "molecular-protocol", "field": "automaticBaselineValue"},
+        {"table": "molecular-protocol", "field": "contaminationAssessment"},
+        {"table": "molecular-protocol", "field": "partitionVolume"},
+        {"table": "molecular-protocol", "field": "partitionVolumeUnit"},
+        {"table": "molecular-protocol", "field": "estimatedNumberOfCopies"},
+        {"table": "molecular-protocol", "field": "amplificationReactionVolume"},
+        {"table": "molecular-protocol", "field": "amplificationReactionVolumeUnit"},
+        {"table": "molecular-protocol", "field": "pcr_analysis_software"},
+        {"table": "molecular-protocol", "field": "experimentalVariance"},
+        {"table": "molecular-protocol", "field": "pcr_primer_lod"},
+        {"table": "molecular-protocol", "field": "pcr_primer_loq"}
+      ],
+      "disposition": "automatic",
+      "conditions": ["Pairwise source_terms[i] -> targets[i]; target dcterms:isVersionOf equals the source IRI. Copy verbatim on rows placed by dna-row-structure."],
+      "rationale": "Exact term-IRI equality.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/c8b9c339b589-dna_derived_data_2024-07-11.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/molecular-protocol.json"
+      ]
+    },
+    {
+      "id": "dna-legacy-gensc-fields",
+      "source_row_types": ["http://rs.gbif.org/terms/1.0/DNADerivedData"],
+      "source_terms": [
+        "https://w3id.org/gensc/terms/MIXS:0001107", "https://w3id.org/gensc/terms/MIXS:0000092", "https://w3id.org/gensc/terms/MIXS:0000008", "https://w3id.org/gensc/terms/MIXS:0000012", "https://w3id.org/gensc/terms/MIXS:0000013", "https://w3id.org/gensc/terms/MIXS:0000014", "https://w3id.org/gensc/terms/MIXS:0000020", "https://w3id.org/gensc/terms/MIXS:0000021",
+        "https://w3id.org/gensc/terms/MIXS:0000022", "https://w3id.org/gensc/terms/MIXS:0000023", "https://w3id.org/gensc/terms/MIXS:0000024", "https://w3id.org/gensc/terms/MIXS:0000025", "https://w3id.org/gensc/terms/MIXS:0000026", "https://w3id.org/gensc/terms/MIXS:0000027", "https://w3id.org/gensc/terms/MIXS:0000028", "https://w3id.org/gensc/terms/MIXS:0000029",
+        "https://w3id.org/gensc/terms/MIXS:0000030", "https://w3id.org/gensc/terms/MIXS:0000031", "https://w3id.org/gensc/terms/MIXS:0000032", "https://w3id.org/gensc/terms/MIXS:0000033", "https://w3id.org/gensc/terms/MIXS:0000034", "https://w3id.org/gensc/terms/MIXS:0000015", "https://w3id.org/gensc/terms/MIXS:0000003", "https://w3id.org/gensc/terms/MIXS:0000002",
+        "https://w3id.org/gensc/terms/MIXS:0001225", "https://w3id.org/gensc/terms/MIXS:0000016", "https://w3id.org/gensc/terms/MIXS:0000017", "https://w3id.org/gensc/terms/MIXS:0000001", "https://w3id.org/gensc/terms/MIXS:0000111", "https://w3id.org/gensc/terms/MIXS:0000035", "https://w3id.org/gensc/terms/MIXS:0000036", "https://w3id.org/gensc/terms/MIXS:0000037",
+        "https://w3id.org/gensc/terms/MIXS:0000038", "https://w3id.org/gensc/terms/MIXS:0000039", "https://w3id.org/gensc/terms/MIXS:0000040", "https://w3id.org/gensc/terms/MIXS:0000041", "https://w3id.org/gensc/terms/MIXS:0000042", "https://w3id.org/gensc/terms/MIXS:0000043", "https://w3id.org/gensc/terms/MIXS:0000044", "https://w3id.org/gensc/terms/MIXS:0000045",
+        "https://w3id.org/gensc/terms/MIXS:0000046", "https://w3id.org/gensc/terms/MIXS:0000047", "https://w3id.org/gensc/terms/MIXS:0000048", "https://w3id.org/gensc/terms/MIXS:0000049", "https://w3id.org/gensc/terms/MIXS:0000050", "https://w3id.org/gensc/terms/MIXS:0000051", "https://w3id.org/gensc/terms/MIXS:0000052", "https://w3id.org/gensc/terms/MIXS:0000053",
+        "https://w3id.org/gensc/terms/MIXS:0000056", "https://w3id.org/gensc/terms/MIXS:0000057", "https://w3id.org/gensc/terms/MIXS:0000058", "https://w3id.org/gensc/terms/MIXS:0000059", "https://w3id.org/gensc/terms/MIXS:0000060", "https://w3id.org/gensc/terms/MIXS:0000061", "https://w3id.org/gensc/terms/MIXS:0000062", "https://w3id.org/gensc/terms/MIXS:0000063",
+        "https://w3id.org/gensc/terms/MIXS:0000064", "https://w3id.org/gensc/terms/MIXS:0000065", "https://w3id.org/gensc/terms/MIXS:0000066", "https://w3id.org/gensc/terms/MIXS:0000067", "https://w3id.org/gensc/terms/MIXS:0000068", "https://w3id.org/gensc/terms/MIXS:0000069", "https://w3id.org/gensc/terms/MIXS:0000070", "https://w3id.org/gensc/terms/MIXS:0000071",
+        "https://w3id.org/gensc/terms/MIXS:0000072", "https://w3id.org/gensc/terms/MIXS:0000005", "https://w3id.org/gensc/terms/MIXS:0000073", "https://w3id.org/gensc/terms/MIXS:0000074", "https://w3id.org/gensc/terms/MIXS:0000075", "https://w3id.org/gensc/terms/MIXS:0000076", "https://w3id.org/gensc/terms/MIXS:0000054", "https://w3id.org/gensc/terms/MIXS:0000055",
+        "https://w3id.org/gensc/terms/MIXS:0000006", "https://w3id.org/gensc/terms/MIXS:0000077", "https://w3id.org/gensc/terms/MIXS:0000078", "https://w3id.org/gensc/terms/MIXS:0000079", "https://w3id.org/gensc/terms/MIXS:0000080", "https://w3id.org/gensc/terms/MIXS:0000081", "https://w3id.org/gensc/terms/MIXS:0000082", "https://w3id.org/gensc/terms/MIXS:0000083",
+        "https://w3id.org/gensc/terms/MIXS:0000084", "https://w3id.org/gensc/terms/MIXS:0000085", "https://w3id.org/gensc/terms/MIXS:0000086", "https://w3id.org/gensc/terms/MIXS:0000087", "https://w3id.org/gensc/terms/MIXS:0000088", "https://w3id.org/gensc/terms/MIXS:0000089", "https://w3id.org/gensc/terms/MIXS:0000091", "https://w3id.org/gensc/terms/MIXS:0000090"
+      ],
+      "targets": [
+        {"table": "molecular-protocol", "field": "samp_name"}, {"table": "molecular-protocol", "field": "project_name"}, {"table": "molecular-protocol", "field": "experimental_factor"}, {"table": "molecular-protocol", "field": "env_broad_scale"}, {"table": "molecular-protocol", "field": "env_local_scale"}, {"table": "molecular-protocol", "field": "env_medium"}, {"table": "molecular-protocol", "field": "subspecf_gen_lin"}, {"table": "molecular-protocol", "field": "ploidy"},
+        {"table": "molecular-protocol", "field": "num_replicons"}, {"table": "molecular-protocol", "field": "extrachrom_elements"}, {"table": "molecular-protocol", "field": "estimated_size"}, {"table": "molecular-protocol", "field": "ref_biomaterial"}, {"table": "molecular-protocol", "field": "source_mat_id"}, {"table": "molecular-protocol", "field": "pathogenicity"}, {"table": "molecular-protocol", "field": "biotic_relationship"}, {"table": "molecular-protocol", "field": "specific_host"},
+        {"table": "molecular-protocol", "field": "host_spec_range"}, {"table": "molecular-protocol", "field": "host_disease_stat"}, {"table": "molecular-protocol", "field": "trophic_level"}, {"table": "molecular-protocol", "field": "propagation"}, {"table": "molecular-protocol", "field": "encoded_traits"}, {"table": "molecular-protocol", "field": "rel_to_oxygen"}, {"table": "molecular-protocol", "field": "isol_growth_condt"}, {"table": "molecular-protocol", "field": "samp_collect_device"},
+        {"table": "molecular-protocol", "field": "samp_collect_method"}, {"table": "molecular-protocol", "field": "samp_mat_process"}, {"table": "molecular-protocol", "field": "size_frac"}, {"table": "molecular-protocol", "field": "samp_size"}, {"table": "molecular-protocol", "field": "samp_vol_we_dna_ext"}, {"table": "molecular-protocol", "field": "source_uvig"}, {"table": "molecular-protocol", "field": "virus_enrich_appr"}, {"table": "molecular-protocol", "field": "nucl_acid_ext"},
+        {"table": "molecular-protocol", "field": "nucl_acid_amp"}, {"table": "molecular-protocol", "field": "lib_size"}, {"table": "molecular-protocol", "field": "lib_reads_seqd"}, {"table": "molecular-protocol", "field": "lib_layout"}, {"table": "molecular-protocol", "field": "lib_vector"}, {"table": "molecular-protocol", "field": "lib_screen"}, {"table": "molecular-protocol", "field": "target_gene"}, {"table": "molecular-protocol", "field": "target_subfragment"},
+        {"table": "molecular-protocol", "field": "pcr_primers"}, {"table": "molecular-protocol", "field": "mid"}, {"table": "molecular-protocol", "field": "adapters"}, {"table": "molecular-protocol", "field": "pcr_cond"}, {"table": "molecular-protocol", "field": "seq_meth"}, {"table": "molecular-protocol", "field": "seq_quality_check"}, {"table": "molecular-protocol", "field": "chimera_check"}, {"table": "molecular-protocol", "field": "tax_ident"},
+        {"table": "molecular-protocol", "field": "assembly_qual"}, {"table": "molecular-protocol", "field": "assembly_name"}, {"table": "molecular-protocol", "field": "assembly_software"}, {"table": "molecular-protocol", "field": "annot"}, {"table": "molecular-protocol", "field": "number_contig"}, {"table": "molecular-protocol", "field": "feat_pred"}, {"table": "molecular-protocol", "field": "ref_db"}, {"table": "molecular-protocol", "field": "sim_search_meth"},
+        {"table": "molecular-protocol", "field": "tax_class"}, {"table": "molecular-protocol", "field": "_16s_recover"}, {"table": "molecular-protocol", "field": "_16s_recover_software"}, {"table": "molecular-protocol", "field": "trnas"}, {"table": "molecular-protocol", "field": "trna_ext_software"}, {"table": "molecular-protocol", "field": "compl_score"}, {"table": "molecular-protocol", "field": "compl_software"}, {"table": "molecular-protocol", "field": "compl_appr"},
+        {"table": "molecular-protocol", "field": "contam_score"}, {"table": "molecular-protocol", "field": "contam_screen_input"}, {"table": "molecular-protocol", "field": "contam_screen_param"}, {"table": "molecular-protocol", "field": "decontam_software"}, {"table": "molecular-protocol", "field": "sort_tech"}, {"table": "molecular-protocol", "field": "single_cell_lysis_appr"}, {"table": "molecular-protocol", "field": "single_cell_lysis_prot"}, {"table": "molecular-protocol", "field": "wga_amp_appr"},
+        {"table": "molecular-protocol", "field": "wga_amp_kit"}, {"table": "molecular-protocol", "field": "bin_param"}, {"table": "molecular-protocol", "field": "bin_software"}, {"table": "molecular-protocol", "field": "reassembly_bin"}, {"table": "molecular-protocol", "field": "mag_cov_software"}, {"table": "molecular-protocol", "field": "vir_ident_software"}, {"table": "molecular-protocol", "field": "pred_genome_type"}, {"table": "molecular-protocol", "field": "pred_genome_struc"},
+        {"table": "molecular-protocol", "field": "detec_type"}, {"table": "molecular-protocol", "field": "otu_class_appr"}, {"table": "molecular-protocol", "field": "otu_seq_comp_appr"}, {"table": "molecular-protocol", "field": "otu_db"}, {"table": "molecular-protocol", "field": "host_pred_appr"}, {"table": "molecular-protocol", "field": "host_pred_est_acc"}, {"table": "molecular-protocol", "field": "associated_resource"}, {"table": "molecular-protocol", "field": "sop"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Pairwise source_terms[i] -> targets[i]; applies only to archives whose meta.xml uses these IRIs (dna_derived_data 2021-07-05 and 2022-02-23).",
+        "The pairing is by identical MIxS accession number (MIXS:NNNNNNN == https://w3id.org/mixs/NNNNNNN); log the normalisation per column.",
+        "Do not normalise any other IRI pattern (e.g. http://gensc.org/ns/mixs/ in GGBN extensions)."
+      ],
+      "rationale": "The same MIxS accession is served under the older gensc namespace; the term definitions are those of the same accession, but the IRI is not equal, so the rule is conditional rather than automatic.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/6b74ac780da0-dna_derived_data_2022-02-23.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/ab4c6bea9178-dna_derived_data_2021-07-05.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/molecular-protocol.json"
+      ]
+    },
+    {
+      "id": "dna-sequence",
+      "source_row_types": ["http://rs.gbif.org/terms/1.0/DNADerivedData"],
+      "source_terms": ["http://rs.gbif.org/terms/dna_sequence"],
+      "targets": [{"table": "nucleotide-sequence", "field": "sequence"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Non-empty value on a row placed by dna-row-structure.",
+        "Leave molecular-protocol.DNA_sequence empty (do not write the sequence twice) pending confirmation of the open question in the notes.",
+        "When dna_sequence is empty the nucleotide-sequence row still exists (required by nucleotide-analysis) with an empty sequence."
+      ],
+      "rationale": "A sequence is the content of dwc:NucleotideSequence; molecular-protocol.DNA_sequence exists in the pinned schema but describes a protocol entity.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/nucleotide-sequence.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/molecular-protocol.json"
+      ]
+    },
+    {
+      "id": "dna-occurrence-id",
+      "source_row_types": ["http://rs.gbif.org/terms/1.0/DNADerivedData"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/occurrenceID"],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "Present from 2024-07-11. If it resolves to exactly one emitted occurrence it is offered to the reviewer as evidence for dna-identification-basis; it is never used to create an occurrence.",
+        "nucleotide-analysis has no occurrence field, so the value is otherwise preserved."
+      ],
+      "rationale": "The pinned schema links occurrences to sequences only through identification.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/nucleotide-analysis.json"]
+    },
+    {
+      "id": "dna-identification-basis",
+      "source_row_types": ["http://rs.gbif.org/terms/1.0/DNADerivedData"],
+      "source_terms": ["https://w3id.org/mixs/0000053", "https://w3id.org/mixs/0000087"],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "Candidate when the occurrence is a metabarcoding/eDNA detection (tax_ident or otu_db populated and the core identification is the sequence-based assignment).",
+        "Approved rows set identification.nucleotideAnalysis_fk (and optionally nucleotideSequence_fk) on the occurrence's identification."
+      ],
+      "rationale": "Stating that an identification was based on a sequence is a claim about evidence that the extension does not make explicitly.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification.json"]
+    },
+    {
+      "id": "dna-material-link",
+      "source_row_types": ["http://rs.gbif.org/terms/1.0/DNADerivedData"],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "review",
+      "conditions": ["Core mapping emitted a material for the same core record (e.g. basisOfRecord MaterialSample); reviewer confirms the analysed material is that material and not an undeclared extract."],
+      "rationale": "nucleotide-analysis.materialEntity_fk asserts which physical material was sequenced.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/nucleotide-analysis.json"]
+    },
+    {
+      "id": "hum-survey-row",
+      "source_row_types": ["http://rs.tdwg.org/eco/terms/Event"],
+      "source_terms": [],
+      "targets": [{"table": "survey", "field": "event_fk"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Archive core is dwc:Event and coreid resolves to exactly one emitted event; Occurrence-core attachment always requires reviewed event grouping and coverage.",
+        "Survey creation and eventCategory are explicitly confirmed; a supplied non-survey eventCategory is a review conflict.",
+        "Survey grain for duplicate or conflicting rows on an event is reviewed before minting survey_pk; source row multiplicity is never silently collapsed.",
+        "surveyID stays empty unless supplied separately; eventID is not repurposed as surveyID."
+      ],
+      "rationale": "The pinned survey table carries the Humboldt (eco:) properties and links to its event.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/survey.json"]
+    },
+    {
+      "id": "hum-survey-direct-fields",
+      "source_row_types": ["http://rs.tdwg.org/eco/terms/Event"],
+      "source_terms": [
+        "http://rs.tdwg.org/eco/terms/siteCount",
+        "http://rs.tdwg.org/eco/terms/siteNestingDescription",
+        "http://rs.tdwg.org/eco/terms/verbatimSiteDescriptions",
+        "http://rs.tdwg.org/eco/terms/verbatimSiteNames",
+        "http://rs.tdwg.org/eco/terms/geospatialScopeAreaValue",
+        "http://rs.tdwg.org/eco/terms/geospatialScopeAreaUnit",
+        "http://rs.tdwg.org/eco/terms/totalAreaSampledValue",
+        "http://rs.tdwg.org/eco/terms/totalAreaSampledUnit",
+        "http://rs.tdwg.org/eco/terms/reportedWeather",
+        "http://rs.tdwg.org/eco/terms/reportedExtremeConditions",
+        "http://rs.tdwg.org/eco/terms/eventDurationValue",
+        "http://rs.tdwg.org/eco/terms/eventDurationUnit",
+        "http://rs.tdwg.org/eco/terms/taxonCompletenessReported",
+        "http://rs.tdwg.org/eco/terms/taxonCompletenessProtocols",
+        "http://rs.tdwg.org/eco/terms/isAbsenceReported",
+        "http://rs.tdwg.org/eco/terms/absentTaxa",
+        "http://rs.tdwg.org/eco/terms/hasNonTargetTaxa",
+        "http://rs.tdwg.org/eco/terms/nonTargetTaxa",
+        "http://rs.tdwg.org/eco/terms/areNonTargetTaxaFullyReported",
+        "http://rs.tdwg.org/eco/terms/hasNonTargetOrganisms",
+        "http://rs.tdwg.org/eco/terms/verbatimTargetScope",
+        "http://rs.tdwg.org/dwc/terms/identifiedBy",
+        "http://rs.tdwg.org/dwc/terms/identificationReferences",
+        "http://rs.tdwg.org/eco/terms/compilationTypes",
+        "http://rs.tdwg.org/eco/terms/compilationSourceTypes",
+        "http://rs.tdwg.org/eco/terms/inventoryTypes",
+        "http://rs.tdwg.org/eco/terms/protocolNames",
+        "http://rs.tdwg.org/eco/terms/protocolDescriptions",
+        "http://rs.tdwg.org/eco/terms/protocolReferences",
+        "http://rs.tdwg.org/eco/terms/isAbundanceReported",
+        "http://rs.tdwg.org/eco/terms/isAbundanceCapReported",
+        "http://rs.tdwg.org/eco/terms/abundanceCap",
+        "http://rs.tdwg.org/eco/terms/isVegetationCoverReported",
+        "http://rs.tdwg.org/eco/terms/isLeastSpecificTargetCategoryQuantityInclusive",
+        "http://rs.tdwg.org/eco/terms/hasVouchers",
+        "http://rs.tdwg.org/eco/terms/voucherInstitutions",
+        "http://rs.tdwg.org/eco/terms/hasMaterialSamples",
+        "http://rs.tdwg.org/eco/terms/materialSampleTypes",
+        "http://rs.tdwg.org/eco/terms/samplingPerformedBy",
+        "http://rs.tdwg.org/eco/terms/isSamplingEffortReported",
+        "http://rs.tdwg.org/eco/terms/samplingEffortProtocol",
+        "http://rs.tdwg.org/eco/terms/samplingEffortValue",
+        "http://rs.tdwg.org/eco/terms/samplingEffortUnit"
+      ],
+      "targets": [
+        {"table": "survey", "field": "siteCount"},
+        {"table": "survey", "field": "siteNestingDescription"},
+        {"table": "survey", "field": "verbatimSiteDescriptions"},
+        {"table": "survey", "field": "verbatimSiteNames"},
+        {"table": "survey", "field": "geospatialScopeAreaValue"},
+        {"table": "survey", "field": "geospatialScopeAreaUnit"},
+        {"table": "survey", "field": "totalAreaSampledValue"},
+        {"table": "survey", "field": "totalAreaSampledUnit"},
+        {"table": "survey", "field": "reportedWeather"},
+        {"table": "survey", "field": "reportedExtremeConditions"},
+        {"table": "survey", "field": "eventDurationValue"},
+        {"table": "survey", "field": "eventDurationUnit"},
+        {"table": "survey", "field": "taxonCompletenessReported"},
+        {"table": "survey", "field": "taxonCompletenessProtocols"},
+        {"table": "survey", "field": "isAbsenceReported"},
+        {"table": "survey", "field": "absentTaxa"},
+        {"table": "survey", "field": "hasNonTargetTaxa"},
+        {"table": "survey", "field": "nonTargetTaxa"},
+        {"table": "survey", "field": "areNonTargetTaxaFullyReported"},
+        {"table": "survey", "field": "hasNonTargetOrganisms"},
+        {"table": "survey", "field": "verbatimTargetScope"},
+        {"table": "survey", "field": "identifiedBy"},
+        {"table": "survey", "field": "identificationReferences"},
+        {"table": "survey", "field": "compilationTypes"},
+        {"table": "survey", "field": "compilationSourceTypes"},
+        {"table": "survey", "field": "inventoryTypes"},
+        {"table": "survey", "field": "protocolNames"},
+        {"table": "survey", "field": "protocolDescriptions"},
+        {"table": "survey", "field": "protocolReferences"},
+        {"table": "survey", "field": "isAbundanceReported"},
+        {"table": "survey", "field": "isAbundanceCapReported"},
+        {"table": "survey", "field": "abundanceCap"},
+        {"table": "survey", "field": "isVegetationCoverReported"},
+        {"table": "survey", "field": "isLeastSpecificTargetCategoryQuantityInclusive"},
+        {"table": "survey", "field": "hasVouchers"},
+        {"table": "survey", "field": "voucherInstitutions"},
+        {"table": "survey", "field": "hasMaterialSamples"},
+        {"table": "survey", "field": "materialSampleTypes"},
+        {"table": "survey", "field": "samplingPerformedBy"},
+        {"table": "survey", "field": "isSamplingEffortReported"},
+        {"table": "survey", "field": "samplingEffortProtocol"},
+        {"table": "survey", "field": "samplingEffortValue"},
+        {"table": "survey", "field": "samplingEffortUnit"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Pairwise source_terms[i] -> targets[i]; each target's dcterms:isVersionOf equals the source IRI. Copy verbatim on rows placed by hum-survey-row.",
+        "Typed survey fields pass lexical/type and minimum checks; booleans accept only case variants of true/false, integers use signed digits, and numbers are finite plain decimals or exponents.",
+        "Every populated *Value has its source *Unit. Cross-field contradictions, including false presence/reporting flags with populated dependent descriptions or values, require review.",
+        "The term-by-term dispositions and prerequisites in cloud-audits/humboldt.json refine this coarse rule; exact IRI equality alone does not discharge typed or semantic checks.",
+        "Do not mint samplingEffortProtocol_fk or samplingProtocol_fk from text."
+      ],
+      "rationale": "Exact term-IRI equality for 43 of the 57 Humboldt terms.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/f16a0de0c5bd-humboldt_2025-07-10.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/survey.json"
+      ]
+    },
+    {
+      "id": "hum-scope-single-dimension",
+      "source_row_types": ["http://rs.tdwg.org/eco/terms/Event"],
+      "source_terms": [
+        "http://rs.tdwg.org/eco/terms/targetTaxonomicScope",
+        "http://rs.tdwg.org/eco/terms/excludedTaxonomicScope",
+        "http://rs.tdwg.org/eco/terms/isTaxonomicScopeFullyReported",
+        "http://rs.tdwg.org/eco/terms/targetHabitatScope",
+        "http://rs.tdwg.org/eco/terms/excludedHabitatScope",
+        "http://rs.tdwg.org/eco/terms/targetLifeStageScope",
+        "http://rs.tdwg.org/eco/terms/excludedLifeStageScope",
+        "http://rs.tdwg.org/eco/terms/isLifeStageScopeFullyReported",
+        "http://rs.tdwg.org/eco/terms/targetDegreeOfEstablishmentScope",
+        "http://rs.tdwg.org/eco/terms/excludedDegreeOfEstablishmentScope",
+        "http://rs.tdwg.org/eco/terms/isDegreeOfEstablishmentScopeFullyReported",
+        "http://rs.tdwg.org/eco/terms/targetGrowthFormScope",
+        "http://rs.tdwg.org/eco/terms/excludedGrowthFormScope",
+        "http://rs.tdwg.org/eco/terms/isGrowthFormScopeFullyReported"
+      ],
+      "targets": [
+        {"table": "survey-target", "field": "surveyTarget_pk"},
+        {"table": "survey-target", "field": "isSurveyTargetFullyReported"},
+        {"table": "survey-target-descriptor", "field": "surveyTarget_fk"},
+        {"table": "survey-target-descriptor", "field": "surveyTargetType"},
+        {"table": "survey-target-descriptor", "field": "surveyTargetValue"},
+        {"table": "survey-target-descriptor", "field": "includeOrExclude"},
+        {"table": "survey-survey-target", "field": "survey_fk"},
+        {"table": "survey-survey-target", "field": "surveyTarget_fk"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Exactly one dimension has a non-empty target* value; exclusion-only scopes require review. Habitat and DegreeOfEstablishment require review for missing flag or target-type policy respectively.",
+        "Create one survey-target (surveyTarget_pk minted) linked through survey-survey-target to the row's survey.",
+        "Split target*/excluded* on ' | ' only (the Humboldt list separator); each element becomes one survey-target-descriptor with surveyTargetType = 'taxon' | 'habitat' | 'lifeStage' | 'degreeOfEstablishment' | 'growthForm' and includeOrExclude = 'include' (target*) or 'exclude' (excluded*). Values are copied verbatim (no name matching).",
+        "isSurveyTargetFullyReported is required and copies a present, valid source flag; missing or invalid flags require an explicit reviewed assertion. Habitat has no flag and cannot be converted automatically. Never default to false or leave the required field empty.",
+        "Splitting on ' | ' round-trips the source; empty, padded or duplicate elements, include/exclude overlap, or suspected alternate separators require review. Flag-only dimensions remain preserved."
+      ],
+      "rationale": "A single-dimension scope is a direct restatement of the Humboldt values in the survey-target model; multi-dimension scopes are not.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/survey-target.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/survey-target-descriptor.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/survey-survey-target.json"
+      ]
+    },
+    {
+      "id": "hum-scope-multi-dimension",
+      "source_row_types": ["http://rs.tdwg.org/eco/terms/Event"],
+      "source_terms": [
+        "http://rs.tdwg.org/eco/terms/targetTaxonomicScope",
+        "http://rs.tdwg.org/eco/terms/targetHabitatScope",
+        "http://rs.tdwg.org/eco/terms/targetLifeStageScope",
+        "http://rs.tdwg.org/eco/terms/targetDegreeOfEstablishmentScope",
+        "http://rs.tdwg.org/eco/terms/targetGrowthFormScope"
+      ],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "Two or more scope dimensions populated in one row.",
+        "Reviewer chooses between one combined survey-target (conjunction, one fully-reported flag must be chosen) and separate targets per dimension; the choice is logged per survey. All scope values remain preserved until approved."
+      ],
+      "rationale": "Humboldt reports fully-reported flags per dimension; survey-target has one flag per target, so any automatic split or merge changes the absence-inference semantics.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/survey-target.json"]
+    },
+    {
+      "id": "hum-occurrence-target-link",
+      "source_row_types": ["http://rs.tdwg.org/eco/terms/Event"],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "review",
+      "conditions": ["occurrence.surveyTarget_fk is set only by reviewer decision, never inferred from taxon names or life stages."],
+      "rationale": "Deciding that an occurrence counted towards a target is an analytical judgement that affects absence inference.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json"]
+    },
+    {
+      "id": "chrono-row",
+      "source_row_types": ["http://rs.tdwg.org/chrono/terms/ChronometricAge"],
+      "source_terms": [],
+      "targets": [{"table": "chronometric-age", "field": "event_fk"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Event core: event_fk = coreid event (sandbox 2026-05-26 subject includes dwc:Event).",
+        "Occurrence core: event_fk = the resolved occurrence's event_fk; log that the age was attached via the occurrence.",
+        "chronometricAge_pk minted unless chronometricAgeID is unique."
+      ],
+      "rationale": "event_fk is required in chronometric-age; it is the only structural link available.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/chronometric-age.json"]
+    },
+    {
+      "id": "chrono-direct-fields",
+      "source_row_types": ["http://rs.tdwg.org/chrono/terms/ChronometricAge"],
+      "source_terms": [
+        "http://rs.tdwg.org/chrono/terms/chronometricAgeID",
+        "http://rs.tdwg.org/chrono/terms/verbatimChronometricAge",
+        "http://rs.tdwg.org/chrono/terms/chronometricAgeProtocol",
+        "http://rs.tdwg.org/chrono/terms/uncalibratedChronometricAge",
+        "http://rs.tdwg.org/chrono/terms/chronometricAgeConversionProtocol",
+        "http://rs.tdwg.org/chrono/terms/earliestChronometricAge",
+        "http://rs.tdwg.org/chrono/terms/earliestChronometricAgeReferenceSystem",
+        "http://rs.tdwg.org/chrono/terms/latestChronometricAge",
+        "http://rs.tdwg.org/chrono/terms/latestChronometricAgeReferenceSystem",
+        "http://rs.tdwg.org/chrono/terms/chronometricAgeUncertaintyInYears",
+        "http://rs.tdwg.org/chrono/terms/chronometricAgeUncertaintyMethod",
+        "http://rs.tdwg.org/chrono/terms/materialDated",
+        "http://rs.tdwg.org/chrono/terms/materialDatedID",
+        "http://rs.tdwg.org/chrono/terms/materialDatedRelationship",
+        "http://rs.tdwg.org/chrono/terms/chronometricAgeDeterminedBy",
+        "http://rs.tdwg.org/chrono/terms/chronometricAgeDeterminedDate",
+        "http://rs.tdwg.org/chrono/terms/chronometricAgeReferences",
+        "http://rs.tdwg.org/chrono/terms/chronometricAgeRemarks"
+      ],
+      "targets": [
+        {"table": "chronometric-age", "field": "chronometricAgeID"},
+        {"table": "chronometric-age", "field": "verbatimChronometricAge"},
+        {"table": "chronometric-age", "field": "chronometricAgeProtocol"},
+        {"table": "chronometric-age", "field": "uncalibratedChronometricAge"},
+        {"table": "chronometric-age", "field": "chronometricAgeConversionProtocol"},
+        {"table": "chronometric-age", "field": "earliestChronometricAge"},
+        {"table": "chronometric-age", "field": "earliestChronometricAgeReferenceSystem"},
+        {"table": "chronometric-age", "field": "latestChronometricAge"},
+        {"table": "chronometric-age", "field": "latestChronometricAgeReferenceSystem"},
+        {"table": "chronometric-age", "field": "chronometricAgeUncertaintyInYears"},
+        {"table": "chronometric-age", "field": "chronometricAgeUncertaintyMethod"},
+        {"table": "chronometric-age", "field": "materialDated"},
+        {"table": "chronometric-age", "field": "materialDatedID"},
+        {"table": "chronometric-age", "field": "materialDatedRelationship"},
+        {"table": "chronometric-age", "field": "chronometricAgeDeterminedBy"},
+        {"table": "chronometric-age", "field": "chronometricAgeDeterminedDate"},
+        {"table": "chronometric-age", "field": "chronometricAgeReferences"},
+        {"table": "chronometric-age", "field": "chronometricAgeRemarks"}
+      ],
+      "disposition": "automatic",
+      "conditions": ["Pairwise source_terms[i] -> targets[i]; exact isVersionOf equality. Copy verbatim on rows placed by chrono-row; do not mint *_fk protocol links."],
+      "rationale": "Exact term-IRI equality.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/b62128535760-ChronometricAge_2024-03-11.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/chronometric-age.json"
+      ]
+    },
+    {
+      "id": "chrono-zooarchnet-legacy",
+      "source_row_types": ["http://zooarchnet.org/dwc/terms/ChronometricAge", "http://zooarchnet.org/dwc/terms/ChronometricDate"],
+      "source_terms": [
+        "http://zooarchnet.org/dwc/terms/maximumChronometricAge",
+        "http://zooarchnet.org/dwc/terms/minimumChronometricAge",
+        "http://zooarchnet.org/dwc/terms/verbatimChronometricAge"
+      ],
+      "targets": [],
+      "disposition": "review",
+      "conditions": ["Any file with either deprecated row type; reviewer confirms each term's equivalence before chrono-row/chrono-direct-fields logic is applied."],
+      "rationale": "Deprecated namespace and max/min vs earliest/latest semantics are not IRI-equal.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/c3dd3ce1ae1d-ChronometricAge_2018-11-13.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/70a6b5ea6d4a-chronometricDate.xml"
+      ]
+    },
+    {
+      "id": "av-media-row",
+      "source_row_types": ["http://rs.tdwg.org/ac/terms/Multimedia"],
+      "source_terms": ["http://purl.org/dc/terms/identifier"],
+      "targets": [{"table": "media", "field": "mediaID"}],
+      "disposition": "conditional",
+      "conditions": [
+        "One media row per extension row (media_pk minted).",
+        "dcterms:identifier -> mediaID when non-empty and unique within the media table (gen-weak-key-uniqueness)."
+      ],
+      "rationale": "media.mediaID is a version of dcterms:identifier and must be preserved in aggregation.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/media.json"]
+    },
+    {
+      "id": "av-media-direct-fields",
+      "source_row_types": ["http://rs.tdwg.org/ac/terms/Multimedia"],
+      "source_terms": [
+        "http://purl.org/dc/terms/type",
+        "http://rs.tdwg.org/ac/terms/subtypeLiteral",
+        "http://rs.tdwg.org/ac/terms/subtype",
+        "http://purl.org/dc/terms/title",
+        "http://purl.org/dc/terms/modified",
+        "http://ns.adobe.com/xap/1.0/MetadataDate",
+        "http://rs.tdwg.org/ac/terms/metadataLanguageLiteral",
+        "http://rs.tdwg.org/ac/terms/metadataLanguage",
+        "http://rs.tdwg.org/ac/terms/providerManagedID",
+        "http://ns.adobe.com/xap/1.0/Rating",
+        "http://rs.tdwg.org/ac/terms/commenterLiteral",
+        "http://rs.tdwg.org/ac/terms/comments",
+        "http://rs.tdwg.org/ac/terms/reviewerLiteral",
+        "http://rs.tdwg.org/ac/terms/reviewerComments",
+        "http://purl.org/dc/terms/available",
+        "http://rs.tdwg.org/ac/terms/hasServiceAccessPoint",
+        "http://purl.org/dc/terms/description",
+        "http://rs.tdwg.org/ac/terms/caption",
+        "http://purl.org/dc/elements/1.1/language",
+        "http://purl.org/dc/terms/language",
+        "http://rs.tdwg.org/ac/terms/physicalSetting",
+        "http://rs.tdwg.org/ac/terms/subjectCategoryVocabulary",
+        "http://rs.tdwg.org/ac/terms/tag",
+        "http://rs.tdwg.org/ac/terms/freqHigh",
+        "http://rs.tdwg.org/ac/terms/freqLow",
+        "http://ns.adobe.com/xap/1.0/CreateDate",
+        "http://rs.tdwg.org/ac/terms/timeOfDay",
+        "http://rs.tdwg.org/ac/terms/subjectPart",
+        "http://rs.tdwg.org/ac/terms/subjectPartLiteral",
+        "http://rs.tdwg.org/ac/terms/subjectOrientation",
+        "http://rs.tdwg.org/ac/terms/subjectOrientationLiteral",
+        "http://rs.tdwg.org/ac/terms/digitizationDate",
+        "http://rs.tdwg.org/ac/terms/captureDevice",
+        "http://rs.tdwg.org/ac/terms/resourceCreationTechnique",
+        "http://rs.tdwg.org/ac/terms/frameRate",
+        "http://purl.org/ontology/mo/sample_rate",
+        "http://rs.tdwg.org/ac/terms/accessURI",
+        "http://purl.org/dc/elements/1.1/format",
+        "http://purl.org/dc/terms/format",
+        "http://rs.tdwg.org/ac/terms/variantLiteral",
+        "http://rs.tdwg.org/ac/terms/variant",
+        "http://rs.tdwg.org/ac/terms/variantDescription",
+        "http://rs.tdwg.org/ac/terms/furtherInformationURL",
+        "http://rs.tdwg.org/ac/terms/serviceExpectation",
+        "http://rs.tdwg.org/ac/terms/hashFunction",
+        "http://rs.tdwg.org/ac/terms/hashValue",
+        "http://ns.adobe.com/exif/1.0/PixelXDimension",
+        "http://ns.adobe.com/exif/1.0/PixelYDimension",
+        "http://rs.tdwg.org/ac/terms/isROIOf",
+        "http://rs.tdwg.org/ac/terms/xFrac",
+        "http://rs.tdwg.org/ac/terms/yFrac",
+        "http://rs.tdwg.org/ac/terms/widthFrac",
+        "http://rs.tdwg.org/ac/terms/heightFrac",
+        "http://rs.tdwg.org/ac/terms/radius",
+        "http://rs.tdwg.org/ac/terms/startTime",
+        "http://rs.tdwg.org/ac/terms/endTime",
+        "http://rs.tdwg.org/ac/terms/startTimestamp",
+        "http://rs.tdwg.org/ac/terms/endTimestamp",
+        "http://rs.tdwg.org/ac/terms/mediaDuration",
+        "http://rs.tdwg.org/ac/terms/mediaSpeed"
+      ],
+      "targets": [
+        {"table": "media", "field": "mediaType"},
+        {"table": "media", "field": "subtypeLiteral"},
+        {"table": "media", "field": "subtypeIRI"},
+        {"table": "media", "field": "title"},
+        {"table": "media", "field": "modified"},
+        {"table": "media", "field": "metadataDate"},
+        {"table": "media", "field": "metadataLanguageLiteral"},
+        {"table": "media", "field": "metadataLanguageIRI"},
+        {"table": "media", "field": "providerManagedID"},
+        {"table": "media", "field": "rating"},
+        {"table": "media", "field": "commenterLiteral"},
+        {"table": "media", "field": "comments"},
+        {"table": "media", "field": "reviewerLiteral"},
+        {"table": "media", "field": "reviewerComments"},
+        {"table": "media", "field": "available"},
+        {"table": "media", "field": "hasServiceAccessPoint"},
+        {"table": "media", "field": "description"},
+        {"table": "media", "field": "caption"},
+        {"table": "media", "field": "language"},
+        {"table": "media", "field": "languageIRI"},
+        {"table": "media", "field": "physicalSetting"},
+        {"table": "media", "field": "subjectCategoryVocabulary"},
+        {"table": "media", "field": "tag"},
+        {"table": "media", "field": "freqHigh"},
+        {"table": "media", "field": "freqLow"},
+        {"table": "media", "field": "createDate"},
+        {"table": "media", "field": "timeOfDay"},
+        {"table": "media", "field": "subjectPartIRI"},
+        {"table": "media", "field": "subjectPartLiteral"},
+        {"table": "media", "field": "subjectOrientationIRI"},
+        {"table": "media", "field": "subjectOrientationLiteral"},
+        {"table": "media", "field": "digitizationDate"},
+        {"table": "media", "field": "captureDevice"},
+        {"table": "media", "field": "resourceCreationTechnique"},
+        {"table": "media", "field": "frameRate"},
+        {"table": "media", "field": "sample-rate"},
+        {"table": "media", "field": "accessURI"},
+        {"table": "media", "field": "format"},
+        {"table": "media", "field": "formatIRI"},
+        {"table": "media", "field": "variantLiteral"},
+        {"table": "media", "field": "variantIRI"},
+        {"table": "media", "field": "variantDescription"},
+        {"table": "media", "field": "furtherInformationURL"},
+        {"table": "media", "field": "serviceExpectation"},
+        {"table": "media", "field": "hashFunction"},
+        {"table": "media", "field": "hashValue"},
+        {"table": "media", "field": "pixelXDimension"},
+        {"table": "media", "field": "pixelYDimension"},
+        {"table": "media", "field": "isPartOfMediaID"},
+        {"table": "media", "field": "xFrac"},
+        {"table": "media", "field": "yFrac"},
+        {"table": "media", "field": "widthFrac"},
+        {"table": "media", "field": "heightFrac"},
+        {"table": "media", "field": "radius"},
+        {"table": "media", "field": "startTime"},
+        {"table": "media", "field": "endTime"},
+        {"table": "media", "field": "startTimestamp"},
+        {"table": "media", "field": "endTimestamp"},
+        {"table": "media", "field": "mediaDuration"},
+        {"table": "media", "field": "mediaSpeed"}
+      ],
+      "disposition": "automatic",
+      "conditions": [
+        "Pairwise source_terms[i] -> targets[i]; each target field's dcterms:isVersionOf equals the source IRI in the pinned media.json.",
+        "Copy verbatim on rows placed by av-media-row; terms absent from the archive's version are simply absent."
+      ],
+      "rationale": "Exact term-IRI equality (60 terms).",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/60275908a547-audiovisual_2026-02-24.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/media.json"
+      ]
+    },
+    {
+      "id": "av-type-literal",
+      "source_row_types": ["http://rs.tdwg.org/ac/terms/Multimedia"],
+      "source_terms": ["http://purl.org/dc/elements/1.1/type"],
+      "targets": [{"table": "media", "field": "mediaType"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Use only when dcterms:type is empty or absent.",
+        "If both are present and dc:type is not the local name of the dcterms:type IRI, keep dcterms:type and send to review."
+      ],
+      "rationale": "media.mediaType is a version of dcterms:type; dc:type is its literal companion.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/media.json"]
+    },
+    {
+      "id": "av-subject-category",
+      "source_row_types": ["http://rs.tdwg.org/ac/terms/Multimedia"],
+      "source_terms": ["http://iptc.org/std/Iptc4xmpExt/2008-02-29/CVterm"],
+      "targets": [{"table": "media", "field": "subjectCategoryIRI"}, {"table": "media", "field": "subjectCategory"}],
+      "disposition": "conditional",
+      "conditions": ["Absolute IRI -> subjectCategoryIRI; any other non-empty value -> subjectCategory."],
+      "rationale": "The pinned fields are versions of ac:CVterm/ac:CVtermLiteral, the AC terms that replaced Iptc4xmpExt:CVterm.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/media.json"]
+    },
+    {
+      "id": "av-agent-ids",
+      "source_row_types": ["http://rs.tdwg.org/ac/terms/Multimedia"],
+      "source_terms": ["http://rs.tdwg.org/ac/terms/commenter", "http://rs.tdwg.org/ac/terms/reviewer"],
+      "targets": [{"table": "media", "field": "commenterID"}, {"table": "media", "field": "reviewerID"}],
+      "disposition": "conditional",
+      "conditions": ["Pairwise; copy verbatim when the value is an identifier (IRI or ID string); do not create agent rows from names."],
+      "rationale": "commenterID/reviewerID are versions of dwc:agentID while ac:commenter/ac:reviewer are IRI-valued.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/media.json"]
+    },
+    {
+      "id": "av-usage-policy",
+      "source_row_types": ["http://rs.tdwg.org/ac/terms/Multimedia"],
+      "source_terms": [
+        "http://purl.org/dc/elements/1.1/rights",
+        "http://purl.org/dc/terms/rights",
+        "http://ns.adobe.com/xap/1.0/rights/Owner",
+        "http://ns.adobe.com/xap/1.0/rights/UsageTerms",
+        "http://ns.adobe.com/xap/1.0/rights/WebStatement",
+        "http://rs.tdwg.org/ac/terms/licenseLogoURL",
+        "http://ns.adobe.com/photoshop/1.0/Credit",
+        "http://rs.tdwg.org/ac/terms/attributionLogoURL",
+        "http://rs.tdwg.org/ac/terms/attributionLinkURL",
+        "http://rs.tdwg.org/ac/terms/licensingException"
+      ],
+      "targets": [
+        {"table": "usage-policy", "field": "rights"},
+        {"table": "usage-policy", "field": "rightsIRI"},
+        {"table": "usage-policy", "field": "owner"},
+        {"table": "usage-policy", "field": "usageTerms"},
+        {"table": "usage-policy", "field": "webStatement"},
+        {"table": "usage-policy", "field": "licenseLogoURL"},
+        {"table": "usage-policy", "field": "credit"},
+        {"table": "usage-policy", "field": "attributionLogoURL"},
+        {"table": "usage-policy", "field": "attributionLinkURL"},
+        {"table": "usage-policy", "field": "licensingException"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Pairwise; at least one of these terms is non-empty in the row.",
+        "One usage-policy row per distinct tuple of the ten values (exact string equality); media.usagePolicy_fk references it.",
+        "Do not infer usage-policy.license from rights text."
+      ],
+      "rationale": "Exact isVersionOf equality; usage policies are shared entities in the pinned schema.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/usage-policy.json"]
+    },
+    {
+      "id": "av-provenance",
+      "source_row_types": ["http://rs.tdwg.org/ac/terms/Multimedia"],
+      "source_terms": [
+        "http://rs.tdwg.org/ac/terms/fundingAttribution",
+        "http://purl.org/dc/elements/1.1/source",
+        "http://purl.org/dc/terms/source",
+        "http://purl.org/dc/elements/1.1/creator",
+        "http://purl.org/dc/terms/creator",
+        "http://rs.tdwg.org/ac/terms/providerLiteral",
+        "http://rs.tdwg.org/ac/terms/provider",
+        "http://rs.tdwg.org/ac/terms/metadataCreatorLiteral",
+        "http://rs.tdwg.org/ac/terms/metadataCreator",
+        "http://rs.tdwg.org/ac/terms/metadataProviderLiteral",
+        "http://rs.tdwg.org/ac/terms/metadataProvider"
+      ],
+      "targets": [
+        {"table": "provenance", "field": "fundingAttribution"},
+        {"table": "provenance", "field": "source"},
+        {"table": "provenance", "field": "sourceIRI"},
+        {"table": "provenance", "field": "creator"},
+        {"table": "provenance", "field": "creatorID"},
+        {"table": "provenance", "field": "providerLiteral"},
+        {"table": "provenance", "field": "providerID"},
+        {"table": "provenance", "field": "metadataCreatorLiteral"},
+        {"table": "provenance", "field": "metadataCreatorID"},
+        {"table": "provenance", "field": "metadataProviderLiteral"},
+        {"table": "provenance", "field": "metadataProviderID"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Pairwise; at least one term non-empty.",
+        "One provenance row per distinct tuple; media.provenance_fk references it.",
+        "IRI-valued AC terms (dcterms:source, dcterms:creator, ac:provider, ac:metadataCreator, ac:metadataProvider) go to *IRI/*ID fields verbatim; no agent rows are created from literals."
+      ],
+      "rationale": "Literal targets are versions of the same dc:/ac: literal terms; ID targets are versions of dwc:agentID and receive the IRI forms.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/provenance.json"]
+    },
+    {
+      "id": "av-derived-from",
+      "source_row_types": ["http://rs.tdwg.org/ac/terms/Multimedia"],
+      "source_terms": ["http://rs.tdwg.org/ac/terms/derivedFrom"],
+      "targets": [{"table": "media", "field": "derivedFromMediaID"}],
+      "disposition": "conditional",
+      "conditions": ["Value is an identifier (equals an emitted mediaID or is an IRI); free-text descriptions of the source are preserved instead."],
+      "rationale": "derivedFromMediaID expects a media identifier inside or outside the dataset.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/media.json"]
+    },
+    {
+      "id": "av-has-roi",
+      "source_row_types": ["http://rs.tdwg.org/ac/terms/Multimedia"],
+      "source_terms": ["http://rs.tdwg.org/ac/terms/hasROI"],
+      "targets": [],
+      "disposition": "review",
+      "conditions": ["If every listed child resolves to an emitted media row, a reviewer may approve setting each child's isPartOfMediaID; otherwise preserve."],
+      "rationale": "Inverse direction; writing to other rows changes records not described by this row.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/media.json"]
+    },
+    {
+      "id": "av-link-occurrence",
+      "source_row_types": ["http://rs.tdwg.org/ac/terms/Multimedia", "http://rs.gbif.org/terms/1.0/Multimedia", "http://rs.gbif.org/terms/1.0/Image"],
+      "source_terms": [],
+      "targets": [{"table": "occurrence-media", "field": "media_fk"}, {"table": "occurrence-media", "field": "occurrence_fk"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Archive core is dwc:Occurrence and coreid resolves to exactly one emitted occurrence.",
+        "Log subject_basis=core_attachment; rows with ac:associatedSpecimenReference non-empty, dwc:preparations non-empty, or a core material for the occurrence are also queued under av-subject-review."
+      ],
+      "rationale": "occurrence-media records an occurrence as content of the media; the publisher attached the media to that occurrence.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-media.json"]
+    },
+    {
+      "id": "av-link-event",
+      "source_row_types": ["http://rs.tdwg.org/ac/terms/Multimedia", "http://rs.gbif.org/terms/1.0/Multimedia", "http://rs.gbif.org/terms/1.0/Image"],
+      "source_terms": [],
+      "targets": [{"table": "event-media", "field": "media_fk"}, {"table": "event-media", "field": "event_fk"}],
+      "disposition": "conditional",
+      "conditions": ["Archive core is dwc:Event and coreid resolves to exactly one emitted event."],
+      "rationale": "Same as av-link-occurrence for Event cores.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event-media.json"]
+    },
+    {
+      "id": "av-subject-review",
+      "source_row_types": ["http://rs.tdwg.org/ac/terms/Multimedia"],
+      "source_terms": [
+        "http://rs.tdwg.org/ac/terms/associatedSpecimenReference",
+        "http://rs.tdwg.org/ac/terms/associatedObservationReference",
+        "http://rs.tdwg.org/dwc/terms/preparations"
+      ],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "associatedSpecimenReference resolves to an emitted material: candidate material-media(media_fk, materialEntity_fk).",
+        "associatedObservationReference resolves to a different occurrence than the coreid: candidate occurrence-media to that occurrence.",
+        "The original core-attachment link is kept unless the reviewer removes it."
+      ],
+      "rationale": "These terms name what the media documents, which can differ from the attachment record.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material-media.json"]
+    },
+    {
+      "id": "av-content-terms-unsupported",
+      "source_row_types": ["http://rs.tdwg.org/ac/terms/Multimedia"],
+      "source_terms": [
+        "http://iptc.org/std/Iptc4xmpExt/2008-02-29/LocationShown",
+        "http://iptc.org/std/Iptc4xmpExt/2008-02-29/LocationCreated",
+        "http://iptc.org/std/Iptc4xmpExt/2008-02-29/WorldRegion",
+        "http://iptc.org/std/Iptc4xmpExt/2008-02-29/CountryCode",
+        "http://iptc.org/std/Iptc4xmpExt/2008-02-29/CountryName",
+        "http://iptc.org/std/Iptc4xmpExt/2008-02-29/ProvinceState",
+        "http://iptc.org/std/Iptc4xmpExt/2008-02-29/City",
+        "http://iptc.org/std/Iptc4xmpExt/2008-02-29/Sublocation",
+        "http://purl.org/dc/terms/temporal",
+        "http://rs.tdwg.org/ac/terms/taxonCoverage",
+        "http://rs.tdwg.org/dwc/terms/scientificName",
+        "http://rs.tdwg.org/dwc/terms/identificationQualifier",
+        "http://rs.tdwg.org/dwc/terms/vernacularName",
+        "http://rs.tdwg.org/dwc/terms/nameAccordingTo",
+        "http://rs.tdwg.org/dwc/terms/scientificNameID",
+        "http://rs.tdwg.org/ac/terms/otherScientificName",
+        "http://rs.tdwg.org/dwc/terms/identifiedBy",
+        "http://rs.tdwg.org/dwc/terms/dateIdentified",
+        "http://rs.tdwg.org/ac/terms/taxonCount",
+        "http://rs.tdwg.org/dwc/terms/sex",
+        "http://rs.tdwg.org/dwc/terms/lifeStage",
+        "http://rs.tdwg.org/ac/terms/IDofContainingCollection",
+        "http://rs.tdwg.org/ac/terms/relatedResourceID",
+        "http://rs.tdwg.org/ac/terms/providerID",
+        "http://rs.tdwg.org/dwc/terms/continent",
+        "http://rs.tdwg.org/dwc/terms/country",
+        "http://rs.tdwg.org/dwc/terms/countryCode",
+        "http://rs.tdwg.org/dwc/terms/stateProvince",
+        "http://rs.tdwg.org/dwc/terms/county",
+        "http://rs.tdwg.org/dwc/terms/municipality",
+        "http://rs.tdwg.org/dwc/terms/locality",
+        "http://rs.tdwg.org/dwc/terms/verbatimLocality",
+        "http://rs.tdwg.org/dwc/terms/decimalLatitude",
+        "http://rs.tdwg.org/dwc/terms/decimalLongitude",
+        "http://rs.tdwg.org/dwc/terms/geodeticDatum",
+        "http://rs.tdwg.org/dwc/terms/coordinateUncertaintyInMeters",
+        "http://rs.tdwg.org/dwc/terms/locationID"
+      ],
+      "targets": [],
+      "disposition": "unsupported",
+      "conditions": [
+        "Any non-empty value; the list covers the representative AC content terms and the remaining dwc: location terms of the 157-term set are handled identically by gen-preserve-unconsumed.",
+        "A reviewer may separately decide to create identification rows with identification.media_fk from AC taxon terms; that is a new assertion, not a conversion."
+      ],
+      "rationale": "media and the *-media join tables have no taxon, identification, location or temporal coverage fields; ac:IDofContainingCollection is not equal to dwc:collectionID.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/60275908a547-audiovisual_2026-02-24.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/media.json"
+      ]
+    },
+    {
+      "id": "av-taxon-core",
+      "source_row_types": ["http://rs.tdwg.org/ac/terms/Multimedia", "http://rs.gbif.org/terms/1.0/Multimedia", "http://rs.gbif.org/terms/1.0/Image", "http://eol.org/schema/media/Document"],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "unsupported",
+      "conditions": ["Archive core is dwc:Taxon."],
+      "rationale": "No taxon-media join exists; orphan media rows would lose the only link the publisher provided.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/index.json"]
+    },
+    {
+      "id": "gbif-mm-media-fields",
+      "source_row_types": ["http://rs.gbif.org/terms/1.0/Multimedia", "http://rs.gbif.org/terms/1.0/Image"],
+      "source_terms": [
+        "http://purl.org/dc/terms/identifier",
+        "http://purl.org/dc/terms/references",
+        "http://purl.org/dc/terms/title",
+        "http://purl.org/dc/terms/description",
+        "http://purl.org/dc/terms/format",
+        "http://purl.org/dc/terms/type",
+        "http://purl.org/dc/terms/created"
+      ],
+      "targets": [
+        {"table": "media", "field": "accessURI"},
+        {"table": "media", "field": "furtherInformationURL"},
+        {"table": "media", "field": "title"},
+        {"table": "media", "field": "description"},
+        {"table": "media", "field": "format"},
+        {"table": "media", "field": "mediaType"},
+        {"table": "media", "field": "createDate"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Pairwise; one media row per extension row (media_pk minted).",
+        "dcterms:identifier -> accessURI only when it is an absolute http(s) URL (the extension defines it as the media file URL); otherwise preserve.",
+        "dcterms:format is a MIME-type literal in this extension, so it targets media.format (dc:format literal) not formatIRI.",
+        "dcterms:type values (StillImage, MovingImage, Sound) copy verbatim; Image extension rows have no type and mediaType stays empty."
+      ],
+      "rationale": "The Simple Multimedia extension uses dcterms: IRIs with literal values and GBIF-specific meanings documented in its definitions.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/94571ca69f7d-multimedia.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/e2c7fd2e9688-images.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/media.json"
+      ]
+    },
+    {
+      "id": "gbif-mm-rights-provenance",
+      "source_row_types": ["http://rs.gbif.org/terms/1.0/Multimedia", "http://rs.gbif.org/terms/1.0/Image"],
+      "source_terms": [
+        "http://purl.org/dc/terms/license",
+        "http://purl.org/dc/terms/rightsHolder",
+        "http://purl.org/dc/terms/creator",
+        "http://purl.org/dc/terms/source",
+        "http://rs.tdwg.org/dwc/terms/datasetID"
+      ],
+      "targets": [
+        {"table": "usage-policy", "field": "license"},
+        {"table": "usage-policy", "field": "rightsHolder"},
+        {"table": "provenance", "field": "creator"},
+        {"table": "provenance", "field": "source"},
+        {"table": "provenance", "field": "datasetID"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Pairwise; shared rows per distinct tuple, referenced via media.usagePolicy_fk / media.provenance_fk.",
+        "dcterms:creator and dcterms:source are used as literals in this extension, so they target the literal provenance fields."
+      ],
+      "rationale": "usage-policy.license and rightsHolder are exact; provenance creator/source/datasetID hold the same information as literals.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/usage-policy.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/provenance.json"
+      ]
+    },
+    {
+      "id": "gbif-mm-unsupported",
+      "source_row_types": ["http://rs.gbif.org/terms/1.0/Multimedia", "http://rs.gbif.org/terms/1.0/Image"],
+      "source_terms": [
+        "http://purl.org/dc/terms/contributor",
+        "http://purl.org/dc/terms/publisher",
+        "http://purl.org/dc/terms/audience",
+        "http://purl.org/dc/terms/spatial",
+        "http://www.w3.org/2003/01/geo/wgs84_pos#latitude",
+        "http://www.w3.org/2003/01/geo/wgs84_pos#longitude"
+      ],
+      "targets": [],
+      "disposition": "unsupported",
+      "conditions": ["Any non-empty value."],
+      "rationale": "No literal contributor/publisher/audience/spatial fields; media-agent-role would require agent identity decisions.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/media.json"]
+    },
+    {
+      "id": "gbif-identifier",
+      "source_row_types": ["http://rs.gbif.org/terms/1.0/Identifier"],
+      "source_terms": ["http://purl.org/dc/terms/identifier"],
+      "targets": [
+        {"table": "occurrence-identifier", "field": "identifier"},
+        {"table": "event-identifier", "field": "identifier"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Occurrence core: occurrence-identifier with occurrence_fk = resolved occurrence. Event core: event-identifier with event_fk = resolved event. Taxon core: unsupported.",
+        "Non-empty identifier; identifierType/IRI/Source left empty; dcterms:title, dcterms:subject, dcterms:format, dwc:datasetID preserved."
+      ],
+      "rationale": "An alternative identifier of the core record is exactly an adms:Identifier of that record.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/e4e4b0b7aaaa-identifier.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-identifier.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event-identifier.json"
+      ]
+    },
+    {
+      "id": "gbif-reference-bibliographic",
+      "source_row_types": ["http://rs.gbif.org/terms/1.0/Reference"],
+      "source_terms": [
+        "http://purl.org/dc/terms/identifier",
+        "http://purl.org/dc/terms/bibliographicCitation",
+        "http://purl.org/dc/terms/title",
+        "http://purl.org/dc/terms/creator",
+        "http://purl.org/dc/terms/date",
+        "http://purl.org/dc/terms/type"
+      ],
+      "targets": [
+        {"table": "bibliographic-resource", "field": "referenceID"},
+        {"table": "bibliographic-resource", "field": "bibliographicCitation"},
+        {"table": "bibliographic-resource", "field": "title"},
+        {"table": "bibliographic-resource", "field": "author"},
+        {"table": "bibliographic-resource", "field": "issued"},
+        {"table": "bibliographic-resource", "field": "referenceType"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Pairwise; Occurrence or Event core with resolvable coreid (Taxon core: unsupported).",
+        "Deduplicate references by non-empty identifier, else by exact bibliographicCitation; reference_pk minted.",
+        "dcterms:date -> issued as the extension defines it as the publication date; dcterms:creator (literal authors) -> author verbatim.",
+        "dcterms:source, description, subject, language, rights, dwc:taxonRemarks, dwc:datasetID preserved."
+      ],
+      "rationale": "Equivalent bibliographic properties in the pinned bibliographic-resource table.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/a6d313919dbb-references.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/bibliographic-resource.json"
+      ]
+    },
+    {
+      "id": "gbif-reference-link",
+      "source_row_types": ["http://rs.gbif.org/terms/1.0/Reference"],
+      "source_terms": [],
+      "targets": [
+        {"table": "occurrence-reference", "field": "occurrence_fk"},
+        {"table": "occurrence-reference", "field": "reference_fk"},
+        {"table": "event-reference", "field": "event_fk"},
+        {"table": "event-reference", "field": "reference_fk"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Occurrence core -> occurrence-reference; Event core -> event-reference; coreid resolves to exactly one record.",
+        "relationshipType left empty."
+      ],
+      "rationale": "The publisher associated the reference with the core record; the nature of the association is not stated.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-reference.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event-reference.json"
+      ]
+    },
+    {
+      "id": "releve-event-assertions",
+      "source_row_types": ["http://rs.gbif.org/terms/1.0/Releve"],
+      "source_terms": [
+        "http://rs.gbif.org/terms/1.0/aspect",
+        "http://rs.gbif.org/terms/1.0/inclinationInDegrees",
+        "http://rs.gbif.org/terms/1.0/coverTotalInPercentage",
+        "http://rs.gbif.org/terms/1.0/coverTreesInPercentage",
+        "http://rs.gbif.org/terms/1.0/coverShrubsInPercentage",
+        "http://rs.gbif.org/terms/1.0/coverHerbsInPercentage",
+        "http://rs.gbif.org/terms/1.0/coverCryptogamsInPercentage",
+        "http://rs.gbif.org/terms/1.0/coverMossesInPercentage",
+        "http://rs.gbif.org/terms/1.0/coverLichensInPercentage",
+        "http://rs.gbif.org/terms/1.0/coverAlgaeInPercentage",
+        "http://rs.gbif.org/terms/1.0/coverLitterInPercentage",
+        "http://rs.gbif.org/terms/1.0/coverWaterInPercentage",
+        "http://rs.gbif.org/terms/1.0/coverRockInPercentage",
+        "http://rs.gbif.org/terms/1.0/treeLayerHeightInMeters",
+        "http://rs.gbif.org/terms/1.0/shrubLayerHeightInMeters",
+        "http://rs.gbif.org/terms/1.0/herbLayerHeightInCentimeters",
+        "http://rs.gbif.org/terms/1.0/mossesIdentified",
+        "http://rs.gbif.org/terms/1.0/lichensIdentified"
+      ],
+      "targets": [
+        {"table": "event-assertion", "field": "event_fk"},
+        {"table": "event-assertion", "field": "assertionType"},
+        {"table": "event-assertion", "field": "assertionTypeIRI"},
+        {"table": "event-assertion", "field": "assertionValue"},
+        {"table": "event-assertion", "field": "assertionUnit"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Not pairwise: each non-empty source column yields one event-assertion row with event_fk = resolved coreid event, assertionType = term local name, assertionTypeIRI = term IRI, assertionValue = value verbatim, assertionUnit = '%' / 'm' / 'cm' / 'degrees' from the term name suffix, empty otherwise.",
+        "Archive core is dwc:Event and coreid resolves to exactly one emitted event."
+      ],
+      "rationale": "The relevé terms are measurements of the plot event with units fixed by the term definitions.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/f6bfd6ba228d-releve_2016-05-10.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event-assertion.json"
+      ]
+    },
+    {
+      "id": "releve-project-syntaxon",
+      "source_row_types": ["http://rs.gbif.org/terms/1.0/Releve"],
+      "source_terms": ["http://rs.gbif.org/terms/1.0/project", "http://rs.gbif.org/terms/1.0/syntaxonName"],
+      "targets": [],
+      "disposition": "review",
+      "conditions": ["Any non-empty value; preserved until a reviewer decides on provenance.projectTitle or an event-assertion for the syntaxon."],
+      "rationale": "Project scoping and phytosociological classification are not equivalent to any single pinned field.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/provenance.json"]
+    },
+    {
+      "id": "agent-actions-roles",
+      "source_row_types": ["https://tdwg.github.io/attribution/people/dwc/AgentActions"],
+      "source_terms": [
+        "http://purl.org/dc/terms/identifier",
+        "https://schema.org/name",
+        "https://tdwg.github.io/attribution/people/dwc/terms/agentType",
+        "https://tdwg.github.io/attribution/people/dwc/terms/role",
+        "http://vocab.getty.edu/ontology/displayOrder"
+      ],
+      "targets": [
+        {"table": "agent", "field": "agentID"},
+        {"table": "agent", "field": "preferredAgentName"},
+        {"table": "agent", "field": "agentType"},
+        {"table": "occurrence-agent-role", "field": "agentRole"},
+        {"table": "occurrence-agent-role", "field": "agentRoleOrder"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Pairwise; Occurrence core with resolvable coreid (sandbox extension).",
+        "If dwc:identificationID resolves to an emitted identification, write the role to identification-agent-role instead (same field names).",
+        "agent rows keyed by dcterms:identifier; rows without an identifier get a per-row agent (no name-based merging).",
+        "agentRoleOrder required: displayOrder if present, else 1-based row order within coreid.",
+        "action, alternateName, verbatimName, agentIdentifierType, startedAtTime, endedAtTime preserved."
+      ],
+      "rationale": "Direct structural equivalent of occurrence/identification agent roles in the pinned schema.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/3492b8278565-agent_actions_v2020-09-08.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-agent-role.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/agent.json"
+      ]
+    },
+    {
+      "id": "ggbn-material-review",
+      "source_row_types": [
+        "http://data.ggbn.org/schemas/ggbn/terms/MaterialSample",
+        "http://data.ggbn.org/schemas/ggbn/terms/Preparation",
+        "http://data.ggbn.org/schemas/ggbn/terms/Preservation",
+        "http://data.ggbn.org/schemas/ggbn/terms/Amplification",
+        "http://data.ggbn.org/schemas/ggbn/terms/GelImage"
+      ],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "Only considered when the core record was emitted as exactly one material row.",
+        "Reviewer approves a per-archive column plan (material-assertion rows, molecular-protocol/nucleotide-sequence rows, material-media) before any rows are written; the plan is stored with the conversion."
+      ],
+      "rationale": "GGBN terms describe lab processes and derived materials that the pinned schema models through several tables; legacy gensc.org MIxS IRIs prevent IRI-equality mapping.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/fd370de48fbc-materialsample.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/9ba1e766131d-amplification.xml"
+      ]
+    },
+    {
+      "id": "ggbn-unsupported",
+      "source_row_types": [
+        "http://data.ggbn.org/schemas/ggbn/terms/Permit",
+        "http://data.ggbn.org/schemas/ggbn/terms/Loan",
+        "http://data.ggbn.org/schemas/ggbn/terms/Cloning"
+      ],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "unsupported",
+      "conditions": ["Any file with these row types."],
+      "rationale": "No permit, loan or cloning tables in the pinned schema.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/f43f0488fce6-permit_2022-08-08.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/921c64a4620f-loan.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/95b63b04c6a2-cloning.xml"
+      ]
+    },
+    {
+      "id": "checklist-families-unsupported",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Taxon",
+        "http://rs.gbif.org/terms/1.0/Distribution",
+        "http://rs.gbif.org/terms/1.0/VernacularName",
+        "http://rs.gbif.org/terms/1.0/Description",
+        "http://rs.gbif.org/terms/1.0/SpeciesProfile",
+        "http://rs.gbif.org/terms/1.0/TypesAndSpecimen",
+        "http://purl.org/plic/terms/3.2.1/PlinianCore",
+        "http://purl.org/plic/terms/3.2.1/Distribution",
+        "http://purl.org/plic/terms/3.2.1/Legislation",
+        "http://purl.org/plic/terms/3.2.1/Uses",
+        "http://purl.org/plic/terms/3.2.1/Synonyms",
+        "http://purl.org/plic/terms/3.2.1/Endemicity",
+        "http://purl.org/plic/terms/3.2.1/ThreatStatus",
+        "http://purl.org/plic/terms/3.2.1/ManagementAndConservation",
+        "https://terms.catalogueoflife.org/NameRelation",
+        "http://rs.gbif.org/sandbox/terms/tcs/tcrel.rdf#TaxonConceptRelationship",
+        "http://rs.gbif.org/issg/terms/Distribution",
+        "http://rs.gbif.org/issg/terms/Pathways",
+        "http://rs.gbif.org/terms/1.0/Chromosomes",
+        "http://rs.gbif.org/terms/1.0/Ellenberg",
+        "http://www.gisin.org/IASProfile/SpeciesStatus"
+      ],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "unsupported",
+      "conditions": [
+        "Any file with these row types, and any extension file of any row type attached to a dwc:Taxon core.",
+        "Do not create occurrence, event, survey, identification or resource-relationship rows from distribution, status, vernacular or name-relation rows."
+      ],
+      "rationale": "The pinned 79-table schema has no taxon, name-usage or taxon-distribution tables; checklist distributions are statements about taxa in areas, not evidence of organisms at places and times.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/index.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/10bcdc218647-distribution_2022-02-02.xml"
+      ]
+    },
+    {
+      "id": "unaudited-families-review",
+      "source_row_types": [
+        "http://purl.org/germplasm/germplasmTerm#GermplasmAccession",
+        "http://purl.org/germplasm/germplasmTerm#MeasurementScore",
+        "http://purl.org/germplasm/germplasmTerm#MeasurementTrait",
+        "http://purl.org/germplasm/germplasmTerm#MeasurementTrial",
+        "http://eol.org/schema/media/Document",
+        "http://eol.org/schema/reference/Reference",
+        "http://www.birdscanada.org/bmde/Observation",
+        "http://rs.nbn.org.uk/dwc/nxf/0.1/terms/nxfOccurrence",
+        "http://rs.tdwg.org/ac/terms/Multimedia#ServiceAccessPointVocabulary",
+        "http://rs.gbif.org/terms/1.0/Links"
+      ],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "review",
+      "conditions": ["Any file with these row types; preserved until a term-by-term mapping is approved and added to this catalogue."],
+      "rationale": "Candidate targets exist (see families) but no term-level audit was performed for these rarely used families.",
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/production-extensions.json"]
+    },
+    {
+      "id": "deprecated-unsupported",
+      "source_row_types": ["http://rs.nordgen.org/dwc/germplasm/0.1/terms/GermplasmSample"],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "unsupported",
+      "conditions": ["Any file with this row type."],
+      "rationale": "Registry marks it as a deprecated draft.",
+      "evidence": ["/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/a1b2a0145608-germplasm.xml"]
+    }
+  ]
+}

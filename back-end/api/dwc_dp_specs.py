@@ -47,7 +47,7 @@ _REPORTED_ERRORS_PER_SOURCE = 10
 DWC_DP_SCHEMA_REVISION = "76898192fd298c2aa170a7059e1bdadf3ee2a828"
 DWC_DP_SCHEMA_REPOSITORY = "https://github.com/tdwg/rs.tdwg.org"
 
-# DwC-DP 1.0 is still under public review. Use TDWG's deployed prerelease
+# Use TDWG's deployed prerelease until the final profile is available.
 # profile in descriptors, while recording the immutable source revision and
 # vendored content hash separately for reproducibility.
 DWC_DP_PROFILE_URL = (
@@ -873,14 +873,20 @@ def _canonical_table_schema_errors(
     return errors
 
 
-def validate_datapackage_descriptor(descriptor: Mapping[str, Any]) -> list[str]:
+def validate_datapackage_descriptor(descriptor: Mapping[str, Any], *, allow_generic: bool = False) -> list[str]:
     """Validate generated metadata without fetching the currently undeployed profile URI."""
     errors: list[str] = []
-    if descriptor.get("profile") != DWC_DP_PROFILE_URL:
+    generic = allow_generic and descriptor.get('profile') == 'data-package'
+    if descriptor.get("profile") != DWC_DP_PROFILE_URL and not generic:
         errors.append(f"Descriptor profile must be '{DWC_DP_PROFILE_URL}'.")
     if descriptor.get("dwcDpSchema") != dwc_dp_schema_snapshot():
         errors.append("Descriptor must identify the exact vendored DwC-DP schema snapshot.")
-    errors.extend(_dwc_dp_profile_errors(descriptor))
+    if generic:
+        base_schema = _load_json(_FRICTIONLESS_DATA_PACKAGE_SCHEMA)
+        errors.extend(f'Data Package descriptor: {error.message}'
+                      for error in validator_for(base_schema)(base_schema).iter_errors(dict(descriptor)))
+    else:
+        errors.extend(_dwc_dp_profile_errors(descriptor))
 
     frictionless_descriptor = deepcopy(dict(descriptor))
     frictionless_descriptor["profile"] = "data-package"
@@ -920,14 +926,16 @@ def build_datapackage_descriptor(
     title: str | None = None,
     description: str | None = None,
     version: str | None = None,
+    additional_tables: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> Dict[str, Any]:
-    validation = validate_dwc_dp_resources(resources)
+    additional_tables = additional_tables or {}
+    validation = validate_dwc_dp_resources(resources) if resources or not additional_tables else {'valid': True}
     if not validation["valid"]:
         raise ValueError("DwC-DP validation failed: " + "; ".join(validation["errors"]))
 
     names = [normalize_resource_name(name) for name in resources]
     descriptor: Dict[str, Any] = {
-        "profile": DWC_DP_PROFILE_URL,
+        "profile": DWC_DP_PROFILE_URL if resources else 'data-package',
         "created": datetime.now(timezone.utc).isoformat(),
         "dwcDpSchema": dwc_dp_schema_snapshot(),
         "resources": [],
@@ -954,7 +962,20 @@ def build_datapackage_descriptor(
             }
         )
 
-    descriptor_errors = validate_datapackage_descriptor(descriptor)
+    for name, table in additional_tables.items():
+        if name in RESERVED_TABLE_NAMES or name != normalize_resource_name(name):
+            raise ValueError(f'Additional table {name!r} must have a normalized, non-reserved name.')
+        df = table['dataframe']
+        schema = deepcopy(table['schema'])
+        if list(df.columns) != [field['name'] for field in schema.get('fields', [])]:
+            raise ValueError(f'Additional table {name!r} fields do not match its dataframe.')
+        descriptor['resources'].append({
+            **{key: deepcopy(value) for key, value in table.items() if key not in {'dataframe', 'schema'}},
+            'name': name, 'path': f'{name}.csv', 'profile': 'tabular-data-resource',
+            'format': 'csv', 'mediatype': 'text/csv', 'encoding': 'utf-8', 'schema': schema,
+        })
+
+    descriptor_errors = validate_datapackage_descriptor(descriptor, allow_generic=bool(additional_tables))
     if descriptor_errors:
         raise ValueError("Invalid DwC-DP descriptor: " + "; ".join(descriptor_errors))
     return descriptor
@@ -1036,6 +1057,11 @@ def _frictionless_data_errors(descriptor: Mapping[str, Any], files: Mapping[str,
             (Path(temp_dir) / path).write_bytes(content)
         package_descriptor = deepcopy(dict(descriptor))
         package_descriptor["profile"] = "data-package"
+        # Opaque provenance resources have byte/hash checks in archive validation.
+        # Frictionless otherwise attempts to interpret the original ZIP as a table
+        # and a JSON conversion report as its own validation-report format.
+        package_descriptor["resources"] = [resource for resource in package_descriptor.get("resources", [])
+            if resource.get("profile") != "data-resource" or resource.get("name") in RESERVED_TABLE_NAMES]
         report = Package.from_descriptor(package_descriptor, basepath=temp_dir).validate()
 
     errors = [f"Frictionless validation failed: {error.message}" for error in report.errors]
@@ -1054,6 +1080,8 @@ def validate_dwc_dp_archive(
     archive_path: Path,
     expected_resources: Mapping[str, pd.DataFrame] | None = None,
     expected_additional_files: Iterable[str] | None = None,
+    require_eml: bool = True,
+    allow_generic: bool = False,
 ) -> Dict[str, Any]:
     """Validate the exact serialized DwC-DP archive before it is uploaded."""
     errors: list[str] = []
@@ -1072,11 +1100,14 @@ def validate_dwc_dp_archive(
                 if path.is_absolute() or ".." in path.parts:
                     errors.append(f"Archive contains an unsafe path: {name!r}.")
 
-            for required_name in {"datapackage.json", "eml.xml", *expected_additional}:
+            required_files = {"datapackage.json", *expected_additional}
+            if require_eml:
+                required_files.add("eml.xml")
+            for required_name in required_files:
                 if required_name not in names:
                     errors.append(f"Archive is missing required file '{required_name}'.")
 
-            if "datapackage.json" not in names or "eml.xml" not in names:
+            if "datapackage.json" not in names or (require_eml and "eml.xml" not in names):
                 return {"valid": False, "errors": errors, "warnings": warnings}
 
             try:
@@ -1087,8 +1118,9 @@ def validate_dwc_dp_archive(
                 errors.append(f"datapackage.json cannot be parsed as strict UTF-8 JSON: {exc}.")
                 descriptor = {}
 
-            errors.extend(validate_eml(archive.extractfile("eml.xml").read()))
-            errors.extend(validate_datapackage_descriptor(descriptor))
+            if "eml.xml" in names:
+                errors.extend(validate_eml(archive.extractfile("eml.xml").read()))
+            errors.extend(validate_datapackage_descriptor(descriptor, allow_generic=allow_generic))
             serialized_resources: Dict[str, pd.DataFrame] = {}
             resource_files: Dict[str, bytes] = {}
             for resource in descriptor.get("resources") or []:
@@ -1107,6 +1139,14 @@ def validate_dwc_dp_archive(
                         f"Descriptor resource '{resource_name}' path '{resource_path}' must be a plain "
                         "file name at the package root."
                     )
+                    continue
+                if resource.get("profile") == "data-resource" and resource_name not in RESERVED_TABLE_NAMES:
+                    content = archive.extractfile(resource_path).read()
+                    if resource.get("bytes") is not None and resource["bytes"] != len(content):
+                        errors.append(f"Ancillary resource '{resource_name}' has an incorrect byte count.")
+                    if resource.get("hash") and resource["hash"] != "sha256:" + hashlib.sha256(content).hexdigest():
+                        errors.append(f"Ancillary resource '{resource_name}' has an incorrect checksum.")
+                    resource_files[resource_path] = content
                     continue
                 try:
                     content = archive.extractfile(resource_path).read()
@@ -1149,7 +1189,10 @@ def validate_dwc_dp_archive(
                             f"expected {len(expected_df)}."
                         )
 
-            serialized_validation = validate_dwc_dp_resources(serialized_resources)
+            canonical = {name: df for name, df in serialized_resources.items() if name in RESERVED_TABLE_NAMES}
+            if not canonical and descriptor.get('profile') == DWC_DP_PROFILE_URL:
+                errors.append('A package with only additional tables must use the generic Data Package profile, not the DwC-DP profile.')
+            serialized_validation = validate_dwc_dp_resources(canonical) if canonical or not serialized_resources else {'errors': [], 'warnings': []}
             errors.extend(serialized_validation["errors"])
             warnings.extend(serialized_validation["warnings"])
             # Row-level Frictionless errors would mostly repeat the checks above, so
@@ -1180,6 +1223,10 @@ def create_dwc_dp_archive(
     dataset_id: str | None = None,
     version: str | None = None,
     additional_files: Iterable[tuple[str, bytes]] | None = None,
+    include_eml: bool = True,
+    eml_content: bytes | None = None,
+    declare_additional_resources: bool = False,
+    additional_tables: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     descriptor = build_datapackage_descriptor(
         resources,
@@ -1187,22 +1234,20 @@ def create_dwc_dp_archive(
         title=title,
         description=description,
         version=version,
+        additional_tables=additional_tables,
     )
 
     with tempfile.TemporaryDirectory() as temp_dir:
         package_root = Path(temp_dir) / "package"
         package_root.mkdir()
-        (package_root / "datapackage.json").write_text(
-            json.dumps(descriptor, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        (package_root / "eml.xml").write_text(
-            make_eml(title, description, user, eml_extra, dataset_id=dataset_id),
-            encoding="utf-8",
-        )
+        if include_eml:
+            content = eml_content if eml_content is not None else make_eml(title, description, user, eml_extra, dataset_id=dataset_id).encode("utf-8")
+            (package_root / "eml.xml").write_bytes(content)
         for raw_name, df in resources.items():
             name = normalize_resource_name(raw_name)
             _write_csv(_serializable_resource(name, df), package_root / f"{name}.csv")
+        for name, table in (additional_tables or {}).items():
+            _write_csv(table['dataframe'], package_root / f'{name}.csv')
 
         additional_names = []
         for filename, content in additional_files or []:
@@ -1212,6 +1257,16 @@ def create_dwc_dp_archive(
                 raise ValueError(f"Ancillary file '{safe_name}' conflicts with a package file.")
             target.write_bytes(content)
             additional_names.append(safe_name)
+            if declare_additional_resources:
+                descriptor["resources"].append({"name": normalize_resource_name(Path(safe_name).stem),
+                    "path": safe_name, "profile": "data-resource", "format": Path(safe_name).suffix.lstrip("."),
+                    "mediatype": "application/zip" if safe_name.endswith(".zip") else "application/json",
+                    "bytes": len(content), "hash": "sha256:" + hashlib.sha256(content).hexdigest()})
+
+        descriptor_errors = validate_datapackage_descriptor(descriptor, allow_generic=bool(additional_tables))
+        if descriptor_errors:
+            raise DwcDpArchiveValidationError("; ".join(descriptor_errors))
+        (package_root / "datapackage.json").write_text(json.dumps(descriptor, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
         with tarfile.open(output_path, "w:gz") as archive:
             for child in sorted(package_root.iterdir()):
@@ -1220,9 +1275,12 @@ def create_dwc_dp_archive(
     archive_validation = validate_dwc_dp_archive(
         output_path,
         expected_resources={
-            normalize_resource_name(name): df for name, df in resources.items()
+            **{normalize_resource_name(name): df for name, df in resources.items()},
+            **{name: table['dataframe'] for name, table in (additional_tables or {}).items()},
         },
         expected_additional_files=additional_names,
+        require_eml=include_eml,
+        allow_generic=bool(additional_tables),
     )
     if not archive_validation["valid"]:
         raise DwcDpArchiveValidationError(

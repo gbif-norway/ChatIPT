@@ -1,0 +1,298 @@
+{
+  "description": "Humboldt current-vocabulary properties outside the registered 57-field XML: 7 literal eco: and 28 ecoiri: properties. Generated from api.dwca_humboldt.AUDIT.",
+  "vocabulary_source": "tdwg/hc vocabulary/term_versions.csv at 05ad2bb6e960b1028a314feaf686444b7b8373c7 (latest recommended versions, 2026-05-26)",
+  "dwc_dp_schema_revision": "76898192fd298c2aa170a7059e1bdadf3ee2a828",
+  "rule_version": "6",
+  "disposition_values": {
+    "imported": "Copied by default when its prerequisites hold.",
+    "reviewed-import": "Converted only after column review; failing cells are withheld and reported.",
+    "preserved": "Retained in source originals and the conversion report only."
+  },
+  "counts": {
+    "imported": 1,
+    "reviewed-import": 11,
+    "preserved": 23
+  },
+  "properties": [
+    {
+      "term": "http://rs.tdwg.org/eco/terms/includeOrExclude",
+      "namespace": "eco",
+      "disposition": "preserved",
+      "target": "survey-target-descriptor.includeOrExclude",
+      "prerequisites": "A SurveyTarget source table model with surveyTargetID keys and survey links.",
+      "reason": "eco:SurveyTarget records have their own grain: several descriptor rows share one surveyTargetID and link to surveys. A Humboldt eco:Event extension row describes one survey, and no registered SurveyTarget source table is supported, so these values stay in the originals. Survey targets are never synthesized from them."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/terms/isSurveyTargetFullyReported",
+      "namespace": "eco",
+      "disposition": "preserved",
+      "target": "survey-target.isSurveyTargetFullyReported",
+      "prerequisites": "A SurveyTarget source table model. The flag belongs to one complete target and is never copied to, or inferred for, other targets.",
+      "reason": "eco:SurveyTarget records have their own grain: several descriptor rows share one surveyTargetID and link to surveys. A Humboldt eco:Event extension row describes one survey, and no registered SurveyTarget source table is supported, so these values stay in the originals. Survey targets are never synthesized from them. Completeness flags are not overwritten or guessed."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/terms/surveyID",
+      "namespace": "eco",
+      "disposition": "imported",
+      "target": "survey.surveyID",
+      "prerequisites": "Exact term IRI in a Humboldt eco:Event extension row with a reviewed survey role. Distinct surveys must not share a value.",
+      "reason": "A literal identifier of the survey that the extension row describes."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/terms/surveyTargetID",
+      "namespace": "eco",
+      "disposition": "preserved",
+      "target": "survey-target.surveyTargetID",
+      "prerequisites": "A SurveyTarget source table model with surveyTargetID keys and survey links.",
+      "reason": "eco:SurveyTarget records have their own grain: several descriptor rows share one surveyTargetID and link to surveys. A Humboldt eco:Event extension row describes one survey, and no registered SurveyTarget source table is supported, so these values stay in the originals. Survey targets are never synthesized from them."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/terms/surveyTargetType",
+      "namespace": "eco",
+      "disposition": "preserved",
+      "target": "survey-target-descriptor.surveyTargetType",
+      "prerequisites": "A SurveyTarget source table model with surveyTargetID keys and survey links.",
+      "reason": "eco:SurveyTarget records have their own grain: several descriptor rows share one surveyTargetID and link to surveys. A Humboldt eco:Event extension row describes one survey, and no registered SurveyTarget source table is supported, so these values stay in the originals. Survey targets are never synthesized from them."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/terms/surveyTargetUnit",
+      "namespace": "eco",
+      "disposition": "preserved",
+      "target": "survey-target-descriptor.surveyTargetUnit",
+      "prerequisites": "A SurveyTarget source table model with surveyTargetID keys and survey links.",
+      "reason": "eco:SurveyTarget records have their own grain: several descriptor rows share one surveyTargetID and link to surveys. A Humboldt eco:Event extension row describes one survey, and no registered SurveyTarget source table is supported, so these values stay in the originals. Survey targets are never synthesized from them."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/terms/surveyTargetValue",
+      "namespace": "eco",
+      "disposition": "preserved",
+      "target": "survey-target-descriptor.surveyTargetValue",
+      "prerequisites": "A SurveyTarget source table model with surveyTargetID keys and survey links.",
+      "reason": "eco:SurveyTarget records have their own grain: several descriptor rows share one surveyTargetID and link to surveys. A Humboldt eco:Event extension row describes one survey, and no registered SurveyTarget source table is supported, so these values stay in the originals. Survey targets are never synthesized from them."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/absentTaxa",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "",
+      "prerequisites": "A pinned target field with IRI semantics, or a reviewed linked-record design.",
+      "reason": "The pinned survey table has only a literal field for this property. IRIs are not copied into literal fields, and literals are not treated as IRIs; values stay in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/compilationSourceTypes",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "",
+      "prerequisites": "A pinned target field with IRI semantics, or a reviewed linked-record design.",
+      "reason": "The pinned survey table has only a literal field for this property. IRIs are not copied into literal fields, and literals are not treated as IRIs; values stay in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/compilationTypes",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "",
+      "prerequisites": "A pinned target field with IRI semantics, or a reviewed linked-record design.",
+      "reason": "The pinned survey table has only a literal field for this property. IRIs are not copied into literal fields, and literals are not treated as IRIs; values stay in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/eventDurationUnit",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "",
+      "prerequisites": "A pinned target field with IRI semantics, or a reviewed linked-record design.",
+      "reason": "The pinned survey table has only a literal field for this property. IRIs are not copied into literal fields, and literals are not treated as IRIs; values stay in the originals. A supplied value is not treated as the unit of the literal measurement; the literal value still needs a literal unit."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/excludedDegreeOfEstablishmentScope",
+      "namespace": "ecoiri",
+      "disposition": "reviewed-import",
+      "target": "survey-target-descriptor.surveyTargetValueIRI",
+      "prerequisites": "Humboldt eco:Event row; no literal scope in that row; one absolute IRI per cell; an inclusion for each dimension; a valid eco:is...ScopeFullyReported flag or an explicit completeness assertion (always required for combined dimensions and degree of establishment).",
+      "reason": "IRI scope elements become descriptors with surveyTargetValueIRI and the dimension label. Mixed literal/IRI rows keep the IRI in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/excludedGrowthFormScope",
+      "namespace": "ecoiri",
+      "disposition": "reviewed-import",
+      "target": "survey-target-descriptor.surveyTargetValueIRI",
+      "prerequisites": "Humboldt eco:Event row; no literal scope in that row; one absolute IRI per cell; an inclusion for each dimension; a valid eco:is...ScopeFullyReported flag or an explicit completeness assertion (always required for combined dimensions and degree of establishment).",
+      "reason": "IRI scope elements become descriptors with surveyTargetValueIRI and the dimension label. Mixed literal/IRI rows keep the IRI in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/excludedHabitatScope",
+      "namespace": "ecoiri",
+      "disposition": "reviewed-import",
+      "target": "survey-target-descriptor.surveyTargetValueIRI",
+      "prerequisites": "Humboldt eco:Event row; no literal scope in that row; one absolute IRI per cell; an inclusion for each dimension; a valid eco:is...ScopeFullyReported flag or an explicit completeness assertion (always required for combined dimensions and degree of establishment).",
+      "reason": "IRI scope elements become descriptors with surveyTargetValueIRI and the dimension label. Mixed literal/IRI rows keep the IRI in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/excludedLifeStageScope",
+      "namespace": "ecoiri",
+      "disposition": "reviewed-import",
+      "target": "survey-target-descriptor.surveyTargetValueIRI",
+      "prerequisites": "Humboldt eco:Event row; no literal scope in that row; one absolute IRI per cell; an inclusion for each dimension; a valid eco:is...ScopeFullyReported flag or an explicit completeness assertion (always required for combined dimensions and degree of establishment).",
+      "reason": "IRI scope elements become descriptors with surveyTargetValueIRI and the dimension label. Mixed literal/IRI rows keep the IRI in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/excludedTaxonomicScope",
+      "namespace": "ecoiri",
+      "disposition": "reviewed-import",
+      "target": "survey-target-descriptor.surveyTargetValueIRI",
+      "prerequisites": "Humboldt eco:Event row; no literal scope in that row; one absolute IRI per cell; an inclusion for each dimension; a valid eco:is...ScopeFullyReported flag or an explicit completeness assertion (always required for combined dimensions and degree of establishment).",
+      "reason": "IRI scope elements become descriptors with surveyTargetValueIRI and the dimension label. Mixed literal/IRI rows keep the IRI in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/geospatialScopeAreaUnit",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "",
+      "prerequisites": "A pinned target field with IRI semantics, or a reviewed linked-record design.",
+      "reason": "The pinned survey table has only a literal field for this property. IRIs are not copied into literal fields, and literals are not treated as IRIs; values stay in the originals. A supplied value is not treated as the unit of the literal measurement; the literal value still needs a literal unit."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/inventoryTypes",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "",
+      "prerequisites": "A pinned target field with IRI semantics, or a reviewed linked-record design.",
+      "reason": "The pinned survey table has only a literal field for this property. IRIs are not copied into literal fields, and literals are not treated as IRIs; values stay in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/materialSampleTypes",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "",
+      "prerequisites": "A pinned target field with IRI semantics, or a reviewed linked-record design.",
+      "reason": "The pinned survey table has only a literal field for this property. IRIs are not copied into literal fields, and literals are not treated as IRIs; values stay in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/nonTargetTaxa",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "",
+      "prerequisites": "A pinned target field with IRI semantics, or a reviewed linked-record design.",
+      "reason": "The pinned survey table has only a literal field for this property. IRIs are not copied into literal fields, and literals are not treated as IRIs; values stay in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/protocolNames",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "",
+      "prerequisites": "A pinned target field with IRI semantics, or a reviewed linked-record design.",
+      "reason": "The pinned survey table has only a literal field for this property. IRIs are not copied into literal fields, and literals are not treated as IRIs; values stay in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/samplingEffortProtocol",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "",
+      "prerequisites": "A pinned target field with IRI semantics, or a reviewed linked-record design.",
+      "reason": "The pinned survey table has only a literal field for this property. IRIs are not copied into literal fields, and literals are not treated as IRIs; values stay in the originals. Protocol IRIs would need reviewed protocol records rather than a copied link."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/samplingEffortUnit",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "",
+      "prerequisites": "A pinned target field with IRI semantics, or a reviewed linked-record design.",
+      "reason": "The pinned survey table has only a literal field for this property. IRIs are not copied into literal fields, and literals are not treated as IRIs; values stay in the originals. A supplied value is not treated as the unit of the literal measurement; the literal value still needs a literal unit."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/samplingPerformedBy",
+      "namespace": "ecoiri",
+      "disposition": "reviewed-import",
+      "target": "survey.samplingPerformedByID",
+      "prerequisites": "Humboldt eco:Event row; one absolute IRI per cell; column review confirms the IRI identifies the sampling agent.",
+      "reason": "The agent IRI is an identifier, so it is copied to the identifier field, never to the literal agent name."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/surveyTargetType",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "survey-target-descriptor.surveyTargetTypeIRI",
+      "prerequisites": "A SurveyTarget source table model.",
+      "reason": "eco:SurveyTarget records have their own grain: several descriptor rows share one surveyTargetID and link to surveys. A Humboldt eco:Event extension row describes one survey, and no registered SurveyTarget source table is supported, so these values stay in the originals. Survey targets are never synthesized from them."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/surveyTargetUnit",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "survey-target-descriptor.surveyTargetUnitIRI",
+      "prerequisites": "A SurveyTarget source table model.",
+      "reason": "eco:SurveyTarget records have their own grain: several descriptor rows share one surveyTargetID and link to surveys. A Humboldt eco:Event extension row describes one survey, and no registered SurveyTarget source table is supported, so these values stay in the originals. Survey targets are never synthesized from them."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/surveyTargetValue",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "survey-target-descriptor.surveyTargetValueIRI",
+      "prerequisites": "A SurveyTarget source table model.",
+      "reason": "eco:SurveyTarget records have their own grain: several descriptor rows share one surveyTargetID and link to surveys. A Humboldt eco:Event extension row describes one survey, and no registered SurveyTarget source table is supported, so these values stay in the originals. Survey targets are never synthesized from them."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/targetDegreeOfEstablishmentScope",
+      "namespace": "ecoiri",
+      "disposition": "reviewed-import",
+      "target": "survey-target-descriptor.surveyTargetValueIRI",
+      "prerequisites": "Humboldt eco:Event row; no literal scope in that row; one absolute IRI per cell; an inclusion for each dimension; a valid eco:is...ScopeFullyReported flag or an explicit completeness assertion (always required for combined dimensions and degree of establishment).",
+      "reason": "IRI scope elements become descriptors with surveyTargetValueIRI and the dimension label. Mixed literal/IRI rows keep the IRI in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/targetGrowthFormScope",
+      "namespace": "ecoiri",
+      "disposition": "reviewed-import",
+      "target": "survey-target-descriptor.surveyTargetValueIRI",
+      "prerequisites": "Humboldt eco:Event row; no literal scope in that row; one absolute IRI per cell; an inclusion for each dimension; a valid eco:is...ScopeFullyReported flag or an explicit completeness assertion (always required for combined dimensions and degree of establishment).",
+      "reason": "IRI scope elements become descriptors with surveyTargetValueIRI and the dimension label. Mixed literal/IRI rows keep the IRI in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/targetHabitatScope",
+      "namespace": "ecoiri",
+      "disposition": "reviewed-import",
+      "target": "survey-target-descriptor.surveyTargetValueIRI",
+      "prerequisites": "Humboldt eco:Event row; no literal scope in that row; one absolute IRI per cell; an inclusion for each dimension; a valid eco:is...ScopeFullyReported flag or an explicit completeness assertion (always required for combined dimensions and degree of establishment).",
+      "reason": "IRI scope elements become descriptors with surveyTargetValueIRI and the dimension label. Mixed literal/IRI rows keep the IRI in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/targetLifeStageScope",
+      "namespace": "ecoiri",
+      "disposition": "reviewed-import",
+      "target": "survey-target-descriptor.surveyTargetValueIRI",
+      "prerequisites": "Humboldt eco:Event row; no literal scope in that row; one absolute IRI per cell; an inclusion for each dimension; a valid eco:is...ScopeFullyReported flag or an explicit completeness assertion (always required for combined dimensions and degree of establishment).",
+      "reason": "IRI scope elements become descriptors with surveyTargetValueIRI and the dimension label. Mixed literal/IRI rows keep the IRI in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/targetTaxonomicScope",
+      "namespace": "ecoiri",
+      "disposition": "reviewed-import",
+      "target": "survey-target-descriptor.surveyTargetValueIRI",
+      "prerequisites": "Humboldt eco:Event row; no literal scope in that row; one absolute IRI per cell; an inclusion for each dimension; a valid eco:is...ScopeFullyReported flag or an explicit completeness assertion (always required for combined dimensions and degree of establishment).",
+      "reason": "IRI scope elements become descriptors with surveyTargetValueIRI and the dimension label. Mixed literal/IRI rows keep the IRI in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/taxonCompletenessProtocols",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "",
+      "prerequisites": "A pinned target field with IRI semantics, or a reviewed linked-record design.",
+      "reason": "The pinned survey table has only a literal field for this property. IRIs are not copied into literal fields, and literals are not treated as IRIs; values stay in the originals. Protocol IRIs would need reviewed protocol records rather than a copied link."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/taxonCompletenessReported",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "",
+      "prerequisites": "A pinned target field with IRI semantics, or a reviewed linked-record design.",
+      "reason": "The pinned survey table has only a literal field for this property. IRIs are not copied into literal fields, and literals are not treated as IRIs; values stay in the originals."
+    },
+    {
+      "term": "http://rs.tdwg.org/eco/iri/totalAreaSampledUnit",
+      "namespace": "ecoiri",
+      "disposition": "preserved",
+      "target": "",
+      "prerequisites": "A pinned target field with IRI semantics, or a reviewed linked-record design.",
+      "reason": "The pinned survey table has only a literal field for this property. IRIs are not copied into literal fields, and literals are not treated as IRIs; values stay in the originals. A supplied value is not treated as the unit of the literal measurement; the literal value still needs a literal unit."
+    }
+  ]
+}

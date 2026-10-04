@@ -1,0 +1,82 @@
+{
+  "rule_version": "9",
+  "source": {
+    "url": "https://cloud.gbif.org/eca/archive.do?r=dry_grasslands_palpurina_phdthesis",
+    "doi": "10.15468/pkx4tg",
+    "bytes": 333844,
+    "sha256": "d45be8017a7f87234ce3b9680f13b39a45aba3725613aff808a985f1050abb64"
+  },
+  "simulated_review": true,
+  "review_issues": 2,
+  "decisions": {
+    "event-category": "survey",
+    "column:1:8": "occurrence.scientificName"
+  },
+  "automatic_choices": {
+    "column:0:5": "preserve",
+    "column:0:6": "preserve",
+    "column:0:7": "preserve",
+    "column:0:8": "preserve",
+    "table:1": "occurrence",
+    "column:1:0": "preserve",
+    "table:2": "humboldt-survey",
+    "hum-category:2": "require",
+    "table:3": "preserve",
+    "column:3:0": "preserve",
+    "column:3:1": "preserve",
+    "column:3:2": "preserve",
+    "column:3:3": "preserve",
+    "column:3:4": "preserve",
+    "column:3:5": "preserve",
+    "column:3:6": "preserve",
+    "column:3:7": "preserve",
+    "column:3:9": "preserve",
+    "column:3:10": "preserve",
+    "column:3:11": "preserve",
+    "column:3:12": "preserve",
+    "column:3:13": "preserve",
+    "column:3:14": "preserve",
+    "column:3:15": "preserve",
+    "column:3:16": "preserve",
+    "column:3:17": "preserve",
+    "column:3:18": "preserve",
+    "column:3:19": "preserve"
+  },
+  "conversion_notices": 25,
+  "resources": {
+    "event": 390,
+    "occurrence": 15669,
+    "identification": 15669,
+    "survey": 390
+  },
+  "parent_links_verified": 389,
+  "direct_survey_cells_verified": 6235,
+  "occurrence_and_survey_links_verified": {
+    "occurrence": 15669,
+    "survey": 390
+  },
+  "source_originals_identical": true,
+  "uploaded_zip_identical": true,
+  "repeated_plan_and_csv_identical": true,
+  "validation": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  },
+  "withheld_values": 0,
+  "scientific_hierarchy": {
+    "counts": {
+      "compatible": 416,
+      "incomparable": 736,
+      "not-demonstrated": 404
+    },
+    "has_findings": false,
+    "review_required": false,
+    "basis": "Original source assertions, including fields retained without mapping.",
+    "policy": "Findings do not repair values or establish scientific equivalence. No scopes, completeness, absences, effort or other properties are inherited or aggregated.",
+    "reference": "https://eco.tdwg.org/hierarchy/",
+    "checks": 1556,
+    "finding_sample": []
+  },
+  "retained_populated_columns": 24
+}

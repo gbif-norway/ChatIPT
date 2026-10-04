@@ -1,6 +1,7 @@
 'use client'
 
 import Dataset from '../../components/Dataset'
+import DwcConversion from '../../components/DwcConversion'
 import ProtectedRoute from '../../components/ProtectedRoute'
 import { DatasetProvider, useDataset } from '../../contexts/DatasetContext'
 import { useNavigation } from '../../components/HeaderWrapper'
@@ -10,7 +11,7 @@ import { useParams, useRouter } from 'next/navigation'
 const DatasetRouteContent = () => {
   const router = useRouter()
   const params = useParams()
-  const { currentDatasetId, loadDataset, setCurrentDatasetId } = useDataset()
+  const { currentDatasetId, currentDataset, loading, error, loadDataset, setCurrentDatasetId } = useDataset()
   const { updateNavigation } = useNavigation()
 
   const routeDatasetId = Number(params?.id)
@@ -60,7 +61,13 @@ const DatasetRouteContent = () => {
     )
   }
 
-  if (currentDatasetId !== routeDatasetId) {
+  if (currentDatasetId !== routeDatasetId || !currentDataset) {
+    if (error && !loading) {
+      return <ProtectedRoute><main><div className="container p-4">
+        <div className="alert alert-danger" role="alert">Could not load this dataset. {error}</div>
+        <button className="btn btn-primary" onClick={() => loadDataset(routeDatasetId)}>Retry</button>
+      </div></main></ProtectedRoute>
+    }
     return (
       <ProtectedRoute>
         <main>
@@ -80,10 +87,10 @@ const DatasetRouteContent = () => {
   return (
     <ProtectedRoute>
       <main>
-        <Dataset
+        {currentDataset?.workflow_type === 'dwca_conversion' ? <DwcConversion /> : <Dataset
           onNewDataset={handleNewDataset}
           onBackToDashboard={handleBackToDashboard}
-        />
+        />}
       </main>
     </ProtectedRoute>
   )

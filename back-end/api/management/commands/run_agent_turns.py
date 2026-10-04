@@ -3,6 +3,7 @@ import time
 from django.core.management.base import BaseCommand
 
 from api.agent_turns import process_next_agent_turn, reconcile_recent_work
+from api.conversion_jobs import process_next_conversion
 
 
 class Command(BaseCommand):
@@ -25,7 +26,7 @@ class Command(BaseCommand):
                     self.stderr.write(f'Agent work reconciliation failed: {exc}')
                 next_reconcile_at = time.monotonic() + 300
             try:
-                worked = process_next_agent_turn()
+                worked = process_next_conversion() or process_next_agent_turn()
             except Exception as exc:
                 if not options['watch']:
                     raise

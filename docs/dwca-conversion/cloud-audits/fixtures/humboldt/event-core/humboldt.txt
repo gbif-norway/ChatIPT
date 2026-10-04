@@ -1,0 +1,9 @@
+eventID	siteCount	verbatimSiteNames	geospatialScopeAreaValue	geospatialScopeAreaUnit	totalAreaSampledValue	totalAreaSampledUnit	eventDurationValue	eventDurationUnit	targetTaxonomicScope	excludedTaxonomicScope	isTaxonomicScopeFullyReported	targetLifeStageScope	isLifeStageScopeFullyReported	targetHabitatScope	isAbsenceReported	absentTaxa	hasNonTargetTaxa	nonTargetTaxa	inventoryTypes	protocolNames	isAbundanceReported	isAbundanceCapReported	abundanceCap	hasVouchers	voucherInstitutions	samplingPerformedBy	isSamplingEffortReported	samplingEffortValue	samplingEffortUnit	identifiedBy
+BBS-2025-R12	10	P01 | P02 | P03 | P04 | P05 | P06 | P07 | P08 | P09 | P10	12	km²			2	days	Aves	Columba livia	true				false		false		restrictedSearch	pointCount	true	false		false		Route 12 volunteer team	true	50	observerMinutes	A. Observer | B. Observer
+BBS-2025-R12-P01	1	P01					5	minutes	Aves		true				false		false		restrictedSearch	pointCount	true	false		false		A. Observer	true	5	observerMinutes	A. Observer
+MOTH-2025-L03	1						12	hours	Lepidoptera		true	adult	false		false		true	Trichoptera	restrictedSearch	lightTrapping	true	false		true	Garden Museum	C. Recorder	true	12	trapHours	C. Recorder
+VEG-2025-Q17	1		25	km²	4	m²	1	hours						scrub | grassland	false				restrictedSearch	quadrat	true	false		false		D. Botanist	true	1	personHours	D. Botanist
+POND-2025-07	3.0								Amphibia						true	Triturus cristatus	false		restrictedSearch	dipNetting	yes	false	300	false		E. Surveyor	true	40		E. Surveyor
+POND-2025-08	1								Amphibia		true				false		false		restrictedSearch	dipNetting	true	false		false		E. Surveyor	true	30	personMinutes	E. Surveyor
+POND-2025-08	1								Amphibia		true				false		false		restrictedSearch	eDNA	true	false		false		E. Surveyor	true	30	personMinutes	E. Surveyor
+BBS-2025-R99	1								Aves		true				false		false		restrictedSearch	pointCount	true	false		false		A. Observer	true	5	observerMinutes	A. Observer

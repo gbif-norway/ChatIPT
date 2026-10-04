@@ -193,6 +193,8 @@ class UserFileSerializer(serializers.ModelSerializer):
             logger.exception("Failed to clean up rejected upload %s", user_file.file.name)
 
     def create(self, validated_data):
+        if validated_data.get('dataset') and validated_data['dataset'].workflow_type == Dataset.WorkflowType.DWCA_CONVERSION:
+            raise serializers.ValidationError('Conversion source files are immutable. Start a new conversion to use different files.')
         user_file = None
         try:
             with transaction.atomic():
@@ -264,6 +266,7 @@ class DatasetSerializer(serializers.ModelSerializer):
             'user_language',
             'dwc_core',
             'source_mode',
+            'workflow_type',
             'visible_agent_set',
             'user_info',
             'user_files',
@@ -332,6 +335,9 @@ class DatasetSerializer(serializers.ModelSerializer):
                 "Please upload at least one data file so I have something to work with."
             )
 
+        if validated_data.get('workflow_type') == Dataset.WorkflowType.DWCA_CONVERSION:
+            return self._create_conversion(validated_data, uploaded_files)
+
         dataset = Dataset.objects.create(**validated_data)
         uploaded_names = []
         try:
@@ -393,6 +399,47 @@ class DatasetSerializer(serializers.ModelSerializer):
         discord_bot.send_discord_message(f"Dataset ID assigned: {dataset.id}.")
         return dataset
 
+    def validate_workflow_type(self, value):
+        if self.instance and value != self.instance.workflow_type:
+            raise serializers.ValidationError('A dataset workflow cannot be changed after creation.')
+        return value
+
+    def update(self, instance, validated_data):
+        if instance.workflow_type == Dataset.WorkflowType.DWCA_CONVERSION:
+            raise serializers.ValidationError('Conversion inputs are immutable. Start a new conversion to use different inputs.')
+        return super().update(instance, validated_data)
+
+    def _create_conversion(self, validated_data, uploads):
+        from api.dwca_import import ImportFailure, MAX_BYTES, read_inputs
+        from api.models import DwcConversion, DwcConversionJob
+
+        if sum(file.size for file in uploads) > MAX_BYTES:
+            raise serializers.ValidationError('Upload at most 200 MB.')
+        try:
+            # Validate the input layout before storing files. Detailed profiling runs in the worker.
+            read_inputs((file.name, file.read()) for file in uploads)
+        except ImportFailure as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+        stored_files = []
+        try:
+            with transaction.atomic():
+                dataset = Dataset.objects.create(**validated_data)
+                for file in uploads:
+                    file.seek(0)
+                    source = UserFile.objects.create(dataset=dataset, file=file, source_manifest={'original_name': file.name})
+                    stored_files.append(source)
+                conversion = DwcConversion.objects.create(dataset=dataset)
+                DwcConversionJob.objects.create(conversion=conversion)
+        except Exception:
+            for source in stored_files:
+                self._delete_conversion_file(source)
+            raise
+        return dataset
+
+    @staticmethod
+    def _delete_conversion_file(source):
+        UserFileSerializer._delete_stored_file(source)
+
 
 class DatasetListSerializer(serializers.ModelSerializer):
     user_files = UserFileSerializer(many=True, read_only=True)
@@ -413,6 +460,7 @@ class DatasetListSerializer(serializers.ModelSerializer):
             'record_count', 'counts', 'last_updated', 'status', 'progress',
             'last_message_preview', 'user_info', 'user_files', 'source_mode',
             'package_ready',
+            'workflow_type',
         ]
 
     def get_record_count(self, obj):
@@ -440,10 +488,15 @@ class DatasetListSerializer(serializers.ModelSerializer):
         }
 
     def get_last_updated(self, obj):
+        if obj.workflow_type == Dataset.WorkflowType.DWCA_CONVERSION and getattr(obj, 'conversion', None):
+            return obj.conversion.updated_at
         last_table = obj.table_set.only('updated_at').order_by('-updated_at').first()
         return last_table.updated_at if last_table else obj.created_at
 
     def get_status(self, obj):
+        if obj.workflow_type == Dataset.WorkflowType.DWCA_CONVERSION:
+            state = getattr(obj, 'conversion', None)
+            return {'complete': 'ready', 'review': 'needs_input', 'failed': 'failed'}.get(state.status if state else '', 'preparing')
         if obj.published_at: 
             return 'published'
         active_agent = obj.agent_set.filter(completed_at__isnull=True).order_by('created_at').first()
@@ -466,6 +519,9 @@ class DatasetListSerializer(serializers.ModelSerializer):
         return 'preparing' if is_working else 'needs_input'
 
     def get_progress(self, obj):
+        if obj.workflow_type == Dataset.WorkflowType.DWCA_CONVERSION:
+            state = getattr(obj, 'conversion', None)
+            return {'done': 3 if state and state.status == 'complete' else 1 if state and state.plan else 0, 'total': 3}
         applicable_tasks = [
             task
             for task in Task.objects.order_by('order', 'id')

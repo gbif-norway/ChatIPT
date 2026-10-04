@@ -1,0 +1,9 @@
+occurrenceID	eventID	basisOfRecord	eventDate	scientificName	individualCount	occurrenceStatus	decimalLatitude	decimalLongitude	geodeticDatum	countryCode	recordedBy
+PLOT7-2025-001	PLOT-7-2025-06-14	HumanObservation	2025-06-14	Bombus pascuorum	4	present	63.4301	10.3951	EPSG:4326	NO	F. Counter
+PLOT7-2025-002	PLOT-7-2025-06-14	HumanObservation	2025-06-14	Bombus lucorum	1	present	63.4301	10.3951	EPSG:4326	NO	F. Counter
+PLOT8-2025-001	PLOT-8-2025-06-14	HumanObservation	2025-06-14	Bombus pratorum	2	present	63.4322	10.4010	EPSG:4326	NO	F. Counter
+PLOT8-2025-002	PLOT-8-2025-06-14	HumanObservation	2025-06-14	Bombus hortorum	1	present	63.4322	10.4010	EPSG:4326	NO	F. Counter
+PLOT9-2025-001	PLOT-9-2025-06-15	HumanObservation	2025-06-15	Bombus pascuorum	6	present	63.4350	10.4105	EPSG:4326	NO	F. Counter
+PLOT9-2025-002	PLOT-9-2025-06-15	HumanObservation	2025-06-15	Bombus terrestris	1	present	63.4350	10.4105	EPSG:4326	NO	F. Counter
+INC-2025-017		HumanObservation	2025-06-15	Bombus hypnorum	1	present	63.4388	10.4190	EPSG:4326	NO	F. Counter
+PLOT10-2025-001	PLOT-10-2025-06-15	HumanObservation	2025-06-15	Bombus pascuorum	3	present	63.4401	10.4222	EPSG:4326	NO	F. Counter

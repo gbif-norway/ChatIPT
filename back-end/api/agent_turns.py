@@ -53,6 +53,8 @@ def ensure_dataset_work(dataset_id, delay_seconds=0):
     """Start or resume a dataset after a committed upload or user message."""
     with transaction.atomic():
         dataset = Dataset.objects.select_for_update().get(pk=dataset_id)
+        if dataset.workflow_type == Dataset.WorkflowType.DWCA_CONVERSION:
+            return None  # Conversion jobs have their own state and never enter publication tasks.
         agent = dataset.agent_set.filter(completed_at__isnull=True).first()
         if not agent:
             if dataset.published_at or (

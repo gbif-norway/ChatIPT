@@ -1,0 +1,5 @@
+eventID	occurrenceID	basisOfRecord	scientificName	individualCount	occurrenceStatus	recordedBy
+BBS-2025-R12-P01	BBS-2025-R12-P01-001	HumanObservation	Fringilla coelebs	3	present	A. Observer
+BBS-2025-R12-P01	BBS-2025-R12-P01-002	HumanObservation	Erithacus rubecula	1	present	A. Observer
+BBS-2025-R12-P01	BBS-2025-R12-P01-003	HumanObservation	Columba livia	2	present	A. Observer
+MOTH-2025-L03	MOTH-2025-L03-001	PreservedSpecimen	Noctua pronuba	14	present	C. Recorder

@@ -10,6 +10,19 @@ ChatIPT helps students and researchers publish biodiversity datasets to GBIF, es
 4. It creates a relational Darwin Core Data Package (DwC-DP) as the authoritative dataset.
 5. It derives the most complete standards-compliant Darwin Core Archive projection possible for publication on GBIF.
 
+The dashboard also has a separate **Convert a Darwin Core Archive** workflow.
+Upload an existing Event, Occurrence or Taxon archive ZIP or loose files, review
+ambiguous mappings, and download a validated package with the original files and
+conversion report. A checklist alone produces a taxonomy Data Package; approved
+actual occurrence records can also produce standard DwC-DP tables. Optional AI
+suggestions run in successive batches and require approval. See the
+[mapping audit and implementation notes](docs/dwca-conversion/README.md) for supported
+extensions and current limits.
+
+Supported source mappings and retention happen automatically. Choices that change
+meaning still need input; parent/child scientific findings are reported without
+blocking conversion or claiming that the source is scientifically consistent.
+
 ## Who it is for
 
 - People new to biodiversity data publication.
@@ -110,7 +123,7 @@ prerelease (`1.0_DEV`) from TDWG's `rs.tdwg.org` `dwc` branch at commit
 TDWG's deployed prerelease profile at
 `https://dwc-prerelease.rs.tdwg.org/dwc-dp/1.0_DEV/dwc-dp-profile.json` and
 record the immutable source revision and a content hash so exported datasets
-remain reproducible while the schemas are under public review.
+remain reproducible while the deployed profile is a prerelease.
 
 When updating the snapshot, replace the profile and complete `table-schemas`
 directory together, update the local index/version metadata and

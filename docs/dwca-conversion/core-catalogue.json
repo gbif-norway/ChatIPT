@@ -1,0 +1,2029 @@
+{
+  "catalogue_version": "1",
+  "schema_revision": "76898192fd298c2aa170a7059e1bdadf3ee2a828",
+  "rules": [
+    {
+      "id": "archive.term-match.exact-iri",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "Applies to every meta.xml <field term> that no other rule in this catalogue names by exact IRI string (case-sensitive, no trailing-slash or scheme normalisation).",
+        "Outcome is 'preserve unmapped': the column stays in the preserved source archive and is listed in the conversion report; nothing is written to a DwC-DP table.",
+        "Never select a target from header-name similarity, local-name equality, field type compatibility, or a target field's dcterms:isVersionOf value.",
+        "Discharge automatically only if every value in the column is empty; record the discharge."
+      ],
+      "rationale": "Exact IRI matching is the default. Target fields cannot be found by isVersionOf: several vendored fields share one isVersionOf (occurrence_pk, occurrenceID, isPartOfOccurrence_fk, material.evidenceForOccurrenceID all point to dwc:occurrenceID), and some isVersionOf values are malformed (occurrence.recordedByID, event.eventConductedByID and material.collectedByID use http://rs.tdwg.org/dwc/terms/version/recordedByID). Field descriptions may also intentionally differ from the source term (DP guide 3.4 item 3).",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/dp/index.md"
+      ]
+    },
+    {
+      "id": "archive.core.occurrence",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": [],
+      "targets": [
+        {"table": "occurrence", "field": "occurrence_pk"},
+        {"table": "occurrence", "field": "event_fk"},
+        {"table": "event", "field": "event_pk"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "meta.xml has exactly one <core> and its rowType equals http://rs.tdwg.org/dwc/terms/Occurrence exactly.",
+        "Each core row produces exactly one occurrence row; occurrence.event_fk is required, so each occurrence must also resolve to one event row (see event.grain.* rules).",
+        "Rows whose basisOfRecord is 'Taxon' or whose shape suggests a species list are routed to taxon.checklist-shaped-occurrence-core instead of being converted silently."
+      ],
+      "rationale": "In DwC-DP an Occurrence is an Event establishing the state of an Organism at a place and time; location and date live in the event table, not occurrence, so an event row is mandatory.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/text/index.md"
+      ]
+    },
+    {
+      "id": "archive.core.event",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Event"],
+      "source_terms": [],
+      "targets": [
+        {"table": "event", "field": "event_pk"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "meta.xml has exactly one <core> and its rowType equals http://rs.tdwg.org/dwc/terms/Event exactly.",
+        "Each core row produces exactly one event row. Occurrences come only from an Occurrence extension (handled by the extension catalogue) or from rule event.core-carries-occurrence-terms after review.",
+        "An Event core with no extensions yields an event-only package; this is valid (the profile requires only one resource)."
+      ],
+      "rationale": "Event core rows are sampling or other events; their grain matches the event table directly.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/f32e31d5a4e3-dwc_event_2026-05-26.xml"
+      ]
+    },
+    {
+      "id": "taxon.core.checklist-unsupported",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Taxon"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/taxonID",
+        "http://rs.tdwg.org/dwc/terms/scientificName",
+        "http://rs.tdwg.org/dwc/terms/acceptedNameUsageID",
+        "http://rs.tdwg.org/dwc/terms/parentNameUsageID",
+        "http://rs.tdwg.org/dwc/terms/taxonomicStatus"
+      ],
+      "targets": [],
+      "disposition": "unsupported",
+      "conditions": [
+        "Core rowType equals http://rs.tdwg.org/dwc/terms/Taxon and there is no Occurrence or Event extension.",
+        "Also applies when the only extensions are taxon-centred (e.g. Distribution, Vernacular names, Species profile, Description, Multimedia, References, Types and Specimen without event data).",
+        "Outcome: stop the DwC-DP conversion with an explicit 'checklist not representable in DwC-DP 1.0_DEV' result; keep the DwC-A as the publishable artefact. Never synthesise occurrences, events or identifications from taxon rows."
+      ],
+      "rationale": "The vendored profile's reserved resource names contain no Taxon or name-usage table; identification-taxon only describes taxa used in an Identification. Distribution rows are statements about taxa in areas, not observations of organisms.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/dwc-dp-profile.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification-taxon.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/71f10ee767e1-dwc_taxon_2026-05-26.xml"
+      ]
+    },
+    {
+      "id": "taxon.core.with-occurrence-extension",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Taxon"],
+      "source_terms": [],
+      "targets": [
+        {"table": "occurrence", "field": "occurrence_pk"},
+        {"table": "event", "field": "event_pk"},
+        {"table": "identification", "field": "identification_pk"}
+      ],
+      "disposition": "review",
+      "conditions": [
+        "Core rowType is http://rs.tdwg.org/dwc/terms/Taxon and an extension has rowType http://rs.tdwg.org/dwc/terms/Occurrence (or rs.gbif.org Types and Specimen rows that carry dates and locations).",
+        "User must confirm that each extension row is an occurrence of an organism and that the taxon core row is the identification applied to it.",
+        "If confirmed: occurrence rows come from extension rows (keys per ids.derived-key-scheme), events per event.grain.one-per-occurrence, and one identification per occurrence copying the taxon core's name terms listed in identification.direct. Taxon-only terms (taxonomicStatus, acceptedNameUsage*, parentNameUsage*, higherClassification) stay unmapped.",
+        "If not confirmed: outcome is taxon.core.checklist-unsupported."
+      ],
+      "rationale": "Reshaping a checklist into occurrence-centred data is a semantic decision; the archive structure alone does not prove that extension rows are organism occurrences.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/text/index.md",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification.json"
+      ]
+    },
+    {
+      "id": "taxon.checklist-shaped-occurrence-core",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/basisOfRecord",
+        "http://rs.tdwg.org/dwc/terms/taxonomicStatus",
+        "http://rs.tdwg.org/dwc/terms/acceptedNameUsage"
+      ],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "Triggered when any row has basisOfRecord exactly 'Taxon' (after basisOfRecord.alias normalisation), or when all of eventDate, year, verbatimEventDate, decimalLatitude, locality, country, countryCode and recordedBy are empty in every row while scientificName is populated.",
+        "User chooses: (a) treat as checklist -> taxon.core.checklist-unsupported; (b) confirm records are real occurrences with unknown date/place and proceed.",
+        "No automatic discharge."
+      ],
+      "rationale": "Species lists are sometimes published as Occurrence cores. Converting them would assert that organisms were observed at unspecified events.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/vocabulary/term_versions.csv",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md"
+      ]
+    },
+    {
+      "id": "archive.core.other-row-types",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Organism",
+        "http://rs.tdwg.org/dwc/terms/MaterialEntity",
+        "http://rs.tdwg.org/dwc/terms/MaterialSample",
+        "http://purl.org/dc/terms/Location",
+        "http://rs.tdwg.org/dwc/terms/Identification",
+        "http://rs.tdwg.org/dwc/terms/MeasurementOrFact",
+        "http://rs.tdwg.org/dwc/terms/ResourceRelationship"
+      ],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "unsupported",
+      "conditions": [
+        "Core rowType is any IRI other than dwc:Occurrence or dwc:Event (dwc:Taxon has its own rules).",
+        "Outcome: conversion not attempted by this workflow version; report the rowType verbatim."
+      ],
+      "rationale": "This catalogue covers Occurrence and Event cores only. Other cores have different entity grains and would need their own reviewed catalogue.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/text/index.md"
+      ]
+    },
+    {
+      "id": "archive.core.simple-darwin-record-alias",
+      "source_row_types": ["http://rs.tdwg.org/dwc/xsd/simpledarwincore/SimpleDarwinRecord"],
+      "source_terms": [],
+      "targets": [
+        {"table": "occurrence", "field": "occurrence_pk"},
+        {"table": "event", "field": "event_pk"}
+      ],
+      "disposition": "review",
+      "conditions": [
+        "Explicit alias: may be processed under archive.core.occurrence only after the user confirms each row is one occurrence (not a taxon or event-only record).",
+        "Requires no extensions (Simple Darwin Core is flat); otherwise unsupported."
+      ],
+      "rationale": "The Darwin Core text guide uses this rowType for flat records whose class is not fixed by the rowType, so equating it with dwc:Occurrence is an assumption.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/text/index.md"
+      ]
+    },
+    {
+      "id": "archive.meta.field-defaults",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "automatic",
+      "conditions": [
+        "A <field> with a default and no index is treated as a constant column holding the default for every row.",
+        "A <field> with both index and default uses the default only where the cell is empty.",
+        "The resulting values then pass through the rule for that term like any other value; the conversion log marks them as originating from meta.xml defaults."
+      ],
+      "rationale": "DwC text defines default as the value for rows that do not supply one; ignoring it drops data (commonly basisOfRecord, license, institutionCode, geodeticDatum).",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/text/index.md"
+      ]
+    },
+    {
+      "id": "archive.meta.multi-file-and-parsing",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "automatic",
+      "conditions": [
+        "Read every <location> of the core in document order and concatenate rows; honour encoding, fieldsTerminatedBy, fieldsEnclosedBy, linesTerminatedBy and ignoreHeaderLines exactly.",
+        "Cell values are copied without case change or trimming; a cell that is empty or only whitespace becomes null. Surrounding whitespace on key columns is not stripped (see ids.core-id-integrity).",
+        "The dateFormat attribute is only a parsing hint for dates.non-iso; it never rewrites values that already conform to ISO 8601-1."
+      ],
+      "rationale": "Deterministic reading is required before any semantic rule can be applied reproducibly.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/text/index.md"
+      ]
+    },
+    {
+      "id": "archive.meta.duplicate-term",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "Same term IRI declared on more than one <field> of the core.",
+        "Auto-discharge if the columns are identical in every row; otherwise the user selects one column or keeps both unmapped."
+      ],
+      "rationale": "Choosing silently between conflicting columns would drop data.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/text/index.md"
+      ]
+    },
+    {
+      "id": "alias.https-dwc-namespace",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": ["https://rs.tdwg.org/dwc/terms/"],
+      "targets": [],
+      "disposition": "conditional",
+      "conditions": [
+        "Explicit alias: a term IRI beginning https://rs.tdwg.org/dwc/terms/ is re-read as http://rs.tdwg.org/dwc/terms/ with the same local name, only if the resulting IRI is named by another rule in this catalogue.",
+        "The alias application is recorded per column in the conversion log.",
+        "No other namespace rewriting (purl.org dc/elements vs dc/terms, trailing slashes, case) is permitted."
+      ],
+      "rationale": "Scheme drift is a known publisher error with no semantic change; it is the only alias allowed for core terms besides the term-specific aliases listed elsewhere.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/vocabulary/term_versions.csv"
+      ]
+    },
+    {
+      "id": "alias.dwciri-namespace",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": ["http://rs.tdwg.org/dwc/iri/"],
+      "targets": [],
+      "disposition": "unsupported",
+      "conditions": [
+        "Any term in the dwciri: namespace is preserved unmapped. It is not merged into the dwc: literal field of the same local name."
+      ],
+      "rationale": "dwciri terms take only IRI values and have distinct semantics; the vendored occurrence and event tables have no IRI-valued counterparts for these terms.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"
+      ]
+    },
+    {
+      "id": "alias.deprecated-terms",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/individualID",
+        "http://rs.tdwg.org/dwc/terms/occurrenceDetails"
+      ],
+      "targets": [
+        {"table": "occurrence", "field": "organismID"},
+        {"table": "provenance", "field": "references"}
+      ],
+      "disposition": "review",
+      "conditions": [
+        "individualID (status deprecated) is offered as a candidate for occurrence.organismID; occurrenceDetails (deprecated) as a candidate for provenance.references.",
+        "User confirmation required; with no confirmation the column stays unmapped."
+      ],
+      "rationale": "Deprecated terms have no declared replacement in term_versions.csv, so treating them as equivalent is a judgement call.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/vocabulary/term_versions.csv"
+      ]
+    },
+    {
+      "id": "ids.core-id-to-pk",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [],
+      "targets": [
+        {"table": "occurrence", "field": "occurrence_pk"},
+        {"table": "event", "field": "event_pk"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Source is the column named by the core's <id index>, not any term. For an Occurrence core it becomes occurrence_pk; for an Event core it becomes event_pk.",
+        "Use the value verbatim only if every core row has a non-empty value, all values are unique, and none collides with a derived key in the same table; otherwise use ids.derived-key-scheme for the whole table.",
+        "If there is no <id> (no extensions), derive keys with ids.derived-key-scheme.",
+        "Every extension row's <coreid> is translated through the same mapping so joins are preserved."
+      ],
+      "rationale": "The core id is the archive's join key. It may legitimately differ from occurrenceID or eventID, and it is the only value extension rows reference. *_pk values MAY change in aggregation, unlike occurrenceID/eventID.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/text/index.md",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"
+      ]
+    },
+    {
+      "id": "ids.core-id-integrity",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "Triggered when extensions exist and any core id is empty, duplicated, or differs from another only by leading/trailing whitespace or case.",
+        "Extension rows whose coreid matches no core id, or more than one, are reported and not attached to anything.",
+        "This blocks conversion; the user fixes the source or explicitly drops the affected rows. Automatic discharge only when no extension row references the problematic ids."
+      ],
+      "rationale": "DwC text requires unique core ids when extensions are used; guessing which duplicate an extension row belongs to would invent relationships.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/text/index.md"
+      ]
+    },
+    {
+      "id": "ids.derived-key-scheme",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [],
+      "targets": [
+        {"table": "occurrence", "field": "occurrence_pk"},
+        {"table": "event", "field": "event_pk"},
+        {"table": "identification", "field": "identification_pk"},
+        {"table": "material", "field": "materialEntity_pk"},
+        {"table": "organism", "field": "organism_pk"},
+        {"table": "protocol", "field": "protocol_pk"},
+        {"table": "provenance", "field": "provenance_pk"},
+        {"table": "geological-context", "field": "geologicalContext_pk"},
+        {"table": "agent", "field": "agent_pk"}
+      ],
+      "disposition": "automatic",
+      "conditions": [
+        "Derived key = '<table>:' + first 32 hex characters of SHA-256 over the UTF-8 canonical JSON array ['dwca-dp-key-v1', <table>, <source core rowType IRI>, ...component strings]. Canonical JSON: no whitespace, NFC strings, nulls as JSON null.",
+        "Components (in order): occurrence/event from core: [core id] when present, else [sorted term IRI=value pairs of the row, duplicate ordinal among byte-identical rows]. Synthesised event for an occurrence row: ['event-of', occurrence_pk]. Event grouped by eventID: ['eventID', eventID]. Identification for a row: ['identification-of', occurrence_pk]. Material for a row: ['material-of', occurrence_pk]. Organism: ['organismID', organismID]. Protocol: ['protocol', protocolName]. Provenance and geological-context: the sorted IRI=value pairs that define the row.",
+        "No timestamps, random UUIDs, file row numbers (except the duplicate ordinal above), or catalogue_version in the key input, so re-converting the same archive yields the same keys.",
+        "After generation, assert uniqueness per table; a collision blocks export."
+      ],
+      "rationale": "Primary keys are package-internal join keys. They must be deterministic and must never be written into occurrenceID, eventID, identificationID, materialEntityID, organismID or other identifiers that DwC-DP says MUST be preserved.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material.json"
+      ]
+    },
+    {
+      "id": "ids.occurrenceID",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/occurrenceID"],
+      "targets": [{"table": "occurrence", "field": "occurrenceID"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Copy verbatim into occurrence.occurrenceID when the row becomes an occurrence. Never generate, copy the core id into, or rewrite occurrenceID.",
+        "Duplicate non-empty occurrenceIDs within the package -> review (occurrenceID is the table's weakPrimaryKey and the target of material.evidenceForOccurrenceID).",
+        "Empty occurrenceID is allowed; it only prevents rules that need the weak key (basisOfRecord.specimen-to-material)."
+      ],
+      "rationale": "occurrenceID MUST be preserved in aggregation and is distinct from occurrence_pk.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material.json"
+      ]
+    },
+    {
+      "id": "ids.eventID",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Occurrence"
+      ],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/eventID"],
+      "targets": [{"table": "event", "field": "eventID"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Event core: copy verbatim into event.eventID. Duplicate non-empty eventIDs in an Event core -> review (parentEventID resolution becomes ambiguous).",
+        "Occurrence core: eventID is the grouping key for event.grain.group-by-eventID and is copied to the grouped event's eventID.",
+        "Synthesised events (event.grain.one-per-occurrence) leave eventID empty; never fill it with a derived key."
+      ],
+      "rationale": "eventID MUST be preserved and may differ from the core id that becomes event_pk.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"
+      ]
+    },
+    {
+      "id": "event.grain.one-per-occurrence",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": [],
+      "targets": [
+        {"table": "event", "field": "event_pk"},
+        {"table": "occurrence", "field": "event_fk"}
+      ],
+      "disposition": "automatic",
+      "conditions": [
+        "Occurrence core row with empty eventID: create one event with key ['event-of', occurrence_pk] and set occurrence.event_fk to it.",
+        "Every event-level term on the row (dates, location, habitat, sampling, georeference, datasetName/datasetID, fieldNumber, eventRemarks) is written to this event.",
+        "Do not merge events across rows because dates or locations happen to be equal; see event.grain.content-dedupe."
+      ],
+      "rationale": "One context event per occurrence row is the only grain that adds no relationships absent from the source.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json"
+      ]
+    },
+    {
+      "id": "event.grain.group-by-eventID",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/eventID"],
+      "targets": [
+        {"table": "event", "field": "event_pk"},
+        {"table": "event", "field": "eventID"},
+        {"table": "occurrence", "field": "event_fk"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Occurrence core rows sharing the same non-empty eventID (exact string) point to one event keyed ['eventID', eventID].",
+        "All event-level values across the group must agree under merge.event-field-conflicts; any conflict puts the group into review.",
+        "Rows with empty eventID fall back to event.grain.one-per-occurrence."
+      ],
+      "rationale": "The publisher asserts shared eventID means a shared event, so grouping is a source fact, not inference.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md"
+      ]
+    },
+    {
+      "id": "merge.event-field-conflicts",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "Applies whenever more than one source row (or a core row and an extension row) contributes to the same target row and field: grouped events, organisms, protocols, provenance, geological contexts, agents, identifications deduplicated by identificationID.",
+        "Comparison: strings after NFC normalisation, exact otherwise; number-typed target fields compare parsed decimal values ('10' equals '10.0'); integer fields compare parsed integers.",
+        "Null vs non-null is not a conflict: the non-null value is used and the fill is logged.",
+        "Two different non-null values are a conflict. User options: split the group (each distinct value combination gets its own derived key and loses the shared eventID grouping only for that split, eventID is still copied), pick one value for the whole group, or abandon the grouping. Never choose by majority, first row, or model suggestion.",
+        "Auto-discharge only if a stored user decision for the same dataset, group key and field exists and the conflicting values are unchanged."
+      ],
+      "rationale": "Merges are where silent data loss most often happens; the policy is deterministic and loss-visible.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/docs/dwca-conversion/README.md"
+      ]
+    },
+    {
+      "id": "event.grain.content-dedupe",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": [],
+      "targets": [{"table": "event", "field": "event_pk"}],
+      "disposition": "review",
+      "conditions": [
+        "Optional, user-initiated only: rows without eventID whose event-level values are all byte-identical may be offered as candidate shared events.",
+        "Never applied automatically; if accepted, eventID remains empty on the merged event."
+      ],
+      "rationale": "Identical date and place do not prove a single event (e.g. two independent observers).",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md"
+      ]
+    },
+    {
+      "id": "event.parentEventID.event-core",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Event"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/parentEventID"],
+      "targets": [{"table": "event", "field": "parentEvent_fk"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Resolve the value against event.eventID (not the core id) of events in the same package and write that event's event_pk.",
+        "Exactly one match required; zero or multiple matches, self-reference, or a cycle -> review. Unresolved values are kept in the conversion log, never written as dangling foreign keys.",
+        "Stub parent events are created only after user confirmation, with eventID = parentEventID, eventCategory per event.eventCategory.default, and no other fields."
+      ],
+      "rationale": "parentEvent_fk is a hard foreign key to event_pk, while the DwC-A value refers to an eventID; core ids and eventIDs can differ.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"
+      ]
+    },
+    {
+      "id": "event.parentEventID.occurrence-core",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/parentEventID"],
+      "targets": [{"table": "event", "field": "parentEvent_fk"}],
+      "disposition": "review",
+      "conditions": [
+        "Written to the occurrence's event (grouped or synthesised) only if it resolves to exactly one event.eventID in the package.",
+        "In an Occurrence core parents usually are not present; creating stub parents requires user confirmation as in event.parentEventID.event-core."
+      ],
+      "rationale": "Same foreign-key constraint, but Occurrence cores rarely include parent events.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"
+      ]
+    },
+    {
+      "id": "event.eventCategory.source",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Occurrence"
+      ],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/eventCategory"],
+      "targets": [{"table": "event", "field": "eventCategory"}],
+      "disposition": "automatic",
+      "conditions": [
+        "Copy verbatim when non-empty. Values outside the project-selected vocabulary (see gap list) are reported but not rewritten."
+      ],
+      "rationale": "Direct term match; eventCategory is required in the vendored event table.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/vocabulary/term_versions.csv"
+      ]
+    },
+    {
+      "id": "event.eventCategory.default",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Occurrence"
+      ],
+      "source_terms": [],
+      "targets": [{"table": "event", "field": "eventCategory"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Only when eventCategory is empty. Event core rows and grouped or stub events: 'Event' (the generic category; makes no claim of being a survey or material gathering).",
+        "Synthesised one-per-occurrence events: 'Occurrence'.",
+        "Literal values follow the eventCategory-2026-05-26 recommendation that the vendored field references (Event, MaterialGathering, Occurrence, OrganismInteraction, Survey). The vendored schema examples and existing ChatIPT DP code use lowercase 'occurrence' instead; this needs a maintainer decision before implementation (gap G1).",
+        "Upgrading to 'Survey' or 'MaterialGathering' requires user confirmation, never inference from samplingProtocol or basisOfRecord."
+      ],
+      "rationale": "A required field must be populated, and the generic value is the only one that does not assert unsupported meaning.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/vocabulary/term_versions.csv",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md"
+      ]
+    },
+    {
+      "id": "event.direct-text",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Occurrence"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/eventType",
+        "http://rs.tdwg.org/dwc/terms/datasetName",
+        "http://rs.tdwg.org/dwc/terms/datasetID",
+        "http://rs.tdwg.org/dwc/terms/fieldNumber",
+        "http://rs.tdwg.org/dwc/terms/eventTime",
+        "http://rs.tdwg.org/dwc/terms/verbatimEventDate",
+        "http://rs.tdwg.org/dwc/terms/habitat",
+        "http://rs.tdwg.org/dwc/terms/sampledSubstrateCategory",
+        "http://rs.tdwg.org/dwc/terms/sampledSubstrateLayer",
+        "http://rs.tdwg.org/dwc/terms/fieldNotes",
+        "http://rs.tdwg.org/dwc/terms/eventRemarks",
+        "http://rs.tdwg.org/dwc/terms/locationID",
+        "http://rs.tdwg.org/dwc/terms/siteNumber",
+        "http://rs.tdwg.org/dwc/terms/higherGeographyID",
+        "http://rs.tdwg.org/dwc/terms/higherGeography",
+        "http://rs.tdwg.org/dwc/terms/continent",
+        "http://rs.tdwg.org/dwc/terms/waterBody",
+        "http://rs.tdwg.org/dwc/terms/islandGroup",
+        "http://rs.tdwg.org/dwc/terms/island",
+        "http://rs.tdwg.org/dwc/terms/country",
+        "http://rs.tdwg.org/dwc/terms/countryCode",
+        "http://rs.tdwg.org/dwc/terms/stateProvince",
+        "http://rs.tdwg.org/dwc/terms/county",
+        "http://rs.tdwg.org/dwc/terms/municipality",
+        "http://rs.tdwg.org/dwc/terms/locality",
+        "http://rs.tdwg.org/dwc/terms/verbatimLocality",
+        "http://rs.tdwg.org/dwc/terms/verbatimElevation",
+        "http://rs.tdwg.org/dwc/terms/verticalDatum",
+        "http://rs.tdwg.org/dwc/terms/verbatimDepth",
+        "http://rs.tdwg.org/dwc/terms/locationAccordingTo",
+        "http://rs.tdwg.org/dwc/terms/locationRemarks",
+        "http://rs.tdwg.org/dwc/terms/preferredSpatialRepresentation",
+        "http://rs.tdwg.org/dwc/terms/geodeticDatum",
+        "http://rs.tdwg.org/dwc/terms/verbatimCoordinates",
+        "http://rs.tdwg.org/dwc/terms/verbatimLatitude",
+        "http://rs.tdwg.org/dwc/terms/verbatimLongitude",
+        "http://rs.tdwg.org/dwc/terms/verbatimCoordinateSystem",
+        "http://rs.tdwg.org/dwc/terms/verbatimSRS",
+        "http://rs.tdwg.org/dwc/terms/footprintSRS",
+        "http://rs.tdwg.org/dwc/terms/georeferencedBy",
+        "http://rs.tdwg.org/dwc/terms/georeferencedDate",
+        "http://rs.tdwg.org/dwc/terms/georeferenceProtocol",
+        "http://rs.tdwg.org/dwc/terms/georeferenceSources",
+        "http://rs.tdwg.org/dwc/terms/georeferenceRemarks",
+        "http://rs.tdwg.org/dwc/terms/georeferenceVerificationStatus"
+      ],
+      "targets": [
+        {"table": "event", "field": "eventType"},
+        {"table": "event", "field": "datasetName"},
+        {"table": "event", "field": "datasetID"},
+        {"table": "event", "field": "fieldNumber"},
+        {"table": "event", "field": "eventTime"},
+        {"table": "event", "field": "verbatimEventDate"},
+        {"table": "event", "field": "habitat"},
+        {"table": "event", "field": "sampledSubstrateCategory"},
+        {"table": "event", "field": "sampledSubstrateLayer"},
+        {"table": "event", "field": "fieldNotes"},
+        {"table": "event", "field": "eventRemarks"},
+        {"table": "event", "field": "locationID"},
+        {"table": "event", "field": "siteNumber"},
+        {"table": "event", "field": "higherGeographyID"},
+        {"table": "event", "field": "higherGeography"},
+        {"table": "event", "field": "continent"},
+        {"table": "event", "field": "waterBody"},
+        {"table": "event", "field": "islandGroup"},
+        {"table": "event", "field": "island"},
+        {"table": "event", "field": "country"},
+        {"table": "event", "field": "countryCode"},
+        {"table": "event", "field": "stateProvince"},
+        {"table": "event", "field": "county"},
+        {"table": "event", "field": "municipality"},
+        {"table": "event", "field": "locality"},
+        {"table": "event", "field": "verbatimLocality"},
+        {"table": "event", "field": "verbatimElevation"},
+        {"table": "event", "field": "verticalDatum"},
+        {"table": "event", "field": "verbatimDepth"},
+        {"table": "event", "field": "locationAccordingTo"},
+        {"table": "event", "field": "locationRemarks"},
+        {"table": "event", "field": "preferredSpatialRepresentation"},
+        {"table": "event", "field": "geodeticDatum"},
+        {"table": "event", "field": "verbatimCoordinates"},
+        {"table": "event", "field": "verbatimLatitude"},
+        {"table": "event", "field": "verbatimLongitude"},
+        {"table": "event", "field": "verbatimCoordinateSystem"},
+        {"table": "event", "field": "verbatimSRS"},
+        {"table": "event", "field": "footprintSRS"},
+        {"table": "event", "field": "georeferencedBy"},
+        {"table": "event", "field": "georeferencedDate"},
+        {"table": "event", "field": "georeferenceProtocol"},
+        {"table": "event", "field": "georeferenceSources"},
+        {"table": "event", "field": "georeferenceRemarks"},
+        {"table": "event", "field": "georeferenceVerificationStatus"}
+      ],
+      "disposition": "automatic",
+      "conditions": [
+        "One-to-one by position in the two lists (source term N -> target N); all targets are type string.",
+        "Verbatim copy. No vocabulary normalisation, no derivation of country from countryCode or vice versa, no default geodeticDatum or verticalDatum.",
+        "In Occurrence cores these fields are subject to merge.event-field-conflicts when events are grouped."
+      ],
+      "rationale": "Identical term and same subject (dcterms:Location is subsumed in event in DwC-DP; georeferenceVerificationStatus is placed on event in this schema revision).",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/127ed4a950cb-dwc_occurrence_2026-05-26.xml",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/f32e31d5a4e3-dwc_event_2026-05-26.xml"
+      ]
+    },
+    {
+      "id": "event.informationWithheld-dataGeneralizations",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Event"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/informationWithheld",
+        "http://rs.tdwg.org/dwc/terms/dataGeneralizations",
+        "http://rs.tdwg.org/dwc/terms/feedbackURL"
+      ],
+      "targets": [
+        {"table": "event", "field": "informationWithheld"},
+        {"table": "event", "field": "dataGeneralizations"},
+        {"table": "event", "field": "feedbackURL"}
+      ],
+      "disposition": "automatic",
+      "conditions": [
+        "Event core only. In Occurrence cores see occurrence.direct-text (these go to the occurrence row)."
+      ],
+      "rationale": "Record-level statements belong to the entity the core row represents.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"
+      ]
+    },
+    {
+      "id": "event.associatedReferences",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Event"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/associatedReferences"],
+      "targets": [{"table": "event", "field": "eventReferences"}],
+      "disposition": "automatic",
+      "conditions": ["Event core only; verbatim copy including ' | ' separators."],
+      "rationale": "Explicit documented rule: the target name differs, but event.eventReferences has isVersionOf dwc:associatedReferences and the same list semantics.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"]
+    },
+    {
+      "id": "dates.eventDate",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Occurrence"
+      ],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/eventDate"],
+      "targets": [{"table": "event", "field": "eventDate"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Automatic verbatim copy when the value is an ISO 8601-1 date, date-time (with or without offset), or interval, including the abbreviated interval end allowed by the term examples (e.g. 2007-11-13/15, 1900/1909).",
+        "Otherwise apply dates.non-iso. No time-zone conversion, no truncation, no expansion of partial dates.",
+        "Do not derive year/month/day/startDayOfYear/endDayOfYear from eventDate during conversion."
+      ],
+      "rationale": "eventDate is a string in the target; keeping it verbatim avoids imposing precision that the source does not have.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"
+      ]
+    },
+    {
+      "id": "dates.non-iso",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Occurrence"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/eventDate",
+        "http://rs.tdwg.org/dwc/terms/dateIdentified",
+        "http://rs.tdwg.org/dwc/terms/georeferencedDate"
+      ],
+      "targets": [
+        {"table": "event", "field": "eventDate"},
+        {"table": "event", "field": "verbatimEventDate"}
+      ],
+      "disposition": "review",
+      "conditions": [
+        "Value is not ISO 8601-1.",
+        "Auto-discharge only if meta.xml declares a dateFormat, every non-ISO value in the column parses under it, and the parse is unambiguous (day > 12 or the format fixes field order). The normalised value goes to eventDate; the original goes to verbatimEventDate only if verbatimEventDate is empty for that row, otherwise only to the conversion log.",
+        "Ambiguous values such as 03/04/2001 without a dateFormat need the user to state the order for the dataset.",
+        "Never overwrite an existing verbatimEventDate."
+      ],
+      "rationale": "Day/month order cannot be recovered from the value alone.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/text/index.md",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"
+      ]
+    },
+    {
+      "id": "dates.integer-parts",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Occurrence"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/year",
+        "http://rs.tdwg.org/dwc/terms/month",
+        "http://rs.tdwg.org/dwc/terms/day",
+        "http://rs.tdwg.org/dwc/terms/startDayOfYear",
+        "http://rs.tdwg.org/dwc/terms/endDayOfYear"
+      ],
+      "targets": [
+        {"table": "event", "field": "year"},
+        {"table": "event", "field": "month"},
+        {"table": "event", "field": "day"},
+        {"table": "event", "field": "startDayOfYear"},
+        {"table": "event", "field": "endDayOfYear"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Copy when the value is a base-10 integer (optionally with trailing '.0') within the schema constraints (month 1-12, day 1-31, day-of-year 1-366).",
+        "Non-integer or out-of-range values -> review; they are not copied (the target type is integer).",
+        "If both eventDate and these parts exist and disagree, copy both unchanged and report the inconsistency; do not correct either."
+      ],
+      "rationale": "Integer-typed targets with constraints; disagreement is a source quality issue, not something conversion may resolve.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"]
+    },
+    {
+      "id": "coords.decimal",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Occurrence"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/decimalLatitude",
+        "http://rs.tdwg.org/dwc/terms/decimalLongitude"
+      ],
+      "targets": [
+        {"table": "event", "field": "decimalLatitude"},
+        {"table": "event", "field": "decimalLongitude"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Copy when the value is a plain decimal number (dot separator, optional sign, no degree symbols or hemisphere letters) within -90..90 / -180..180.",
+        "Comma decimal separators, DMS strings, out-of-range values or apparent lat/long swaps -> review. Never swap or negate automatically.",
+        "Only one of the pair present -> copy and report.",
+        "geodeticDatum is copied as given (event.direct-text); its absence is reported, not defaulted to WGS84."
+      ],
+      "rationale": "Number-typed targets with range constraints; reinterpretation would change the location.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"]
+    },
+    {
+      "id": "coords.numeric-quality",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Occurrence"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/coordinateUncertaintyInMeters",
+        "http://rs.tdwg.org/dwc/terms/coordinatePrecision",
+        "http://rs.tdwg.org/dwc/terms/pointRadiusSpatialFit",
+        "http://rs.tdwg.org/dwc/terms/footprintSpatialFit"
+      ],
+      "targets": [
+        {"table": "event", "field": "coordinateUncertaintyInMeters"},
+        {"table": "event", "field": "coordinatePrecision"},
+        {"table": "event", "field": "pointRadiusSpatialFit"},
+        {"table": "event", "field": "footprintSpatialFit"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Copy plain numbers that satisfy constraints: coordinateUncertaintyInMeters 1..20037509 (0 is invalid); pointRadiusSpatialFit >= 0.",
+        "coordinateUncertaintyInMeters = 0, values with units ('30 m'), or non-numeric text -> review; not copied.",
+        "Uncertainty with no coordinates is reported, not dropped."
+      ],
+      "rationale": "Schema constraints are explicit; unit stripping is a reinterpretation.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"]
+    },
+    {
+      "id": "coords.elevation-depth",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Occurrence"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/minimumElevationInMeters",
+        "http://rs.tdwg.org/dwc/terms/maximumElevationInMeters",
+        "http://rs.tdwg.org/dwc/terms/minimumDepthInMeters",
+        "http://rs.tdwg.org/dwc/terms/maximumDepthInMeters",
+        "http://rs.tdwg.org/dwc/terms/minimumDistanceAboveSurfaceInMeters",
+        "http://rs.tdwg.org/dwc/terms/maximumDistanceAboveSurfaceInMeters"
+      ],
+      "targets": [
+        {"table": "event", "field": "minimumElevationInMeters"},
+        {"table": "event", "field": "maximumElevationInMeters"},
+        {"table": "event", "field": "minimumDepthInMeters"},
+        {"table": "event", "field": "maximumDepthInMeters"},
+        {"table": "event", "field": "minimumDistanceAboveSurfaceInMeters"},
+        {"table": "event", "field": "maximumDistanceAboveSurfaceInMeters"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Copy plain numbers. Depths must be within 0..11000; negative depths or min > max -> review, never sign-flipped or swapped.",
+        "Values with units or ranges ('100-200 m') -> review; they belong in verbatimElevation/verbatimDepth, which are moved only with user confirmation and only into empty cells."
+      ],
+      "rationale": "Number-typed targets; the schema forbids negative depth.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"]
+    },
+    {
+      "id": "coords.footprintWKT",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Occurrence"
+      ],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/footprintWKT"],
+      "targets": [{"table": "event", "field": "footprintWKT"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Copy verbatim. If a WKT parser is available, unparsable geometry is reported (still copied, since the target is a string)."
+      ],
+      "rationale": "Direct term match.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"]
+    },
+    {
+      "id": "agents.event-core-recordedBy",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Event"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/recordedBy",
+        "http://rs.tdwg.org/dwc/terms/recordedByID"
+      ],
+      "targets": [
+        {"table": "event", "field": "eventConductedBy"},
+        {"table": "event", "field": "eventConductedByID"}
+      ],
+      "disposition": "automatic",
+      "conditions": [
+        "Event core only; verbatim copy including ' | ' lists.",
+        "In Occurrence cores recordedBy stays on the occurrence (agents.occurrence-recordedBy) and is not duplicated to the event."
+      ],
+      "rationale": "Explicit documented rule: eventConductedBy has isVersionOf dwc:recordedBy and describes the agents who conducted or recorded the event.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"]
+    },
+    {
+      "id": "agents.occurrence-recordedBy",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/recordedBy",
+        "http://rs.tdwg.org/dwc/terms/recordedByID"
+      ],
+      "targets": [
+        {"table": "occurrence", "field": "recordedBy"},
+        {"table": "occurrence", "field": "recordedByID"}
+      ],
+      "disposition": "automatic",
+      "conditions": [
+        "Verbatim copy including ' | ' lists. recordedByID is a weak foreign key to agent.agentID; unresolved values are allowed and not invented as agent rows here."
+      ],
+      "rationale": "In this schema revision recordedBy is on occurrence; GBIF's newer working schema moves it to event, which must not be mixed in.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/PROVENANCE.md"
+      ]
+    },
+    {
+      "id": "agents.agent-rows",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/recordedByID",
+        "http://rs.tdwg.org/dwc/terms/identifiedByID"
+      ],
+      "targets": [
+        {"table": "agent", "field": "agentID"},
+        {"table": "agent", "field": "preferredAgentName"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Create an agent row (deduplicated by exact agentID) only when the *ByID cell holds one value (no ' | ') that is an absolute IRI.",
+        "preferredAgentName is filled from the paired name term (recordedBy/identifiedBy) only when that cell also holds exactly one value and every row with the same ID has the same name; otherwise leave empty and report.",
+        "Lists are never paired by position automatically; pairing lists needs user confirmation."
+      ],
+      "rationale": "Weak keys do not require agent rows, and name/ID pairing in lists is not guaranteed by the source.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/agent.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json"
+      ]
+    },
+    {
+      "id": "occurrence.direct-text",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/sex",
+        "http://rs.tdwg.org/dwc/terms/lifeStage",
+        "http://rs.tdwg.org/dwc/terms/reproductiveCondition",
+        "http://rs.tdwg.org/dwc/terms/caste",
+        "http://rs.tdwg.org/dwc/terms/behavior",
+        "http://rs.tdwg.org/dwc/terms/vitality",
+        "http://rs.tdwg.org/dwc/terms/establishmentMeans",
+        "http://rs.tdwg.org/dwc/terms/degreeOfEstablishment",
+        "http://rs.tdwg.org/dwc/terms/pathway",
+        "http://rs.tdwg.org/dwc/terms/occurrenceRemarks",
+        "http://rs.tdwg.org/dwc/terms/informationWithheld",
+        "http://rs.tdwg.org/dwc/terms/dataGeneralizations",
+        "http://rs.tdwg.org/dwc/terms/organismScope",
+        "http://rs.tdwg.org/dwc/terms/organismName",
+        "http://rs.tdwg.org/dwc/terms/causeOfDeath",
+        "http://rs.tdwg.org/dwc/terms/organismRemarks",
+        "http://rs.tdwg.org/dwc/terms/feedbackURL"
+      ],
+      "targets": [
+        {"table": "occurrence", "field": "sex"},
+        {"table": "occurrence", "field": "lifeStage"},
+        {"table": "occurrence", "field": "reproductiveCondition"},
+        {"table": "occurrence", "field": "caste"},
+        {"table": "occurrence", "field": "behavior"},
+        {"table": "occurrence", "field": "vitality"},
+        {"table": "occurrence", "field": "establishmentMeans"},
+        {"table": "occurrence", "field": "degreeOfEstablishment"},
+        {"table": "occurrence", "field": "pathway"},
+        {"table": "occurrence", "field": "occurrenceRemarks"},
+        {"table": "occurrence", "field": "informationWithheld"},
+        {"table": "occurrence", "field": "dataGeneralizations"},
+        {"table": "occurrence", "field": "organismScope"},
+        {"table": "occurrence", "field": "organismName"},
+        {"table": "occurrence", "field": "causeOfDeath"},
+        {"table": "occurrence", "field": "organismRemarks"},
+        {"table": "occurrence", "field": "feedbackURL"}
+      ],
+      "disposition": "automatic",
+      "conditions": [
+        "One-to-one by list position; verbatim copy; no vocabulary normalisation (e.g. 'Female' is not lowercased)."
+      ],
+      "rationale": "Same terms, same subject (state of the organism at the occurrence, or record-level statements about the occurrence row).",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/127ed4a950cb-dwc_occurrence_2026-05-26.xml"
+      ]
+    },
+    {
+      "id": "occurrence.associatedReferences",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/associatedReferences"],
+      "targets": [{"table": "occurrence", "field": "occurrenceReferences"}],
+      "disposition": "automatic",
+      "conditions": ["Verbatim copy including ' | ' separators."],
+      "rationale": "Explicit documented rule: occurrence.occurrenceReferences has isVersionOf dwc:associatedReferences and the same definition.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json"]
+    },
+    {
+      "id": "occurrence.occurrenceStatus",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/occurrenceStatus"],
+      "targets": [{"table": "occurrence", "field": "occurrenceStatus"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Automatic verbatim copy when the value is exactly one of present, absent, detected, notDetected.",
+        "Case or spacing variants of those four values (e.g. 'Present', 'not detected') are normalised to the matching value with the alias recorded.",
+        "Any other value (e.g. 'yes', '1', 'common') -> review; not copied.",
+        "No rewriting present->detected or absent->notDetected during conversion; canonicalisation is a separate, explicit project decision (gap G2)."
+      ],
+      "rationale": "occurrenceStatus is required in the vendored occurrence table. ChatIPT's existing DwC-A projection maps detected->present, so preserving source values keeps round trips stable.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/vocabulary/term_versions.csv",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/helpers/publish.py"
+      ]
+    },
+    {
+      "id": "occurrence.occurrenceStatus-missing",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/occurrenceStatus"],
+      "targets": [{"table": "occurrence", "field": "occurrenceStatus"}],
+      "disposition": "review",
+      "conditions": [
+        "occurrenceStatus is empty or not mapped.",
+        "Auto-discharge with 'present' only for rows whose basisOfRecord is PreservedSpecimen, FossilSpecimen or LivingSpecimen (after basisOfRecord.alias) AND individualCount / organismQuantity are not zero. Record the inference.",
+        "All other rows: one dataset-level user confirmation ('records without a status are presence records'); rows with individualCount = 0 or organismQuantity = 0 are always excluded from that blanket confirmation and listed separately."
+      ],
+      "rationale": "The field is required, but absence of status is not proof of presence; a physically held specimen of an organism is.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json"
+      ]
+    },
+    {
+      "id": "quantity.organismQuantity",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/organismQuantity",
+        "http://rs.tdwg.org/dwc/terms/organismQuantityType"
+      ],
+      "targets": [
+        {"table": "occurrence", "field": "organismQuantity"},
+        {"table": "occurrence", "field": "organismQuantityType"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Verbatim copy (both targets are strings).",
+        "If exactly one of the pair is non-empty in a row, copy it and report the unpaired value (the schema says each must have the other); do not invent the missing half."
+      ],
+      "rationale": "Direct term match; pairing is a quality requirement, not a reason to drop data.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json"]
+    },
+    {
+      "id": "quantity.individualCount",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/individualCount"],
+      "targets": [
+        {"table": "occurrence", "field": "organismQuantity"},
+        {"table": "occurrence", "field": "organismQuantityType"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "The vendored occurrence table has no individualCount field.",
+        "When organismQuantity and organismQuantityType are both empty and individualCount is a non-negative integer: organismQuantity = the value as given, organismQuantityType = 'individuals'. Record the rule.",
+        "When organismQuantityType is 'individuals' (case-insensitive) and organismQuantity equals individualCount numerically: nothing to write; discharge.",
+        "Otherwise (different type, different number, non-integer count) -> review; individualCount stays unmapped unless the user accepts an occurrence-assertion row (assertionType 'individualCount', assertionValue as given).",
+        "individualCount = 0 with occurrenceStatus present/detected -> review."
+      ],
+      "rationale": "dwc:individualCount is 'the number of individuals present at the time of the dwc:Occurrence', and the organismQuantity term examples use 'individuals' as the type; the conversion is lossless only in those cases.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/vocabulary/term_versions.csv",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json"
+      ]
+    },
+    {
+      "id": "organism.organismID",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/organismID",
+        "http://rs.tdwg.org/dwc/terms/organismScope",
+        "http://rs.tdwg.org/dwc/terms/organismName",
+        "http://rs.tdwg.org/dwc/terms/causeOfDeath",
+        "http://rs.tdwg.org/dwc/terms/organismRemarks"
+      ],
+      "targets": [
+        {"table": "occurrence", "field": "organismID"},
+        {"table": "organism", "field": "organism_pk"},
+        {"table": "organism", "field": "organismID"},
+        {"table": "organism", "field": "organismScope"},
+        {"table": "organism", "field": "organismName"},
+        {"table": "organism", "field": "causeOfDeath"},
+        {"table": "organism", "field": "organismRemarks"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "occurrence.organismID: verbatim copy (weak key to organism.organismID).",
+        "One organism row per distinct non-empty organismID with organism_pk from ids.derived-key-scheme.",
+        "Organism-level fields on the organism row are filled only where all occurrences of that organismID agree (merge.event-field-conflicts comparison); disagreeing fields stay empty on organism and remain on each occurrence. Report, do not block.",
+        "No organism row when organismID is empty; values stay on the occurrence (occurrence.direct-text)."
+      ],
+      "rationale": "Organism is the persistent individual; the occurrence fields carry the observed state. Creating organisms without an organismID would invent identity.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/organism.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md"
+      ]
+    },
+    {
+      "id": "relations.associated-free-text",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/associatedOccurrences",
+        "http://rs.tdwg.org/dwc/terms/associatedOrganisms",
+        "http://rs.tdwg.org/dwc/terms/associatedTaxa"
+      ],
+      "targets": [
+        {"table": "resource-relationship", "field": "relationshipType"},
+        {"table": "organism", "field": "associatedOrganisms"}
+      ],
+      "disposition": "review",
+      "conditions": [
+        "associatedOrganisms may be copied verbatim to organism.associatedOrganisms only when an organism row exists for the row's organismID; otherwise unmapped.",
+        "associatedOccurrences and associatedTaxa: never parsed into resource-relationship or organism-interaction rows automatically. A user may confirm a parse only when every item has the form '<relationship>:<identifier>' and each identifier resolves to an occurrenceID in the package.",
+        "associatedTaxa describes taxa, not organisms; organism-interaction rows require occurrences of both organisms and are out of scope."
+      ],
+      "rationale": "These are free-text lists; turning them into typed relationships invents structure.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/resource-relationship.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/organism.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md"
+      ]
+    },
+    {
+      "id": "relations.associatedMedia",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/associatedMedia"],
+      "targets": [
+        {"table": "media", "field": "media_pk"},
+        {"table": "occurrence-media", "field": "media_fk"},
+        {"table": "occurrence-media", "field": "occurrence_fk"}
+      ],
+      "disposition": "review",
+      "conditions": [
+        "Candidate rows: split only on ' | ', and only when every item is an absolute http(s) URL.",
+        "The user must confirm whether URLs are media files or landing pages and whether the media depict the occurrence's organism. With a Multimedia/Audiovisual extension present, defer to the extension catalogue and avoid duplicates by exact URL.",
+        "Without confirmation the column stays unmapped."
+      ],
+      "rationale": "associatedMedia does not say what the media show or what kind of resource each URL is.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-media.json"
+      ]
+    },
+    {
+      "id": "basisOfRecord.alias",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/basisOfRecord"],
+      "targets": [],
+      "disposition": "conditional",
+      "conditions": [
+        "Normalise only by removing spaces, underscores and hyphens and comparing case-insensitively against MaterialEntity, PreservedSpecimen, FossilSpecimen, LivingSpecimen, MaterialSample, Event, HumanObservation, MachineObservation, Taxon, Occurrence, MaterialCitation.",
+        "Exactly one match -> use it and record the alias. No match (e.g. 'Observation', 'Specimen', 'Literature', 'S') -> review; the user maps each distinct value once per dataset."
+      ],
+      "rationale": "Spelling variants are common; anything beyond them is a semantic choice.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/vocabulary/term_versions.csv"
+      ]
+    },
+    {
+      "id": "basisOfRecord.specimen-to-material",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/basisOfRecord"],
+      "targets": [
+        {"table": "material", "field": "materialEntity_pk"},
+        {"table": "material", "field": "evidenceForOccurrenceID"},
+        {"table": "material", "field": "collectionEvent_fk"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "basisOfRecord (after alias) is PreservedSpecimen, FossilSpecimen, LivingSpecimen, MaterialSample or MaterialEntity.",
+        "Create one material row per occurrence row: key ['material-of', occurrence_pk]; collectionEvent_fk = the occurrence's event_pk; evidenceForOccurrenceID = occurrence.occurrenceID.",
+        "If occurrenceID is empty the evidence link cannot be expressed (it is a weak key to occurrence.occurrenceID, not occurrence_pk) -> review; the material is still created with collectionEvent_fk.",
+        "If several occurrence rows share the same non-empty materialEntityID, or the same institutionCode+collectionCode+catalogNumber, -> review (one physical object as evidence for several occurrences cannot be expressed with a single evidenceForOccurrenceID).",
+        "materialEntityCategory is not set from basisOfRecord (see basisOfRecord.material-category)."
+      ],
+      "rationale": "DwC-DP has no basisOfRecord field; the specimen classes assert that a material entity exists and provides evidence for the occurrence.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/vocabulary/term_versions.csv"
+      ]
+    },
+    {
+      "id": "basisOfRecord.observation",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/basisOfRecord"],
+      "targets": [],
+      "disposition": "conditional",
+      "conditions": [
+        "basisOfRecord is HumanObservation, MachineObservation or Occurrence: no material row; the occurrence is converted on its own.",
+        "The original value is kept in the conversion log because 1.0_DEV has no field for it (gap G3). It is not written to eventType, materialEntityType, occurrenceRemarks or an assertion.",
+        "If material-only terms (catalogNumber, preparations, disposition, institutionCode with collectionCode, materialEntityID) are populated on such rows -> material.terms-without-specimen-basis."
+      ],
+      "rationale": "Observations have no physical evidence object; inventing one or relabelling the basis in another field would misrepresent the record.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material.json"
+      ]
+    },
+    {
+      "id": "basisOfRecord.other-or-missing",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/basisOfRecord"],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "MaterialCitation: user decides whether to create a material row (the cited object exists elsewhere) or keep occurrence only.",
+        "Event in an Occurrence core: user decides whether rows are occurrences at all.",
+        "Taxon: route to taxon.checklist-shaped-occurrence-core.",
+        "Missing basisOfRecord: convert as occurrence only; if material-only terms are present, offer material creation for confirmation."
+      ],
+      "rationale": "These values do not determine the entity structure on their own.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/vocabulary/term_versions.csv"
+      ]
+    },
+    {
+      "id": "basisOfRecord.material-category",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/basisOfRecord",
+        "http://rs.tdwg.org/dwc/terms/materialEntityCategory"
+      ],
+      "targets": [{"table": "material", "field": "materialEntityCategory"}],
+      "disposition": "review",
+      "conditions": [
+        "A source materialEntityCategory value is copied verbatim to the material row (automatic part).",
+        "Derivation from basisOfRecord is only a suggestion and needs confirmation: the term's 2026-05-26 recommended values (liveOrganism, deadOrganism, partOfOrganism, fossil, ...) differ from the vendored schema examples (preserved, living, fossilized), and PreservedSpecimen does not indicate whole vs part of an organism."
+      ],
+      "rationale": "The vocabulary is unsettled across sources and the mapping is not one-to-one.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/vocabulary/term_versions.csv",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material.json"
+      ]
+    },
+    {
+      "id": "material.direct-text",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/materialEntityID",
+        "http://rs.tdwg.org/dwc/terms/digitalSpecimenID",
+        "http://rs.tdwg.org/dwc/terms/materialEntityType",
+        "http://rs.tdwg.org/dwc/terms/discipline",
+        "http://rs.tdwg.org/dwc/terms/institutionCode",
+        "http://rs.tdwg.org/dwc/terms/institutionID",
+        "http://rs.tdwg.org/dwc/terms/ownerInstitutionCode",
+        "http://rs.tdwg.org/dwc/terms/collectionCode",
+        "http://rs.tdwg.org/dwc/terms/collectionID",
+        "http://rs.tdwg.org/dwc/terms/catalogNumber",
+        "http://rs.tdwg.org/dwc/terms/otherCatalogNumbers",
+        "http://rs.tdwg.org/dwc/terms/objectQuantity",
+        "http://rs.tdwg.org/dwc/terms/objectQuantityType",
+        "http://rs.tdwg.org/dwc/terms/preparations",
+        "http://rs.tdwg.org/dwc/terms/disposition",
+        "http://rs.tdwg.org/dwc/terms/verbatimLabel",
+        "http://rs.tdwg.org/dwc/terms/associatedSequences",
+        "http://rs.tdwg.org/dwc/terms/materialEntityRemarks",
+        "http://rs.tdwg.org/dwc/terms/typeOfType",
+        "http://rs.tdwg.org/dwc/terms/typifiedName",
+        "http://rs.tdwg.org/dwc/terms/typeStatus"
+      ],
+      "targets": [
+        {"table": "material", "field": "materialEntityID"},
+        {"table": "material", "field": "digitalSpecimenID"},
+        {"table": "material", "field": "materialEntityType"},
+        {"table": "material", "field": "discipline"},
+        {"table": "material", "field": "institutionCode"},
+        {"table": "material", "field": "institutionID"},
+        {"table": "material", "field": "ownerInstitutionCode"},
+        {"table": "material", "field": "collectionCode"},
+        {"table": "material", "field": "collectionID"},
+        {"table": "material", "field": "catalogNumber"},
+        {"table": "material", "field": "otherCatalogNumbers"},
+        {"table": "material", "field": "objectQuantity"},
+        {"table": "material", "field": "objectQuantityType"},
+        {"table": "material", "field": "preparations"},
+        {"table": "material", "field": "disposition"},
+        {"table": "material", "field": "verbatimLabel"},
+        {"table": "material", "field": "associatedSequences"},
+        {"table": "material", "field": "materialEntityRemarks"},
+        {"table": "material", "field": "typeOfType"},
+        {"table": "material", "field": "typifiedName"},
+        {"table": "material", "field": "typeStatus"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Only for rows that produced a material row (basisOfRecord.specimen-to-material, or a user-confirmed material). One-to-one by list position; verbatim copy.",
+        "typeStatus also has an identification.typeStatus field; write it to material only, to avoid two divergent copies."
+      ],
+      "rationale": "These terms describe the physical object and belong to the material entity.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/127ed4a950cb-dwc_occurrence_2026-05-26.xml"
+      ]
+    },
+    {
+      "id": "material.collector-fields",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/recordNumber",
+        "http://rs.tdwg.org/dwc/terms/recordedBy",
+        "http://rs.tdwg.org/dwc/terms/recordedByID"
+      ],
+      "targets": [
+        {"table": "material", "field": "collectorNumber"},
+        {"table": "material", "field": "collectedBy"},
+        {"table": "material", "field": "collectedByID"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Only when a material row exists for the occurrence row. recordNumber -> collectorNumber (isVersionOf dwc:recordNumber).",
+        "recordedBy/recordedByID are also copied to collectedBy/collectedByID (isVersionOf dwc:recordedBy) only for PreservedSpecimen and FossilSpecimen rows, where the recorder of the occurrence is the gatherer of the specimen. LivingSpecimen and MaterialSample rows -> review (the recorder may not be the collector).",
+        "recordNumber on rows without material -> review (candidate: occurrence-identifier with identifierType 'recordNumber')."
+      ],
+      "rationale": "Explicit documented rule based on the targets' isVersionOf; the gatherer equivalence is safe only for collected specimens.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material.json"
+      ]
+    },
+    {
+      "id": "material.materialSampleID",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/materialSampleID"],
+      "targets": [{"table": "material", "field": "materialEntityID"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Explicit alias: copy to material.materialEntityID only when a material row exists and materialEntityID is empty or identical.",
+        "Different non-empty materialEntityID -> review."
+      ],
+      "rationale": "1.0_DEV has no MaterialSample table; the conceptual model treats a material sample as a material entity, so its identifier identifies that material entity.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/vocabulary/term_versions.csv"
+      ]
+    },
+    {
+      "id": "material.terms-without-specimen-basis",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/catalogNumber",
+        "http://rs.tdwg.org/dwc/terms/institutionCode",
+        "http://rs.tdwg.org/dwc/terms/collectionCode",
+        "http://rs.tdwg.org/dwc/terms/otherCatalogNumbers",
+        "http://rs.tdwg.org/dwc/terms/ownerInstitutionCode",
+        "http://rs.tdwg.org/dwc/terms/institutionID",
+        "http://rs.tdwg.org/dwc/terms/collectionID"
+      ],
+      "targets": [
+        {"table": "occurrence-identifier", "field": "identifier"},
+        {"table": "occurrence-identifier", "field": "identifierType"}
+      ],
+      "disposition": "review",
+      "conditions": [
+        "Material-only terms populated on rows with no material row (observations, missing basisOfRecord).",
+        "Offered choices per dataset: (a) keep unmapped; (b) catalogNumber -> occurrence-identifier (identifier = value, identifierType = 'catalogNumber'), common for observation platforms; (c) the user confirms physical material exists -> create material.",
+        "institutionCode/collectionCode alone never create a material row."
+      ],
+      "rationale": "Observation platforms reuse catalogNumber and institutionCode for digital records; these are not evidence of specimens.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-identifier.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material.json"
+      ]
+    },
+    {
+      "id": "identification.grain",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [],
+      "targets": [
+        {"table": "identification", "field": "identification_pk"},
+        {"table": "identification", "field": "occurrence_fk"}
+      ],
+      "disposition": "automatic",
+      "conditions": [
+        "One identification row per occurrence row where any identification.direct source term is non-empty; key ['identification-of', occurrence_pk]; occurrence_fk = occurrence_pk.",
+        "materialEntity_fk, media_fk and nucleotide*_fk are not set from core terms: the core does not say what evidence the determination was based on.",
+        "isAcceptedIdentification is copied only if present in the source (boolean parse: true/false case-insensitively); it is not set to true by default.",
+        "If an Identification History extension also supplies the same identificationID, merge by identificationID under merge.event-field-conflicts; otherwise keep both rows."
+      ],
+      "rationale": "The occurrence core carries one current determination; DwC-DP models it as an Identification of the occurrence.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md"
+      ]
+    },
+    {
+      "id": "identification.direct",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/identificationID",
+        "http://rs.tdwg.org/dwc/terms/identificationType",
+        "http://rs.tdwg.org/dwc/terms/verbatimIdentification",
+        "http://rs.tdwg.org/dwc/terms/identifiedBy",
+        "http://rs.tdwg.org/dwc/terms/identifiedByID",
+        "http://rs.tdwg.org/dwc/terms/dateIdentified",
+        "http://rs.tdwg.org/dwc/terms/identificationReferences",
+        "http://rs.tdwg.org/dwc/terms/identificationVerificationStatus",
+        "http://rs.tdwg.org/dwc/terms/identificationRemarks",
+        "http://rs.tdwg.org/dwc/terms/scientificNameID",
+        "http://rs.tdwg.org/dwc/terms/scientificNameAuthorship",
+        "http://rs.tdwg.org/dwc/terms/vernacularName",
+        "http://rs.tdwg.org/dwc/terms/taxonRank",
+        "http://rs.tdwg.org/dwc/terms/kingdom",
+        "http://rs.tdwg.org/dwc/terms/phylum",
+        "http://rs.tdwg.org/dwc/terms/class",
+        "http://rs.tdwg.org/dwc/terms/order",
+        "http://rs.tdwg.org/dwc/terms/superfamily",
+        "http://rs.tdwg.org/dwc/terms/family",
+        "http://rs.tdwg.org/dwc/terms/subfamily",
+        "http://rs.tdwg.org/dwc/terms/tribe",
+        "http://rs.tdwg.org/dwc/terms/subtribe",
+        "http://rs.tdwg.org/dwc/terms/genus",
+        "http://rs.tdwg.org/dwc/terms/genericName",
+        "http://rs.tdwg.org/dwc/terms/subgenus",
+        "http://rs.tdwg.org/dwc/terms/infragenericEpithet",
+        "http://rs.tdwg.org/dwc/terms/specificEpithet",
+        "http://rs.tdwg.org/dwc/terms/infraspecificEpithet",
+        "http://rs.tdwg.org/dwc/terms/cultivarEpithet",
+        "http://rs.tdwg.org/dwc/terms/nameAccordingTo",
+        "http://rs.tdwg.org/dwc/terms/nomenclaturalCode",
+        "http://rs.tdwg.org/dwc/terms/nomenclaturalStatus",
+        "http://rs.tdwg.org/dwc/terms/namePublishedIn",
+        "http://rs.tdwg.org/dwc/terms/namePublishedInYear",
+        "http://rs.tdwg.org/dwc/terms/taxonRemarks"
+      ],
+      "targets": [
+        {"table": "identification", "field": "identificationID"},
+        {"table": "identification", "field": "identificationType"},
+        {"table": "identification", "field": "verbatimIdentification"},
+        {"table": "identification", "field": "identifiedBy"},
+        {"table": "identification", "field": "identifiedByID"},
+        {"table": "identification", "field": "dateIdentified"},
+        {"table": "identification", "field": "identificationReferences"},
+        {"table": "identification", "field": "identificationVerificationStatus"},
+        {"table": "identification", "field": "identificationRemarks"},
+        {"table": "identification", "field": "scientificNameID"},
+        {"table": "identification", "field": "scientificNameAuthorship"},
+        {"table": "identification", "field": "vernacularName"},
+        {"table": "identification", "field": "taxonRank"},
+        {"table": "identification", "field": "kingdom"},
+        {"table": "identification", "field": "phylum"},
+        {"table": "identification", "field": "class"},
+        {"table": "identification", "field": "order"},
+        {"table": "identification", "field": "superfamily"},
+        {"table": "identification", "field": "family"},
+        {"table": "identification", "field": "subfamily"},
+        {"table": "identification", "field": "tribe"},
+        {"table": "identification", "field": "subtribe"},
+        {"table": "identification", "field": "genus"},
+        {"table": "identification", "field": "genericName"},
+        {"table": "identification", "field": "subgenus"},
+        {"table": "identification", "field": "infragenericEpithet"},
+        {"table": "identification", "field": "specificEpithet"},
+        {"table": "identification", "field": "infraspecificEpithet"},
+        {"table": "identification", "field": "cultivarEpithet"},
+        {"table": "identification", "field": "nameAccordingTo"},
+        {"table": "identification", "field": "nomenclaturalCode"},
+        {"table": "identification", "field": "nomenclaturalStatus"},
+        {"table": "identification", "field": "namePublishedIn"},
+        {"table": "identification", "field": "namePublishedInYear"},
+        {"table": "identification", "field": "taxonRemarks"}
+      ],
+      "disposition": "automatic",
+      "conditions": [
+        "One-to-one by list position; verbatim copy to the row created by identification.grain.",
+        "Higher-rank fields go to identification only; identification-taxon is used only for taxon formulas (not produced from core terms; it also lacks superfamily, tribe and subtribe).",
+        "No backbone matching, synonym resolution or name correction during conversion; ChatIPT's separate taxon-review step must not overwrite these copied values or write matched backbone IDs into taxonID."
+      ],
+      "rationale": "Same terms, same subject. Separating the current determination from occurrence-state fields follows the DwC-DP model.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification-taxon.json"
+      ]
+    },
+    {
+      "id": "identification.scientificName",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/scientificName",
+        "http://rs.tdwg.org/dwc/terms/scientificNameAuthorship"
+      ],
+      "targets": [
+        {"table": "identification", "field": "scientificName"},
+        {"table": "occurrence", "field": "scientificName"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Default: verbatim copy.",
+        "Vendored descriptions say scientificName excludes authorship. When scientificNameAuthorship is non-empty and scientificName ends with ' ' + that exact authorship string (after NFC and collapsing internal whitespace), write the name without the suffix and record the original in the conversion log. verbatimIdentification is not filled from it.",
+        "When authorship appears embedded but there is no scientificNameAuthorship column, copy verbatim and report; do not parse names to split authorship."
+      ],
+      "rationale": "The DwC term allows authorship inside scientificName but the DwC-DP field description does not; only exact suffix removal is deterministic.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/dp/index.md"
+      ]
+    },
+    {
+      "id": "identification.taxonID",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/taxonID"],
+      "targets": [
+        {"table": "identification", "field": "taxonID"},
+        {"table": "occurrence", "field": "taxonID"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "In DwC-DP taxonID is always an external link and should be resolvable. Copy automatically when the value is an absolute http(s) IRI, an LSID URN, or a DOI.",
+        "Bare local identifiers (e.g. '32567'): review. The user either provides externalClassificationSource for the dataset, in which case the ID is copied and the source is written to externalClassificationSource on the same rows, or leaves taxonID unmapped.",
+        "Never replace with IDs from ChatIPT's own name matching."
+      ],
+      "rationale": "In DwC-A a taxonID may point to a record inside the same archive or a private system; in DwC-DP it must denote an external taxon record.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification-taxon.json"
+      ]
+    },
+    {
+      "id": "identification.occurrence-mirror",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/verbatimIdentification",
+        "http://rs.tdwg.org/dwc/terms/identifiedBy",
+        "http://rs.tdwg.org/dwc/terms/identifiedByID",
+        "http://rs.tdwg.org/dwc/terms/dateIdentified",
+        "http://rs.tdwg.org/dwc/terms/identificationReferences",
+        "http://rs.tdwg.org/dwc/terms/identificationVerificationStatus",
+        "http://rs.tdwg.org/dwc/terms/identificationRemarks",
+        "http://rs.tdwg.org/dwc/terms/scientificNameID",
+        "http://rs.tdwg.org/dwc/terms/scientificNameAuthorship",
+        "http://rs.tdwg.org/dwc/terms/vernacularName",
+        "http://rs.tdwg.org/dwc/terms/taxonRank"
+      ],
+      "targets": [
+        {"table": "occurrence", "field": "verbatimIdentification"},
+        {"table": "occurrence", "field": "identifiedBy"},
+        {"table": "occurrence", "field": "identifiedByID"},
+        {"table": "occurrence", "field": "dateIdentified"},
+        {"table": "occurrence", "field": "identificationReferences"},
+        {"table": "occurrence", "field": "identificationVerificationStatus"},
+        {"table": "occurrence", "field": "identificationRemarks"},
+        {"table": "occurrence", "field": "scientificNameID"},
+        {"table": "occurrence", "field": "scientificNameAuthorship"},
+        {"table": "occurrence", "field": "vernacularName"},
+        {"table": "occurrence", "field": "taxonRank"}
+      ],
+      "disposition": "automatic",
+      "conditions": [
+        "The same values written by identification.direct are also written to the occurrence row's fields of the same name, so occurrence-level consumers (including ChatIPT's DwC-A projection) see the current determination.",
+        "Both copies derive from one source cell and must be identical; a later edit to one without the other is a validation error."
+      ],
+      "rationale": "The vendored occurrence table carries a subset of identification fields as a convenience.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence.json"
+      ]
+    },
+    {
+      "id": "taxonomy.unsupported-terms",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/identificationQualifier",
+        "http://rs.tdwg.org/dwc/terms/acceptedNameUsageID",
+        "http://rs.tdwg.org/dwc/terms/acceptedNameUsage",
+        "http://rs.tdwg.org/dwc/terms/parentNameUsageID",
+        "http://rs.tdwg.org/dwc/terms/parentNameUsage",
+        "http://rs.tdwg.org/dwc/terms/originalNameUsageID",
+        "http://rs.tdwg.org/dwc/terms/originalNameUsage",
+        "http://rs.tdwg.org/dwc/terms/nameAccordingToID",
+        "http://rs.tdwg.org/dwc/terms/namePublishedInID",
+        "http://rs.tdwg.org/dwc/terms/taxonConceptID",
+        "http://rs.tdwg.org/dwc/terms/higherClassification",
+        "http://rs.tdwg.org/dwc/terms/verbatimTaxonRank",
+        "http://rs.tdwg.org/dwc/terms/taxonomicStatus"
+      ],
+      "targets": [],
+      "disposition": "unsupported",
+      "conditions": [
+        "No field in the vendored identification, identification-taxon or occurrence tables. Preserve unmapped and report.",
+        "identificationQualifier is not folded into taxonFormula, verbatimIdentification or identificationRemarks; a user may choose to compose verbatimIdentification only when that field is empty, and the choice is recorded (gap G4).",
+        "higherClassification is not split into rank fields."
+      ],
+      "rationale": "Mapping these into neighbouring fields would change their meaning; taxon-usage terms are opinions of a checklist, not of the identification.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification-taxon.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/vocabulary/term_versions.csv"
+      ]
+    },
+    {
+      "id": "taxonomy.previousIdentifications",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Occurrence"],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/previousIdentifications"],
+      "targets": [{"table": "identification", "field": "verbatimIdentification"}],
+      "disposition": "review",
+      "conditions": [
+        "Not parsed automatically. A user may accept one non-current identification row per ' | ' item, with verbatimIdentification = item text, isAcceptedIdentification = false and occurrence_fk set; nothing else is inferred."
+      ],
+      "rationale": "Free-text history lacks determiner/date structure.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/identification.json"]
+    },
+    {
+      "id": "sampling.samplingProtocol",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Occurrence"
+      ],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/samplingProtocol"],
+      "targets": [
+        {"table": "protocol", "field": "protocol_pk"},
+        {"table": "protocol", "field": "protocolName"},
+        {"table": "event-protocol", "field": "protocol_fk"},
+        {"table": "event-protocol", "field": "event_fk"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "The vendored event table has no samplingProtocol field (only survey.samplingProtocol).",
+        "Split only on the exact separator ' | '. For each item create or reuse a protocol row deduplicated by exact item text (key ['protocol', text]) with protocolName = item text, and add an event-protocol row (protocol_fk, event_fk). protocolType is left empty.",
+        "Items that are a single absolute http(s) URL or DOI go to protocolReferences instead of protocolName.",
+        "In Occurrence cores with grouped events, differing samplingProtocol values across the group are a merge conflict."
+      ],
+      "rationale": "samplingProtocol names the methods used during an event, which is exactly a Protocol followed by that Event. A survey row is not created automatically because a protocol does not make an event a biotic survey.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/protocol.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event-protocol.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/survey.json"
+      ]
+    },
+    {
+      "id": "sampling.sampleSize",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Occurrence"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/sampleSizeValue",
+        "http://rs.tdwg.org/dwc/terms/sampleSizeUnit"
+      ],
+      "targets": [
+        {"table": "event-assertion", "field": "event_fk"},
+        {"table": "event-assertion", "field": "assertionType"},
+        {"table": "event-assertion", "field": "assertionTypeIRI"},
+        {"table": "event-assertion", "field": "assertionValue"},
+        {"table": "event-assertion", "field": "assertionUnit"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Both values non-empty: one event-assertion row with assertionType 'sampleSize', assertionTypeIRI http://rs.tdwg.org/dwc/terms/sampleSizeValue, assertionValue = sampleSizeValue as given, assertionUnit = sampleSizeUnit as given.",
+        "Only one present -> review (the term requires both).",
+        "If the user confirms the event is a Survey (sampling.survey-opt-in), write to survey.sampleSizeValue/sampleSizeUnit instead, not both."
+      ],
+      "rationale": "Sample size is a measurement of the sampling event; the event table has no field for it and creating surveys automatically would overstate the event.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event-assertion.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/survey.json"
+      ]
+    },
+    {
+      "id": "sampling.samplingEffort",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Occurrence"
+      ],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/samplingEffort"],
+      "targets": [
+        {"table": "event-assertion", "field": "assertionType"},
+        {"table": "event-assertion", "field": "assertionTypeIRI"},
+        {"table": "event-assertion", "field": "assertionValue"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "One event-assertion row: assertionType 'samplingEffort', assertionTypeIRI http://rs.tdwg.org/dwc/terms/samplingEffort, assertionValue verbatim, assertionUnit empty.",
+        "Never parsed into survey.samplingEffortValue (number) and samplingEffortUnit; '40 trap-nights' -> value and unit split requires user confirmation together with sampling.survey-opt-in."
+      ],
+      "rationale": "dwc:samplingEffort is free text; the eco: value/unit pair is a different, structured representation.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/vocabulary/term_versions.csv",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/survey.json"
+      ]
+    },
+    {
+      "id": "sampling.survey-opt-in",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Event"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/samplingProtocol",
+        "http://rs.tdwg.org/dwc/terms/sampleSizeValue",
+        "http://rs.tdwg.org/dwc/terms/sampleSizeUnit"
+      ],
+      "targets": [
+        {"table": "survey", "field": "survey_pk"},
+        {"table": "survey", "field": "event_fk"},
+        {"table": "survey", "field": "samplingProtocol"},
+        {"table": "survey", "field": "sampleSizeValue"},
+        {"table": "survey", "field": "sampleSizeUnit"}
+      ],
+      "disposition": "review",
+      "conditions": [
+        "Offered when Event core rows have sampling terms; the user confirms which events are biotic surveys/inventories.",
+        "Confirmed events get one survey row (event_fk = event_pk) and eventCategory 'Survey' only if eventCategory was empty. Humboldt extension data is handled by the extension catalogue and must reuse the same survey row.",
+        "Never inferred from eventType text, the presence of samplingProtocol, or absence records."
+      ],
+      "rationale": "A Survey supports absence and abundance inference; asserting it without confirmation would overstate the data.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/survey.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md"
+      ]
+    },
+    {
+      "id": "event.core-carries-occurrence-terms",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Event"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/scientificName",
+        "http://rs.tdwg.org/dwc/terms/occurrenceStatus",
+        "http://rs.tdwg.org/dwc/terms/individualCount",
+        "http://rs.tdwg.org/dwc/terms/organismQuantity"
+      ],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "Occurrence-level or identification terms declared on an Event core.",
+        "User chooses: keep unmapped, or create one occurrence per event row (only if occurrenceStatus can be resolved per occurrence.occurrenceStatus rules)."
+      ],
+      "rationale": "Event core rows describe events; an organism occurrence is not implied by a taxon name on an event (it could be a survey target).",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/f32e31d5a4e3-dwc_event_2026-05-26.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/survey-target.json"
+      ]
+    },
+    {
+      "id": "merge.core-extension-event-terms",
+      "source_row_types": ["http://rs.tdwg.org/dwc/terms/Event"],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/eventDate",
+        "http://rs.tdwg.org/dwc/terms/decimalLatitude",
+        "http://rs.tdwg.org/dwc/terms/decimalLongitude",
+        "http://rs.tdwg.org/dwc/terms/locality"
+      ],
+      "targets": [{"table": "event", "field": "event_pk"}],
+      "disposition": "review",
+      "conditions": [
+        "Occurrence extension rows of an Event core repeat event-level terms.",
+        "Values equal to the parent event's values (merge.event-field-conflicts comparison) are dropped as duplicates (auto-discharge).",
+        "A different non-null value (e.g. an occurrence-specific time or point within a transect) -> review: create a child event (parentEvent_fk = core event, key ['event-of', occurrence_pk]) with the differing values, or keep unmapped. Not overwritten on the parent."
+      ],
+      "rationale": "Occurrences in a sampling event can have their own finer place/time; flattening would lose it, overwriting would corrupt the parent.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/cm/index.md",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"
+      ]
+    },
+    {
+      "id": "context.geological",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [
+        "http://rs.tdwg.org/dwc/terms/geologicalContextID",
+        "http://rs.tdwg.org/dwc/terms/earliestEonOrLowestEonothem",
+        "http://rs.tdwg.org/dwc/terms/latestEonOrHighestEonothem",
+        "http://rs.tdwg.org/dwc/terms/earliestEraOrLowestErathem",
+        "http://rs.tdwg.org/dwc/terms/latestEraOrHighestErathem",
+        "http://rs.tdwg.org/dwc/terms/earliestPeriodOrLowestSystem",
+        "http://rs.tdwg.org/dwc/terms/latestPeriodOrHighestSystem",
+        "http://rs.tdwg.org/dwc/terms/earliestEpochOrLowestSeries",
+        "http://rs.tdwg.org/dwc/terms/latestEpochOrHighestSeries",
+        "http://rs.tdwg.org/dwc/terms/earliestAgeOrLowestStage",
+        "http://rs.tdwg.org/dwc/terms/latestAgeOrHighestStage",
+        "http://rs.tdwg.org/dwc/terms/lowestBiostratigraphicZone",
+        "http://rs.tdwg.org/dwc/terms/highestBiostratigraphicZone",
+        "http://rs.tdwg.org/dwc/terms/lithostratigraphicTerms",
+        "http://rs.tdwg.org/dwc/terms/group",
+        "http://rs.tdwg.org/dwc/terms/formation",
+        "http://rs.tdwg.org/dwc/terms/member",
+        "http://rs.tdwg.org/dwc/terms/bed"
+      ],
+      "targets": [
+        {"table": "geological-context", "field": "geologicalContextID"},
+        {"table": "geological-context", "field": "earliestEonOrLowestEonothem"},
+        {"table": "geological-context", "field": "latestEonOrHighestEonothem"},
+        {"table": "geological-context", "field": "earliestEraOrLowestErathem"},
+        {"table": "geological-context", "field": "latestEraOrHighestErathem"},
+        {"table": "geological-context", "field": "earliestPeriodOrLowestSystem"},
+        {"table": "geological-context", "field": "latestPeriodOrHighestSystem"},
+        {"table": "geological-context", "field": "earliestEpochOrLowestSeries"},
+        {"table": "geological-context", "field": "latestEpochOrHighestSeries"},
+        {"table": "geological-context", "field": "earliestAgeOrLowestStage"},
+        {"table": "geological-context", "field": "latestAgeOrHighestStage"},
+        {"table": "geological-context", "field": "lowestBiostratigraphicZone"},
+        {"table": "geological-context", "field": "highestBiostratigraphicZone"},
+        {"table": "geological-context", "field": "lithostratigraphicTerms"},
+        {"table": "geological-context", "field": "group"},
+        {"table": "geological-context", "field": "formation"},
+        {"table": "geological-context", "field": "member"},
+        {"table": "geological-context", "field": "bed"},
+        {"table": "event", "field": "geologicalContextID"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Automatic when geologicalContextID is non-empty: one geological-context row per distinct ID (merge conflicts per merge.event-field-conflicts) and event.geologicalContextID = that ID (a weak key to geological-context.geologicalContextID, not the pk).",
+        "Stratigraphic terms without geologicalContextID -> review: the event cannot reference the context without an ID, and generated IDs would be new identifiers. The user may accept a generated geologicalContextID (recorded as generated) or keep unmapped."
+      ],
+      "rationale": "Same terms; the link mechanism depends on a source identifier.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/geological-context.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"
+      ]
+    },
+    {
+      "id": "dynamicProperties",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": ["http://rs.tdwg.org/dwc/terms/dynamicProperties"],
+      "targets": [
+        {"table": "occurrence-assertion", "field": "assertionType"},
+        {"table": "occurrence-assertion", "field": "assertionValue"},
+        {"table": "event-assertion", "field": "assertionType"},
+        {"table": "event-assertion", "field": "assertionValue"}
+      ],
+      "disposition": "review",
+      "conditions": [
+        "No field exists and the DP guide says custom fields SHOULD NOT be added.",
+        "If a value parses as a flat JSON object of scalar values, propose one assertion row per key (assertionType = key verbatim, assertionValue = value as text, unit empty). Target table defaults to occurrence-assertion for Occurrence cores and event-assertion for Event cores, but the user must confirm per key which entity it describes (it may describe the specimen, organism, location or event).",
+        "Units embedded in key names (e.g. 'weightInGrams') are not extracted. Nested objects, arrays, and non-JSON text are never split; they stay unmapped.",
+        "Auto-discharge only by a stored decision for the same key in the same dataset."
+      ],
+      "rationale": "dynamicProperties is record-level and untyped; neither the key name nor a model's guess establishes its subject or meaning.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/vocabulary/term_versions.csv",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/dp/index.md",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/occurrence-assertion.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event-assertion.json"
+      ]
+    },
+    {
+      "id": "record.type-language-unsupported",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [
+        "http://purl.org/dc/elements/1.1/type",
+        "http://purl.org/dc/terms/type",
+        "http://purl.org/dc/elements/1.1/language",
+        "http://purl.org/dc/terms/language"
+      ],
+      "targets": [],
+      "disposition": "unsupported",
+      "conditions": [
+        "Preserve unmapped. dc:type (DCMI type of the record) is never mapped to eventType, materialEntityType or eventCategory.",
+        "Auto-discharge with no report entry when the value is constant across the dataset (still preserved in the source archive)."
+      ],
+      "rationale": "These describe the digital record, not the event, occurrence or material, and 1.0_DEV has no record-level fields for them.",
+      "evidence": [
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/extension/127ed4a950cb-dwc_occurrence_2026-05-26.xml",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json"
+      ]
+    },
+    {
+      "id": "record.modified",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": ["http://purl.org/dc/terms/modified"],
+      "targets": [{"table": "material", "field": "modified"}],
+      "disposition": "conditional",
+      "conditions": [
+        "Copied to material.modified only when a material row exists for the occurrence row.",
+        "Otherwise unmapped and logged (occurrence and event have no modified field in this revision)."
+      ],
+      "rationale": "Record modification date applies to the record as a whole; only material has a target.",
+      "evidence": ["/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material.json"]
+    },
+    {
+      "id": "record.rights",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event"
+      ],
+      "source_terms": [
+        "http://purl.org/dc/terms/license",
+        "http://purl.org/dc/terms/rightsHolder",
+        "http://purl.org/dc/terms/accessRights"
+      ],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "1.0_DEV has usage-policy links only for material and media; GBIF's newer event-usage-policy table must not be used.",
+        "Auto-discharge when the value is identical in every row and equals the licence/rights already stated in the archive EML (exact string or same licence URL); the EML is carried into the package unchanged.",
+        "Varying per-record licences, or a record licence that differs from EML, need user input: per-record licensing cannot be expressed for occurrence-only data and must be resolved before publication."
+      ],
+      "rationale": "Licensing must not be lost or silently generalised.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/dwc-dp-profile.json",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/PROVENANCE.md"
+      ]
+    },
+    {
+      "id": "record.provenance",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Occurrence"
+      ],
+      "source_terms": [
+        "http://purl.org/dc/terms/bibliographicCitation",
+        "http://purl.org/dc/terms/references",
+        "http://rs.tdwg.org/dwc/terms/projectID",
+        "http://rs.tdwg.org/dwc/terms/projectTitle",
+        "http://rs.tdwg.org/ac/terms/fundingAttribution",
+        "http://rs.tdwg.org/dwc/terms/fundingAttributionID"
+      ],
+      "targets": [
+        {"table": "provenance", "field": "bibliographicCitation"},
+        {"table": "provenance", "field": "references"},
+        {"table": "provenance", "field": "projectID"},
+        {"table": "provenance", "field": "projectTitle"},
+        {"table": "provenance", "field": "fundingAttribution"},
+        {"table": "provenance", "field": "fundingAttributionID"},
+        {"table": "event", "field": "provenance_fk"}
+      ],
+      "disposition": "conditional",
+      "conditions": [
+        "Event core: one provenance row per distinct combination of these values (key from the sorted IRI=value pairs); event.provenance_fk links it. Automatic.",
+        "Occurrence core: provenance can only attach to events or material, not occurrences. projectID/projectTitle/funding go to the occurrence's event automatically. bibliographicCitation and references describe the occurrence record: attach to the material row if one exists; otherwise review (attach to the 1:1 synthesised event, or keep unmapped). For grouped events, values differing across the group are kept off the event and reviewed.",
+        "Auto-discharge project/funding values that are constant and identical to the EML project section."
+      ],
+      "rationale": "The provenance table holds these terms; the restriction is where it can be linked.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/provenance.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/event.json",
+        "/Users/rukayasj/Projects/chatipt/back-end/api/templates/dwc-dp/table-schemas/material.json"
+      ]
+    },
+    {
+      "id": "metadata.eml-and-conversion-log",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Taxon"
+      ],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "automatic",
+      "conditions": [
+        "The archive's EML (meta.xml metadata attribute) is preserved byte-for-byte alongside the converted package; any regeneration of eml.xml is a separate, reviewed metadata step.",
+        "Every conversion records: source archive SHA-256, meta.xml, catalogue_version, schema_revision, the rule id applied to every (source column -> target field) pair, every alias application, every auto-discharge with its condition, every user decision, every unmapped column with row count, and every derived key's input components.",
+        "The log is not written as custom fields in DwC-DP tables; if exported it must be a non-table resource with a non-reserved name."
+      ],
+      "rationale": "The workflow must preserve originals and record every applied rule; the DP guide forbids misrepresenting fields and discourages custom fields.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/docs/dwca-conversion/README.md",
+        "/Users/rukayasj/Projects/sandbox/dwc-dp-guides/tdwg-dwc-standard/docs/dp/index.md"
+      ]
+    },
+    {
+      "id": "review.discharge-policy",
+      "source_row_types": [
+        "http://rs.tdwg.org/dwc/terms/Occurrence",
+        "http://rs.tdwg.org/dwc/terms/Event",
+        "http://rs.tdwg.org/dwc/terms/Taxon"
+      ],
+      "source_terms": [],
+      "targets": [],
+      "disposition": "review",
+      "conditions": [
+        "A review item may be discharged automatically only by: (1) the column being empty in every row; (2) a condition stated in the rule itself and evaluated deterministically on the data; (3) equality with the archive EML for dataset-constant values where the rule allows it; (4) an exact stored user decision for the same dataset, rule id, source term and value set.",
+        "A language model may summarise options and draft explanations, but its confidence, a header-name match, or a type match never discharges a review, selects a target, or authorises dropping data.",
+        "Reviews with no decision leave the data unmapped (never dropped) and are listed in the conversion report; blocking reviews (ids.core-id-integrity, required-field gaps, taxon-core routing) prevent export."
+      ],
+      "rationale": "Separates deterministic discharge from semantic decisions that need a person.",
+      "evidence": [
+        "/Users/rukayasj/Projects/chatipt/docs/dwca-conversion/README.md"
+      ]
+    }
+  ]
+}

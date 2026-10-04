@@ -5,7 +5,7 @@ import { useDataset } from '../contexts/DatasetContext'
 import { useAuth } from '../contexts/AuthContext'
 import { getStatusMeta } from '../utils/datasetPresentation'
 
-export default function DatasetsGrid({ onOpenDataset, onNewDataset, onShowWelcome }) {
+export default function DatasetsGrid({ onOpenDataset, onNewDataset, onConvertArchive, onShowWelcome }) {
   const [items, setItems] = useState(null)
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -90,6 +90,7 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset, onShowWelcom
         <button className="btn btn-primary btn-lg" onClick={onNewDataset}>
           <i className="bi bi-plus-circle me-2"></i>Add new dataset
         </button>
+        <button className="btn btn-outline-primary btn-lg ms-2" onClick={onConvertArchive}>Convert a Darwin Core Archive</button>
       </div>
     )
   }
@@ -118,6 +119,7 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset, onShowWelcom
           <button className="btn btn-primary" onClick={onNewDataset}>
             <i className="bi bi-plus-circle me-2"></i>Add new dataset
           </button>
+          <button className="btn btn-outline-primary" onClick={onConvertArchive}>Convert a Darwin Core Archive</button>
         </div>
       </div>
 
@@ -140,7 +142,8 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset, onShowWelcom
                   {countSummary.primary.map(label => <div key={label}>{label}</div>)}
                   {countSummary.package && <div>{countSummary.package}</div>}
                   <div>Updated {new Date(d.last_updated).toLocaleString()}</div>
-                  <div>{d.package_ready ? 'Publication packages ready' : `Progress ${d.progress.done}/${d.progress.total}`}</div>
+                  <div>{d.workflow_type === 'dwca_conversion' ? 'Archive conversion' : 'Dataset publication'}</div>
+                  <div>{d.package_ready ? (d.workflow_type === 'dwca_conversion' ? 'Converted package ready' : 'Publication packages ready') : `Progress ${d.progress.done}/${d.progress.total}`}</div>
                   {/* Show dataset user ORCID for superusers */}
                   {user && user.is_superuser && d.user_info && d.user_info.orcid_id && (
                     <div className="mt-1">

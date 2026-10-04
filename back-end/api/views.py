@@ -39,6 +39,15 @@ class AttentionNotificationRateThrottle(UserRateThrottle):
         return super().allow_request(request, view)
 
 
+class ConversionReviewRateThrottle(UserRateThrottle):
+    rate = '10/hour'
+
+    def allow_request(self, request, view):
+        if request.method == 'GET' or request.data.get('action') != 'suggest':
+            return True
+        return super().allow_request(request, view)
+
+
 class IsAuthenticatedOrSuperuser(BasePermission):
     """
     Custom permission that allows authenticated users to access their own data,
@@ -445,6 +454,75 @@ class DatasetViewSet(viewsets.ModelViewSet):
         logger.info(f"DatasetViewSet.perform_create - User ID: {self.request.user.id}")
         dataset = serializer.save(user=self.request.user)
         transaction.on_commit(lambda: ensure_dataset_work(dataset.id))
+
+    def perform_destroy(self, instance):
+        if instance.workflow_type != Dataset.WorkflowType.DWCA_CONVERSION:
+            return super().perform_destroy(instance)
+        files = [(source.file.storage, source.file.name) for source in instance.user_files.all() if source.file]
+        conversion = getattr(instance, 'conversion', None)
+        if conversion and conversion.output_file:
+            files.append((conversion.output_file.storage, conversion.output_file.name))
+        with transaction.atomic():
+            instance.delete()
+            for storage, name in files:
+                transaction.on_commit(lambda storage=storage, name=name: storage.delete(name), robust=True)
+
+    @staticmethod
+    def _conversion_state(conversion):
+        from api.conversion_jobs import advice_progress
+        return {'status': conversion.status, 'plan': conversion.plan, 'decisions': conversion.decisions,
+                'advice_reviewed': conversion.advice_reviewed, 'advice_progress': advice_progress(conversion),
+                'suggestions': conversion.suggestions, 'error': conversion.error,
+                'report': {key: value for key, value in conversion.report.items() if key != 'row_crosswalk'},
+                'updated_at': conversion.updated_at, 'download_ready': conversion.status == 'complete' and bool(conversion.output_file)}
+
+    @action(detail=True, methods=['get', 'post'], url_path='conversion', throttle_classes=[ConversionReviewRateThrottle])
+    def conversion(self, request, *args, **kwargs):
+        from api.models import DwcConversion, DwcConversionJob
+        from api.dwca_conversion import validate_decisions
+        from api.dwca_import import ImportFailure
+
+        dataset = self.get_object()
+        if dataset.workflow_type != Dataset.WorkflowType.DWCA_CONVERSION:
+            raise ValidationError('This dataset is not an archive conversion.')
+        if request.method == 'GET':
+            return Response(self._conversion_state(dataset.conversion))
+        with transaction.atomic():
+            conversion = DwcConversion.objects.select_for_update().get(dataset=dataset)
+            if DwcConversionJob.objects.filter(conversion=conversion).exists():
+                return Response({'detail': 'Conversion work is already queued or running.'}, status=409)
+            operation = request.data.get('action', 'convert')
+            if operation not in {'convert', 'suggest', 'inspect'}:
+                raise ValidationError('Unknown conversion action.')
+            if operation != 'inspect' and request.data.get('plan_id') != conversion.plan.get('id'):
+                return Response({'detail': 'The plan changed. Reload before submitting decisions.'}, status=409)
+            if operation in {'convert', 'suggest'}:
+                try:
+                    decisions = request.data.get('decisions', {})
+                    validate_decisions(conversion.plan, decisions, require_complete=operation == 'convert')
+                except ImportFailure as exc:
+                    raise ValidationError(str(exc)) from exc
+                conversion.decisions = decisions
+            if operation == 'suggest':
+                from api.conversion_jobs import pending_advice
+                if not pending_advice(conversion):
+                    conversion.save(update_fields=['decisions', 'updated_at'])
+                    return Response(self._conversion_state(conversion))
+            conversion.status = {'inspect': 'queued', 'convert': 'converting', 'suggest': 'reviewing'}[operation]
+            conversion.error = ''; conversion.save()
+            DwcConversionJob.objects.create(conversion=conversion, action=operation)
+        return Response(self._conversion_state(conversion), status=202)
+
+    @action(detail=True, methods=['get'], url_path='conversion-download')
+    def conversion_download(self, request, *args, **kwargs):
+        from django.http import FileResponse
+        dataset = self.get_object()
+        conversion = getattr(dataset, 'conversion', None)
+        if not conversion or conversion.status != 'complete' or not dataset.package_ready:
+            return Response({'detail': 'A validated converted package is not ready.'}, status=409)
+        prefix = 'taxonomy-data-package' if conversion.report.get('output_format') == 'taxonomy-data-package' else 'dwc-dp'
+        return FileResponse(conversion.output_file.open('rb'), as_attachment=True,
+                            filename=f'{prefix}-{dataset.pk}.tar.gz', content_type='application/gzip')
 
     @action(detail=True, methods=['get'], url_path='openai-usage')
     def openai_usage(self, request, *args, **kwargs):
@@ -874,6 +952,8 @@ class UserFileViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         dataset = instance.dataset
+        if dataset.workflow_type == Dataset.WorkflowType.DWCA_CONVERSION:
+            raise ValidationError('Conversion source files are immutable. Delete the conversion or start a new one.')
         file_type = instance.file_type
         file_name = instance.file.name
         storage = instance.file.storage
