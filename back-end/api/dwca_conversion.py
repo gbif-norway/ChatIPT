@@ -415,7 +415,7 @@ def build_plan(archive):
         if not table.is_core:
             options = [PRESERVE]
             if family == "occurrence" and core.row_type == DWC + "Event":
-                options.insert(0, {"value": "occurrence", "label": "Occurrences within their linked core events"})
+                options.insert(0, {"value": "occurrence", "label": "Occurrences, each linked to its event"})
             elif family == "identification":
                 options.insert(0, {"value": "identification", "label": "Identification records of linked occurrences"}) if core.row_type == DWC + "Occurrence" else None
             elif family == "assertion":
@@ -618,7 +618,9 @@ def build_plan(archive):
         if family == 'occurrence' and not table.is_core and core.row_type == DWC + 'Event':
             event_columns = [column for column in columns if column['table'] == t and column['nonempty'] and column['default'] != 'join'
                              and any(option['value'].startswith('event.') for option in column['options'])]
-            shown = [column['term'].rsplit('/', 1)[-1] for column in event_columns if column['term'] != DWC + 'eventID']
+            # Only columns that go to the event by default are described; others are listed if chosen later.
+            shown = [column['term'].rsplit('/', 1)[-1] for column in event_columns
+                     if column['term'] != DWC + 'eventID' and column['default'].startswith('event.')]
             if shown:
                 issues.append(_issue(f'occurrence-events:{t}', f'{table.name}: where and when details on occurrence rows',
                     f"{table.name} has event details on its rows ({', '.join(shown[:6])}{', …' if len(shown) > 6 else ''}). In a Data Package these belong to an event. "
