@@ -223,3 +223,12 @@ test('a scientificName left empty still counts as written to verbatimIdentificat
   assert.deepEqual(summary.groups, {})
   assert.deepEqual(planDiagram(state, selected).targets.map(target => target.name), ['occurrence'])
 })
+
+test('a partial verbatim copy is described and not counted as written', () => {
+  const state = { plan: { tables: [{ name: 'occurrence.txt', core: true, rows: 1 }], automatic_choices: [], issues: [],
+    columns: [{ id: 'column:0:0', table: 0, term: 'http://rs.tdwg.org/dwc/terms/scientificName', default: 'preserve', verbatim_copy_partial: true,
+      verbatim_copy: 'occurrence.verbatimIdentification', options: [{ value: 'occurrence.scientificName' }, { value: 'preserve' }] }] } }
+  const selected = (id, fallback) => fallback
+  assert.equal(summariseColumns(state, selected).mapped, 0)
+  assert.match(columnDetails(state, selected)[0].outcome, /where your file leaves it empty/)
+})

@@ -89,3 +89,9 @@ test('open questions name their decision and carry current recommendations', () 
   assert.equal(decisionTitle(state, 'other'), 'other')
   assert.deepEqual(openQuestions({}), [])
 })
+
+test('questions handled by the name check are not repeated in the questions panel', () => {
+  const state = { plan: { issues: [{ id: 'column:1:16', title: 'scientificName' }, { id: 'event-category', title: 'Events' }] },
+    review: { escalated: ['column:1:16', 'event-category'] }, name_review: { question_ids: ['column:1:16'] } }
+  assert.deepEqual(openQuestions(state).map(item => item.id), ['event-category'])
+})

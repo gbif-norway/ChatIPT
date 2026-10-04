@@ -33,7 +33,9 @@ export function shownRecommendation(state, id) {
 
 // Questions the user still has to answer, each naming the decision it belongs to.
 export function openQuestions(state) {
-  return (state?.review?.escalated || []).map(id => ({ id, title: issueById(state, id)?.title || id }))
+  // scientificName questions answered in the name check are shown there, not here.
+  const inNameCheck = new Set(state?.name_review?.question_ids || [])
+  return (state?.review?.escalated || []).filter(id => !inNameCheck.has(id)).map(id => ({ id, title: issueById(state, id)?.title || id }))
 }
 
 // Current AI recommendations for open questions, for the questions panel.

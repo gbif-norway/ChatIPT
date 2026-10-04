@@ -598,6 +598,8 @@ def build_plan(archive):
             if term == NAME and ((own == 'occurrence' and (table.is_core or family == 'occurrence')) or family == 'identification'):
                 # The supplied name text is always copied to verbatimIdentification, whatever is chosen here.
                 item['verbatim_copy'] = ('identification' if family == 'identification' else 'occurrence') + '.verbatimIdentification'
+                if VERBATIM_NAME in table.terms:
+                    item['verbatim_copy_partial'] = True  # Only rows without their own verbatimIdentification receive it.
                 item['options'] = [{**option, 'label': 'Leave scientificName empty; the name text is kept in verbatimIdentification'}
                                    if option['value'] == 'preserve' else option for option in item['options']]
             columns.append(item); profile["columns"].append({key: item[key] for key in ("term", "nonempty", "distinct", "samples")})
