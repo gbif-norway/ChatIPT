@@ -31,7 +31,7 @@ action. This document specifies what runs on top of them. Nothing here changes
 | `api/conversion_evidence.py` (new) | EML extraction, review items, evidence packets, dependency/basis computation. Pure functions of plan, archive and decisions. |
 | `api/conversion_review.py` (new) | AI reviewer run, escalation rules, application, provenance helpers, invalidation, cost guard, state/report sections. |
 | `api/conversion_chat.py` (new) | Chat turn loop, tools, openers, answer verification. |
-| `api/models.py` | `DwcConversion.review` JSON field; `DwcConversionJob.heartbeat_at`; new `DwcConversionDecisionEvent`, `DwcConversionMessage` and `ConversionSpendReservation`; drop `suggestions` and `advice_reviewed`. One migration. |
+| `api/models.py` | `DwcConversion.review` JSON field; `DwcConversionJob.heartbeat_at`; new `DwcConversionDecisionEvent`, `DwcConversionMessage` and `ConversionSpendReservation`; drop `suggestions` and `advice_reviewed`. Migration `0033`, depending on `0032_conversion_conflicts`. |
 | `api/conversion_jobs.py` | Small edits: `review` and `chat` actions, conversion-first claim locking and lease (§5.9), job chaining in the finisher, report section; remove `suggest_mappings`, `pending_advice`, `advice_progress`. |
 | `api/views.py` | Small edits: `review` and `chat` operations, state fields, provenance hook on decision changes, job supersession. |
 | `front-end/app/components/ConversionChat.js`, `ConversionAiDecisions.js` (new) | Chat panel; AI-decided list with override. |
@@ -248,9 +248,9 @@ duplicates and unknown ids ignored):
 | 6 | issue `authority == "user-assertion"` or `option.assertion` | escalated with recommendation | `assertion` |
 | 7 | `needs_user` | escalated with recommendation | `model-needs-user` |
 | 8 | `confidence != "high"` | escalated with recommendation | `low-confidence` |
-| 9 | kind not in `CONVERSION_AI_APPLY_KINDS` (default: all kinds) | escalated with recommendation | `kind-not-enabled` |
+| 9 | kind not in `CONVERSION_AI_APPLY_KINDS` (default: all except `event-grain`) | escalated with recommendation | `kind-not-enabled` |
 | 10 | item now has a `user` or `chat` decision, or its basis or availability differs from the packet's | no change | `superseded` / `stale-basis` |
-| 11 | `apply_decision_changes` (§7.1: invalidation plus `validate_decisions` on the whole set) raises | escalated with recommendation | `rejected` (+ message) |
+| 11 | `apply_decision_changes` rejects it (§7.1: a structural `validate_decisions` error, a new requirement violation, or removal of another AI choice) | escalated with recommendation | `rejected` (+ message) |
 | 12 | otherwise | **applied** | — |
 
 Rules 10–12 run inside the application transaction (§5.6) against the decisions
@@ -432,11 +432,18 @@ chat confirmations, and adopting a recommendation. It:
    would remove any other AI-applied decision is rejected instead (escalation rule
    11), so the reviewer never undoes its own earlier choices;
 3. validates the resulting set with `validate_decisions(plan, candidate,
-   require_complete=False)` — every active effective choice, not only the changed
-   keys;
-4. if that fails only because of removals, retries with the stale AI decisions kept
-   (marked `stale-basis`); if that also fails, raises the validation error and
-   nothing is written;
+   require_complete=False)`. That call raises only for structural errors (unknown id
+   or option, a table whose conversion is unavailable, an unavailable parent link);
+   requirement violations of active effective choices come back in its
+   `unresolved` list, and `dwca_review.violations(plan, decisions)` lists them.
+   - **User and chat changes** keep the step 1–3 semantics: violations are allowed
+     in a save and shown, so dependent choices can be changed in any order.
+     Structural errors raise and nothing is written.
+   - **AI changes** are rejected when `violations(plan, candidate)` contains any
+     entry not already in `violations(plan, current)` (compared by decision id and
+     value), or when step 2 would remove another AI choice;
+4. if removing the stale AI decisions introduces violations that keeping them would
+   not, the removed AI decisions are retained instead and marked `stale-basis`;
 5. writes the decisions, one event per changed key (including `system` removals),
    and the recommendation updates;
 6. additionally writes an event for every key in `confirm_ids` even when its value is
@@ -451,9 +458,12 @@ current plan.
 The conversion report gains:
 
 - `decision_provenance`: for every explicit decision in the final set, its latest
-  event (source, time, plan id, model, confidence, rationale, evidence excerpts, and
-  for chat decisions the transcript excerpt); automatic defaults are listed as
-  `automatic` without events.
+  event (source, time, plan id, model, confidence, rationale, evidence excerpts);
+  automatic defaults are listed as `automatic` without events. For chat decisions it
+  records the source, time, plan id, the user message id and whether the user
+  answered a question or clicked a confirmation, but **no conversation text**: the
+  report ships inside the downloaded, possibly published, package. Transcripts stay
+  in the database and the interface.
 - `ai_review`: model, runs, counts by outcome and reason, and the escalated
   recommendations that the final decisions did not adopt.
 
@@ -470,7 +480,9 @@ strictly lower level (§3):
 - the item's table role `table:<t>` for table-scoped items above level 1;
 - `event-grain` for `material-identity`;
 - `hum-category:<t>` for `survey-completeness`;
-- every `decision_in` id in the item's option requirements that is at a lower level;
+- every `decision_in` id in the item's option requirements
+  (`plan["requirements"][item][value]`, from both `conditions` and `when`, recursing
+  into `any`/`all`) that is at a lower level;
 - for nested Taxon items, the same rules inside the nested plan, prefixed, plus the
   outer `table:<i>`;
 - for a group item, every member id (members are never AI items, so they change only
@@ -517,9 +529,10 @@ On the candidate decision set, repeated until nothing changes:
    iterations. Same-run AI applications cannot remove each other: dependencies point
    to lower levels only, and a higher-level AI application that would make a
    lower-level AI value unavailable is itself rejected by rule 11.
-6. §7.1 step 3 validates the whole result. Only if removal makes the set invalid are
-   the removed AI decisions retained instead, each marked `stale-basis` and escalated
-   ("this was decided before you changed X; please check it").
+6. §7.1 steps 3–4 check the whole result. Only if removal introduces violations that
+   keeping them would not are the removed AI decisions retained instead, each marked
+   `stale-basis` and escalated ("this was decided before you changed X; please check
+   it").
 7. Deferred items whose dependencies are now decided become reviewable.
 
 **Convert gate.** A retained `stale-basis` AI decision blocks `convert` (400 with the
@@ -594,7 +607,9 @@ conversion; all locking follows §5.9.
 ### 9.3 Model, context, tools and the Responses loop
 
 `gpt-6-sol` at `medium` effort (`OPENAI_CONVERSION_CHAT_MODEL` /
-`OPENAI_CONVERSION_CHAT_EFFORT`), the same Flex routing as the publication chat.
+`OPENAI_CONVERSION_CHAT_EFFORT`), on the Standard tier by default because a user is
+waiting (`OPENAI_CONVERSION_CHAT_SERVICE_TIER`, `default` or `flex`). The reviewer
+keeps Flex.
 
 The loop calls the Responses API directly through `query_responses_api` and the Flex
 fallback (exposed as a public `query_with_flex_fallback` in `openai_helpers.py`), not
@@ -684,7 +699,9 @@ value different from its current one. It then calls `apply_decision_changes` wit
 `source="chat"` and `evidence={"confirmed": true}`, and stores a user message
 ("Confirmed: <item title> — <option label>") linked as the event's `message`. A
 running review job sees the decision at its next fenced write and treats the item as
-`superseded`. A free-text "yes" never applies an assertion. Each confirmation names one
+`superseded`. If the confirmation makes deferred items eligible and no job exists,
+it queues a `review` job, like a chat turn (§5.1); a form `save` never does. A
+free-text "yes" never applies an assertion. Each confirmation names one
 item and one value, so a "No" cannot become absence.
 
 The model therefore cannot manufacture consent: text in EML or cells cannot create a
@@ -713,7 +730,8 @@ A chat turn answers **all** other user messages newer than the latest reply's
 finisher to chain another turn, so no message is left unanswered. If a reply already
 covers the newest user message, the turn is skipped (idempotent). Tool effects are
 committed per call and re-applying the same value is a no-op, so a crashed turn can
-be re-run. After three failed attempts the job posts a fixed error notice and stops.
+be re-run. Transport errors are retried by the helper; a turn that still fails posts
+a fixed error notice that answers the batch (so the queue does not spin) and stops.
 Messages from earlier plans stay visible after re-inspection, under a divider, and
 are not sent to the model.
 
@@ -760,7 +778,8 @@ Confirmations (path B) never call a model and remain available.
 
 - **Chat panel** (`ConversionChat.js`) above the choices whenever escalated items,
   conflicts or messages exist: transcript, composer, pending indicator, and a note
-  that answers given here are recorded in the conversion report inside the download.
+  that the conversation is kept with this conversion, and that the report inside the
+  download records which choices were answered here but not the conversation text.
 - **Decided by the AI reviewer** (`ConversionAiDecisions.js`): each AI-applied choice
   with its rationale, cited evidence and a select to override it. Overrides go
   through `save` and are recorded as `user`.
@@ -824,7 +843,7 @@ Confirmations (path B) never call a model and remain available.
   in one turn with `answers_through`; reasoning and function-call items replayed
   within a turn; invalid final JSON retried; idempotent replay; message queued during
   a review job and chained; no `Agent`/`Task`/`Message` rows.
-- Report: `decision_provenance` and chat transcript excerpts.
+- Report: `decision_provenance` for every source, with no conversation text for chat decisions.
 - EML extraction: namespaces, truncation, entity expansion refused, missing/multiple.
 - Frontend unit tests for the new pure helpers.
 
@@ -848,10 +867,11 @@ require a rerun.
 | --- | --- |
 | `OPENAI_CONVERSION_REVIEW_MODEL` / `_EFFORT` | `OPENAI_MODEL_STANDARD` / `high` |
 | `OPENAI_CONVERSION_CHAT_MODEL` / `_EFFORT` | `OPENAI_MODEL_STANDARD` / `medium` |
+| `OPENAI_CONVERSION_CHAT_SERVICE_TIER` | `default` |
 | `CONVERSION_REVIEW_BATCH_SIZE` | 12 |
 | `CONVERSION_REVIEW_MAX_ITEMS` | 120 per run |
 | `CONVERSION_REVIEW_MAX_RUNS_PER_PLAN` | 6 automatic runs |
-| `CONVERSION_AI_APPLY_KINDS` | all kinds (assertion rules still apply) |
+| `CONVERSION_AI_APPLY_KINDS` | every kind except `event-grain` until the offline benchmark meets the 98% bar (assertion rules still apply) |
 | `CONVERSION_JOB_LEASE_SECONDS` | 3,600 (minimum; raised to the derived call bound, §5.9) |
 | `OPENAI_DATASET_COST_LIMIT_USD` | existing, now enforced for conversion calls |
 

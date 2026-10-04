@@ -67,13 +67,14 @@ class CompatAssistantMessage:
     wait=wait_fixed(2),
     reraise=True,
 )
-def query_responses_api(args):
+def query_responses_api(args, max_retries=None):
     timeout_setting = (
         "OPENAI_FLEX_TIMEOUT_SECONDS" if args.get('service_tier') == 'flex'
         else "OPENAI_RESPONSES_TIMEOUT_SECONDS"
     )
     timeout_seconds = float(getattr(settings, timeout_setting, 900.0 if args.get('service_tier') == 'flex' else 180.0))
-    max_retries = int(getattr(settings, "OPENAI_SDK_MAX_RETRIES", 0))
+    if max_retries is None:
+        max_retries = int(getattr(settings, "OPENAI_SDK_MAX_RETRIES", 0))
     with OpenAI(timeout=timeout_seconds, max_retries=max_retries) as client:
         return client.responses.create(**args)
 
@@ -89,19 +90,32 @@ def _flex_capacity_unavailable(exc):
     return 'resource_unavailable' in code or 'resource unavailable' in message
 
 
-def _query_with_flex_fallback(args):
+def _query_with_flex_fallback(args, max_retries=None):
     if args.get('service_tier') != 'flex':
-        return query_responses_api(args)
+        return query_responses_api(args, max_retries=max_retries)
     for attempt in range(2):
         try:
-            return query_responses_api(args)
+            return query_responses_api(args, max_retries=max_retries)
         except RateLimitError as exc:
             if not _flex_capacity_unavailable(exc):
                 raise
             if attempt == 0:
                 time.sleep(2)
     logger.warning('Flex capacity unavailable for %s; retrying once on Standard', args['model'])
-    return query_responses_api({**args, 'service_tier': 'default'})
+    return query_responses_api({**args, 'service_tier': 'default'}, max_retries=max_retries)
+
+
+def query_with_flex_fallback(args, max_retries=None):
+    """Public entry for callers that build their own Responses requests (archive conversion)."""
+    return _query_with_flex_fallback(args, max_retries=max_retries)
+
+
+def worst_case_call_seconds():
+    """Longest one call through query_with_flex_fallback can take with SDK retries disabled."""
+    flex = float(getattr(settings, 'OPENAI_FLEX_TIMEOUT_SECONDS', 900.0))
+    standard = float(getattr(settings, 'OPENAI_RESPONSES_TIMEOUT_SECONDS', 180.0))
+    # Two Flex attempts and one Standard fallback, each with one InternalServerError retry.
+    return 2 * 2 * flex + 2 * standard + 10
 
 
 def create_response_message(

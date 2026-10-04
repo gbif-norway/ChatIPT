@@ -461,8 +461,8 @@ class DwcConversion(models.Model):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.QUEUED)
     plan = models.JSONField(default=dict)
     decisions = models.JSONField(default=dict)
-    suggestions = models.JSONField(default=list)
-    advice_reviewed = models.JSONField(default=list)
+    # AI reviewer state for the current plan (docs/dwca-conversion/ai-review-and-chat.md §6).
+    review = models.JSONField(default=dict)
     report = models.JSONField(default=dict)
     error = models.TextField(blank=True)
     output_file = models.FileField(upload_to='user_files/conversions', blank=True)
@@ -473,6 +473,69 @@ class DwcConversionJob(models.Model):
     conversion = models.OneToOneField(DwcConversion, on_delete=models.CASCADE, related_name='job')
     action = models.CharField(max_length=20, default='inspect')
     claimed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    # Renewed before each model call of a review or chat job, so a live call keeps its lease.
+    heartbeat_at = models.DateTimeField(null=True, blank=True)
+
+
+class DwcConversionMessage(models.Model):
+    """The conversion's own conversation; conversion never creates publication Agent messages."""
+    class Role(models.TextChoices):
+        USER = 'user'
+        ASSISTANT = 'assistant'
+
+    conversion = models.ForeignKey(DwcConversion, on_delete=models.CASCADE, related_name='messages')
+    created_at = models.DateTimeField(auto_now_add=True)
+    role = models.CharField(max_length=20, choices=Role.choices)
+    # '', questions, conflict, blocked, notice or confirmation.
+    kind = models.CharField(max_length=20, blank=True)
+    content = models.TextField(blank=True)
+    plan_id = models.CharField(max_length=64, blank=True)
+    asked = models.JSONField(default=list, blank=True)
+    proposals = models.JSONField(default=list, blank=True)
+    actions = models.JSONField(default=list, blank=True)
+    answers_through = models.PositiveBigIntegerField(null=True, blank=True)
+    model = models.CharField(max_length=100, blank=True)
+    response_id = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        ordering = ['id']
+
+
+class DwcConversionDecisionEvent(models.Model):
+    """Append-only provenance for every explicit conversion decision change."""
+    class Source(models.TextChoices):
+        USER = 'user'
+        AI_REVIEWER = 'ai-reviewer'
+        CHAT = 'chat'
+        SYSTEM = 'system'
+
+    conversion = models.ForeignKey(DwcConversion, on_delete=models.CASCADE, related_name='decision_events')
+    created_at = models.DateTimeField(auto_now_add=True)
+    plan_id = models.CharField(max_length=64)
+    decision_id = models.CharField(max_length=500)
+    value = models.CharField(max_length=500, blank=True)
+    previous_value = models.CharField(max_length=500, blank=True)
+    source = models.CharField(max_length=20, choices=Source.choices)
+    model = models.CharField(max_length=100, blank=True)
+    reasoning_effort = models.CharField(max_length=30, blank=True)
+    response_id = models.CharField(max_length=200, blank=True)
+    confidence = models.CharField(max_length=20, blank=True)
+    evidence = models.JSONField(default=list, blank=True)
+    rationale = models.TextField(blank=True)
+    message = models.ForeignKey(DwcConversionMessage, on_delete=models.SET_NULL, null=True, blank=True, related_name='decision_events')
+    transcript = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ['id']
+
+
+class ConversionSpendReservation(models.Model):
+    """Worst-case cost held for a conversion model call until its priced usage is recorded."""
+    conversion = models.ForeignKey(DwcConversion, on_delete=models.CASCADE, related_name='spend_reservations')
+    amount = models.DecimalField(max_digits=12, decimal_places=6)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    response_id = models.CharField(max_length=200, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 
