@@ -172,6 +172,15 @@ class ReviewerFlowTests(ConversionTestCase):
             self.assertEqual(review.reviewable_items(conversion), [])
             self.assertEqual(review.reviewable_items(conversion, manual=True), ['loose-links'])
 
+    def test_server_error_needs_a_manual_retry(self):
+        with patch.object(evidence, 'evidence_packet', side_effect=ValueError('too large')), patch(QUERY) as query:
+            process_next_conversion(); process_next_conversion()
+        query.assert_not_called()
+        conversion = self.conversion
+        self.assertEqual(conversion.review['recommendations']['loose-links']['reason'], 'ai-unavailable')
+        self.assertIn('server error', conversion.review['error'])
+        self.assertFalse(DwcConversionJob.objects.filter(conversion=conversion).exists())
+
     def test_superseded_worker_records_usage_but_writes_no_state(self):
         def respond(payload, max_retries=None):
             # The user converts... here: re-inspect supersedes the running review job mid-call.
@@ -235,9 +244,10 @@ class CostCeilingTests(ConversionTestCase):
         self.inspect_only()
         conversion = self.conversion
         reservation = ConversionSpendReservation.objects.create(conversion=conversion, amount=Decimal('0.1'))
-        response = SimpleNamespace(id='no-usage', status='completed', model='gpt-6-sol', service_tier='flex', usage=None)
-        review.record_usage(conversion.pk, conversion.dataset_id, response, reservation, 'gpt-6-sol', 'high', review.REVIEW_TASK, 1)
-        self.assertTrue(ConversionSpendReservation.objects.filter(pk=reservation.pk).exists())
+        for usage in (None, {'total_tokens': 50}):
+            response = SimpleNamespace(id=f'no-usage-{usage}', status='completed', model='gpt-6-sol', service_tier='flex', usage=usage)
+            review.record_usage(conversion.pk, conversion.dataset_id, response, reservation, 'gpt-6-sol', 'high', review.REVIEW_TASK, 1)
+            self.assertTrue(ConversionSpendReservation.objects.filter(pk=reservation.pk).exists())
 
     def test_unpriced_usage_keeps_its_reservation(self):
         self.inspect_only()
@@ -388,6 +398,10 @@ class InvalidationTests(ConversionTestCase):
         self.ai_apply(conversion, 'row-group:1:0', 'preserve')
         conversion.conflicts = [{'id': 'c', 'category': 'conflict', 'reason': 'Rows disagree', 'decision_ids': ['row:1:2'], 'evidence': {}}]
         conversion.save(update_fields=['conflicts'])
+        review.on_conflicts_recorded(conversion)
+        self.assertEqual(self.conversion.review['recommendations']['row-group:1:0']['reason'], 'conflict')
+        self.assertEqual(self.client.get(self.url).data['review']['conflicted'], ['row-group:1:0'])
+        self.assertTrue(DwcConversionMessage.objects.filter(conversion=conversion, kind='conflict').exists())
         context = review.Context(conversion)
         self.assertFalse(context.current('row-group:1:0'))
         self.assertIn('row-group:1:0', review.open_items(conversion, context))
@@ -469,6 +483,10 @@ class EvidenceTests(SimpleTestCase):
         archive = SimpleNamespace(files={'a/eml.xml': EML, 'b/eml.xml': EML})
         self.assertEqual(evidence.extract_eml(archive)['reason'], 'Several metadata documents were supplied.')
         self.assertFalse(evidence.extract_eml(SimpleNamespace(files={'eml.xml': b'<not xml'}))['available'])
+        declared = SimpleNamespace(files={'meta.xml': b'<archive metadata="metadata.xml"/>', 'eml.xml': EML})
+        self.assertEqual(evidence.extract_eml(declared)['reason'], 'meta.xml names a metadata document that was not supplied.')
+        named = SimpleNamespace(files={'meta.xml': b'<archive metadata="metadata.xml"/>', 'metadata.xml': EML, 'eml.xml': b'<x/>'})
+        self.assertTrue(evidence.extract_eml(named)['available'])
 
     def test_packets_are_bounded_and_carry_group_evidence(self):
         from api.dwca_conversion import build_plan

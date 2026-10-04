@@ -65,18 +65,19 @@ def _parser():
 
 
 def _metadata_name(files):
+    """(declared, path): the meta.xml metadata attribute, resolved; a declaration wins over any eml.xml."""
     metas = [name for name in files if PurePosixPath(name).name.lower() == 'meta.xml']
     if len(metas) != 1:
-        return None
+        return False, None
     try:
         root = etree.fromstring(files[metas[0]], parser=_parser())
     except (etree.XMLSyntaxError, ValueError):
-        return None
+        return False, None
     declared = root.get('metadata')
     if not declared:
-        return None
+        return False, None
     candidate = (PurePosixPath(metas[0]).parent / declared).as_posix()
-    return candidate if candidate in files else None
+    return True, candidate if candidate in files else None
 
 
 def _text(element):
@@ -91,7 +92,9 @@ def _all(root, path):
 def extract_eml(archive):
     """The bounded EML sections from §4.1, or {'available': False, 'reason': ...}."""
     files = archive.files
-    declared = _metadata_name(files)
+    declares, declared = _metadata_name(files)
+    if declares and declared is None:
+        return {'available': False, 'reason': 'meta.xml names a metadata document that was not supplied.'}
     candidates = [declared] if declared else sorted(name for name in files if PurePosixPath(name).name.lower() == 'eml.xml')
     if len(candidates) != 1:
         return {'available': False, 'reason': 'No metadata document was supplied.' if not candidates

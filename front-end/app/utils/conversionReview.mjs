@@ -38,6 +38,7 @@ export function aiDecidedItems(state) {
     return {
       id, item, value, label: optionLabel(item, value), source: state?.decision_sources?.[id] || null,
       stale: Boolean(state?.review?.recommendations?.[id]?.stale_basis),
+      conflict: (state?.review?.conflicted || []).includes(id),
     }
   }).filter(entry => entry.item)
 }

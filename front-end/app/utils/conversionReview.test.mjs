@@ -25,7 +25,7 @@ const reviewPlan = {
 test('AI-applied choices carry their reason and stale flag', () => {
   const state = {
     plan: reviewPlan, decisions: { 'column:0:2': 'occurrence.scientificName' },
-    review: { applied: ['column:0:2', 'missing'], recommendations: { 'column:0:2': { stale_basis: true } } },
+    review: { applied: ['column:0:2', 'missing'], conflicted: ['column:0:2'], recommendations: { 'column:0:2': { stale_basis: true } } },
     decision_sources: { 'column:0:2': { source: 'ai-reviewer', rationale: 'Names have no authorship.' } },
   }
   const [decided] = aiDecidedItems(state)
@@ -33,6 +33,7 @@ test('AI-applied choices carry their reason and stale flag', () => {
   assert.equal(decided.label, 'Occurrence name')
   assert.equal(decided.source.rationale, 'Names have no authorship.')
   assert.equal(decided.stale, true)
+  assert.equal(decided.conflict, true)
 })
 
 test('recommendations are shown only while current and not already chosen', () => {

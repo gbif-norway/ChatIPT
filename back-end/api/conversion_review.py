@@ -389,7 +389,8 @@ def record_usage(conversion_id, dataset_id, response, reservation, model, effort
                 **defaults, 'dataset_id': dataset_id, 'task_name': task})
         if reservation is not None:
             # Missing token usage prices as zero, which would understate the spend; keep the reservation then.
-            if response_id and defaults.get('estimated_cost_usd') is not None and defaults.get('total_tokens'):
+            if (response_id and defaults.get('estimated_cost_usd') is not None
+                    and defaults.get('input_tokens') and defaults.get('output_tokens')):
                 ConversionSpendReservation.objects.filter(pk=reservation.pk).delete()
             else:
                 ConversionSpendReservation.objects.filter(pk=reservation.pk).update(response_id=response_id)
@@ -422,6 +423,11 @@ def on_conflicts_recorded(conversion):
     """After a convert failure returns to review: named recommendations stop being current (conflict_ids
     is read on every check) and the conversation explains the conflict."""
     from api.conversion_chat import post_conflict_opener
+    state = review_state(conversion)
+    for item_id in conflict_ids(conversion):
+        if item_id in state['recommendations']:
+            state['recommendations'][item_id]['reason'] = 'conflict'
+    conversion.save(update_fields=['review', 'updated_at'])
     return post_conflict_opener(conversion)
 
 
@@ -691,6 +697,8 @@ def process_job(conversion_id, job_id, claim, action):
         try:
             with fence(conversion_id, job_id, claim, action, None) as (conversion, _):
                 if action == 'review':
+                    # Only a manual request retries these, so a persistent error cannot loop automatically.
+                    _mark(conversion, reviewable_items(conversion), 'ai-unavailable')
                     review_state(conversion).update(error='AI review stopped because of a server error. You can answer the choices yourself.')
                     conversion.save(update_fields=['review', 'updated_at'])
                 else:
@@ -760,6 +768,7 @@ def state_section(conversion):
         'review': {'status': state.get('status', 'idle'), 'error': state.get('error', ''), 'runs': state.get('runs', 0),
                    'recommendations': recommendations, 'escalated': open_items(conversion, context),
                    'applied': ai_applied(context), 'deferred': deferred,
+                   'conflicted': [item_id for item_id in ai_applied(context) if item_id in context.conflicts],
                    'reviewable': len(reviewable_items(conversion, manual=True, context=context)) if ai_available() else 0,
                    'blockers': [item_id for item_id in ai_applied(context) if state['recommendations'].get(item_id, {}).get('stale_basis')]},
         'decision_sources': sources,
