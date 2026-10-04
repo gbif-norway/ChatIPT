@@ -614,7 +614,9 @@ def build_plan(archive):
                 issues.append(_issue(item["id"], term.rsplit("/", 1)[-1],
                     kind='name-semantics' if name_ambiguity and not media_reason else 'column-mapping', reason=media_reason or (
                         "Some names look like they include an author, a qualifier such as 'cf.', or another unusual form. In a Darwin Core Data Package, scientificName holds only the name, without its author. "
-                        "The full text is always kept in verbatimIdentification. Copy the names into scientificName as they are, or leave scientificName empty."
+                        + ("The full text goes to verbatimIdentification where your file leaves it empty; otherwise only your original files keep it. "
+                           if VERBATIM_NAME in table.terms else "The full text is always kept in verbatimIdentification. ")
+                        + "Copy the names into scientificName as they are, or leave scientificName empty."
                         if name_ambiguity else "This column could describe more than one thing, for example the occurrence or its identification. Choose where it belongs, or keep it only in your original files." if options
                         else "Darwin Core Data Packages have no field for this term, so the values stay in your original files." if term not in SCHEMA_TERMS
                         else "This converter does not map this term yet, so the values stay in your original files."),

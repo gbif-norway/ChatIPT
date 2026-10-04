@@ -54,7 +54,7 @@ function DecisionCell({ entry, editable, busy, onDecide }) {
       <button type="button" className="btn btn-sm btn-outline-secondary" disabled={busy}
         onClick={() => onDecide(entry.label, 'keep')} title="Copy the supplied text to scientificName where it is empty">Keep as supplied</button>
       <button type="button" className="btn btn-sm btn-outline-secondary" disabled={busy}
-        onClick={() => onDecide(entry.label, 'empty')} title="Leave scientificName empty; the supplied text stays in verbatimIdentification">Leave empty</button>
+        onClick={() => onDecide(entry.label, 'empty')} title="Leave scientificName empty; the supplied text goes to verbatimIdentification unless your file supplies its own there">Leave empty</button>
     </div>
     {alternatives.length > 0 && <select className="form-select form-select-sm mt-1" aria-label={`Other COL names for ${entry.label}`} value="" disabled={busy}
       onChange={event => event.target.value && onDecide(entry.label, 'alternative', event.target.value)}>
