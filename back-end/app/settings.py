@@ -296,6 +296,9 @@ OPENAI_CRITICAL_REASONING_EFFORT = os.environ.get("OPENAI_CRITICAL_REASONING_EFF
 # Automatic AI review and conversation for archive conversion (docs/dwca-conversion/ai-review-and-chat.md).
 # Always off under the test runner, so tests opt in explicitly with mocked model responses.
 CONVERSION_AI_REVIEW_ENABLED = os.environ.get("CONVERSION_AI_REVIEW_ENABLED", "1") == "1" and not TESTING
+# Scientific-name checks (GBIF name parser and Catalogue of Life matching) after inspection; off under the test runner
+# so that tests never reach the network.
+CONVERSION_NAME_CHECKS_ENABLED = os.environ.get("CONVERSION_NAME_CHECKS_ENABLED", "1") == "1" and not TESTING
 # Soft, ignorable nudge only -- shown to the model in state_update.txt once a task
 # stage has made this many tool calls. Not an enforced limit.
 AGENT_CALL_COUNT_NUDGE_THRESHOLD = int(os.environ.get("AGENT_CALL_COUNT_NUDGE_THRESHOLD", "20"))

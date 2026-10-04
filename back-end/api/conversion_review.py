@@ -443,14 +443,20 @@ def blocking_conflicts(conflicts):
 
 
 def supersede_job(conversion):
-    """convert/inspect replace a review or chat job; the fence then rejects that worker's writes."""
+    """convert/inspect replace a review, chat or name-check job; the fence then rejects that worker's writes."""
     from api import conversion_chat
     job = DwcConversionJob.objects.select_for_update().filter(conversion=conversion).first()
     if job is None:
         return True
-    if job.action not in {'review', 'chat'}:
+    if job.action not in {'review', 'chat', 'names'}:
         return False
     job.delete()
+    if job.action == 'names':
+        from api.conversion_names import current
+        names = current(conversion)
+        if names.get('status') in {'pending', 'running'}:
+            names['status'] = 'incomplete'  # unfinished labels can be checked again; conversion goes on without them
+        return True
     conversion_chat.acknowledge_unanswered(conversion, conversion_chat.SUPERSEDED_NOTICE)
     state = review_state(conversion)
     state['status'] = 'idle'

@@ -12,7 +12,8 @@ from django.utils import timezone
 
 from api.dwca_import import ConversionError, ImportFailure, read_inputs, source_zip
 from api.dwca_conversion import build_plan, convert
-from api.dwc_dp_specs import create_dwc_dp_archive, validate_dwc_dp_archive, validate_eml
+from api.dwc_dp_specs import create_dwc_dp_archive, validate_dwc_dp_archive, validate_dwc_dp_resources, validate_eml
+from api.conversion_names import LEASE_SECONDS
 from api.models import DwcConversion, DwcConversionJob, Table
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,8 @@ def _claim(now):
     review_stale = now - timedelta(seconds=lease_seconds())
     due = (Q(job__claimed_at__isnull=True)
            | Q(job__action__in=['inspect', 'convert'], job__claimed_at__lt=now - timedelta(hours=1))
-           | Q(job__action__in=['review', 'chat'], job_seen__lt=review_stale))
+           | Q(job__action__in=['review', 'chat'], job_seen__lt=review_stale)
+           | Q(job__action='names', job_seen__lt=now - timedelta(seconds=LEASE_SECONDS)))
     conversion = (DwcConversion.objects.select_for_update(skip_locked=True, of=('self',))
                   .annotate(job_seen=Coalesce('job__heartbeat_at', 'job__claimed_at'))
                   .filter(job__isnull=False).filter(due).order_by('job__id').first())
@@ -72,13 +74,18 @@ def process_next_conversion():
         if job.action == 'review':
             conversion.status = 'reviewing'
             conversion.save(update_fields=['status', 'updated_at'])
-        elif job.action != 'chat':
+        elif job.action not in {'chat', 'names'}:
             conversion.status = {'inspect': 'inspecting', 'convert': 'converting'}.get(job.action, conversion.status)
             conversion.error = ''; conversion.save(update_fields=['status', 'error', 'updated_at'])
     if job.action in {'review', 'chat'}:
         # AI review and conversation have their own fenced runner and finisher.
         from api.conversion_review import process_job
         process_job(conversion.pk, job.pk, now, job.action)
+        return True
+    if job.action == 'names':
+        # Name checks run beside review: the conversion keeps its status and the choices stay editable.
+        from api.conversion_names import process_job as process_names_job
+        process_names_job(conversion.pk, job.pk, now)
         return True
     conversion = DwcConversion.objects.select_related('dataset').get(pk=conversion.pk)
     output_content = None
@@ -89,10 +96,12 @@ def process_next_conversion():
             conversion.plan = build_plan(archive)
             conversion.decisions = {}; conversion.review = {}; conversion.report = {}
             conversion.conflicts = []; conversion.retryable = False
+            conversion.name_review = _collect_names(archive, conversion.plan)
             conversion.status = 'review'
         elif job.action == 'convert':
             archive = load_sources(conversion)
             resources, report = convert(archive, conversion.plan, conversion.decisions)
+            resources = _apply_names(conversion, resources, report)
             if 'taxonomy' in report:
                 from api.dwca_taxon import taxonomy_tables
                 additional_tables = taxonomy_tables(archive, report)
@@ -144,7 +153,7 @@ def process_next_conversion():
                 if old_output and old_output != conversion.output_file.name:
                     transaction.on_commit(lambda: conversion.output_file.storage.delete(old_output), robust=True)
             conversion.save()
-            if _chain_review(conversion, claimed_job, job.action):
+            if _chain_names(conversion, claimed_job, job.action) or _chain_review(conversion, claimed_job, job.action):
                 return True
             claimed_job.delete()
             _post_failure_opener(conversion, job.action)
@@ -163,6 +172,34 @@ def process_next_conversion():
                 DwcConversion.objects.filter(pk=conversion.pk).update(status='review' if conversion.plan else 'failed', error=record['reason'],
                                                                       conflicts=[record], retryable=True, updated_at=timezone.now())
                 claimed_job.delete()
+    return True
+
+def _collect_names(archive, plan):
+    """The labels to check; collection reads only the archive, and a defect here never blocks inspection."""
+    from api.conversion_names import collect_state
+    try:
+        return collect_state(archive, plan)
+    except Exception:
+        logger.exception('Could not collect scientific names')
+        return {}
+
+def _apply_names(conversion, resources, report):
+    """Overlay reviewed name decisions on the converted tables, record them, and validate the result again."""
+    from api.conversion_names import apply_name_decisions, current
+    resources, section = apply_name_decisions(resources, current(conversion))
+    if section is not None:
+        report['name_review'] = section
+        if section['reviewed']:
+            report['validation'] = validate_dwc_dp_resources(resources)
+    return resources
+
+def _chain_names(conversion, job, action):
+    """After a successful inspect, keep the job as a name check when the archive has names to check."""
+    from api.conversion_names import enabled
+    if action != 'inspect' or conversion.status != 'review' or not enabled() or conversion.name_review.get('status') != 'pending':
+        return False
+    job.action = 'names'; job.claimed_at = None; job.heartbeat_at = None
+    job.save(update_fields=['action', 'claimed_at', 'heartbeat_at'])
     return True
 
 def _chain_review(conversion, job, action):
