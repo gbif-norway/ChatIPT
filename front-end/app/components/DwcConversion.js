@@ -10,6 +10,7 @@ import { focusDecision } from '../utils/focusDecision'
 import ConversionAiDecisions from './ConversionAiDecisions'
 import ConversionChat from './ConversionChat'
 import ConversionColumnSummary from './ConversionColumnSummary'
+import ConversionNameReview from './ConversionNameReview'
 import ConversionOpenQuestions from './ConversionOpenQuestions'
 import ConversionPlanDiagram from './ConversionPlanDiagram'
 import ConversionSteps from './ConversionSteps'
@@ -252,7 +253,6 @@ export default function DwcConversion() {
       {scientificFindings.length > 0 && <details className="small mb-2"><summary>Findings in your files (up to 10 shown)</summary><ul>{scientificFindings.map((finding, index) => <li key={index}>{finding.child_eventID} → {finding.ancestor_eventID || finding.parent_eventID}: {finding.reason}</li>)}</ul></details>}
       <p className="small mb-0">No survey scopes, completeness flags or other values are copied from parent to child or repaired. The package check covers structure and values only. <a href="https://eco.tdwg.org/hierarchy/" target="_blank" rel="noreferrer">TDWG guidance on event hierarchies</a></p>
     </div>})}
-    {/* Mount point for the "Scientific names" section (ConversionNameReview): between the file summary and the notices. */}
     {notices.length > 0 && <div className="alert alert-info">
       <p className="mb-1">{notices.length} {notices.length === 1 ? 'notice' : 'notices'} about this conversion. Your original files keep every source value; the report explains what could not be mapped and which values were left out of the mapped tables.</p>
       <details className="small"><summary>View notices</summary><ul>{notices.map((notice, index) => <li key={`${notice.id}:${index}`}><strong>{notice.title}:</strong> {notice.reason}</li>)}</ul></details>
@@ -269,6 +269,7 @@ export default function DwcConversion() {
       {(attention.length > 0 || needsInputIssues.length > 0) && <h3 className="h5 mt-3">Needs your input</h3>}
       {attention.map(item => <ChoiceCard key={item.id} item={item} {...cardProps} />)}
       {needsInputIssues.map(issue => <ChoiceCard key={issue.id} item={issue} {...cardProps} />)}
+      <ConversionNameReview state={state} send={send} disabled={disabled} datasetId={datasetId} onRefresh={load} />
       <div className="row g-3 align-items-start mb-3">
         {showQuestions && <div className="col-12 col-lg-6">
           <h3 className="h5">Questions about your data</h3>

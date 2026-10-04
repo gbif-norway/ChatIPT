@@ -464,6 +464,8 @@ class DwcConversion(models.Model):
     decisions = models.JSONField(default=dict)
     # AI reviewer state for the current plan (docs/dwca-conversion/ai-review-and-chat.md §6).
     review = models.JSONField(default=dict)
+    # Scientific-name checks and the user's name decisions for the current plan (api/conversion_names.py).
+    name_review = models.JSONField(default=dict)
     report = models.JSONField(default=dict)
     error = models.TextField(blank=True)
     # Structured failures: [{id, category, reason, decision_ids, evidence}].

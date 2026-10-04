@@ -479,7 +479,8 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 transaction.on_commit(lambda storage=storage, name=name: storage.delete(name), robust=True)
 
     @staticmethod
-    def _conversion_state(conversion):
+    def _conversion_state(conversion, names_page=None):
+        from api import conversion_names
         from api.conversion_review import state_section
         from api.dwca_conversion import option_status, validate_decisions
         plan = conversion.plan
@@ -487,8 +488,9 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 'unresolved': validate_decisions(plan, conversion.decisions, require_complete=False) if plan else [],
                 'option_status': option_status(plan, conversion.decisions) if plan else {},
                 'conflicts': conversion.conflicts, 'retryable': conversion.retryable, 'error': conversion.error,
-                'report': {key: value for key, value in conversion.report.items() if key != 'row_crosswalk'},
+                'report': {key: value for key, value in conversion_names.public_report(conversion.report).items() if key != 'row_crosswalk'},
                 'updated_at': conversion.updated_at, 'download_ready': conversion.status == 'complete' and bool(conversion.output_file),
+                'name_review': conversion_names.state_section(conversion, **(names_page or {})),
                 **state_section(conversion)}
 
     @staticmethod
@@ -505,7 +507,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get', 'post'], url_path='conversion',
             throttle_classes=[ConversionReviewRateThrottle, ConversionChatRateThrottle])
     def conversion(self, request, *args, **kwargs):
-        from api import conversion_review
+        from api import conversion_names, conversion_review
         from api.models import DwcConversion, DwcConversionJob
         from api.dwca_conversion import validate_decisions
         from api.dwca_import import ConversionError, ImportFailure
@@ -514,15 +516,19 @@ class DatasetViewSet(viewsets.ModelViewSet):
         if dataset.workflow_type != Dataset.WorkflowType.DWCA_CONVERSION:
             raise ValidationError('This dataset is not an archive conversion.')
         if request.method == 'GET':
-            return Response(self._conversion_state(dataset.conversion))
+            query = request.query_params
+            names_page = {'offset': int(query['names_offset']) if query.get('names_offset', '').isdigit() else 0,
+                          'limit': int(query['names_limit']) if query.get('names_limit', '').isdigit() else 100,
+                          'view': 'pending' if query.get('names_view') == 'pending' else 'all'}
+            return Response(self._conversion_state(dataset.conversion, names_page))
         operation = request.data.get('action', 'convert')
-        if operation not in {'convert', 'review', 'inspect', 'save', 'chat'}:
+        if operation not in {'convert', 'review', 'inspect', 'save', 'chat', 'names', 'check_names'}:
             raise ValidationError('Unknown conversion action.')
         with transaction.atomic():
             # Lock order: conversion, then job (docs/dwca-conversion/ai-review-and-chat.md §5.9).
             conversion = DwcConversion.objects.select_for_update().get(dataset=dataset)
             job = DwcConversionJob.objects.select_for_update().filter(conversion=conversion).first()
-            ai_job = job is not None and job.action in {'review', 'chat'}
+            ai_job = job is not None and job.action in {'review', 'chat', 'names'}
             if job is not None and not ai_job:
                 return Response({'detail': 'Conversion work is already queued or running.'}, status=409)
             if operation == 'inspect':
@@ -539,6 +545,22 @@ class DatasetViewSet(viewsets.ModelViewSet):
             if conversion.status not in {'review', 'reviewing'}:
                 # A completed, blocked or failed conversion's choices must stay those of its result.
                 return Response({'detail': 'Choices can only be changed while the conversion is in review.'}, status=409)
+            if operation == 'names':
+                try:
+                    with transaction.atomic():
+                        if 'name_decisions' in request.data:
+                            conversion_names.set_decisions(conversion, request.data['name_decisions'])
+                        if request.data.get('bulk'):
+                            conversion_names.bulk_decide(conversion, request.data['bulk'])
+                except conversion_names.NameDecisionError as exc:
+                    raise ValidationError(str(exc))
+                return Response(self._conversion_state(conversion))
+            if operation == 'check_names':
+                if job is not None:
+                    return Response({'detail': 'Name checks, AI review or a reply is already running.'}, status=409)
+                conversion_names.request_check(conversion, refresh=bool(request.data.get('refresh')))
+                DwcConversionJob.objects.create(conversion=conversion, action='names')
+                return Response(self._conversion_state(conversion), status=202)
             if operation == 'review':
                 if ai_job:
                     return Response({'detail': 'AI review or a reply is already running.'}, status=409)
