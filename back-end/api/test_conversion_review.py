@@ -164,7 +164,20 @@ class ReviewerFlowTests(ConversionTestCase):
         self.assertEqual(self.events('status:0')[-1].evidence, [])
         self.assertEqual(self.events('column:0:2')[-1].evidence, [])
         self.post('save', changes={'status:0': 'present'}, accepted_recommendations=['status:0'])
+        self.assertEqual(self.events('status:0')[-1].evidence, [], 'A recommendation without a matching basis is not current.')
+        conversion = self.conversion
+        context = review.Context(conversion)
+        conversion.review['recommendations']['status:0'].update(
+            basis_sha256=evidence.digest(context.basis('status:0')), availability_sha256=evidence.digest(context.availability('status:0')))
+        conversion.save(update_fields=['review'])
+        self.post('save', changes={'status:0': 'absent'})
+        self.post('save', changes={'status:0': 'present'}, accepted_recommendations=['status:0'])
         self.assertEqual(self.events('status:0')[-1].evidence, [{'accepted_recommendation': True}])
+        # A dependency change makes the same recommendation stale; adopting it is then not recorded.
+        self.post('save', changes={'loose-links': None})
+        self.post('save', changes={'status:0': 'absent'})
+        self.post('save', changes={'status:0': 'present'}, accepted_recommendations=['status:0'])
+        self.assertEqual(self.events('status:0')[-1].evidence, [])
 
     def test_legacy_suggest_jobs_are_retired(self):
         import importlib

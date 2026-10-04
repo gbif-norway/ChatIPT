@@ -216,11 +216,12 @@ def apply_decision_changes(conversion, changes, source, *, model='', reasoning_e
             candidate, retained, removed = kept, sorted(removed), {}
             for key in retained:
                 recommendations.setdefault(key, {})['stale_basis'] = True
-    # Only a shown, current recommendation for exactly the chosen value counts as adopted.
+    # Only a shown, current recommendation (judged on the decisions the user saw) for exactly the chosen value counts.
+    shown = Context(conversion) if accepted_recommendation_ids else None
     accepted = {key for key in accepted_recommendation_ids
-                if isinstance(key, str) and recommendations.get(key, {}).get('plan_id') == plan.get('id')
-                and recommendations[key].get('outcome') == 'escalated' and recommendations[key].get('option')
-                and recommendations[key]['option'] == candidate.get(key)}
+                if isinstance(key, str) and recommendations.get(key, {}).get('outcome') == 'escalated'
+                and recommendations[key].get('option') and recommendations[key]['option'] == candidate.get(key)
+                and shown.current(key)}
     events = []
     for key in sorted(set(before) | set(candidate)):
         if before.get(key) == candidate.get(key):
