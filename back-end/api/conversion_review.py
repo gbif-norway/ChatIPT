@@ -381,12 +381,15 @@ def record_usage(conversion_id, dataset_id, response, reservation, model, effort
     from api.openai_usage import response_usage_defaults
     response_id = str(getattr(response, 'id', '') or '')
     with transaction.atomic():
+        # The same lock as reserve(), so a concurrent reservation never misses this charge.
+        DwcConversion.objects.select_for_update(of=('self',)).filter(pk=conversion_id).first()
         defaults = response_usage_defaults(response, requested_model=model, reasoning_effort=effort, duration_ms=duration_ms)
         if response_id:
             OpenAIUsage.objects.update_or_create(response_id=response_id, defaults={
                 **defaults, 'dataset_id': dataset_id, 'task_name': task})
         if reservation is not None:
-            if response_id and defaults.get('estimated_cost_usd') is not None:
+            # Missing token usage prices as zero, which would understate the spend; keep the reservation then.
+            if response_id and defaults.get('estimated_cost_usd') is not None and defaults.get('total_tokens'):
                 ConversionSpendReservation.objects.filter(pk=reservation.pk).delete()
             else:
                 ConversionSpendReservation.objects.filter(pk=reservation.pk).update(response_id=response_id)
@@ -413,6 +416,19 @@ def fence(conversion_id, job_id, claim, action, statuses):
         job.heartbeat_at = timezone.now()
         job.save(update_fields=['heartbeat_at'])
         yield conversion, job
+
+
+def on_conflicts_recorded(conversion):
+    """After a convert failure returns to review: named recommendations stop being current (conflict_ids
+    is read on every check) and the conversation explains the conflict."""
+    from api.conversion_chat import post_conflict_opener
+    return post_conflict_opener(conversion)
+
+
+def blocking_conflicts(conflicts):
+    """Recorded decision conflicts that no change has addressed; converting again would fail the same way."""
+    return [conflict for conflict in conflicts or []
+            if conflict.get('category') in {'conflict', 'decision'} and conflict.get('decision_ids')]
 
 
 def supersede_job(conversion):
@@ -454,13 +470,24 @@ def parse_items(response):
         parsed = json.loads(getattr(response, 'output_text', '') or '')
     except (TypeError, ValueError):
         return None
-    if not isinstance(parsed, dict) or not isinstance(parsed.get('items'), list):
+    if not isinstance(parsed, dict) or set(parsed) != {'items'} or not isinstance(parsed['items'], list):
         return None
     found = {}
     for item in parsed['items']:
-        if isinstance(item, dict) and isinstance(item.get('id'), str) and item['id'] not in found:
-            found[item['id']] = item
+        if not _valid_item(item):
+            return None  # A schema-invalid response is treated as unavailable, never partially applied.
+        found.setdefault(item['id'], item)
     return found
+
+
+ITEM_TYPES = {'id': str, 'choice': str, 'confidence': str, 'evidence': list, 'rationale': str, 'needs_user': bool,
+              'user_question': str}
+
+
+def _valid_item(item):
+    return (isinstance(item, dict) and set(item) == set(ITEM_TYPES)
+            and all(isinstance(item[key], kind) for key, kind in ITEM_TYPES.items())
+            and item['confidence'] in {'high', 'medium', 'low'} and all(isinstance(ref, str) for ref in item['evidence']))
 
 
 def judge(issue, packet, refs, item, kinds):
@@ -585,14 +612,15 @@ def run_review(conversion_id, job_id, claim):
     limit = max(int(setting('CONVERSION_REVIEW_MAX_ITEMS', 120)), 1)
     attempted, processed = set(), 0
     model, effort = review_model()
-    for level in range(4):
+    for level in range(evidence.MAX_LEVEL + 1):
         while True:
             snapshot = DwcConversion.objects.select_related('dataset').get(pk=conversion_id)
             if snapshot.plan.get('id') != plan_id:
                 raise Fenced()
             context = Context(snapshot)
             pending = [item_id for item_id in reviewable_items(snapshot, manual, context) if item_id not in attempted]
-            batch = [item_id for item_id in pending if evidence.level(context.issues[item_id]) == level][:batch_size]
+            batch = [item_id for item_id in pending if evidence.level(context.issues[item_id]) == level]
+            batch = batch[:max(min(batch_size, limit - processed), 0)] if processed < limit else batch[:1]
             if not batch:
                 break
             if processed >= limit:

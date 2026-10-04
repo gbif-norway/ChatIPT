@@ -571,6 +571,11 @@ class DatasetViewSet(viewsets.ModelViewSet):
                         accepted_recommendation_ids=request.data.get('accepted_recommendations') or [],
                         confirm_ids=request.data.get('confirm') or [])
                     if operation == 'convert':
+                        unchanged = conversion_review.blocking_conflicts(conflicts)
+                        if unchanged:
+                            raise ConversionError('Change one of the choices named by the last conversion attempt before converting again: '
+                                                  + unchanged[0]['reason'][:300], category='decision',
+                                                  decision_ids=[identifier for conflict in unchanged for identifier in conflict['decision_ids']])
                         blockers = conversion_review.convert_blockers(conversion)
                         if blockers:
                             raise ConversionError(f'Check {len(blockers)} AI choices made before a choice they depend on changed.',

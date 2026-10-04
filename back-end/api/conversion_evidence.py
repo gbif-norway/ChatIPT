@@ -24,6 +24,9 @@ LEVELS = {
     'survey-completeness': 3,
 }
 ROOT_DECISIONS = ('loose-links', 'taxonomy-package')
+# Nested Taxon occurrence items sit below every top-level item, so their outer role is always a lower level.
+NESTED_OFFSET = 4
+MAX_LEVEL = 3 + NESTED_OFFSET
 PACKET_LIMIT = 8000
 EML_LIMIT = 8000
 EML_MAX_BYTES = 2 * 1024 * 1024
@@ -163,7 +166,7 @@ def issue_index(plan):
 
 
 def level(entry):
-    return LEVELS.get(entry.get('kind'), 3)
+    return LEVELS.get(entry.get('kind'), 3) + (NESTED_OFFSET if NESTED.match(entry.get('id', '')) else 0)
 
 
 def split_nested(item_id):
@@ -205,7 +208,7 @@ def dependencies(plan, item_id):
         add(root)
         if prefix:
             add(prefix + root)
-    if 'table' in item and mine > 1:
+    if 'table' in item and (mine > 1 or prefix):
         add(f"table:{item['table']}")
     if item.get('kind') == 'material-identity':
         add(prefix + 'event-grain')
@@ -473,10 +476,26 @@ def _fit(packet):
         lambda: evidence.__setitem__('targets', evidence['targets'][:3]),
         lambda: [row.__setitem__('values', dict(list(row['values'].items())[:8])) for row in evidence['rows']],
     ]
-    for step in steps:
+    final = [
+        lambda: evidence.__setitem__('requirements', evidence['requirements'][:4]),
+        lambda: [option.__setitem__('reasons', [clip(' '.join(option['reasons']), 150)] if option['reasons'] else [])
+                 for option in packet['options']],
+        lambda: evidence.__setitem__('context', evidence['context'][:6]),
+        lambda: [requirement.__setitem__('evidence', '') for requirement in evidence['requirements']],
+        lambda: evidence.__setitem__('columns', evidence['columns'][:3]),
+        lambda: evidence.pop('tables', None),
+        lambda: evidence.__setitem__('rows', []),
+        lambda: evidence.__setitem__('targets', []),
+        lambda: [option.__setitem__('label', clip(option['label'], 80)) or option.__setitem__('reasons', [])
+                 for option in packet['options']],
+        lambda: packet.__setitem__('options', packet['options'][:40]),
+    ]
+    for step in [*steps, *final]:
         if len(canonical(packet)) <= PACKET_LIMIT:
             return packet
         step()
+    if len(canonical(packet)) > PACKET_LIMIT:
+        raise ValueError(f"Evidence for {packet['id']} cannot fit the packet limit.")
     return packet
 
 

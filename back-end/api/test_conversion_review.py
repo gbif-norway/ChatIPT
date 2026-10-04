@@ -231,6 +231,14 @@ class CostCeilingTests(ConversionTestCase):
         review.release_on_error(first, error)
         self.assertFalse(ConversionSpendReservation.objects.filter(pk=first.pk).exists())
 
+    def test_missing_usage_keeps_its_reservation(self):
+        self.inspect_only()
+        conversion = self.conversion
+        reservation = ConversionSpendReservation.objects.create(conversion=conversion, amount=Decimal('0.1'))
+        response = SimpleNamespace(id='no-usage', status='completed', model='gpt-6-sol', service_tier='flex', usage=None)
+        review.record_usage(conversion.pk, conversion.dataset_id, response, reservation, 'gpt-6-sol', 'high', review.REVIEW_TASK, 1)
+        self.assertTrue(ConversionSpendReservation.objects.filter(pk=reservation.pk).exists())
+
     def test_unpriced_usage_keeps_its_reservation(self):
         self.inspect_only()
         conversion = self.conversion
@@ -238,6 +246,31 @@ class CostCeilingTests(ConversionTestCase):
         response = SimpleNamespace(id='priority', status='completed', model='gpt-6-sol', service_tier='priority', usage={})
         review.record_usage(conversion.pk, conversion.dataset_id, response, reservation, 'gpt-6-sol', 'high', review.REVIEW_TASK, 1)
         self.assertEqual(ConversionSpendReservation.objects.get(pk=reservation.pk).response_id, 'priority')
+
+
+@override_settings(**AI)
+class LimitTests(ConversionTestCase):
+    @override_settings(CONVERSION_REVIEW_MAX_ITEMS=1)
+    def test_item_limit_holds_across_the_run(self):
+        self.inspect_only()
+        self.assertEqual(self.post('save', changes={'loose-links': 'confirm'}).status_code, 200)
+        with patch(QUERY, side_effect=lambda payload, max_retries=None: reply(
+                [answer(item_id, 'abstain') for item_id in requested(payload)])) as query:
+            self.assertEqual(self.post('review').status_code, 202)
+            process_next_conversion()
+        self.assertEqual(query.call_count, 1)
+        self.assertEqual(len(requested(query.call_args.args[0])), 1)
+        records = self.conversion.review['recommendations']
+        self.assertEqual(sorted(item_id for item_id, record in records.items() if record['reason'] == 'review-limit'),
+                         ['column:0:2', 'status:0'])
+        self.assertFalse(DwcConversionJob.objects.filter(conversion=self.conversion).exists())
+
+    def test_schema_invalid_output_is_never_applied(self):
+        broken = answer('column:0:2', 'preserve')
+        del broken['needs_user']
+        self.assertIsNone(review.parse_items(reply([broken])))
+        self.assertIsNone(review.parse_items(reply([{**answer('column:0:2', 'preserve'), 'confidence': 'certain'}])))
+        self.assertEqual(list(review.parse_items(reply([answer('column:0:2', 'preserve')]))), ['column:0:2'])
 
 
 @override_settings(**AI)
@@ -335,6 +368,18 @@ class InvalidationTests(ConversionTestCase):
         self.assertEqual(self.post('save', changes={}, confirm=['row-group:1:0']).status_code, 200)
         self.assertEqual(review.convert_blockers(self.conversion), [])
         self.assertEqual(self.events('row-group:1:0')[-1].evidence, [{'confirmed_unchanged': True}])
+
+    def test_convert_waits_for_a_change_to_a_conflicting_choice(self):
+        self.inspect_only()
+        conversion = self.conversion
+        review.apply_decision_changes(conversion, {'loose-links': 'confirm', 'table:1': 'nbn-context', 'row-group:1:0': 'preserve'}, 'user')
+        conversion.conflicts = [{'id': 'c', 'category': 'conflict', 'reason': 'Rows disagree', 'decision_ids': ['table:1'], 'evidence': {}}]
+        conversion.save(update_fields=['conflicts'])
+        blocked = self.post('convert')
+        self.assertEqual(blocked.status_code, 400)
+        self.assertEqual(blocked.data['conflict']['decision_ids'], ['table:1'])
+        self.assertEqual(self.post('save', changes={'table:1': 'preserve'}).data['conflicts'], [])
+        self.assertEqual(self.post('convert').status_code, 202)
 
     def test_conflicts_make_named_recommendations_not_current(self):
         self.inspect_only()
@@ -436,6 +481,22 @@ class EvidenceTests(SimpleTestCase):
         self.assertIn('group', refs); self.assertIn('row:1:1', refs)
         self.assertEqual(packet['authority'], 'ai-reviewable')
         self.assertEqual(evidence.digest(packet), evidence.digest(evidence.evidence_packet(plan, archive, {}, 'row-group:1:0')[0]))
+
+    def test_nested_items_depend_on_their_outer_role(self):
+        plan = {'issues': [{'id': 'table:1', 'kind': 'taxon-occurrences', 'table': 1, 'options': []},
+                           {'id': 'taxon-occurrence:1:status:0', 'kind': 'occurrence-status', 'table': 1, 'options': []}]}
+        self.assertEqual(evidence.dependencies(plan, 'taxon-occurrence:1:status:0'), ['table:1'])
+        self.assertGreater(evidence.level(plan['issues'][1]), evidence.level(plan['issues'][0]))
+
+    def test_packet_limit_is_absolute(self):
+        packet = {'id': 'x', 'kind': 'column-mapping', 'authority': 'ai-reviewable', 'title': 't', 'reason': 'r',
+                  'options': [{'value': f'v{n}', 'label': 'label ' * 40, 'assertion': False, 'available': False,
+                               'reasons': ['reason ' * 60]} for n in range(30)],
+                  'evidence': {'columns': [], 'rows': [], 'requirements': [{'ref': f'req:{n}', 'option': 'v', 'satisfied': False,
+                                                                           'reason': 'x' * 400, 'evidence': {'k': 'y' * 1400}} for n in range(20)],
+                               'targets': [], 'context': []}}
+        evidence._fit(packet)
+        self.assertLessEqual(len(evidence.canonical(packet)), evidence.PACKET_LIMIT)
 
     def test_dependencies_point_to_lower_levels_and_follow_requirements(self):
         from api.dwca_conversion import build_plan

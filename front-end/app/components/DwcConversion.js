@@ -108,6 +108,7 @@ export default function DwcConversion() {
   const [busy, setBusy] = useState(false)
   const saves = useRef(0)
   const saving = useRef(Promise.resolve())
+  const saveFailed = useRef(false)
   const datasetId = currentDataset?.id
   const url = `${config.baseUrl}/api/datasets/${datasetId}/conversion/`
   const load = useCallback(async () => {
@@ -127,6 +128,7 @@ export default function DwcConversion() {
     setBusy(true); setError('')
     try {
       await saving.current  // Convert only after every pending change is saved.
+      if (saveFailed.current) throw new Error('Your last change was not saved. Check the choices below before converting.')
       setState(await request(url, { action, plan_id: state?.plan?.id }))
     } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
@@ -138,8 +140,15 @@ export default function DwcConversion() {
     saving.current = saving.current.then(async () => {
       try {
         const saved = await request(url, { action: 'save', plan_id: state?.plan?.id, changes, ...extra })
+        saveFailed.current = false
         if (sequence === saves.current) { setState(saved); setError('') }
-      } catch (err) { if (sequence === saves.current) setError(err.message) }
+      } catch (err) {
+        // Show the server's choices again, so the form never displays an unsaved change as current.
+        // Converting stays blocked until the form shows what the server holds.
+        saveFailed.current = true
+        setError(err.message)
+        try { setState(await request(url)); saveFailed.current = false } catch { /* Stay blocked until a reload succeeds. */ }
+      }
     })
   }
   const choose = (id, value, extra = {}) => {

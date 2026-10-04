@@ -181,7 +181,8 @@ def _post_failure_opener(conversion, action):
     if action != 'convert':
         return
     from api import conversion_chat
+    from api.conversion_review import on_conflicts_recorded
     if conversion.status == 'review' and any(conflict.get('decision_ids') for conflict in conversion.conflicts):
-        conversion_chat.post_conflict_opener(conversion)
+        on_conflicts_recorded(conversion)
     elif conversion.status == 'blocked':
         conversion_chat.post_blocked_opener(conversion)
