@@ -495,6 +495,25 @@ class EscalationRuleTests(SimpleTestCase):
         self.assertEqual(self.judge(kinds={'row-handling'}), ('escalated', 'kind-not-enabled'))
         self.assertEqual(self.judge(), ('apply', ''))
 
+    def test_preserving_a_mapped_column_escalates_for_user_choice(self):
+        packet = {'options': [{'value': 'preserve', 'assertion': False, 'available': True},
+                              {'value': 'occurrence.scientificName', 'assertion': False, 'available': True}]}
+        item = {'choice': 'preserve', 'confidence': 'high', 'evidence': ['col:0:1'], 'needs_user': False}
+        for issue_id in ('column:0:1', 'taxon-occurrence:3:column:0:1'):
+            with self.subTest(issue_id=issue_id):
+                outcome = review.judge({**self.issue, 'id': issue_id}, packet, self.refs, item, {'column-mapping'})
+                self.assertEqual(outcome[:3], ('escalated', 'drops-field', 'preserve'))
+
+    def test_drops_field_only_applies_to_column_issues_with_a_mapped_option(self):
+        packet = {'options': [{'value': 'preserve', 'assertion': False, 'available': True},
+                              {'value': 'mapped', 'assertion': False, 'available': False}]}
+        item = {'choice': 'preserve', 'confidence': 'high', 'evidence': ['col:0:1'], 'needs_user': False}
+        for issue_id in ('row-group:1:0', 'table:1'):
+            outcome = review.judge({**self.issue, 'id': issue_id}, packet, self.refs, item, {'column-mapping'})
+            self.assertEqual(outcome[0], 'apply')
+        outcome = review.judge({'id': 'column:0:1', **self.issue}, packet, self.refs, item, {'column-mapping'})
+        self.assertEqual(outcome[0], 'apply')
+
     @override_settings(CONVERSION_AI_APPLY_KINDS=None)
     def test_event_grain_is_not_applied_by_default(self):
         self.assertNotIn('event-grain', review.apply_kinds())

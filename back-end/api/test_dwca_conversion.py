@@ -287,6 +287,48 @@ class ConversionAPITests(TransactionTestCase):
             self.assertEqual(response.status_code, 201, response.data); discord.assert_not_called()
         return Dataset.objects.get(pk=response.data['id'])
 
+    def upload_with_eml(self, title='', description=''):
+        eml = b'<eml><dataset><title>  Forest   birds </title><abstract><para>Point counts   in forest.</para></abstract></dataset></eml>'
+        files = [SimpleUploadedFile('meta.xml', manifest().replace(b'<archive ', b'<archive metadata="metadata.xml" ')),
+                 SimpleUploadedFile('metadata.xml', eml), SimpleUploadedFile('occ.csv', b'join,occurrenceID\na,persistent\n')]
+        response = self.client.post('/api/datasets/', {'workflow_type': 'dwca_conversion', 'title': title,
+                                                       'description': description, 'files': files}, format='multipart')
+        self.assertEqual(response.status_code, 201, response.data)
+        return Dataset.objects.get(pk=response.data['id'])
+
+    def test_inspect_fills_blank_metadata_from_declared_eml_and_reports_provenance(self):
+        dataset = self.upload_with_eml()
+        self.assertTrue(process_next_conversion())
+        dataset.refresh_from_db()
+        conversion = dataset.conversion
+        self.assertEqual(dataset.title, 'Forest birds')
+        self.assertEqual(dataset.description, 'Point counts in forest.')
+        response = self.client.post(f'/api/datasets/{dataset.pk}/conversion/',
+                                    {'plan_id': conversion.plan['id'], 'decisions': decisions_for(conversion.plan)}, format='json')
+        self.assertEqual(response.status_code, 202, response.data)
+        with patch('api.conversion_jobs.validate_eml', return_value=None):
+            self.assertTrue(process_next_conversion())
+        conversion.refresh_from_db()
+        self.assertEqual(conversion.status, 'complete', conversion.error)
+        self.assertEqual(conversion.report['metadata']['title_source'], 'eml')
+        self.assertEqual(conversion.report['metadata']['description_source'], 'eml')
+        self.assertIn('eml', conversion.report['metadata'])
+
+    def test_inspect_does_not_overwrite_user_metadata(self):
+        dataset = self.upload_with_eml('My title', 'My description')
+        self.assertTrue(process_next_conversion())
+        dataset.refresh_from_db()
+        self.assertEqual(dataset.title, 'My title')
+        self.assertEqual(dataset.description, 'My description')
+        conversion = dataset.conversion
+        response = self.client.post(f'/api/datasets/{dataset.pk}/conversion/',
+                                    {'plan_id': conversion.plan['id'], 'decisions': decisions_for(conversion.plan)}, format='json')
+        self.assertEqual(response.status_code, 202, response.data)
+        self.assertTrue(process_next_conversion())
+        conversion.refresh_from_db()
+        self.assertEqual(conversion.report['metadata']['title_source'], 'user')
+        self.assertEqual(conversion.report['metadata']['description_source'], 'user')
+
     def test_separate_queue_review_export_and_authenticated_download(self):
         dataset = self.upload()
         self.assertEqual(dataset.agent_set.count(), 0); self.assertIsNone(dataset.next_agent())
@@ -296,6 +338,8 @@ class ConversionAPITests(TransactionTestCase):
         self.assertEqual(response.status_code, 202, response.data)
         self.assertTrue(process_next_conversion()); conversion.refresh_from_db()
         self.assertEqual(conversion.status, 'complete', conversion.error); self.assertTrue(dataset.package_ready)
+        self.assertEqual(conversion.report['metadata']['title_source'], 'none')
+        self.assertEqual(conversion.report['metadata']['description_source'], 'none')
         self.assertEqual(dataset.agent_set.count(), 0)
         response = self.client.get(f'/api/datasets/{dataset.pk}/conversion-download/')
         self.assertEqual(response.status_code, 200); response.close()
@@ -338,4 +382,3 @@ class ConversionAPITests(TransactionTestCase):
         conversion.refresh_from_db()
         self.assertEqual(conversion.status, 'review'); self.assertIn('Storage is unavailable', conversion.error)
         self.assertFalse(DwcConversionJob.objects.filter(conversion=conversion).exists()); self.assertTrue(dataset.user_files.exists())
-

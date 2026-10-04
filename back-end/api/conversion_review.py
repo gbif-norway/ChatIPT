@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from contextlib import contextmanager
 from decimal import Decimal, InvalidOperation
@@ -523,6 +524,10 @@ def judge(issue, packet, refs, item, kinds):
         return 'escalated', 'model-needs-user', choice, excerpts
     if item.get('confidence') != 'high':
         return 'escalated', 'low-confidence', choice, excerpts
+    column_issue = issue.get('id', '').startswith('column:') or re.match(r'^taxon-occurrence:\d+:column:', issue.get('id', ''))
+    if (column_issue and choice == 'preserve'
+            and any(option['available'] and option['value'] != 'preserve' for option in packet['options'])):
+        return 'escalated', 'drops-field', choice, excerpts
     if issue.get('kind') not in kinds:
         return 'escalated', 'kind-not-enabled', choice, excerpts
     return 'apply', '', choice, excerpts
