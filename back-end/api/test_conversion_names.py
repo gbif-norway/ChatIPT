@@ -896,3 +896,16 @@ class JobOrderingTests(NamesCase):
             self.run_names(match=match)
         self.assertEqual(calls, [1])
         self.assertEqual((self.job().action, self.conversion.status), ('review', 'reviewing'))
+
+
+class OversizedNameTests(SimpleTestCase):
+    def test_huge_whitespace_cells_are_skipped_without_splitting_and_reported(self):
+        from api.conversion_names import MAX_LABEL_CHARS, apply_name_decisions, collect_state
+        from api.dwca_import import read_inputs as read
+        huge = 'A' + ' ' * (MAX_LABEL_CHARS * 5) + 'b'
+        archive = read([('occurrence.csv', ('occurrenceID,occurrenceStatus,scientificName\no1,present,"' + huge + '"\n').encode())])
+        state = collect_state(archive, {'id': 'plan'})
+        self.assertEqual(state['labels'], [])
+        self.assertEqual(state['skipped_long'], {'labels': 1, 'rows': 1})
+        frames, section = apply_name_decisions({}, state, {})
+        self.assertEqual(section['skipped_long'], {'labels': 1, 'rows': 1})

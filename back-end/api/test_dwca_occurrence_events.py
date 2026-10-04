@@ -202,3 +202,23 @@ class SeveralExtensionTests(SimpleTestCase):
         source = two_extensions(b'event,occ,locality\ne1,b1,Lake\n', b'event,occ,locality\ne1,p1,Lake\n')
         plan = build_plan(source)
         self.assertEqual({entry(plan, f'occurrence-events:{t}')['default'] for t in (1, 2)}, {'patch'})
+
+
+class CrossExtensionDateTests(SimpleTestCase):
+    def test_a_year_from_one_extension_must_fit_a_date_from_another(self):
+        def extension(name, term):
+            return ('<extension rowType="' + DWC + 'Occurrence" fieldsTerminatedBy="," ignoreHeaderLines="1"><files><location>' + name
+                    + '</location></files><coreid index="0"/><field index="1" term="' + DWC + 'occurrenceID"/><field index="2" term="'
+                    + DWC + term + '"/><field term="' + DWC + 'occurrenceStatus" default="present"/></extension>')
+        meta = ('<archive xmlns="http://rs.tdwg.org/dwc/text/"><core rowType="' + DWC + 'Event" fieldsTerminatedBy="," ignoreHeaderLines="1">'
+                '<files><location>event.csv</location></files><id index="0"/><field index="0" term="' + DWC + 'eventID"/>'
+                '<field term="' + DWC + 'eventCategory" default="survey"/></core>'
+                + extension('years.csv', 'year') + extension('dates.csv', 'eventDate') + '</archive>')
+        source = read_inputs([('meta.xml', meta.encode()), ('event.csv', b'eventID\ne1\n'),
+                              ('years.csv', b'event,occ,year\ne1,a,2020\n'), ('dates.csv', b'event,occ,date\ne1,b,2021-01-01\n')])
+        plan = build_plan(source)
+        both = {'occurrence-events:1': 'patch', 'occurrence-events:2': 'patch'}
+        status = option_status(plan, both)
+        self.assertFalse(status['occurrence-events:1']['patch']['available'])
+        self.assertFalse(status['occurrence-events:2']['patch']['available'])
+        self.assertTrue(option_status(plan, {**both, 'occurrence-events:2': 'per-row'})['occurrence-events:1']['patch']['available'])

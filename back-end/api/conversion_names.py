@@ -56,8 +56,12 @@ def budget_seconds():
     return float(getattr(settings, 'CONVERSION_NAME_BUDGET_SECONDS', taxon_matching.RUN_BUDGET_SECONDS))
 
 
-def normal(value):
-    return ' '.join(str(value if value is not None else '').split())
+def normal(value, limit=None):
+    """Whitespace-normalised text, or None for a cell far too long to be a name (never split or copied)."""
+    text = str(value if value is not None else '')
+    if limit is not None and len(text) > limit * 4:
+        return None
+    return ' '.join(text.split())
 
 
 # Collection ------------------------------------------------------------------------------------
@@ -73,19 +77,20 @@ def collect_state(archive, plan):
         name_at = table.terms.index(NAME)
         context_at = {rank: table.terms.index(DWC + rank) for rank in (*HINT_RANKS, 'taxonRank') if DWC + rank in table.terms}
         for row in table.rows:
-            label = normal(row[name_at])
-            if not label:
-                continue
-            if len(label) > MAX_LABEL_CHARS:
+            label = normal(row[name_at], MAX_LABEL_CHARS)
+            if label is None or len(label) > MAX_LABEL_CHARS:
                 too_long['rows'] += 1
-                too_long['hashes'].add(hash(label))
+                too_long['hashes'].add(hash(row[name_at]))
+                continue
+            if not label:
                 continue
             record = found.setdefault(label, {'label': label, 'rows': 0, 'tables': {}, 'context': defaultdict(set)})
             record['rows'] += 1
             record['tables'][target] = record['tables'].get(target, 0) + 1
             for rank, index in context_at.items():
-                if 0 < len(normal(row[index])) <= MAX_CONTEXT_CHARS:
-                    record['context'][rank].add(normal(row[index]))
+                hint = normal(row[index], MAX_CONTEXT_CHARS)
+                if hint and len(hint) <= MAX_CONTEXT_CHARS:
+                    record['context'][rank].add(hint)
     ordered = sorted(found.values(), key=lambda record: (-record['rows'], record['label']))
     labels = []
     for record in ordered[:MAX_LABELS]:
@@ -294,7 +299,7 @@ def row_source_names(archive, row_crosswalk, frames):
         if SOURCE_TABLES.get(table.row_type) is None or NAME not in table.terms:
             continue
         text = table.rows[entry['source_row'] - 1][table.terms.index(NAME)]
-        if not normal(text):
+        if not normal(text, MAX_LABEL_CHARS):
             continue
         if not names[position]:
             names[position] = text
@@ -317,7 +322,10 @@ def apply_name_decisions(frames, name_review, source_names):
     from api.dwc_dp_specs import get_table_spec
     state = name_review or {}
     if not state.get('labels'):
-        return frames, None
+        skipped = state.get('skipped_long') or {}
+        # The report still says when every name was too long to check.
+        return frames, ({'status': state.get('status'), 'labels': 0, 'checked': 0, 'reviewed': 0, 'unreviewed': 0,
+                         'skipped_long': skipped, 'decision_counts': {}, 'names': []} if skipped.get('labels') else None)
     decisions = state.get('decisions') or {}
     entries = {label: {'label': label, 'decision': decision['decision'], 'source': decision.get('source'),
                        'scientificName': decision.get('scientificName'), 'scientificNameAuthorship': decision.get('scientificNameAuthorship'),

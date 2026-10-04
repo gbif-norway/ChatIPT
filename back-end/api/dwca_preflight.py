@@ -272,6 +272,30 @@ class Preflight:
                                 'so both cannot be copied onto the same events.', {'events': len(bad), 'examples': bad[:EXAMPLES]},
                                 when=[chosen(column, target), chosen(other_column, target),
                                       {'type': 'decision_in', 'id': f'occurrence-events:{other}', 'values': ['patch']}]))
+            # A year copied by one extension must also fit an eventDate copied by the other.
+            for year_column in extension:
+                if 'event.year' not in self.targets(year_column):
+                    continue
+                for date_column in self.by_table[other]:
+                    if date_column['default'] == 'join' or 'event.eventDate' not in self.targets(date_column):
+                        continue
+                    bad = [event for event in by_event if event in theirs_by_event
+                           and any(self.conversion._year_disagrees(year, date)
+                                   for year in supplied(t, year_column, 'event.year', event)
+                                   for n in theirs_by_event[event]
+                                   if (date := self.copied(other, 'event.eventDate', rows[n][date_column['column']])))]
+                    if bad:
+                        condition = [chosen(year_column, 'event.year'), chosen(date_column, 'event.eventDate'),
+                                     {'type': 'decision_in', 'id': f'occurrence-events:{other}', 'values': ['patch']}]
+                        reason = (f'The year disagrees with the eventDate in {self.archive.tables[other].name} for {len(bad)} events, '
+                                  'so both cannot be copied onto the same events.')
+                        self.require(decision, 'patch', _requirement([{'type': 'unsatisfiable'}], reason,
+                                                                     {'events': len(bad), 'examples': bad[:EXAMPLES]}, when=condition))
+                        # The other extension sees the same clash from its side.
+                        self.require(f'occurrence-events:{other}', 'patch', _requirement(
+                            [{'type': 'unsatisfiable'}], reason, {'events': len(bad), 'examples': bad[:EXAMPLES]},
+                            when=[chosen(year_column, 'event.year'), chosen(date_column, 'event.eventDate'),
+                                  {'type': 'decision_in', 'id': decision, 'values': ['patch']}]))
         # An event without a supplied category gets the missing-category choice before details are copied.
         category = next((column for column in self.by_table[self.ci] if 'event.eventCategory' in self.targets(column)), None)
         for column in extension:
