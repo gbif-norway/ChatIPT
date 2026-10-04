@@ -30,6 +30,7 @@ MAX_LEVEL = 3 + NESTED_OFFSET
 PACKET_LIMIT = 8000
 EML_LIMIT = 8000
 EML_MAX_BYTES = 2 * 1024 * 1024
+PUBLICATION_EML_MAX_BYTES = 64 * 1024 * 1024  # parsed without entities, network or huge-tree text nodes
 TOP_VALUES = 10
 ROW_LIMIT = 5
 ROW_COLUMNS = 20
@@ -90,7 +91,7 @@ def _all(root, path):
     return root.xpath(f'.//{steps}')
 
 
-def _eml_dataset(archive):
+def _eml_dataset(archive, max_bytes=EML_MAX_BYTES):
     """(dataset element, None) for the single declared or supplied EML document, or (None, reason)."""
     files = archive.files
     declares, declared = _metadata_name(files)
@@ -100,7 +101,7 @@ def _eml_dataset(archive):
     if len(candidates) != 1:
         return None, 'No metadata document was supplied.' if not candidates else 'Several metadata documents were supplied.'
     content = files[candidates[0]]
-    if len(content) > EML_MAX_BYTES:
+    if len(content) > max_bytes:
         return None, 'The metadata document is too large to summarise.'
     try:
         root = etree.fromstring(content, parser=_parser())
@@ -114,7 +115,8 @@ def _eml_dataset(archive):
 
 def publication_metadata(archive, limit):
     """The EML title and abstract in full for dataset fields, with whether either exceeded the field limit."""
-    dataset, _ = _eml_dataset(archive)
+    # The evidence limit keeps model prompts small; dataset fields may come from any EML an upload can hold.
+    dataset, _ = _eml_dataset(archive, max_bytes=PUBLICATION_EML_MAX_BYTES)
     if dataset is None:
         return {'title': '', 'description': '', 'truncated': {}}
     title = next((text for element in _all(dataset, 'title') if (text := _text(element))), '')

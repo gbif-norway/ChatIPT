@@ -222,3 +222,13 @@ class CrossExtensionDateTests(SimpleTestCase):
         self.assertFalse(status['occurrence-events:1']['patch']['available'])
         self.assertFalse(status['occurrence-events:2']['patch']['available'])
         self.assertTrue(option_status(plan, {**both, 'occurrence-events:2': 'per-row'})['occurrence-events:1']['patch']['available'])
+
+
+class LargeEmlTests(SimpleTestCase):
+    def test_metadata_is_read_from_eml_larger_than_the_evidence_limit(self):
+        from api.conversion_evidence import EML_MAX_BYTES, publication_metadata
+        padding = '<keywordSet>' + '<keyword>forest</keyword>' * (EML_MAX_BYTES // 20) + '</keywordSet>'
+        eml = f'<eml><dataset><title>Big</title><abstract><para>Short.</para></abstract>{padding}</dataset></eml>'.encode()
+        self.assertGreater(len(eml), EML_MAX_BYTES)
+        source = read_inputs([('occurrence.csv', b'occurrenceID,occurrenceStatus\no1,present\n'), ('eml.xml', eml)])
+        self.assertEqual(publication_metadata(source, 5000)['title'], 'Big')
