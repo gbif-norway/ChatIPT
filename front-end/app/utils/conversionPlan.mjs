@@ -91,6 +91,7 @@ export function columnDetails(state, selected) {
     const option = (column.options || []).find(item => item.value === value)
     let outcome
     if (retained) outcome = 'Kept in your original files with its table'
+    else if (value === 'preserve' && column.verbatim_copy) outcome = `Kept in your original files, and the text is also copied to ${column.verbatim_copy.split('.').pop()}`
     else if (value === 'preserve') outcome = {
       'no-target': 'No Darwin Core Data Package field; kept in your original files',
       unsupported: "Can't be mapped yet; kept in your original files",
@@ -194,6 +195,13 @@ export function planDiagram(state, selected) {
   tables.forEach((table, index) => {
     if (table.core || retainedTable(state, selected, index)) return
     for (const target of roleTargets(selected(`table:${index}`))) add(index, target, 0)
+    // Where and when details on an occurrence table: "patch" fills the linked events that exist already;
+    // "per-row" creates a child event of the linked event for each occurrence row.
+    const details = selected(`occurrence-events:${index}`)
+    if (details === 'patch' || details === 'per-row') {
+      add(index, 'event', 0)
+      if (details === 'per-row') edges.get(`${index}|event`).childEvents = true
+    }
   })
   const names = [...new Set([...edges.values()].map(edge => edge.target))]
   const rank = name => TARGET_ORDER.includes(name) ? TARGET_ORDER.indexOf(name) : TARGET_ORDER.length

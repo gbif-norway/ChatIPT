@@ -143,3 +143,18 @@ test('a table role adds a link even when no column maps there, and a kept table 
   assert.equal(kept.sources[1].retained, true)
   assert.deepEqual(planDiagram({}, makeSelector({}, {})).sources, [])
 })
+
+test('occurrence-event details patch existing events or add child events', () => {
+  const base = { plan: { ...plan, columns: [], automatic_choices: [{ id: 'occurrence-events:1', default: 'patch' }] } }
+  const patch = planDiagram(base, makeSelector(base, { 'table:1': 'occurrence' }))
+  assert.deepEqual(patch.edges.filter(edge => edge.target === 'event').map(edge => [edge.source, Boolean(edge.childEvents)]), [[1, false]])
+  const perRow = planDiagram(base, makeSelector(base, { 'table:1': 'occurrence', 'occurrence-events:1': 'per-row' }))
+  assert.deepEqual(perRow.edges.filter(edge => edge.target === 'event').map(edge => [edge.source, Boolean(edge.childEvents)]), [[1, true]])
+  const kept = planDiagram(base, makeSelector(base, { 'table:1': 'occurrence', 'occurrence-events:1': 'preserve' }))
+  assert.equal(kept.edges.some(edge => edge.target === 'event'), false)
+})
+
+test('a scientific name kept in originals mentions its verbatim copy', () => {
+  const named = { plan: { tables: [{ name: 't', core: true }], columns: [{ id: 'c', table: 0, term: term('scientificName'), default: 'preserve', verbatim_copy: 'occurrence.verbatimIdentification', options: [{ value: 'preserve' }] }], automatic_choices: [] } }
+  assert.match(columnDetails(named, makeSelector(named, {}))[0].outcome, /copied to verbatimIdentification/)
+})

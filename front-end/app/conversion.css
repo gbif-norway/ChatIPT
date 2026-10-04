@@ -159,6 +159,10 @@
     stroke: var(--bs-secondary-color);
 }
 
+.conversion-plan-edge-child {
+    stroke-dasharray: 6 4;
+}
+
 .conversion-plan-node rect {
     fill: var(--bs-body-bg);
     stroke: var(--bs-border-color);
