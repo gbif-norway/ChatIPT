@@ -158,3 +158,57 @@ test('a scientific name kept in originals mentions its verbatim copy', () => {
   const named = { plan: { tables: [{ name: 't', core: true }], columns: [{ id: 'c', table: 0, term: term('scientificName'), default: 'preserve', verbatim_copy: 'occurrence.verbatimIdentification', options: [{ value: 'preserve' }] }], automatic_choices: [] } }
   assert.match(columnDetails(named, makeSelector(named, {}))[0].outcome, /copied to verbatimIdentification/)
 })
+
+test('event details on an occurrence table follow the occurrence-events choice in the diagram and summary', () => {
+  const eventPlan = {
+    tables: [{ name: 'event.txt', core: true, rows: 10 }, { name: 'occurrence.txt', core: false, rows: 40 }],
+    columns: [
+      mapped('column:0:0', 0, 'eventDate', 'event.eventDate'),
+      mapped('column:1:0', 1, 'eventDate', 'event.eventDate'),
+      mapped('column:1:1', 1, 'locality', 'event.locality'),
+      mapped('column:1:2', 1, 'scientificName', 'occurrence.scientificName'),
+    ],
+    issues: [],
+    automatic_choices: [{ id: 'occurrence-events:1', default: 'patch', options: [] }],
+  }
+  const run = decisions => {
+    const eventState = { plan: eventPlan, decisions }
+    const selected = makeSelector(eventState, decisions)
+    return {
+      diagram: planDiagram(eventState, selected), summary: summariseColumns(eventState, selected), details: columnDetails(eventState, selected),
+    }
+  }
+  const edgesOf = diagram => diagram.edges.map(edge => `${edge.source}>${edge.target}:${edge.columns}`).sort()
+  // The automatic default (patch) maps the columns into the existing events.
+  const patch = run({})
+  assert.deepEqual(edgesOf(patch.diagram), ['0>event:1', '1>event:2', '1>occurrence:1'])
+  assert.equal(patch.summary.mapped, 4)
+  // per-row creates child events from the same columns.
+  const perRow = run({ 'occurrence-events:1': 'per-row' })
+  assert.equal(perRow.diagram.edges.find(edge => edge.source === 1 && edge.target === 'event').childEvents, true)
+  assert.equal(perRow.summary.mapped, 4)
+  // preserve: no Event edge from the occurrence table, and the columns count as kept in originals.
+  const kept = run({ 'occurrence-events:1': 'preserve' })
+  assert.deepEqual(edgesOf(kept.diagram), ['0>event:1', '1>occurrence:1'])
+  assert.equal(kept.summary.mapped, 2)
+  assert.deepEqual(kept.summary.groups.chosen.names, ['eventDate', 'locality'])
+  assert.deepEqual(summaryLines(kept.summary).at(-1), '2 columns are kept in your original files by choice: eventDate, locality.')
+  assert.match(kept.details.find(item => item.id === 'column:1:1').outcome, /not copied/)
+  assert.equal(kept.details.find(item => item.id === 'column:1:1').mapped, false)
+  assert.equal(kept.details.find(item => item.id === 'column:1:2').mapped, true)
+})
+
+test('an unanswered occurrence-events question is not drawn or counted as mapped', () => {
+  const asked = {
+    plan: {
+      tables: [{ name: 'event.txt', core: true, rows: 10 }, { name: 'occurrence.txt', core: false, rows: 40 }],
+      columns: [mapped('column:1:0', 1, 'locality', 'event.locality')],
+      issues: [{ id: 'occurrence-events:1', options: [] }], automatic_choices: [],
+    }, decisions: {},
+  }
+  const selected = makeSelector(asked, {})
+  assert.equal(planDiagram(asked, selected).edges.length, 0)
+  const summary = summariseColumns(asked, selected)
+  assert.deepEqual([summary.mapped, summary.review], [0, 1])
+  assert.match(columnDetails(asked, selected)[0].outcome, /Waiting for your choice/)
+})
