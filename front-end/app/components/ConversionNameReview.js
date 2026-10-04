@@ -65,8 +65,9 @@ function DecisionCell({ entry, editable, busy, onDecide }) {
 }
 
 // The scientificName question asks what happens to names without a decision here; each option is phrased for that.
-const fallbackLabel = option => option.value === 'preserve'
-  ? 'Leave scientificName empty (the text stays in verbatimIdentification)'
+const fallbackLabel = (option, partial) => option.value === 'preserve'
+  ? (partial ? 'Leave scientificName empty (the text goes to verbatimIdentification where your file leaves that empty; otherwise only your original files keep it)'
+    : 'Leave scientificName empty (the text stays in verbatimIdentification)')
   : `Copy the supplied text into scientificName${option.value.startsWith('identification.') ? ' (identification)' : ''}`
 
 export default function ConversionNameReview({ state, send, disabled, datasetId, onRefresh, questions = [], decisions = {}, onChoose }) {
@@ -128,8 +129,8 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
     </div>
     <p className="small text-muted mt-2 mb-2">
       Your names are checked with the GBIF name parser and Catalogue of Life, the taxonomy GBIF.org uses{nameReview.checklist ? ` (${nameReview.checklist})` : ''}.
-      A match shows that a name was found, not that the identification is right. Nothing changes unless you decide: the supplied text always stays in
-      verbatimIdentification{questions.length ? ', and names you don\'t decide follow the choice at the end of this section' : ', and names you do not review are converted as they are'}.
+      A match shows that a name was found, not that the identification is right. Nothing changes unless you decide: the supplied text goes to
+      verbatimIdentification unless your file supplies its own there, and your original files keep everything{questions.length ? ', and names you don\'t decide follow the choice at the end of this section' : ', and names you do not review are converted as they are'}.
       {' '}{summary.decided.toLocaleString()} of {summary.labels.toLocaleString()} names decided, covering {summary.rows.toLocaleString()} rows.
     </p>
     {skippedMessage(summary) && <p className="small text-warning-emphasis">{skippedMessage(summary)}</p>}
@@ -179,7 +180,8 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
       <select id={question.id} className="form-select form-select-sm" value={decisions[question.id] || ''} disabled={disabled || !onChoose}
         onChange={event => onChoose(question.id, event.target.value)}>
         {!decisions[question.id] && <option value="">Choose…</option>}
-        {question.options.map(option => <option key={option.value} value={option.value}>{fallbackLabel(option)}</option>)}
+        {question.options.map(option => <option key={option.value} value={option.value}>
+          {fallbackLabel(option, state?.plan?.columns?.find(column => column.id === question.id)?.verbatim_copy_partial)}</option>)}
       </select>
     </div>)}
   </section>

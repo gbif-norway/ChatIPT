@@ -598,10 +598,13 @@ def build_plan(archive):
             if term == NAME and ((own == 'occurrence' and (table.is_core or family == 'occurrence')) or family == 'identification'):
                 # The supplied name text is always copied to verbatimIdentification, whatever is chosen here.
                 item['verbatim_copy'] = ('identification' if family == 'identification' else 'occurrence') + '.verbatimIdentification'
-                if VERBATIM_NAME in table.terms:
+                partial = VERBATIM_NAME in table.terms
+                if partial:
                     item['verbatim_copy_partial'] = True  # Only rows without their own verbatimIdentification receive it.
-                item['options'] = [{**option, 'label': 'Leave scientificName empty; the name text is kept in verbatimIdentification'}
-                                   if option['value'] == 'preserve' else option for option in item['options']]
+                label = ('Leave scientificName empty; the name text goes to verbatimIdentification where your file leaves that empty, '
+                         'otherwise it stays only in your original files' if partial
+                         else 'Leave scientificName empty; the name text is kept in verbatimIdentification')
+                item['options'] = [{**option, 'label': label} if option['value'] == 'preserve' else option for option in item['options']]
             columns.append(item); profile["columns"].append({key: item[key] for key in ("term", "nonempty", "distinct", "samples")})
             if typed_reason or date_reason:
                 warnings.append({'id': item['id'], 'title': term.rsplit('/', 1)[-1],
