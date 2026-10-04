@@ -68,3 +68,12 @@ export const parseNote = (entry) => {
   if (!parsed.lossless) return 'The parser would reformat the supplied text'
   return parsed.authorship ? 'Splits exactly into name and authorship' : 'No authorship found'
 }
+
+// Cells too long to be a name are never checked or listed; say how many so nothing is hidden silently.
+export const skippedMessage = (summary) => {
+  const skipped = summary?.skipped_long
+  if (!skipped?.labels) return null
+  const names = skipped.labels === 1 ? '1 name is' : `${skipped.labels.toLocaleString()} names are`
+  const rows = skipped.rows === 1 ? '1 row' : `${skipped.rows.toLocaleString()} rows`
+  return `${names} longer than ${(summary.max_label_chars || 500).toLocaleString()} characters (${rows}). They are not checked and are converted as they are.`
+}

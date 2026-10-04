@@ -120,7 +120,7 @@ def process_next_conversion():
         elif job.action == 'convert':
             archive = load_sources(conversion)
             resources, report = convert(archive, conversion.plan, conversion.decisions)
-            resources = _apply_names(conversion, resources, report)
+            resources = _apply_names(conversion, archive, resources, report)
             if 'taxonomy' in report:
                 from api.dwca_taxon import taxonomy_tables
                 additional_tables = taxonomy_tables(archive, report)
@@ -210,10 +210,12 @@ def _collect_names(archive, plan):
         logger.exception('Could not collect scientific names')
         return {}
 
-def _apply_names(conversion, resources, report):
+def _apply_names(conversion, archive, resources, report):
     """Overlay reviewed name decisions on the converted tables, record them, and validate the result again."""
-    from api.conversion_names import apply_name_decisions, current
-    resources, section = apply_name_decisions(resources, current(conversion))
+    from api.conversion_names import apply_name_decisions, current, row_source_names
+    state = current(conversion)
+    sources = row_source_names(archive, report.get('row_crosswalk'), resources) if state.get('decisions') else {}
+    resources, section = apply_name_decisions(resources, state, sources)
     if section is not None:
         report['name_review'] = section
         if section['reviewed']:

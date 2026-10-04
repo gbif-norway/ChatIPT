@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { bulkActions, bulkBody, checkMessage, decisionBody, decisionResult, isChecking, isEditable, pageCount, pageQuery, parseNote } from './conversionNames.mjs'
+import { bulkActions, bulkBody, checkMessage, decisionBody, decisionResult, isChecking, isEditable, pageCount, pageQuery, parseNote, skippedMessage } from './conversionNames.mjs'
 
 const review = (patch = {}) => ({ status: 'complete', error: '', summary: { labels: 10, checked: 10, bulk_col: 3, bulk_parsed: 0 }, ...patch })
 
@@ -52,4 +52,11 @@ test('parse notes explain why a split is or is not offered', () => {
   assert.match(parseNote({ parsed: { usable: true, lossless: false } }), /reformat/)
   assert.match(parseNote({ parsed: { usable: true, lossless: true, authorship: 'L.' } }), /Splits exactly/)
   assert.equal(parseNote({}), 'Not parsed yet')
+})
+
+test('overlong names are reported, not hidden', () => {
+  assert.equal(skippedMessage({ skipped_long: { labels: 0, rows: 0 } }), null)
+  assert.equal(skippedMessage({}), null)
+  assert.match(skippedMessage({ skipped_long: { labels: 1, rows: 1 }, max_label_chars: 500 }), /^1 name is longer than 500 characters \(1 row\)/)
+  assert.match(skippedMessage({ skipped_long: { labels: 3, rows: 1200 }, max_label_chars: 500 }), /3 names are longer than 500 characters \(1,200 rows\)/)
 })
