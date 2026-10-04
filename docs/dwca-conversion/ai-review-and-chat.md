@@ -865,7 +865,10 @@ adversarial cases (EML and cell text instructing a choice, misleading headers,
 contradictory metadata). Metrics per model/effort: precision of applied decisions,
 escalation and abstention rates, assertion leaks (must be 0 by construction),
 cost and latency per archive. The release bar is ≥ 98% precision on applied
-decisions; kinds below it are removed from the default `CONVERSION_AI_APPLY_KINDS`.
+decisions, except `event-grain` at ≥ 95%: preflight already guarantees that every
+copied event value agrees within each eventID group, so an error can only merge rows
+with identical event data and identifiers. Kinds below their bar are removed from the
+default `CONVERSION_AI_APPLY_KINDS`.
 Responses are saved as replay fixtures so prompt or packet changes can be checked
 offline. Results are recorded in this directory; prompt, packet or model changes
 require a rerun.
@@ -880,7 +883,7 @@ require a rerun.
 | `CONVERSION_REVIEW_BATCH_SIZE` | 12 |
 | `CONVERSION_REVIEW_MAX_ITEMS` | 120 per run |
 | `CONVERSION_REVIEW_MAX_RUNS_PER_PLAN` | 6 automatic runs |
-| `CONVERSION_AI_APPLY_KINDS` | every kind except `event-grain` until the offline benchmark meets the 98% bar (assertion rules still apply) |
+| `CONVERSION_AI_APPLY_KINDS` | every kind except `event-grain` until the offline benchmark meets its 95% bar (assertion rules still apply) |
 | `CONVERSION_JOB_LEASE_SECONDS` | 3,600 (minimum; raised to the derived call bound, §5.9) |
 | `OPENAI_DATASET_COST_LIMIT_USD` | existing, now enforced for conversion calls |
 | `CONVERSION_AI_REVIEW_ENABLED` | on, but always off under the test runner (tests opt in with mocked responses) |
