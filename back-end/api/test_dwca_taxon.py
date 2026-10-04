@@ -62,7 +62,7 @@ class TaxonConversionTests(SimpleTestCase):
         automatic = {choice['id']: choice['default'] for choice in plan['automatic_choices']}
         self.assertEqual(automatic[prefix + 'event-grain'], 'by_id')
         self.assertTrue(plan['taxonomy']['scientific_hierarchies']['1']['has_findings'])
-        self.assertTrue(any(notice['source_table'] == 'records.csv' for notice in plan['warnings']))
+        self.assertTrue(any(column['id'] == prefix + 'column:0:5' and column.get('unmapped') == 'no-target' for column in plan['columns']))
         choices = decisions(plan)
         frames, report = convert(source, plan, choices)
         self.assertTrue(report['validation']['valid'])

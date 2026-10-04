@@ -151,6 +151,8 @@ class Preflight:
                 self.media(t)
             elif family == 'molecular':
                 self.molecular(t)
+            elif family == 'occurrence':
+                self.occurrence_events(t)
             elif family == 'germplasm-score':
                 self.trait_link(t)
             elif family == 'nbn':
@@ -203,6 +205,76 @@ class Preflight:
         groups = {key: members for key, members in groups.items() if len(members) > 1}
         self.mapping_conflicts('event-grain', 'by_id', self.ci, groups, 'event.', {'event.eventID'}, 'eventID',
                                fills={'event.eventCategory': 'occurrence'})
+
+    def occurrence_events(self, t):
+        """Copying event details from Occurrence rows onto their linked event needs agreement (convert's event patch)."""
+        decision = f'occurrence-events:{t}'
+        if 'patch' not in self.options(decision):
+            return
+        table = self.archive.tables[t]
+        by_event = defaultdict(list)
+        for n, source_id in enumerate(table.ids):
+            by_event[source_id].append(n)
+        extension = [column for column in self.by_table[t] if column['default'] != 'join']
+        sources = [(t, column) for column in extension] + [(self.ci, column) for column in self.by_table[self.ci]]
+
+        def supplied(origin, column, target, event):
+            rows = [table.rows[n] for n in by_event[event]] if origin == t else [self.core.rows[self.core_row[event]]]
+            return {value for row in rows if (value := self.copied(origin, target, row[column['column']]))}
+
+        def chosen(column, target):
+            return {'type': 'target_in', 'column': column['id'], 'targets': [target]}
+
+        for column in extension:
+            for target in self.targets(column):
+                if not target.startswith('event.'):
+                    continue
+                name = _short(column['term'])
+                bad = [{'event': event, 'values': sorted(values)[:EXAMPLES], 'source_rows': [n + 1 for n in by_event[event][:EXAMPLES]]}
+                       for event in by_event if len(values := supplied(t, column, target, event)) > 1]
+                if bad:
+                    self.require(decision, 'patch', _requirement([{'type': 'unsatisfiable'}],
+                        f'{name} differs between occurrences of the same event in {len(bad)} events, so it cannot be copied onto the event.',
+                        {'events': len(bad), 'examples': bad[:EXAMPLES]}, when=[chosen(column, target)]))
+                for core_column in self.by_table[self.ci]:
+                    if target not in self.targets(core_column):
+                        continue
+                    bad = [{'event': event, 'event_value': sorted(own)[0], 'occurrence_values': sorted(values)[:EXAMPLES]}
+                           for event in by_event if (values := supplied(t, column, target, event))
+                           and (own := supplied(self.ci, core_column, target, event)) and values != own]
+                    if bad:
+                        self.require(decision, 'patch', _requirement([{'type': 'unsatisfiable'}],
+                            f'{name} on occurrence rows disagrees with the linked event in {self.core.name} for {len(bad)} events.',
+                            {'events': len(bad), 'examples': bad[:EXAMPLES]}, when=[chosen(column, target), chosen(core_column, target)]))
+        # A year must agree with the eventDate it ends up beside, wherever each comes from.
+        years = [(origin, column) for origin, column in sources if 'event.year' in self.targets(column)]
+        dates = [(origin, column) for origin, column in sources if 'event.eventDate' in self.targets(column)]
+        for year_origin, year_column in years:
+            for date_origin, date_column in dates:
+                if t not in {year_origin, date_origin}:
+                    continue
+                bad = [event for event in by_event
+                       if any(self.conversion._year_disagrees(year, date)
+                              for year in supplied(year_origin, year_column, 'event.year', event)
+                              for date in supplied(date_origin, date_column, 'event.eventDate', event))]
+                if bad:
+                    self.require(decision, 'patch', _requirement([{'type': 'unsatisfiable'}],
+                        f'The year disagrees with the eventDate for {len(bad)} events.', {'events': len(bad), 'examples': bad[:EXAMPLES]},
+                        when=[chosen(year_column, 'event.year'), chosen(date_column, 'event.eventDate')]))
+        # A coordinate pair must not be assembled from the occurrence rows and the event.
+        pair = ('event.decimalLatitude', 'event.decimalLongitude')
+        coordinates = {origin: [(column, target) for column in (extension if origin == t else self.by_table[self.ci])
+                                for target in pair if target in self.targets(column)] for origin in (t, self.ci)}
+        mixed = []
+        for event in by_event:
+            given = {origin: {target for column, target in coordinates[origin] if supplied(origin, column, target, event)} for origin in (t, self.ci)}
+            if given[t] and given[self.ci] and not (given[t] <= given[self.ci] or given[self.ci] <= given[t]):
+                mixed.append(event)
+        if mixed:
+            self.require(decision, 'patch', _requirement([{'type': 'unsatisfiable'}],
+                f'For {len(mixed)} events, the occurrence rows and the event each supply only part of the coordinate pair.',
+                {'events': len(mixed), 'examples': mixed[:EXAMPLES]},
+                when=[{'type': 'any', 'conditions': [chosen(column, target) for column, target in coordinates[origin]]} for origin in (t, self.ci)]))
 
     def parent_link(self):
         if self.core.row_type != DWC + 'Occurrence':
