@@ -17,6 +17,7 @@ export function attentionItems(state) {
 // AI review and conversation (docs/dwca-conversion/ai-review-and-chat.md §10–11).
 
 const issueById = (state, id) => (state?.plan?.issues || []).find(issue => issue.id === id)
+export const decisionTitle = (state, id) => issueById(state, id)?.title || id
 const optionLabel = (item, value) => item?.options?.find(option => option.value === value)?.label || value
 
 export function recommendationFor(state, id) {
@@ -28,6 +29,17 @@ export function shownRecommendation(state, id) {
   const record = recommendationFor(state, id)
   if (!record?.option || record.outcome !== 'escalated' || record.current === false) return null
   return state?.decisions?.[id] === record.option ? null : record
+}
+
+// Questions the user still has to answer, each naming the decision it belongs to.
+export function openQuestions(state) {
+  return (state?.review?.escalated || []).map(id => ({ id, title: issueById(state, id)?.title || id }))
+}
+
+// Current AI recommendations for open questions, for the questions panel.
+export function shownRecommendations(state) {
+  return openQuestions(state).map(question => ({ ...question, recommendation: shownRecommendation(state, question.id) }))
+    .filter(entry => entry.recommendation)
 }
 
 // Choices the AI reviewer applied, with the reason it gave; each stays overridable.

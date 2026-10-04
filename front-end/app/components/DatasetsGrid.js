@@ -4,12 +4,15 @@ import config from '../config'
 import { useDataset } from '../contexts/DatasetContext'
 import { useAuth } from '../contexts/AuthContext'
 import { getStatusMeta } from '../utils/datasetPresentation'
+import { datasetDisplayName, datasetKind } from '../utils/datasetKind.mjs'
+import NewDatasetChooser from './NewDatasetChooser'
 
 export default function DatasetsGrid({ onOpenDataset, onNewDataset, onConvertArchive, onShowWelcome }) {
   const [items, setItems] = useState(null)
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [deleting, setDeleting] = useState(null) // Track which dataset is being deleted
+  const [choosing, setChoosing] = useState(false)
   const { deleteDataset } = useDataset()
   const { user } = useAuth()
 
@@ -31,11 +34,7 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset, onConvertArc
     fetchDatasets()
   }, [])
 
-  const getDisplayName = (dataset) => {
-    if (dataset.title) return dataset.title
-    if (dataset.user_files && dataset.user_files.length > 0) return dataset.user_files[0].filename
-    return 'Untitled Dataset'
-  }
+  const getDisplayName = (dataset) => datasetDisplayName(dataset, 'Untitled Dataset')
 
   const pluralize = (count, singular) => `${count.toLocaleString()} ${singular}${count === 1 ? '' : 's'}`
 
@@ -83,20 +82,30 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset, onConvertArc
   if (error) return <div className="alert alert-danger">{error}</div>
   if (!items) return <div className="spinner-border" role="status"><span className="visually-hidden">Loading...</span></div>
 
+  const chooser = (
+    <NewDatasetChooser
+      show={choosing}
+      onHide={() => setChoosing(false)}
+      onStartOwnData={onNewDataset}
+      onConvertArchive={onConvertArchive}
+    />
+  )
+
   if (items.length === 0) {
     return (
       <div className="text-center my-5">
         <p>You do not have any datasets yet.</p>
-        <button className="btn btn-primary btn-lg" onClick={onNewDataset}>
+        <button className="btn btn-primary btn-lg" onClick={() => setChoosing(true)}>
           <i className="bi bi-plus-circle me-2"></i>Add new dataset
         </button>
-        <button className="btn btn-outline-primary btn-lg ms-2" onClick={onConvertArchive}>Convert a Darwin Core Archive</button>
+        {chooser}
       </div>
     )
   }
 
   return (
     <>
+      {chooser}
       <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
         <h2><i className="bi bi-grid-3x3-gap me-2"></i>My datasets</h2>
         <div className="d-flex flex-wrap gap-2">
@@ -116,10 +125,9 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset, onConvertArc
             <i className={`bi bi-arrow-clockwise me-1 ${refreshing ? 'spinner-border spinner-border-sm' : ''}`}></i>
             Refresh
           </button>
-          <button className="btn btn-primary" onClick={onNewDataset}>
+          <button className="btn btn-primary" onClick={() => setChoosing(true)}>
             <i className="bi bi-plus-circle me-2"></i>Add new dataset
           </button>
-          <button className="btn btn-outline-primary" onClick={onConvertArchive}>Convert a Darwin Core Archive</button>
         </div>
       </div>
 
@@ -127,10 +135,14 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset, onConvertArc
         {items.map(d => {
           const countSummary = getCountSummary(d)
           const statusMeta = getStatusMeta(d.status)
+          const kind = datasetKind(d)
           return (
           <div key={d.id} className="col-12 col-md-6 col-lg-4">
-            <div className="card h-100">
+            <div className={`card h-100 kind-accent kind-accent-${kind.key}`}>
               <div className="card-body d-flex flex-column">
+                <span className={`kind-badge kind-badge-${kind.key} align-self-start mb-2`}>
+                  <i className={`bi ${kind.icon}`} aria-hidden="true"></i>{kind.label}
+                </span>
                 <div className="d-flex justify-content-between align-items-start">
                   <h5 className="card-title mb-0">{getDisplayName(d)}</h5>
                   <span className={`badge ${statusMeta.badgeClass}`}>
@@ -142,7 +154,6 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset, onConvertArc
                   {countSummary.primary.map(label => <div key={label}>{label}</div>)}
                   {countSummary.package && <div>{countSummary.package}</div>}
                   <div>Updated {new Date(d.last_updated).toLocaleString()}</div>
-                  <div>{d.workflow_type === 'dwca_conversion' ? 'Archive conversion' : 'Dataset publication'}</div>
                   <div>{d.package_ready ? (d.workflow_type === 'dwca_conversion' ? 'Converted package ready' : 'Publication packages ready') : `Progress ${d.progress.done}/${d.progress.total}`}</div>
                   {/* Show dataset user ORCID for superusers */}
                   {user && user.is_superuser && d.user_info && d.user_info.orcid_id && (

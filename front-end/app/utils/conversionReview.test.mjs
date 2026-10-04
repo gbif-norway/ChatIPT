@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { aiDecidedItems, attentionItems, chatVisible, conflictsFor, openProposals, optionState, shownRecommendation, unresolvedIssues } from './conversionReview.mjs'
+import { aiDecidedItems, attentionItems, chatVisible, conflictsFor, decisionTitle, openProposals, openQuestions, optionState, shownRecommendation, shownRecommendations, unresolvedIssues } from './conversionReview.mjs'
 
 const plan = {
   issues: [{ id: 'layout' }, { id: 'table:1', table: 1 }, { id: 'row-group:1:0', table: 1, members: ['row:1:0', 'row:1:4'] }],
@@ -73,4 +73,19 @@ test('option availability and conflicts are looked up by decision id', () => {
   assert.equal(optionState(state, 'event-grain', 'per_row').available, true)
   assert.equal(conflictsFor(state, 'table:1').length, 1)
   assert.equal(conflictsFor(state, 'layout').length, 0)
+})
+
+test('open questions name their decision and carry current recommendations', () => {
+  const state = {
+    plan: reviewPlan, decisions: {},
+    review: { escalated: ['status:0', 'layout', 'gone'], recommendations: {
+      'status:0': { outcome: 'escalated', option: 'present', option_label: 'Present', current: true },
+      layout: { outcome: 'escalated', option: 'confirm', current: false },
+    } },
+  }
+  assert.deepEqual(openQuestions(state), [{ id: 'status:0', title: 'Status' }, { id: 'layout', title: 'Confirm layout' }, { id: 'gone', title: 'gone' }])
+  assert.deepEqual(shownRecommendations(state).map(entry => [entry.id, entry.recommendation.option]), [['status:0', 'present']])
+  assert.equal(decisionTitle(state, 'layout'), 'Confirm layout')
+  assert.equal(decisionTitle(state, 'other'), 'other')
+  assert.deepEqual(openQuestions({}), [])
 })
