@@ -60,6 +60,13 @@ const graphPalette = (isDark) => ({
   selected: isDark ? '#ffffff' : '#15251d',
 })
 
+// Opens the explorer modal mounted by <PackageExplorer>. The dataset page and the conversion page both use it.
+export async function openPackageExplorer() {
+  const bootstrap = await import('bootstrap/dist/js/bootstrap.bundle.min.js')
+  const modalElement = document.getElementById('packageExplorerModal')
+  if (modalElement) bootstrap.Modal.getOrCreateInstance(modalElement).show()
+}
+
 export default function PackageExplorer({ datasetId, onOpenTable }) {
   const graphRef = useRef(null)
   const cyRef = useRef(null)
@@ -496,14 +503,16 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
                         <div className="package-inspector-section">
                           <div className="package-inspector-section-title">
                             <strong>Rows</strong>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-link"
-                              data-bs-dismiss="modal"
-                              onClick={() => onOpenTable?.(selectedNode.tableId)}
-                            >
-                              Open on main page
-                            </button>
+                            {onOpenTable && (
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-link"
+                                data-bs-dismiss="modal"
+                                onClick={() => onOpenTable(selectedNode.tableId)}
+                              >
+                                Open on main page
+                              </button>
+                            )}
                           </div>
                           {foreignKeys.size > 0 && (
                             <p className="package-preview-hint mt-0 mb-2">
