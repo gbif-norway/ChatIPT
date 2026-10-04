@@ -99,6 +99,13 @@ def current(conversion):
     return state if plan_id and state.get('plan_id') == plan_id else {}
 
 
+def pending(conversion):
+    """True when name checks should (still) run: unchecked names, under the run limit, and wanted."""
+    state = current(conversion)
+    return (bool(state.get('labels')) and state.get('status') in {'pending', 'incomplete'} and state.get('runs', 0) < MAX_RUNS
+            and (enabled() or bool(state.get('requested'))))
+
+
 def checked(record):
     return 'match' in record and 'parsed' in record
 
@@ -248,7 +255,7 @@ def request_check(conversion, refresh=False):
     state = current(conversion)
     if not state or 'labels' not in state:
         state = {'plan_id': conversion.plan['id'], 'status': 'pending', 'error': '', 'runs': 0, 'decisions': {}}
-    state.update(status='pending', error='', runs=0)
+    state.update(status='pending', error='', runs=0, requested=True)
     if refresh:
         for record in state.get('labels', []):
             if record['label'] not in state['decisions']:
@@ -261,21 +268,10 @@ def request_check(conversion, refresh=False):
 
 # Applying decisions ------------------------------------------------------------------------------
 
-def _verbatim_values(table, frame, frames):
-    """The source name text of each row; identification rows without their own follow their occurrence."""
-    own = frame['verbatimIdentification'].tolist() if 'verbatimIdentification' in frame.columns else [''] * len(frame)
-    occurrence = frames.get('occurrence')
-    if table != 'identification' or occurrence is None or 'occurrence_fk' not in frame.columns \
-            or not {'occurrence_pk', 'verbatimIdentification'} <= set(occurrence.columns):
-        return own
-    by_key = dict(zip(occurrence['occurrence_pk'], occurrence['verbatimIdentification']))
-    return [value if normal(value) else by_key.get(key, '') for value, key in zip(own, frame['occurrence_fk'])]
-
-
 def apply_name_decisions(frames, name_review):
     """Overlay reviewed names on converted frames; returns (new frames, report section or None).
 
-    Rows are found by their `verbatimIdentification`, which is never changed. A decided name replaces
+    Rows are found by their own `verbatimIdentification` (never borrowed from a linked row), which is never changed. A decided name replaces
     scientificName; authorship and rank only fill blank cells (a differing supplied authorship is kept and
     counted), so supplied values are never overwritten. Unreviewed labels leave the converter's output as it is.
     """
@@ -293,10 +289,11 @@ def apply_name_decisions(frames, name_review):
     result = dict(frames)
     for table in OUTPUT_TABLES:
         frame = frames.get(table)
-        if frame is None or not decisions or not len(frame):
+        # Each row is keyed on its own source name text only; a row without one is left untouched.
+        if frame is None or not decisions or not len(frame) or 'verbatimIdentification' not in frame.columns:
             continue
         fields = set(get_table_spec(table).fields)
-        verbatim = _verbatim_values(table, frame, frames)
+        verbatim = frame['verbatimIdentification'].tolist()
         positions = defaultdict(list)
         for position, value in enumerate(verbatim):
             if normal(value) in decisions:
@@ -422,7 +419,7 @@ def _run(conversion_id, job_id, claim):
         fresh = collect_state(load_sources(snapshot), snapshot.plan)
     with fence(conversion_id, job_id, claim, 'names', REVIEW_STATUSES) as (conversion, _):
         if fresh is not None and (not current(conversion) or 'labels' not in current(conversion)):
-            fresh['runs'] = current(conversion).get('runs', 0)
+            fresh.update(runs=current(conversion).get('runs', 0), requested=current(conversion).get('requested', False))
             conversion.name_review = fresh
         state = current(conversion)
         if not state:
@@ -489,27 +486,28 @@ def _run(conversion_id, job_id, claim):
 
 
 def finish_job(conversion_id, job_id, claim):
-    """Continue unfinished labels, else hand the job to the chat or the automatic AI review, else end it."""
+    """At each batch boundary yield to a waiting chat message or an AI review; otherwise continue or end."""
     from api import conversion_chat
-    from api.conversion_review import Fenced, fence, should_auto_review
+    from api.conversion_review import Fenced, fence, review_state, should_auto_review
     try:
         with fence(conversion_id, job_id, claim, 'names', None) as (conversion, job):
             state = current(conversion)
             job.claimed_at = None
             job.heartbeat_at = None
-            if state.get('status') == 'incomplete' and state.get('runs', 0) < MAX_RUNS and conversion.status in REVIEW_STATUSES:
-                job.save(update_fields=['claimed_at', 'heartbeat_at'])
-                return
-            if state.get('status') == 'incomplete':
-                state['error'] = 'Name checks did not finish. Check again to continue.'
+            in_review = conversion.status in REVIEW_STATUSES
             if conversion_chat.unanswered(conversion) and conversion.status in REVIEW_STATUSES | {'blocked'}:
                 job.action = 'chat'
                 job.save(update_fields=['action', 'claimed_at', 'heartbeat_at'])
-            elif conversion.status in REVIEW_STATUSES and should_auto_review(conversion):
+            elif in_review and (review_state(conversion).get('manual') or should_auto_review(conversion)):
                 job.action = 'review'
                 job.save(update_fields=['action', 'claimed_at', 'heartbeat_at'])
                 conversion.status = 'reviewing'
+            elif in_review and state.get('status') == 'incomplete' and state.get('runs', 0) < MAX_RUNS:
+                job.save(update_fields=['claimed_at', 'heartbeat_at'])
+                return
             else:
+                if state.get('status') == 'incomplete':
+                    state['error'] = 'Name checks did not finish. Check again to continue.'
                 job.delete()
             conversion.save(update_fields=['status', 'name_review', 'updated_at'])
     except Fenced:

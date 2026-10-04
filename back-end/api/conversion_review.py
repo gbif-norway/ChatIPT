@@ -728,6 +728,7 @@ def process_job(conversion_id, job_id, claim, action):
 
 def finish_job(conversion_id, job_id, claim, action):
     from api import conversion_chat
+    from api.conversion_names import pending as names_pending
     try:
         with fence(conversion_id, job_id, claim, action, None) as (conversion, job):
             state = review_state(conversion)
@@ -747,6 +748,10 @@ def finish_job(conversion_id, job_id, claim, action):
                 job.action = 'review'
                 job.save(update_fields=['action', 'claimed_at', 'heartbeat_at'])
                 conversion.status = 'reviewing'
+            elif conversion.status in REVIEW_STATUSES and names_pending(conversion):
+                job.action = 'names'
+                job.save(update_fields=['action', 'claimed_at', 'heartbeat_at'])
+                conversion.status = 'review'  # name checks resume now that review and chat have had their turn
             else:
                 job.delete()
                 if conversion.status == 'reviewing':

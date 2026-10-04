@@ -183,7 +183,7 @@ def process_next_conversion():
             elif job.action == 'inspect' and conversion.status == 'review':
                 conversion.dataset.save(update_fields=['title', 'description'])
             conversion.save()
-            if _chain_names(conversion, claimed_job, job.action) or _chain_review(conversion, claimed_job, job.action):
+            if _chain_review(conversion, claimed_job, job.action) or _chain_names(conversion, claimed_job, job.action):
                 return True
             claimed_job.delete()
             _post_failure_opener(conversion, job.action)
@@ -224,9 +224,9 @@ def _apply_names(conversion, resources, report):
     return resources
 
 def _chain_names(conversion, job, action):
-    """After a successful inspect, keep the job as a name check when the archive has names to check."""
-    from api.conversion_names import enabled
-    if action != 'inspect' or conversion.status != 'review' or not enabled() or conversion.name_review.get('status') != 'pending':
+    """After a successful inspect (and any automatic AI review, which goes first), keep the job as a name check."""
+    from api.conversion_names import pending
+    if action != 'inspect' or conversion.status != 'review' or not pending(conversion):
         return False
     job.action = 'names'; job.claimed_at = None; job.heartbeat_at = None
     job.save(update_fields=['action', 'claimed_at', 'heartbeat_at'])

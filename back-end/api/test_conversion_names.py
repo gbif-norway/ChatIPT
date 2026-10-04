@@ -14,7 +14,8 @@ from api.conversion_jobs import process_next_conversion
 from api.dwca_import import read_inputs
 from api.models import DwcConversion, DwcConversionJob, Table
 from api.taxon_matching import TaxonServiceError
-from api.test_conversion_review import ConversionTestCase
+from api import conversion_chat
+from api.test_conversion_review import AI, QUERY, ConversionTestCase, answer, reply, requested
 from api.test_dwca_conversion import decisions_for
 
 RELEASE = {'checklistKey': 'col-key', 'alias': 'COL26.6 XR', 'checklistBankDatasetKey': '315557'}
@@ -198,11 +199,11 @@ class OverlayTests(SimpleTestCase):
         # Whitespace-different labels match, and verbatimIdentification is never touched.
         self.assertEqual(occurrence[1]['verbatimIdentification'], 'Aus  bus L.')
         self.assertEqual(result['occurrence']['verbatimIdentification'].tolist(), source['occurrence']['verbatimIdentification'].tolist())
-        # The identification row follows its occurrence when it carries no verbatimIdentification column of its own.
-        self.assertEqual(result['identification']['scientificName'].tolist(), ['Aus bus', ''])
+        # An identification row with no verbatimIdentification of its own is left untouched, never borrowed from its occurrence.
+        pd.testing.assert_frame_equal(result['identification'], source['identification'])
         self.assertEqual({key: value.to_dict('records') for key, value in source.items()}, before)  # inputs are not mutated
         entry = section['entries'][0]
-        self.assertEqual((entry['rows'], entry['authorshipKept']), ({'occurrence': 2, 'identification': 1}, 1))
+        self.assertEqual((entry['rows'], entry['authorshipKept']), ({'occurrence': 2}, 1))
 
     def test_identification_rows_with_their_own_verbatim_text_are_matched_directly(self):
         identification = pd.DataFrame([{'identification_pk': 'i1', 'occurrence_fk': 'o4', 'verbatimIdentification': 'Aus bus L.',
@@ -210,6 +211,25 @@ class OverlayTests(SimpleTestCase):
         result, _ = names.apply_name_decisions(frames(identification=identification), review({'Aus bus L.': decision('parsed', 'Aus bus', 'L.')}))
         row = result['identification'].iloc[0]
         self.assertEqual((row['scientificName'], row['scientificNameAuthorship'], row['verbatimIdentification']), ('Aus bus', 'L.', 'Aus bus L.'))
+
+    def test_identification_rows_follow_their_own_name_not_their_occurrences(self):
+        occurrence = pd.DataFrame([{'occurrence_pk': 'o1', 'scientificName': '', 'verbatimIdentification': 'Species A'}])
+        identification = pd.DataFrame([
+            {'identification_pk': 'i1', 'occurrence_fk': 'o1', 'scientificName': '', 'verbatimIdentification': 'Species B'},
+            {'identification_pk': 'i2', 'occurrence_fk': 'o1', 'scientificName': '', 'verbatimIdentification': ''},
+            {'identification_pk': 'i3', 'occurrence_fk': 'o1', 'scientificName': '', 'verbatimIdentification': 'Species A'}])
+        state = {'plan_id': 'plan', 'status': 'complete', 'labels': [{'label': 'Species A'}, {'label': 'Species B'}], 'truncated': 0}
+
+        def names_for(decisions):
+            result, section = names.apply_name_decisions({'occurrence': occurrence, 'identification': identification},
+                                                         {**state, 'decisions': decisions})
+            return result['occurrence']['scientificName'].tolist(), result['identification']['scientificName'].tolist(), section
+
+        only_a = names_for({'Species A': decision('parsed', 'Species Alpha')})
+        self.assertEqual(only_a[:2], (['Species Alpha'], ['', '', 'Species Alpha']))  # the "Species B" record is not rewritten to A
+        only_b = names_for({'Species B': decision('parsed', 'Species Beta')})
+        self.assertEqual(only_b[:2], ([''], ['Species Beta', '', '']))  # approving B reaches its own record, not the occurrence
+        self.assertEqual(only_b[2]['entries'][0]['rows'], {'identification': 1})
 
     def test_keep_fills_blank_names_only_and_empty_clears(self):
         result, _ = names.apply_name_decisions(frames(), review({
@@ -619,3 +639,103 @@ class NameDecisionAPITests(NamesCase):
         identification = Table.objects.get(dataset_id=self.dataset_id, title='identification').df
         self.assertEqual(sorted(identification['scientificName']), ['', 'Aus bus', 'Aus bus'])
         self.assertTrue(self.conversion.report['validation']['valid'])
+
+
+def respond(payload, max_retries=None):
+    return reply([answer(item_id, 'confirm', refs=['table:0']) for item_id in requested(payload)])
+
+
+def answer_chat(conversion_id, job_id, claim):
+    conversion_chat.acknowledge_unanswered(DwcConversion.objects.get(pk=conversion_id), 'Answered.')
+
+
+def budget_after_first_chunk(on_first=None):
+    calls = []
+
+    def limited(queries, deadline=None):
+        calls.append(len(queries))
+        if len(calls) == 1 and on_first:
+            on_first()
+        if len(calls) == 2:
+            raise TaxonServiceError('the time budget for this matching run was used up')
+        return fake_match(queries)
+    return limited
+
+
+@override_settings(**AI)
+class JobOrderingTests(NamesCase):
+    def job(self):
+        return DwcConversionJob.objects.filter(conversion=self.conversion).first()
+
+    def inspect_without_ai(self):
+        with override_settings(CONVERSION_AI_REVIEW_ENABLED=False):
+            process_next_conversion()
+        self.assertEqual(self.job().action, 'names')
+
+    def test_the_automatic_ai_review_runs_before_name_checks(self):
+        with patch(QUERY, side_effect=respond):
+            process_next_conversion()  # inspect
+            self.assertEqual((self.job().action, self.conversion.status), ('review', 'reviewing'))
+            process_next_conversion()  # review
+        self.assertEqual((self.job().action, self.conversion.status), ('names', 'review'))
+        self.assertEqual(self.conversion.name_review['status'], 'pending')
+        self.run_names()
+        self.assertEqual((self.conversion.name_review['status'], self.conversion.status), ('complete', 'review'))
+        self.assertIsNone(self.job())
+
+    def test_a_waiting_chat_message_is_answered_at_the_next_names_batch_and_names_then_resume(self):
+        self.inspect_without_ai()
+        with patch.object(names, 'CHUNK', 2), patch('api.conversion_review.should_auto_review', return_value=False):
+            self.run_names(match=budget_after_first_chunk(lambda: self.assertEqual(
+                self.post('chat', message='Which names matter?').status_code, 202)))
+            # The message did not get a 409 and did not wait for every label: chat has the next turn.
+            self.assertEqual(self.conversion.name_review['status'], 'incomplete')
+            self.assertEqual(self.job().action, 'chat')
+            with patch('api.conversion_chat.run_chat_turn', side_effect=answer_chat):
+                process_next_conversion()
+            self.assertEqual(self.job().action, 'names')
+            self.run_names()
+        self.assertEqual(self.conversion.name_review['status'], 'complete')
+        self.assertIsNone(self.job())
+
+    def test_a_manual_review_takes_over_a_queued_name_check_which_resumes_afterwards(self):
+        self.inspect_without_ai()
+        response = self.post('review')
+        self.assertEqual(response.status_code, 202, response.data)
+        self.assertEqual((self.job().action, self.conversion.status), ('review', 'reviewing'))
+        self.assertEqual(self.conversion.name_review['status'], 'pending')
+        with patch(QUERY, side_effect=respond):
+            process_next_conversion()
+        self.assertEqual((self.job().action, self.conversion.status), ('names', 'review'))
+        self.run_names()
+        self.assertEqual(self.conversion.name_review['status'], 'complete')
+
+    def test_a_manual_review_during_a_running_name_check_gets_the_next_batch_boundary(self):
+        self.inspect_without_ai()
+        with patch.object(names, 'CHUNK', 2):
+            self.run_names(match=budget_after_first_chunk(lambda: self.assertEqual(self.post('review').status_code, 202)))
+        self.assertEqual((self.job().action, self.conversion.status), ('review', 'reviewing'))
+        self.assertEqual(self.conversion.name_review['status'], 'incomplete')
+        with patch(QUERY, side_effect=respond):
+            process_next_conversion()
+        self.assertEqual(self.job().action, 'names')  # unfinished names resume once the review is done
+        self.run_names()
+        self.assertEqual((self.conversion.name_review['status'], self.conversion.status), ('complete', 'review'))
+
+    def test_a_running_review_still_refuses_a_second_manual_review(self):
+        self.inspect_without_ai()
+        with patch(QUERY, side_effect=respond):
+            self.assertEqual(self.post('review').status_code, 202)
+            self.assertEqual(self.post('review').status_code, 409)
+
+    def test_names_do_not_resume_after_review_when_they_are_finished_or_over_the_run_limit(self):
+        self.inspect_without_ai()
+        with patch('api.conversion_review.should_auto_review', return_value=False):
+            self.run_names()
+        self.assertIsNone(self.job())
+        self.assertFalse(names.pending(self.conversion))
+        state = {**self.conversion.name_review, 'status': 'incomplete', 'runs': names.MAX_RUNS, 'requested': True}
+        self.assertFalse(names.pending(DwcConversion(plan=self.conversion.plan, name_review=state)))
+        with override_settings(CONVERSION_NAME_CHECKS_ENABLED=False):
+            self.assertFalse(names.pending(DwcConversion(plan=self.conversion.plan, name_review={**state, 'runs': 1, 'requested': False})))
+            self.assertTrue(names.pending(DwcConversion(plan=self.conversion.plan, name_review={**state, 'runs': 1})))

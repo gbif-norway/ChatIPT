@@ -562,13 +562,19 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 DwcConversionJob.objects.create(conversion=conversion, action='names')
                 return Response(self._conversion_state(conversion), status=202)
             if operation == 'review':
-                if ai_job:
+                if ai_job and job.action != 'names':
                     return Response({'detail': 'AI review or a reply is already running.'}, status=409)
                 if not conversion_review.ai_available():
                     raise ValidationError('AI review is unavailable because no API key is configured. You can review the choices yourself.')
                 if not conversion_review.reviewable_items(conversion, manual=True):
                     return Response(self._conversion_state(conversion))
                 conversion_review.review_state(conversion)['manual'] = True
+                if job is not None and job.claimed_at is not None:
+                    # A name check is running: it hands over to this review at its next batch boundary.
+                    conversion.save(update_fields=['review', 'updated_at'])
+                    return Response(self._conversion_state(conversion), status=202)
+                if job is not None:
+                    job.delete()  # a queued name check resumes after the review
                 conversion.status = 'reviewing'
                 conversion.save(update_fields=['review', 'status', 'updated_at'])
                 DwcConversionJob.objects.create(conversion=conversion, action='review')
