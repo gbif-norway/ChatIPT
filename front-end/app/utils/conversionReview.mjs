@@ -1,13 +1,28 @@
-export function unresolvedIssues(plan, decisions = {}) {
-  const effective = { ...Object.fromEntries((plan?.automatic_choices || []).map(choice => [choice.id, choice.default])), ...decisions }
-  const rowChoice = issue => issue.id.startsWith('taxon-occurrence:')
-    ? `taxon-occurrence:${issue.table}:row:0:${issue.row - 1}` : `row:${issue.table}:${issue.row - 1}`
-  return (plan?.issues || []).filter(issue => !effective[issue.id] &&
-    !(issue.table !== undefined && (effective[`table:${issue.table}`] === 'preserve' ||
-      (issue.row !== undefined && effective[rowChoice(issue)] === 'preserve'))))
+// The server resolves choices (automatic defaults, grouped rows, option requirements)
+// and returns `unresolved`; the interface only filters and labels.
+
+export function unresolvedIssues(state) {
+  const unresolved = new Set(state?.unresolved || [])
+  return (state?.plan?.issues || []).filter(issue => unresolved.has(issue.id))
 }
 
-export function pendingAdvice(state, decisions = {}) {
+// Automatic choices and column mappings whose current value fails a requirement.
+export function attentionItems(state) {
+  const unresolved = new Set(state?.unresolved || [])
+  const issues = new Set((state?.plan?.issues || []).map(issue => issue.id))
+  return [...(state?.plan?.automatic_choices || []), ...(state?.plan?.columns || [])]
+    .filter(item => unresolved.has(item.id) && !issues.has(item.id))
+}
+
+export function pendingAdvice(state) {
   const reviewed = new Set([...(state?.advice_reviewed || []), ...(state?.suggestions || []).map(item => item.id)])
-  return unresolvedIssues(state?.plan, decisions).filter(issue => !reviewed.has(issue.id))
+  return unresolvedIssues(state).filter(issue => !reviewed.has(issue.id))
+}
+
+export function optionState(state, id, value) {
+  return state?.option_status?.[id]?.[value] || { available: true, reasons: [] }
+}
+
+export function conflictsFor(state, id) {
+  return (state?.conflicts || []).filter(conflict => (conflict.decision_ids || []).includes(id))
 }

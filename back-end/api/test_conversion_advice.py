@@ -24,8 +24,9 @@ class AdviceBatchTests(TransactionTestCase):
         self.client = APIClient()
         self.client.force_authenticate(CustomUser.objects.create_user(username='advice-owner'))
         response = self.client.post('/api/datasets/', {'workflow_type': 'dwca_conversion', 'files': [
-            SimpleUploadedFile('occurrence.csv', b'occurrenceID,occurrenceStatus\no1,present\n'),
-            SimpleUploadedFile('nbn.csv', ('occurrenceID,sensitiveOccurrence\n' + 'o1,true\n' * 50).encode()),
+            # Distinct scope claims stay separate questions; identical row questions would be grouped.
+            SimpleUploadedFile('event.csv', ('eventID,eventCategory\n' + ''.join(f'e{n},survey\n' for n in range(50))).encode()),
+            SimpleUploadedFile('humboldt.csv', ('eventID,targetTaxonomicScope\n' + ''.join(f'e{n},Taxon{n}\n' for n in range(50))).encode()),
         ]}, format='multipart')
         self.assertEqual(response.status_code, 201, response.data)
         process_next_conversion()

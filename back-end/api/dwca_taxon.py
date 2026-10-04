@@ -10,7 +10,7 @@ from collections import defaultdict
 
 import pandas as pd
 
-from api.dwca_import import DWC, SourceArchive, SourceTable
+from api.dwca_import import DWC, ConversionError, SourceArchive, SourceTable
 from api.dwc_dp_specs import TABLE_SPECS, dwc_dp_schema_snapshot, validate_dwc_dp_resources
 
 
@@ -123,6 +123,7 @@ def occurrence_proxy(archive, index):
 
 def build_taxon_plan(archive):
     from api.dwca_conversion import RULE_VERSION, PRESERVE, _issue, build_plan
+    from api.dwca_review import apply_policy
     taxonomy_preserve = {**PRESERVE, 'label': 'Keep in taxonomy tables and original files only'}
     issues = [_issue('taxonomy-package', 'Preserve the checklist as taxonomy tables',
         'The target has no standalone Taxon table. Checklist fields and extension links remain verbatim in additional taxonomy tables. A checklist alone produces a generic taxonomy Data Package, not a standard DwC-DP.',
@@ -131,7 +132,7 @@ def build_taxon_plan(archive):
         issues.append(_issue('loose-links', 'Confirm the Taxon-core loose-file layout',
             'Known filenames identify roles. Extensions join by supplied taxonID, never by row position.',
             [{'value': 'confirm', 'label': 'Confirm these table roles and taxonID joins'}]))
-    columns, profiles, nested, conflicts, automatic, warnings = [], [], {}, [], [], []
+    columns, profiles, nested, conflicts, automatic, warnings, row_issues = [], [], {}, [], [], [], []
     for t, table in enumerate(archive.tables):
         profile = {'name': table.name, 'row_type': table.row_type, 'core': table.is_core,
                    'rows': len(table.rows), 'unique_join_ids': len(set(table.ids)), 'join_basis': table.join_basis, 'columns': []}
@@ -152,7 +153,7 @@ def build_taxon_plan(archive):
             + (f'{len(differences)} classification differences are recorded in the report. ' if differences else '')
             + 'Taxonomy tables retain every original value regardless of this choice.',
             [{'value': 'convert', 'label': 'Convert the supplied occurrence records to standard DwC-DP tables'},
-            {**PRESERVE, 'label': 'Keep these records in additional taxonomy tables only'}], table=t))
+            {**PRESERVE, 'label': 'Keep these records in additional taxonomy tables only'}], table=t, kind='taxon-occurrences'))
         prefix = f'taxon-occurrence:{t}:'
         for column in inner['columns']:
             outer = {**column, 'id': prefix + column['id'], 'table': t}
@@ -164,19 +165,23 @@ def build_taxon_plan(archive):
                              options=outer['options'] if external else [taxonomy_preserve])
                 issues.append(_issue(outer['id'], 'taxonID: external identifier required for DwC-DP',
                     'DwC-DP taxonID refers to a globally resolvable external taxon record. Local checklist identifiers remain in taxonomy tables and their explicit attachment links. Confirm external meaning before copying an IRI.',
-                    outer['options'], table=t))
+                    outer['options'], table=t, kind='external-identifier'))
             columns.append(outer)
         issues.extend({**issue, 'id': prefix + issue['id'], 'table': t,
-                       'options': [taxonomy_preserve if option['value'] == 'preserve' else option for option in issue['options']]}
+                       'options': [taxonomy_preserve if option['value'] == 'preserve' else option for option in issue['options']],
+                       **({'members': [prefix + member for member in issue['members']]} if issue.get('members') else {})}
                       for issue in inner['issues'])
+        row_issues.extend({**member, 'id': prefix + member['id'], 'group': prefix + member['group'], 'table': t}
+                          for member in inner.get('row_issues', []))
         automatic.extend({**choice, 'id': prefix + choice['id'], 'table': t,
-                          'options': [taxonomy_preserve if option['value'] == 'preserve' else option for option in choice['options']]}
+                          'options': [taxonomy_preserve if option['value'] == 'preserve' else option for option in choice['options']],
+                          **({'members': [prefix + member for member in choice['members']]} if choice.get('members') else {})}
                          for choice in inner.get('automatic_choices', []))
         warnings.extend({**notice, 'id': prefix + notice['id'], 'table': t,
                          'source_table': table.name} for notice in inner.get('warnings', []))
     plan = {'version': RULE_VERSION, 'source_sha256': archive.fingerprint, 'schema': dwc_dp_schema_snapshot(),
-            'tables': profiles, 'columns': columns, 'issues': issues,
-            'automatic_choices': automatic, 'warnings': warnings,
+            'tables': profiles, 'columns': columns, 'issues': apply_policy(issues),
+            'automatic_choices': apply_policy(automatic), 'warnings': warnings, 'row_issues': row_issues,
             'taxonomy': {'occurrence_plans': nested, 'classification_conflicts': conflicts,
                          'scientific_hierarchies': {index: inner['scientific_hierarchy'] for index, inner in nested.items()
                                                    if 'scientific_hierarchy' in inner},
@@ -201,7 +206,11 @@ def convert_taxon(archive, plan, decisions, *, user_decisions=None):
         proxy, _ = occurrence_proxy(archive, t)
         prefix = f'taxon-occurrence:{t}:'
         inner_decisions = {key[len(prefix):]: value for key, value in user_decisions.items() if key.startswith(prefix)}
-        frames, report = convert(proxy, inner, inner_decisions)
+        try:
+            frames, report = convert(proxy, inner, inner_decisions)
+        except ConversionError as error:
+            raise ConversionError(str(error), category=error.category, decision_ids=[prefix + key for key in error.decision_ids],
+                                  evidence=error.evidence) from error
         def original_indices(value):
             if isinstance(value, dict):
                 return {key: t if key in {'source_table_index', 'table'} and item == 0 else original_indices(item)

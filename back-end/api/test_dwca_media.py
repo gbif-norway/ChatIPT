@@ -106,7 +106,7 @@ class MediaConversionTests(SimpleTestCase):
     def test_conflicting_alias_columns_cannot_silently_overwrite(self):
         archive = media_archive([DCT + 'identifier', DCT + 'type', DC + 'type'], [['o1', 'urn:m:1', 'StillImage', 'Sound']])
         plan = build_plan(archive); decisions = choices(plan)
-        with self.assertRaisesMessage(ImportFailure, 'Conflicting source values map to media.mediaType'):
+        with self.assertRaisesMessage(ImportFailure, 'supply different values for media.mediaType in 1 rows'):
             convert(archive, plan, decisions)
         alias = next(c for c in plan['columns'] if c['term'] == DC + 'type')
         decisions[alias['id']] = 'preserve'
@@ -117,9 +117,9 @@ class MediaConversionTests(SimpleTestCase):
     def test_media_without_mapped_values_is_preserved_instead_of_invented(self):
         archive = media_archive([DWC + 'scientificName'], [['o1', 'Panthera leo']])
         plan = build_plan(archive); decisions = choices(plan)
-        with self.assertRaisesMessage(ImportFailure, 'at least one mapped media value'):
-            convert(archive, plan, decisions)
-        decisions['table:1'] = 'preserve'
+        table = next(item for item in [*plan['issues'], *plan['automatic_choices']] if item['id'] == 'table:1')
+        self.assertTrue({option['value'] for option in table['unavailable_options']} >= {'media-occurrence', 'media-event', 'media-unlinked'})
+        self.assertEqual(table.get('default'), 'preserve')
         frames, report = convert(archive, plan, decisions)
         self.assertNotIn('media', frames)
 

@@ -143,7 +143,7 @@ class StreamlinedReviewTests(SimpleTestCase):
         plan = build_plan(archive)
         chosen = choices(plan)
         chosen['event-category'] = 'occurrence'
-        with self.assertRaisesMessage(ImportFailure, 'Choose survey'):
+        with self.assertRaisesMessage(ImportFailure, 'needs survey as the missing-category choice'):
             validate_decisions(plan, chosen)
         chosen['table:1'] = 'preserve'
         validate_decisions(plan, chosen)

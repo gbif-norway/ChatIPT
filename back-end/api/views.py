@@ -470,11 +470,27 @@ class DatasetViewSet(viewsets.ModelViewSet):
     @staticmethod
     def _conversion_state(conversion):
         from api.conversion_jobs import advice_progress
-        return {'status': conversion.status, 'plan': conversion.plan, 'decisions': conversion.decisions,
+        from api.dwca_conversion import option_status, validate_decisions
+        plan = conversion.plan
+        return {'status': conversion.status, 'plan': plan, 'decisions': conversion.decisions,
+                'unresolved': validate_decisions(plan, conversion.decisions, require_complete=False) if plan else [],
+                'option_status': option_status(plan, conversion.decisions) if plan else {},
+                'conflicts': conversion.conflicts, 'retryable': conversion.retryable,
                 'advice_reviewed': conversion.advice_reviewed, 'advice_progress': advice_progress(conversion),
                 'suggestions': conversion.suggestions, 'error': conversion.error,
                 'report': {key: value for key, value in conversion.report.items() if key != 'row_crosswalk'},
                 'updated_at': conversion.updated_at, 'download_ready': conversion.status == 'complete' and bool(conversion.output_file)}
+
+    @staticmethod
+    def _unaffected_conflicts(conversion, decisions):
+        """Keep stored conflicts unless a changed choice (group choices count for their members) can remedy them."""
+        previous = conversion.decisions
+        changed = {key for key in {*previous, *decisions} if previous.get(key) != decisions.get(key)}
+        groups = {item['id']: item['members'] for item in [*conversion.plan.get('issues', []), *conversion.plan.get('automatic_choices', [])]
+                  if item.get('members')}
+        changed |= {member for key in changed for member in groups.get(key, [])}
+        changed |= {member['group'] for member in conversion.plan.get('row_issues', []) if member['id'] in changed}
+        return [conflict for conflict in conversion.conflicts if not changed & set(conflict.get('decision_ids', []))]
 
     @action(detail=True, methods=['get', 'post'], url_path='conversion', throttle_classes=[ConversionReviewRateThrottle])
     def conversion(self, request, *args, **kwargs):
@@ -492,17 +508,27 @@ class DatasetViewSet(viewsets.ModelViewSet):
             if DwcConversionJob.objects.filter(conversion=conversion).exists():
                 return Response({'detail': 'Conversion work is already queued or running.'}, status=409)
             operation = request.data.get('action', 'convert')
-            if operation not in {'convert', 'suggest', 'inspect'}:
+            if operation not in {'convert', 'suggest', 'inspect', 'save'}:
                 raise ValidationError('Unknown conversion action.')
+            if operation != 'inspect' and conversion.status != 'review':
+                # A completed, blocked or failed conversion's choices must stay those of its result.
+                return Response({'detail': 'Choices can only be changed while the conversion is in review.'}, status=409)
             if operation != 'inspect' and request.data.get('plan_id') != conversion.plan.get('id'):
                 return Response({'detail': 'The plan changed. Reload before submitting decisions.'}, status=409)
-            if operation in {'convert', 'suggest'}:
+            if operation in {'convert', 'suggest', 'save'}:
+                decisions = request.data.get('decisions', {})
                 try:
-                    decisions = request.data.get('decisions', {})
                     validate_decisions(conversion.plan, decisions, require_complete=operation == 'convert')
                 except ImportFailure as exc:
-                    raise ValidationError(str(exc)) from exc
+                    record = exc.as_conflict() if hasattr(exc, 'as_conflict') else {'reason': str(exc), 'decision_ids': []}
+                    return Response({'detail': str(exc), 'conflict': record}, status=400)
+                conversion.conflicts = self._unaffected_conflicts(conversion, decisions)
                 conversion.decisions = decisions
+            if operation == 'save':
+                if not conversion.conflicts and conversion.status == 'review':
+                    conversion.error = ''  # The stored failure has been remedied.
+                conversion.save(update_fields=['decisions', 'conflicts', 'error', 'updated_at'])
+                return Response(self._conversion_state(conversion))
             if operation == 'suggest':
                 from api.conversion_jobs import pending_advice
                 if not pending_advice(conversion):

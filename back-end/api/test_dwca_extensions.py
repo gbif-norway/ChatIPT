@@ -100,7 +100,7 @@ class ExtensionIntegrationTests(SimpleTestCase):
         archive = source('germplasm_accession.csv', [G + 'germplasmID', G + 'biologicalStatus', G + 'purdyPedigree', GEO + 'lat'],
                          [['o1', 'acc:1', 'Landrace', 'A/B', '60']], OCCURRENCE)
         plan, choices = review(archive)
-        with self.assertRaisesMessage(ImportFailure, 'explicitly approved material'):
+        with self.assertRaisesMessage(ImportFailure, 'Accessions attach to approved core material'):
             convert(archive, plan, choices)
         choices['material:0'] = 'per_row'
         frames, report = convert(archive, plan, choices)
@@ -128,17 +128,18 @@ class ExtensionIntegrationTests(SimpleTestCase):
         self.assertEqual(next(c for c in report['columns'] if c['term'] == DWC + 'measurementValue')['mapped_rows'], 1)
         self.assertEqual(next(c for c in report['columns'] if c['term'] == G + 'measurementTraitID' and c['source_table'] == 'measurement_score.csv')['disposition'], 'derived')
         next(table for table in archive.tables if table.name == 'measurement_score.csv').rows[0][1] = 'wrong-accession'
-        plan, choices = review(archive); choices['material:0'] = 'per_row'
-        with self.assertRaisesMessage(ImportFailure, 'must exactly match an identifier'):
-            convert(archive, plan, choices)
+        plan = build_plan(archive)
+        scores = next(index for index, table in enumerate(archive.tables) if table.name == 'measurement_score.csv')
+        table = next(item for item in [*plan['issues'], *plan['automatic_choices']] if item['id'] == f'table:{scores}')
+        self.assertIn('germplasm-score-material', {option['value'] for option in table['unavailable_options']})
 
     def test_score_protocol_missing_or_ambiguous_id_never_links(self):
         for protocols in ([], [['o1', 'trait:1', 'Height'], ['o1', 'trait:1', 'Height']]):
             other = [('measurement_trait.csv', data([DWC + 'occurrenceID', G + 'measurementTraitID', G + 'measurementTraitName'], protocols))] if protocols else []
             archive = source('measurement_score.csv', [G + 'measurementTraitID', DWC + 'measurementType', DWC + 'measurementValue'], [['o1', 'trait:1', 'Height', '7']], OCCURRENCE, other)
-            plan, choices = review(archive); choices['table:1'] = 'germplasm-score-occurrence'; choices['trait-link:1'] = 'exact'
-            with self.assertRaisesMessage(ImportFailure, 'exactly match one converted'):
-                convert(archive, plan, choices)
+            plan = build_plan(archive)
+            link = next(item for item in [*plan['issues'], *plan['automatic_choices']] if item['id'] == 'trait-link:1')
+            self.assertEqual([option['value'] for option in link['unavailable_options']], ['exact'])
 
     def test_score_subject_retargets_and_type_contradictions_fail(self):
         archive = source('measurement_score.csv', [DWC + 'measurementType', DWC + 'measurementValue', G + 'measurementTraitName'], [['e1', 'Height', '7', 'Height']])

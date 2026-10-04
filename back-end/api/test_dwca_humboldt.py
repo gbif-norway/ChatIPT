@@ -6,7 +6,7 @@ from pathlib import Path
 
 from django.test import SimpleTestCase
 
-from api.dwca_conversion import build_plan, convert
+from api.dwca_conversion import build_plan, convert, validate_decisions
 from api.dwca_humboldt import DIRECT, ECO, SCOPE_TERMS
 from api.dwca_import import DWC, ImportFailure, read_inputs, source_zip
 from api.dwc_dp_specs import create_dwc_dp_archive, validate_dwc_dp_archive
@@ -117,16 +117,19 @@ class HumboldtConversionTests(SimpleTestCase):
 
     def test_conflicting_surveys_cannot_merge(self):
         source = archive([ECO + 'siteCount'], [['e1', '3'], ['e1', '4']])
-        plan = build_plan(source); decisions = choices(plan); decisions['table:1'] = 'humboldt-merge'
-        with self.assertRaisesMessage(ImportFailure, 'identical source values'):
-            convert(source, plan, decisions)
+        plan = build_plan(source); decisions = choices(plan)
+        table = next(item for item in [*plan['issues'], *plan['automatic_choices']] if item['id'] == 'table:1')
+        self.assertIn('only identical rows can be combined', table['unavailable_options'][0]['reason'])
+        with self.assertRaisesMessage(ImportFailure, 'Unsupported mapping decision'):
+            validate_decisions(plan, {**decisions, 'table:1': 'humboldt-merge'})
 
     def test_occurrence_subject_requires_complete_identical_grouping_and_category_review(self):
         core = ('occurrence.csv', b'occurrenceID,eventID,occurrenceStatus\no1,e1,present\no2,e1,present\n')
         source = archive([ECO + 'siteCount'], [['o1', '3'], ['o2', '3']], core)
         plan = build_plan(source); decisions = choices(plan); decisions['event-grain'] = 'by_id'
-        with self.assertRaisesMessage(ImportFailure, 'reviewed survey events'):
-            convert(source, plan, decisions)
+        category = next(item for item in plan['issues'] if item['id'] == 'hum-category:1')
+        self.assertEqual([option['value'] for option in category['options']], ['confirm'])
+        self.assertEqual(category['authority'], 'user-assertion')
         decisions['hum-category:1'] = 'confirm'
         frames, report = convert(source, plan, decisions)
         self.assertEqual(len(frames['survey']), 1)
@@ -135,9 +138,8 @@ class HumboldtConversionTests(SimpleTestCase):
         self.assertTrue(report['validation']['valid'])
         partial = archive([ECO + 'siteCount'], [['o1', '3']], core)
         partial_plan = build_plan(partial); partial_choices = choices(partial_plan)
-        partial_choices.update({'event-grain': 'by_id', 'hum-category:1': 'confirm'})
-        with self.assertRaisesMessage(ImportFailure, 'complete identical coverage'):
-            convert(partial, partial_plan, partial_choices)
+        partial_table = next(item for item in [*partial_plan['issues'], *partial_plan['automatic_choices']] if item['id'] == 'table:1')
+        self.assertIn('humboldt-grouped', {option['value'] for option in partial_table.get('unavailable_options', [])})
 
     def test_supplied_non_survey_category_cannot_be_overwritten(self):
         source = archive([ECO + 'siteCount'], [['e1', '3']], ('event.csv', b'eventID,eventCategory\ne1,occurrence\n'))

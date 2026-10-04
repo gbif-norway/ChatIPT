@@ -455,6 +455,7 @@ class DwcConversion(models.Model):
         REVIEWING = 'reviewing'
         CONVERTING = 'converting'
         COMPLETE = 'complete'
+        BLOCKED = 'blocked'  # The source must change; no retry.
         FAILED = 'failed'
 
     dataset = models.OneToOneField(Dataset, on_delete=models.CASCADE, related_name='conversion')
@@ -465,6 +466,9 @@ class DwcConversion(models.Model):
     advice_reviewed = models.JSONField(default=list)
     report = models.JSONField(default=dict)
     error = models.TextField(blank=True)
+    # Structured failures: [{id, category, reason, decision_ids, evidence}].
+    conflicts = models.JSONField(default=list)
+    retryable = models.BooleanField(default=False)
     output_file = models.FileField(upload_to='user_files/conversions', blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
