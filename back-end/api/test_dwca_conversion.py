@@ -12,7 +12,7 @@ from django.test import SimpleTestCase, TransactionTestCase, override_settings
 from rest_framework.test import APIClient
 
 from api.dwca_import import DWC, ImportFailure, read_inputs, source_zip
-from api.dwca_conversion import build_plan, convert, validate_decisions
+from api.dwca_conversion import build_plan, convert, option_status, validate_decisions
 from api.dwc_dp_specs import create_dwc_dp_archive, validate_dwc_dp_archive
 from api.models import CustomUser, Dataset, DwcConversion, DwcConversionJob, OpenAIUsage
 from api.conversion_jobs import process_next_conversion, suggest_mappings
@@ -198,7 +198,13 @@ class ArchiveTests(SimpleTestCase):
     def test_grouping_requires_consistent_event_values(self):
         archive = occurrence(b'occurrenceID,eventID,eventDate,occurrenceStatus\na,e,2025-01-01,present\nb,e,2025-01-02,present\n')
         plan = build_plan(archive); decisions = decisions_for(plan); decisions['event-grain'] = 'by_id'
-        with self.assertRaisesRegex(ImportFailure, 'Conflicting event'): convert(archive, plan, decisions)
+        self.assertFalse(option_status(plan, decisions)['event-grain']['by_id']['available'])
+        with self.assertRaisesRegex(ImportFailure, 'disagree within 1 eventID groups'): convert(archive, plan, decisions)
+        # Availability follows the effective decisions: retaining eventDate makes combining valid.
+        date = next(column['id'] for column in plan['columns'] if column['term'] == DWC + 'eventDate')
+        self.assertTrue(option_status(plan, {**decisions, date: 'preserve'})['event-grain']['by_id']['available'])
+        frames, report = convert(archive, plan, {**decisions, date: 'preserve'})
+        self.assertEqual(len(frames['event']), 1); self.assertTrue(report['validation']['valid'])
         decisions['event-grain'] = 'per_row'
         frames, report = convert(archive, plan, decisions)
         self.assertEqual(len(frames['event']), 2); self.assertTrue(report['validation']['valid'])
@@ -243,7 +249,7 @@ class ArchiveTests(SimpleTestCase):
     def test_material_merging_blocks_conflicting_descriptions(self):
         archive = occurrence(b'occurrenceID,eventID,materialSampleID,catalogNumber,occurrenceStatus\na,e,m,catalog-a,present\nb,e,m,catalog-b,present\n')
         plan = build_plan(archive); decisions = decisions_for(plan); decisions.update({'material:0': 'by_id', 'event-grain': 'by_id'})
-        with self.assertRaisesRegex(ImportFailure, 'Conflicting material'): convert(archive, plan, decisions)
+        with self.assertRaisesRegex(ImportFailure, 'disagree within 1 material identifier groups'): convert(archive, plan, decisions)
 
     def test_event_extensions_and_explicit_assertion_subjects(self):
         archive = read_inputs([('event.csv', b'eventID,eventCategory\ne,survey\n'),
@@ -253,13 +259,18 @@ class ArchiveTests(SimpleTestCase):
         self.assertTrue(report['validation']['valid']); self.assertEqual(len(frames['occurrence-assertion']), 1); self.assertEqual(len(frames['event-assertion']), 1)
         archive.tables[1].rows[0][1] = 'dangling'
         plan = build_plan(archive)
-        with self.assertRaisesRegex(ImportFailure, 'does not resolve'): convert(archive, plan, decisions_for(plan))
+        issue = next(item for item in [*plan['issues'], *plan['automatic_choices']] if item['id'] == 'table:1')
+        self.assertIn('declared-assertions', {option['value'] for option in issue['unavailable_options']})
+        with self.assertRaisesRegex(ImportFailure, 'Unsupported mapping decision'):
+            validate_decisions(plan, {**decisions_for(plan), 'table:1': 'declared-assertions'})
 
     def test_assertion_identifier_must_agree_with_core_attachment(self):
         extension = '<extension rowType="http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact" fieldsTerminatedBy="," ignoreHeaderLines="1"><files><location>facts.csv</location></files><coreid index="0"/><field index="1" term="' + DWC + 'occurrenceID"/><field index="2" term="' + DWC + 'measurementValue"/></extension>'
         archive = read_inputs([('meta.xml', manifest(extension=extension)), ('occ.csv', b'key,occurrenceID\njoin,persistent\n'), ('facts.csv', b'join,occurrenceID,value\njoin,other,5\n')])
         plan = build_plan(archive)
-        with self.assertRaisesRegex(ImportFailure, 'disagrees'): convert(archive, plan, decisions_for(plan))
+        issue = next(item for item in [*plan['issues'], *plan['automatic_choices']] if item['id'] == 'table:1')
+        self.assertEqual([option['value'] for option in issue['unavailable_options']], ['occurrence-assertion'])
+        self.assertIn('attached core row', issue['unavailable_options'][0]['reason'])
 
 
 class ConversionAPITests(TransactionTestCase):

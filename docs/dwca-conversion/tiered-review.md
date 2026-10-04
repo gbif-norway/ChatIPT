@@ -1,6 +1,6 @@
 # Tiered review: deterministic, AI reviewer, chat fallback
 
-Status: design for rule version 10. This document is the interface contract
+Status: implemented in rule version 10 (`api/dwca_review.py`, `api/dwca_preflight.py`). This document is the interface contract
 between the deterministic plan (steps 1–3) and the AI reviewer / conversation
 agent (steps 4–5). Steps 4–5 have their own design document,
 [ai-review-and-chat.md](ai-review-and-chat.md), which must conform to this one.
@@ -60,12 +60,18 @@ validity depends on the data, `requirements`: a closed list of plan-only
 conditions evaluated by `option_status(plan, decisions)` without reloading the
 archive:
 
-- `{"type": "column_not_target", "columns": [...], "prefix": "event."}` — the
-  listed columns, which disagree within groups, must not map to that table.
+- `{"type": "target_in" | "target_not_in", "column": id, "targets": [...], "prefixes": [...]}`
+  — the column's effective target (a preserved table or material makes it
+  `preserve`) is, or is not, one of these targets or prefixes.
 - `{"type": "decision_in", "id": ..., "values": [...]}`
-- `{"type": "column_preserved", "columns": [...]}`
-- `{"type": "unsatisfiable"}` — no permitted choice can make it valid; the option is
-  moved to `unavailable_options` at plan time.
+- `{"type": "any", "conditions": [...]}`
+- `{"type": "unsatisfiable"}`. When no permitted choice can make an option valid,
+  the option is moved to `unavailable_options` at plan time instead.
+
+A requirement is `{conditions, reason, evidence?, when?}`: all conditions must hold
+whenever every `when` condition holds (for example, conflicts that apply only
+when a particular column is the material identifier). Requirements are stored
+in `plan.requirements[decision_id][value]`.
 
 Each requirement has `reason` and bounded `evidence` (counts plus up to five
 examples with source rows). Typed values use the same filtering as `convert()`
@@ -92,13 +98,23 @@ preserved table or row. A failing requirement raises a structured error (below),
 so an unsubmitted default can never fail later in `convert()`. The conversion
 state returns `option_status: {decision_id: {value: {available, reasons}}}` for
 issues, automatic choices and columns (parent links and NBN columns are columns).
-The existing `event_grouping_evidence` is replaced by the `event-grain`
+The former `event_grouping_evidence` is replaced by the `event-grain`
 requirement evidence.
 
 ### 2b. Plan-only decision checks
 
-`validate_decisions` also rejects two columns of the same table effectively mapped
-to the same target field.
+Two columns of one table effectively mapped to the same target field are rejected
+when they supply different copied values in any row (the conversion rule; equal
+or one-sided values are combined as before). This is precomputed as a pair of
+`target_not_in` requirements. Group checks (event and material combining) compare
+the *combined* value of every subset of columns that can map to a field, so sparse
+complementary columns are not mistaken for conflicts. Duplicate term IRIs within
+one table are already rejected on import, so `_source` duplicate-term conflicts
+cannot arise from valid inputs.
+
+Some combinations stay convert-time `conflict`s because their validity depends on
+several tables at once: surveyIDs shared across Humboldt tables and assertion
+occurrenceIDs found in more than one Occurrence extension.
 
 ### 2c. Failure categories
 
@@ -110,7 +126,7 @@ to the same target field.
 | `stale-plan` | 752 | 409; re-inspect. |
 | `decision` | 716, 719, 932, 982, 1044, duplicate targets | Rejected by `validate_decisions` before queuing. |
 | `conflict` | 989 (scope decisions differ within a merge), event patch conflicts 834/838/841 with row evidence, emitter conflicts in germplasm/legacy | Returned to review only when `decision_ids` contain a real remedy. |
-| `source` | malformed inputs; `_source` duplicate-term conflict (83) when every conflicting column is required | Status `blocked`: the source must change; no retry offered. A duplicate-term conflict among approved columns is a `decision` error naming the columns, since preserving one remedies it. |
+| `source` | malformed inputs | Status `blocked`: the source must change; no retry offered. A `conflict` or `decision` failure without any remedying decision is also `blocked`. |
 | `internal` | 831 and other invariants | Status `failed`, logged, not retryable (a code defect). |
 | `transient` | storage/network | Status `failed` with retry. |
 
@@ -138,14 +154,19 @@ The job stores structured failures in `conversion.conflicts`:
 
 ## Persistence and states
 
-- `action: "save"` validates (`require_complete=False`), persists decisions,
+- `action: "save"` accepts any offered option (structural validation); requirement
+  violations do not reject a save but appear in `unresolved` and `option_status`,
+  so a user can change dependent choices in any order. `convert` rejects them.
+  It persists decisions,
   clears `conflicts` whose `decision_ids` intersect the changed ids *after group
   expansion* (a group change affects all its members), and returns
   the state. No job is queued. The form saves on each change.
 - Every state response includes `unresolved`, `option_status` and `conflicts`.
 - Statuses: `queued`, `inspecting`, `review`, `reviewing`, `converting`,
   `complete`, `blocked` (source must change), `failed` (with `retryable` true for
-  transient and false for internal failures).
+  transient and false for internal failures). A transient failure after a plan
+  exists (for example storage while saving output) returns to `review` with
+  `retryable` true, since converting again is the retry.
 
 ## Contract for steps 4–5
 

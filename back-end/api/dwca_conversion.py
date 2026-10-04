@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 
 import pandas as pd
 
-from api.dwca_import import DWC, ImportFailure, REGISTRY
+from api.dwca_import import DWC, ConversionError, ImportFailure, REGISTRY
 from api.dwca_media import MEDIA_FAMILIES, MEDIA_SUBJECT_TERMS, media_targets
 from api.dwca_references import REFERENCE_FAMILIES, NON_EXACT_TARGETS, IDENTIFIER_ROW_TYPE, REFERENCE_ROW_TYPE, DC, reference_targets, emit_reference_records
 from api.dwca_humboldt import HUMBOLDT_FAMILIES, IRI_DIRECT, DIRECT, blocked_fields, humboldt_targets, scope_review, emit_humboldt_records, valid_value
@@ -21,8 +21,12 @@ from api.dwca_scientific import audit_hierarchy
 from api.dwca_legacy import (LEGACY_FAMILIES, LEGACY_DERIVED_TERMS, BMDE, NXF, GROUPS, UTM, TIMES, NBN_DATE,
                             legacy_targets, legacy_row_review, nbn_event_date, emit_legacy_records)
 from api.dwc_dp_specs import TABLE_SPECS, dwc_dp_schema_snapshot, validate_dwc_dp_resources
+from api.dwca_preflight import preflight
+from api.dwca_review import (apply_policy, effective_decisions, failed_requirements, group_rows,  # noqa: F401
+                             option_status, remove_unavailable, violations)
 
-RULE_VERSION = "9"
+RULE_VERSION = "10"
+ECO_SURVEY_ID = 'http://rs.tdwg.org/eco/terms/surveyID'
 REGISTERED_TERMS = {term for terms in REGISTRY['terms'].values() for term in terms}
 NAMESPACE = uuid.UUID("7750ccce-e9f9-4fd1-b9d8-a02a9747cae9")
 PRESERVE = {"value": "preserve", "label": "Keep in original files only"}
@@ -73,6 +77,14 @@ def _typed_field(target):
     table, field = target.split('.', 1)
     descriptor = TABLE_SPECS[table].field_descriptors[field]
     return descriptor if descriptor.get('type') in {'integer', 'number', 'boolean'} else None
+
+
+def _copied(row_type, target, value):
+    """The value conversion copies to target, or None when it is withheld as invalid."""
+    descriptor = _typed_field(target)
+    if value and descriptor is not None and SUPPORTED_EXTENSIONS.get(row_type) != 'humboldt' and not valid_value(descriptor, value):
+        return None
+    return value
 
 
 def _source(terms, row):
@@ -228,6 +240,7 @@ def _scientific_summary(audit):
 
 
 def _issue(id, title, reason, options, **extra):
+    """A review question. kind and per-option assertion flags are set by apply_policy."""
     return {"id": id, "title": title, "reason": reason, "options": options, **extra}
 
 
@@ -262,7 +275,7 @@ def _streamline_plan(archive, core, plan, warnings):
         default = None
         reason = None
         if issue.get('table') in retained_tables and not issue['id'].startswith('table:'):
-            if not issue['id'].startswith(('column:', 'row:')):
+            if not issue['id'].startswith(('column:', 'row:', 'row-group:')):
                 # This table cannot be converted, so dependent interpretations
                 # cannot be applied and offer no actionable user choice.
                 continue
@@ -338,7 +351,7 @@ def build_plan(archive):
     material_context = core.row_type == DWC + 'Occurrence' and any(
         term in core.terms and any(row[core.terms.index(term)] for row in core.rows)
         for term in (DWC + 'materialSampleID', DWC + 'materialEntityID'))
-    issues, columns, profiles, warnings = [], [], [], []
+    issues, columns, profiles, warnings, row_issues = [], [], [], [], []
     nodes, hierarchy_unsupported, hierarchy = _hierarchy(archive, core)
     scientific = _scientific_hierarchy(archive, core, nodes, hierarchy)
     if not archive.has_meta:
@@ -346,10 +359,13 @@ def build_plan(archive):
             "There is no meta.xml. File roles come from recognised filenames; extensions join by the core's persistent identifier, never by row position.",
             [{"value": "confirm", "label": "Confirm these table roles and identifier joins"}]))
     if core.row_type == DWC + "Occurrence":
+        supplied_events = [row[core.terms.index(DWC + 'eventID')] for row in core.rows if row[core.terms.index(DWC + 'eventID')]] if DWC + 'eventID' in core.terms else []
         issues.append(_issue("event-grain", "How should occurrence events be represented?",
             "Each occurrence needs an event. Separate events preserve row context. Combining by eventID is permitted only when every mapped event value agrees within each group.",
             [{"value": "per_row", "label": "One occurrence context event per source row"},
-             {"value": "by_id", "label": "Combine rows by supplied eventID after consistency checks"}]))
+             {"value": "by_id", "label": "Combine rows by supplied eventID after consistency checks"}],
+            # Splitting a repeated persistent identity asserts that the rows are different events.
+            assertion_values=['per_row'] if len(set(supplied_events)) != len(supplied_events) else []))
     for t, table in enumerate(archive.tables):
         family = SUPPORTED_EXTENSIONS.get(table.row_type)
         sources = [_source(table.terms, row) for row in table.rows] if family in {'humboldt', 'eol-media', 'eol-reference', 'bmde', 'nbn'} else []
@@ -540,8 +556,8 @@ def build_plan(archive):
                     'nonempty': len(values), 'samples': item['samples']})
             if review:
                 issues.append(_issue(item["id"], term.rsplit("/", 1)[-1],
-                    media_reason or ("Scientific names in this schema exclude authorship. Confirm the supplied value has that meaning, or retain it in originals." if name_ambiguity else "The source term has more than one possible subject or meaning. Choose its target, or retain it in originals." if options else "There is no implemented mapping for this source term. Originals retain all values."),
-                    item["options"], table=t, nonempty=len(values), samples=[value[:250] for value in item["samples"]]))
+                    kind='name-semantics' if name_ambiguity and not media_reason else 'column-mapping', reason=media_reason or ("Scientific names in this schema exclude authorship. Confirm the supplied value has that meaning, or retain it in originals." if name_ambiguity else "The source term has more than one possible subject or meaning. Choose its target, or retain it in originals." if options else "There is no implemented mapping for this source term. Originals retain all values."),
+                    options=item["options"], table=t, nonempty=len(values), samples=[value[:250] for value in item["samples"]]))
         profiles.append(profile)
         if table.is_core or family == 'occurrence':
             pair = [DWC + 'decimalLatitude', DWC + 'decimalLongitude']
@@ -570,7 +586,7 @@ def build_plan(archive):
                         G + 'measurementTraitName', DWC + 'measurementMethod', G + 'measurementTraitSource', G + 'measurementTraitRemarks'))
                     reason = 'A Trait Descriptor needs a name, method, source or remarks. An identifier alone cannot create a protocol description.'
                 if missing:
-                    issues.append(_issue(f'row:{t}:{n}', f'{table.name}, row {n + 1}: incomplete description', reason, [PRESERVE], table=t, row=n + 1))
+                    row_issues.append(_issue(f'row:{t}:{n}', f'{table.name}, row {n + 1}: incomplete description', reason, [PRESERVE], table=t, row=n + 1))
         if family == 'eol-media':
             for n, source in enumerate(sources):
                 reason = eol_media_row_review(source)
@@ -578,11 +594,11 @@ def build_plan(archive):
                     options = [PRESERVE]
                     if source.get(DCT + 'type', '').strip().lower() not in TEXT_TYPES:
                         options.append({'value': 'convert', 'label': 'Convert with the chosen subject; retain missing or unsupported details'})
-                    issues.append(_issue(f'row:{t}:{n}', f'{table.name}, row {n + 1}: media meaning', reason, options, table=t, row=n + 1))
+                    row_issues.append(_issue(f'row:{t}:{n}', f'{table.name}, row {n + 1}: media meaning', reason, options, table=t, row=n + 1))
         if family == 'eol-reference':
             for n, source in enumerate(sources):
                 if not source.get(DCT + 'identifier', '').strip():
-                    issues.append(_issue(f'row:{t}:{n}', f'{table.name}, row {n + 1}: reference identifier is missing',
+                    row_issues.append(_issue(f'row:{t}:{n}', f'{table.name}, row {n + 1}: reference identifier is missing',
                         'EOL requires a supplied reference identifier; this row stays in originals.', [PRESERVE], table=t, row=n + 1))
         if family in {'bmde', 'nbn'}:
             for n, source in enumerate(sources):
@@ -591,7 +607,7 @@ def build_plan(archive):
                     options = [PRESERVE]
                     if family != 'bmde' or not (source.get(BMDE + 'LastModifiedAction', '').strip().upper() == 'DELETE' or source.get(BMDE + 'NoObservations', '').strip() == 'NoObs'):
                         options.append({'value': 'convert', 'label': 'Confirm handling and convert approved values; retain invalid or unsupported dates'})
-                    issues.append(_issue(f'row:{t}:{n}', f'{table.name}, row {n + 1}: record handling', reason, options, table=t, row=n + 1))
+                    row_issues.append(_issue(f'row:{t}:{n}', f'{table.name}, row {n + 1}: record handling', reason, options, table=t, row=n + 1))
         if family == 'germplasm-score' and G + 'measurementTraitID' in table.terms:
             issues.append(_issue(f'trait-link:{t}', f'{table.name}: link scores to trait protocols?',
                 'A trait ID may be an ontology identifier. Link only when each supplied ID exactly matches one converted Trait Descriptor protocol ID; no protocol is created from a score.',
@@ -604,8 +620,10 @@ def build_plan(archive):
             for n, source in enumerate(sources):
                 review = scope_review(source)
                 if review:
-                    issues.append(_issue(f'hum-scope:{t}:{n}', f'{table.name}, row {n + 1}: survey scope',
-                        review['reason'], review['options'], table=t, row=n + 1))
+                    # Grouping by identical scope claims keeps one completeness assertion to one claim.
+                    row_issues.append(_issue(f'hum-scope:{t}:{n}', f'{table.name}, row {n + 1}: survey scope',
+                        review['reason'], review['options'], table=t, row=n + 1,
+                        scope_values={term: value for term, value in sorted(source.items()) if 'Scope' in term}))
         if table.is_core and own == "event" and (DWC + "eventCategory" not in table.terms or any(not row[table.terms.index(DWC + "eventCategory")] for row in table.rows)):
             humboldt_present = any(extension.row_type in HUMBOLDT_FAMILIES for extension in archive.tables if not extension.is_core)
             issues.append(_issue("event-category", "Event category is missing", "Choose the category for source events without a supplied category."
@@ -634,52 +652,93 @@ def build_plan(archive):
             "tables": profiles, "columns": columns, "issues": issues,
             "files": [{"name": name, "sha256": hashlib.sha256(content).hexdigest(), "bytes": len(content)} for name, content in sorted(archive.files.items())]}
     plan['uploads'] = [{'name': name, 'sha256': hashlib.sha256(content).hexdigest(), 'bytes': len(content)} for name, content in sorted(archive.uploaded_files.items())]
-    if core.row_type == DWC + 'Occurrence' and DWC + 'eventID' in core.terms:
-        group_column = core.terms.index(DWC + 'eventID')
-        core_index = archive.tables.index(core)
-        event_columns = [column for column in columns if column['table'] == core_index and column['default'].startswith('event.')]
-        groups, conflicts = {}, defaultdict(set)
-        for row in core.rows:
-            group = row[group_column]
-            record = {column['default']: row[column['column']] for column in event_columns}
-            if group not in groups:
-                groups[group] = record
-            else:
-                for field, value in record.items():
-                    if value != groups[group][field]: conflicts[field].add(group)
-        plan['event_grouping_evidence'] = {'identifier': DWC + 'eventID', 'missing': sum(not row[group_column] for row in core.rows),
-            'groups': len(groups), 'conflicting_fields': {field: len(values) for field, values in sorted(conflicts.items())},
-            'checks_passed': '' not in groups and not conflicts}
     if hierarchy_unsupported or hierarchy:
         plan['event_hierarchy'] = {'identifier': DWC + 'eventID', 'parent_identifier': PARENT,
             'basis': 'source Event rows' if core.row_type == DWC + 'Event' else 'occurrence rows combined by supplied eventID',
             **({'unsupported': hierarchy_unsupported} if hierarchy_unsupported else hierarchy_summary(hierarchy))}
     if scientific is not None:
         plan['scientific_hierarchy'] = _scientific_summary(scientific)
+    _preflight_plan(archive, core, plan, row_issues)
     _streamline_plan(archive, core, plan, warnings)
+    _require_valid_defaults(plan)
+    apply_policy(plan['issues']); apply_policy(plan['automatic_choices'])
     plan["id"] = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
     return plan
 
 
+def _preflight_plan(archive, core, plan, row_issues):
+    """Attach precomputed option requirements, unavailable options and grouped row issues."""
+    checks = preflight(archive, core, plan['columns'], plan['issues'], row_issues)
+    grouped, members = group_rows(row_issues, [table.name for table in archive.tables])
+    plan['issues'].extend(grouped)
+    plan['row_issues'] = members
+    remove_unavailable([*plan['issues'], *plan['columns']], checks.unavailable)
+    unavailable_tables = dict(checks.unavailable_tables)
+    for issue in plan['issues']:
+        # A dependent question with no possible answer makes its extension unconvertible.
+        if not issue['options'] and 'table' in issue and issue['id'] != f"table:{issue['table']}":
+            unavailable_tables.setdefault(issue['table'], ' '.join(option['reason'] for option in issue.get('unavailable_options', [])))
+    for t, reason in unavailable_tables.items():
+        issue = next(issue for issue in plan['issues'] if issue['id'] == f'table:{t}')
+        issue.update(options=[PRESERVE], reason=reason)
+        plan['tables'][t]['conversion_unavailable'] = reason
+    plan['requirements'] = {decision: {value: list(requirements) for value, requirements in sorted(values.items())}
+                            for decision, values in sorted(checks.requirements.items())}
+
+
+def _require_valid_defaults(plan):
+    """An automatic choice whose requirements fail under the automatic defaults needs input instead."""
+    while True:
+        effective = effective_decisions(plan, {})
+        failing = [choice for choice in plan['automatic_choices']
+                   if failed_requirements(plan, effective, choice['id'], choice['default'])]
+        if not failing:
+            return
+        for choice in failing:
+            reasons = ' '.join(requirement['reason'] for requirement in failed_requirements(plan, effective, choice['id'], choice['default']))
+            plan['automatic_choices'].remove(choice)
+            plan['warnings'] = [warning for warning in plan['warnings'] if warning['id'] != choice['id']]
+            plan['issues'].append({key: value for key, value in choice.items() if key != 'default'} | {'reason': choice['reason'] + ' ' + reasons})
+            for column in plan['columns']:
+                if column['id'] == choice['id']:
+                    column['review'] = True
+
+
 def validate_decisions(plan, decisions, require_complete=True):
+    """The only gate for every decision source. Returns unresolved and violating decision ids.
+
+    Partial saves accept any offered option and report requirement violations as
+    unresolved; a complete check rejects missing choices and every active
+    effective choice (explicit, automatic, group-expanded or column default)
+    whose requirements fail.
+    """
     if not isinstance(decisions, dict) or any(not isinstance(value, str) for value in decisions.values()):
-        raise ImportFailure("Decisions must be a mapping of decision IDs to option strings.")
-    choices = {item["id"]: {option["value"] for option in item["options"]} for item in [*plan["columns"], *plan["issues"], *plan.get('automatic_choices', [])]}
+        raise ConversionError("Decisions must be a mapping of decision IDs to option strings.", category='decision')
+    entries = [*plan["columns"], *plan["issues"], *plan.get('automatic_choices', [])]
+    choices = {item["id"]: {option["value"] for option in item["options"]} for item in entries}
+    for member in plan.get('row_issues', []):
+        choices[member['id']] = choices.get(member['group'], set())
     for index, table in enumerate(plan['tables']):
         if table.get('conversion_unavailable') and decisions.get(f'table:{index}', 'preserve') != 'preserve':
-            raise ImportFailure(table['conversion_unavailable'])
+            raise ConversionError(table['conversion_unavailable'], category='decision', decision_ids=[f'table:{index}'])
     for item in plan["columns"]:
         if item.get("parent_link_unavailable") and decisions.get(item["id"]) == PARENT_LINK:
-            raise ImportFailure(item["parent_link_unavailable"])
+            raise ConversionError(item["parent_link_unavailable"], category='decision', decision_ids=[item['id']])
     for key, value in decisions.items():
         if key not in choices or value not in choices[key]:
-            raise ImportFailure(f"Unsupported mapping decision: {key}={value!r}.")
-    effective = {**{item['id']: item['default'] for item in plan.get('automatic_choices', [])}, **decisions}
+            raise ConversionError(f"Unsupported mapping decision: {key}={value!r}.", category='decision', decision_ids=[key])
+    effective = effective_decisions(plan, decisions)
     nested = plan.get('taxonomy', {}).get('occurrence_plans', {})
     nested_ids = {f'taxon-occurrence:{index}:' + issue['id'] for index, inner in nested.items() for issue in inner['issues']}
-    unresolved = [item["id"] for item in plan["issues"] if item['id'] not in nested_ids and item["id"] not in effective and not (
+
+    def resolved(item):
+        # A group is resolved when every member has an effective choice, even without a group key.
+        return all(member in effective for member in item['members']) if item.get('members') else item['id'] in effective
+
+    unresolved = [item["id"] for item in plan["issues"] if item['id'] not in nested_ids and not resolved(item) and not (
         "table" in item and (effective.get(f"table:{item['table']}") == "preserve" or
                             ('row' in item and effective.get(f"row:{item['table']}:{item['row'] - 1}") == 'preserve')))]
+    found = violations(plan, decisions)
     active_nested = []
     for index, inner in nested.items():
         if effective.get(f'table:{index}') == 'preserve':
@@ -687,19 +746,22 @@ def validate_decisions(plan, decisions, require_complete=True):
         prefix = f'taxon-occurrence:{index}:'
         inner_decisions = {key[len(prefix):]: value for key, value in decisions.items() if key.startswith(prefix)}
         unresolved.extend(prefix + key for key in validate_decisions(inner, inner_decisions, require_complete=False))
-        active_nested.append((inner, inner_decisions))
+        active_nested.append((prefix, inner, inner_decisions))
+    if require_complete and found:
+        raise ConversionError(' '.join(dict.fromkeys(reason for item in found for reason in item['reasons'])), category='decision',
+                              decision_ids=[identifier for item in found for identifier in item['decision_ids']],
+                              evidence={'violations': found[:10]})
     if require_complete and unresolved:
-        raise ImportFailure(f"Resolve {len(unresolved)} review decisions before converting.")
+        raise ConversionError(f"Resolve {len(unresolved)} review decisions before converting.", category='decision',
+                              decision_ids=unresolved)
     if require_complete:
-        for inner, inner_decisions in active_nested:
-            validate_decisions(inner, inner_decisions)
-    if require_complete and effective.get('event-category') == 'occurrence':
-        dependent = {item['id'] for item in plan.get('automatic_choices', []) if item.get('depends_on_event_category')}
-        for index, table in enumerate(plan['tables']):
-            if (f'hum-category:{index}' in dependent and effective.get(f'table:{index}', 'preserve').startswith('humboldt-')
-                    and effective.get(f'hum-category:{index}') != 'confirm'):
-                raise ImportFailure('Choose survey for missing event categories, confirm the linked survey events, or retain the Humboldt table in originals.')
-    return unresolved
+        for prefix, inner, inner_decisions in active_nested:
+            try:
+                validate_decisions(inner, inner_decisions)
+            except ConversionError as error:
+                raise ConversionError(str(error), category=error.category, decision_ids=[prefix + key for key in error.decision_ids],
+                                      evidence=error.evidence) from error
+    return list(dict.fromkeys([*unresolved, *(item['id'] for item in found)]))
 
 
 def _link_parents(archive, core, core_index, plan, decisions, core_columns, event_keys, events_by_key, column_consumption):
@@ -713,10 +775,11 @@ def _link_parents(archive, core, core_index, plan, decisions, core_columns, even
     links = {}
     if decision == PARENT_LINK:
         if core.row_type == DWC + 'Occurrence' and decisions.get('event-grain') != 'by_id':
-            raise ImportFailure('Parent event links on an Occurrence core require events combined by supplied eventID; '
-                                'separate per-row events have no established persistent identity. Preserve parentEventID instead.')
+            raise ConversionError('Parent event links on an Occurrence core require events combined by supplied eventID; '
+                                  'separate per-row events have no established persistent identity. Preserve parentEventID instead.',
+                                  category='decision', decision_ids=['event-grain', column['id']])
         if unsupported or result['problems']:
-            raise ImportFailure(unsupported or describe_problems(result))
+            raise ConversionError(unsupported or describe_problems(result), category='decision', decision_ids=[column['id']])
         for child, parent in result['links'].items():
             child_key, parent_key = event_keys[nodes[child]['join_ids'][0]], event_keys[nodes[parent]['join_ids'][0]]
             events_by_key[child_key]['parentEvent_fk'] = parent_key
@@ -749,10 +812,10 @@ def _link_parents(archive, core, core_index, plan, decisions, core_columns, even
 
 def convert(archive, plan, decisions):
     if build_plan(archive)["id"] != plan["id"]:
-        raise ImportFailure("The mapping plan no longer matches these files or mapping rules. Inspect the upload again.")
+        raise ConversionError("The mapping plan no longer matches these files or mapping rules. Inspect the upload again.", category='stale-plan')
     validate_decisions(plan, decisions)
     user_decisions = dict(decisions)
-    decisions = {**{item['id']: item['default'] for item in plan.get('automatic_choices', [])}, **decisions}
+    decisions = effective_decisions(plan, decisions)
     if next(table for table in archive.tables if table.is_core).row_type == DWC + 'Taxon':
         from api.dwca_taxon import convert_taxon
         return convert_taxon(archive, plan, decisions, user_decisions=user_decisions)
@@ -763,6 +826,7 @@ def convert(archive, plan, decisions):
     namespace = archive.fingerprint
     columns_by_table = defaultdict(list)
     issues_by_id = {issue['id']: issue for issue in [*plan['issues'], *plan.get('automatic_choices', [])]}
+    issues_by_id.update({member['id']: {**issues_by_id[member['group']], **member} for member in plan.get('row_issues', [])})
     for column in plan["columns"]:
         columns_by_table[column["table"]].append(column)
 
@@ -776,15 +840,16 @@ def convert(archive, plan, decisions):
                 continue
             table, field = target.split(".", 1)
             value = row[column['column']]
-            descriptor = _typed_field(target)
-            if value and descriptor is not None and SUPPORTED_EXTENSIONS.get(archive.tables[t].row_type) != 'humboldt' and not valid_value(descriptor, value):
+            if _copied(archive.tables[t].row_type, target, value) is None:
                 withheld_values.append({'source_table': archive.tables[t].name, 'source_table_index': t, 'source_row': n + 1,
                                        'term': column['term'], 'value': value, 'target': target,
                                        'reason': 'Value fails the approved target type or bounds; retained without normalization.'})
                 typed_withheld[(t, column['column'])].add(n)
                 continue
             if field in result[table] and value and result[table][field] and result[table][field] != value:
-                raise ImportFailure(f'Conflicting source values map to {target}; preserve one column or correct the source.')
+                raise ConversionError(f'Conflicting source values map to {target}; preserve one column or correct the source.', category='conflict',
+                                      decision_ids=[item['id'] for item in columns_by_table[t] if decisions.get(item['id'], item['default']) == target],
+                                      evidence={'source_table': archive.tables[t].name, 'source_row': n + 1})
             if value or field not in result[table]:
                 result[table][field] = value
         return result
@@ -792,6 +857,9 @@ def convert(archive, plan, decisions):
     def approved_source(t, row):
         selected = [column for column in columns_by_table[t] if decisions.get(column['id'], column['default']) != 'preserve']
         return _source([column['term'] for column in selected], [row[column['column']] for column in selected])
+
+    def patch_columns(t, field):
+        return [item['id'] for item in columns_by_table[t] if decisions.get(item['id'], item['default']) in {'event.' + field, 'derive'}]
 
     def derived_source(t, row):
         return {column['term']: row[column['column']] for column in columns_by_table[t]
@@ -828,17 +896,24 @@ def convert(archive, plan, decisions):
             return
         event = events_by_key.get(record['event_pk'])
         if event is None:
-            raise ImportFailure('An extension event patch must refer to an existing core event.')
+            raise ConversionError('An extension event patch must refer to an existing core event.', category='internal')
         for field, value in record.items():
             if value and event.get(field) and event[field] != value:
-                raise ImportFailure(f'Extension {archive.tables[t].name}, row {n + 1}, conflicts with existing event.{field}; preserve the field or correct the source.')
+                raise ConversionError(f'Extension {archive.tables[t].name}, row {n + 1}, conflicts with existing event.{field}; preserve the field or correct the source.',
+                                      category='conflict', decision_ids=[f'table:{t}', *patch_columns(t, field)],
+                                      evidence={'source_table': archive.tables[t].name, 'source_row': n + 1, 'field': field,
+                                                'event_value': event[field], 'extension_value': value})
         combined = {**event, **{field: value for field, value in record.items() if value}}
         if combined.get('year') and combined.get('eventDate'):
             if not re.fullmatch(r'-?\d{1,4}', combined['year']):
-                raise ImportFailure('Mapped event.year is not an integer year.')
+                raise ConversionError('Mapped event.year is not an integer year.', category='conflict',
+                                      decision_ids=[f'table:{t}', *patch_columns(t, 'year')], evidence={'source_row': n + 1})
             years = re.findall(r'(?<!\d)(\d{4})(?=-|/|$)', combined['eventDate'])
             if years and any(int(year) != int(combined['year']) for year in years):
-                raise ImportFailure('An extension year conflicts with the existing eventDate.')
+                raise ConversionError('An extension year conflicts with the existing eventDate.', category='conflict',
+                                      decision_ids=[f'table:{t}', *patch_columns(t, 'year')],
+                                      evidence={'source_table': archive.tables[t].name, 'source_row': n + 1,
+                                                'year': combined['year'], 'eventDate': combined['eventDate']})
         event.update(combined)
         trace('event', {'event_pk': event['event_pk']}, t, n)
 
@@ -871,12 +946,15 @@ def convert(archive, plan, decisions):
             material = dict(mapped.get('material', {}))
             group = (t, source_id) if decisions[f'material:{t}'] == 'per_row' else (t, material.get('materialEntityID', ''))
             if not group[1]:
-                raise ImportFailure('Combining material rows requires a mapped material identifier on every row.')
+                raise ConversionError('Combining material rows requires a mapped material identifier on every row.', category='decision',
+                                      decision_ids=[f'material:{t}'])
             # evidenceForOccurrenceID shares a source IRI with occurrenceID, but is a relationship, not a copied identifier.
             material.pop('evidenceForOccurrenceID', None)
             material.update(materialEntity_pk=_key(archive, 'material', *group), collectionEvent_fk=event_key)
             if group in material_groups and material_groups[group] != material:
-                raise ImportFailure(f'Conflicting material values or collection events for {group[1]!r}; retain separate records or correct the source.')
+                raise ConversionError(f'Conflicting material values or collection events for {group[1]!r}; retain separate records or correct the source.',
+                                      category='conflict', decision_ids=[f'material:{t}', 'event-grain'],
+                                      evidence={'source_table': archive.tables[t].name, 'source_row': n + 1, 'materialEntityID': group[1]})
             if group not in material_groups:
                 material_groups[group] = material; add('material', material, t, n)
             else:
@@ -900,7 +978,8 @@ def convert(archive, plan, decisions):
         if core.row_type == DWC + "Occurrence" and decisions["event-grain"] == "by_id":
             group_id = event.get("eventID", "")
             if not group_id:
-                raise ImportFailure("Combining events requires a nonempty eventID on every core row.")
+                raise ConversionError("Combining events requires a nonempty eventID on every core row.", category='decision',
+                                      decision_ids=['event-grain'])
         event_key = _key(archive, "event", group_id); event_keys[source_id] = event_key
         event.update(event_pk=event_key)
         if not event.get("eventCategory"):
@@ -909,7 +988,12 @@ def convert(archive, plan, decisions):
             supplied_categories.add(event_key)
         if group_id in event_groups:
             if event_groups[group_id] != event:
-                raise ImportFailure(f"Conflicting event values for eventID {group_id!r}; use separate events or correct the source.")
+                raise ConversionError(f"Conflicting event values for eventID {group_id!r}; use separate events or correct the source.",
+                                      category='conflict', decision_ids=['event-grain', *(item['id'] for item in columns_by_table[core_index]
+                                                                                        if decisions.get(item['id'], item['default']).startswith('event.'))],
+                                      evidence={'eventID': group_id, 'source_row': n + 1,
+                                                'fields': sorted(field for field in {*event, *event_groups[group_id]}
+                                                                 if event.get(field) != event_groups[group_id].get(field))})
             trace('event', {'event_pk': event_key}, core_index, n)
         else:
             event_groups[group_id] = event; add("event", event, core_index, n)
@@ -929,185 +1013,212 @@ def convert(archive, plan, decisions):
         if role == "preserve": continue
         if role == 'humboldt-grouped':
             if decisions.get('event-grain') != 'by_id':
-                raise ImportFailure('Occurrence-core Humboldt surveys require events combined by supplied eventID after consistency checks.')
+                raise ConversionError('Occurrence-core Humboldt surveys require events combined by supplied eventID after consistency checks.',
+                                      category='decision', decision_ids=['event-grain', f'table:{t}'])
             expected, attached, signatures = defaultdict(set), defaultdict(set), defaultdict(set)
             for source_id in core.ids: expected[event_keys[source_id]].add(source_id)
             for row, source_id in zip(table.rows, table.ids):
                 event_key = event_keys[source_id]; attached[event_key].add(source_id); signatures[event_key].add(source_signature(t, row))
             if any(attached[key] != expected[key] or len(signatures[key]) != 1 for key in attached):
-                raise ImportFailure('Grouped Humboldt rows need complete identical coverage of every occurrence in each attached event.')
+                raise ConversionError('Grouped Humboldt rows need complete identical coverage of every occurrence in each attached event.',
+                                      category='conflict', decision_ids=[f'table:{t}'])
         for n, (row, source_id) in enumerate(zip(table.rows, table.ids)):
-            if decisions.get(f'row:{t}:{n}') == 'preserve':
-                preserved_rows.append({'source_table': table.name, 'source_table_index': t, 'source_row': n + 1,
-                                       'reason': issues_by_id[f'row:{t}:{n}']['reason']})
-                skipped_by_table[t].add(n)
-                continue
-            mapped = values(t, row, n)
-            if role == "occurrence":
-                occurrence_row(t, n, f"{source_id}:{n}", mapped, event_keys[source_id])
-            elif role == "identification":
-                record = {**mapped.get("identification", {}), "identification_pk": _key(archive, "identification", t, n), "occurrence_fk": occurrence_keys[source_id]}
-                add("identification", record, t, n)
-            elif role.endswith("-assertion") or role == 'declared-assertions':
-                record = dict(mapped.get("occurrence-assertion", {}))
-                explicit_id = row[table.terms.index(DWC + 'occurrenceID')] if DWC + 'occurrenceID' in table.terms else ''
-                if role == 'declared-assertions' and explicit_id:
-                    matches = occurrences_by_identifier.get(explicit_id, [])
-                    if len(matches) != 1 or matches[0][1] != event_keys[source_id]:
-                        raise ImportFailure(f'Assertion occurrenceID {explicit_id!r} does not resolve to exactly one occurrence in its attached event.')
-                    record['occurrence_fk'] = matches[0][0]; target = 'occurrence-assertion'
-                elif role == 'occurrence-assertion':
-                    if explicit_id:
+            try:
+                if decisions.get(f'row:{t}:{n}') == 'preserve':
+                    preserved_rows.append({'source_table': table.name, 'source_table_index': t, 'source_row': n + 1,
+                                           'reason': issues_by_id[f'row:{t}:{n}']['reason']})
+                    skipped_by_table[t].add(n)
+                    continue
+                mapped = values(t, row, n)
+                if role == "occurrence":
+                    occurrence_row(t, n, f"{source_id}:{n}", mapped, event_keys[source_id])
+                elif role == "identification":
+                    record = {**mapped.get("identification", {}), "identification_pk": _key(archive, "identification", t, n), "occurrence_fk": occurrence_keys[source_id]}
+                    add("identification", record, t, n)
+                elif role.endswith("-assertion") or role == 'declared-assertions':
+                    record = dict(mapped.get("occurrence-assertion", {}))
+                    explicit_id = row[table.terms.index(DWC + 'occurrenceID')] if DWC + 'occurrenceID' in table.terms else ''
+                    if role == 'declared-assertions' and explicit_id:
                         matches = occurrences_by_identifier.get(explicit_id, [])
-                        if len(matches) != 1 or matches[0][0] != occurrence_keys[source_id]:
-                            raise ImportFailure('The assertion occurrenceID disagrees with its archive core attachment.')
-                    record['occurrence_fk'] = occurrence_keys[source_id]; target = role
-                else:
-                    record['event_fk'] = event_keys[source_id]; target = 'event-assertion'
-                add(target, record, t, n)
-            elif role == "resource-relationship":
-                record = mapped.get(role, {})
-                add(role, record, t, n)
-            elif role in {'identifier', 'reference', 'eol-reference'}:
-                subject_table = 'event' if core.row_type == DWC + 'Event' else 'occurrence'
-                subject_key = event_keys[source_id] if subject_table == 'event' else occurrence_keys[source_id]
-                records = (emit_eol_records(role, _source(table.terms, row), mapped, subject_table, subject_key, _key(archive, 'reference', t, n))
-                           if role == 'eol-reference' else emit_reference_records(role, mapped, subject_table, subject_key, _key(archive, 'reference', t, n)))
-                for name, record in records:
-                    add(name, record, t, n)
-            elif role.startswith('humboldt-'):
-                event_key = event_keys[source_id]; event = events_by_key[event_key]
-                if event['eventCategory'] != 'survey':
-                    if decisions[f'hum-category:{t}'] != 'confirm' or event_key in supplied_categories:
-                        raise ImportFailure('Humboldt rows need reviewed survey events; a supplied non-survey eventCategory cannot be overwritten.')
-                    event['eventCategory'] = 'survey'
-                source = approved_source(t, row)
-                scope_decision = decisions.get(f'hum-scope:{t}:{n}', 'source')
-                group = (t, event_key) if role in {'humboldt-grouped', 'humboldt-merge'} else (t, n)
-                signature = (source_signature(t, row), json.dumps(mapped, sort_keys=True), scope_decision)
-                if group in humboldt_groups and humboldt_groups[group][0] != signature:
-                    raise ImportFailure('Combining Humboldt surveys requires identical source values and scope decisions; retain separate surveys instead.')
-                survey_key = _key(archive, 'survey', *group)
-                records, consumed, withheld = emit_humboldt_records(
-                    source, mapped, event_key, survey_key, scope_decision,
-                    original_source=_source(table.terms, row))
-                for name, record in records:
-                    if group in humboldt_groups:
-                        keys = TABLE_SPECS[name].primary_key or [field for field in record if field.endswith('_fk')]
-                        trace(name, {field: record.get(field) for field in keys}, t, n)
+                        if len(matches) != 1 or matches[0][1] != event_keys[source_id]:
+                            raise ConversionError(f'Assertion occurrenceID {explicit_id!r} does not resolve to exactly one occurrence in its attached event.',
+                                                  category='conflict', decision_ids=[f'table:{t}'],
+                                                  evidence={'source_table': table.name, 'source_row': n + 1, 'matches': len(matches)})
+                        record['occurrence_fk'] = matches[0][0]; target = 'occurrence-assertion'
+                    elif role == 'occurrence-assertion':
+                        if explicit_id:
+                            matches = occurrences_by_identifier.get(explicit_id, [])
+                            if len(matches) != 1 or matches[0][0] != occurrence_keys[source_id]:
+                                raise ConversionError('The assertion occurrenceID disagrees with its archive core attachment.', category='conflict',
+                                                      decision_ids=[f'table:{t}'], evidence={'source_table': table.name, 'source_row': n + 1})
+                        record['occurrence_fk'] = occurrence_keys[source_id]; target = role
                     else:
+                        record['event_fk'] = event_keys[source_id]; target = 'event-assertion'
+                    add(target, record, t, n)
+                elif role == "resource-relationship":
+                    record = mapped.get(role, {})
+                    add(role, record, t, n)
+                elif role in {'identifier', 'reference', 'eol-reference'}:
+                    subject_table = 'event' if core.row_type == DWC + 'Event' else 'occurrence'
+                    subject_key = event_keys[source_id] if subject_table == 'event' else occurrence_keys[source_id]
+                    records = (emit_eol_records(role, _source(table.terms, row), mapped, subject_table, subject_key, _key(archive, 'reference', t, n))
+                               if role == 'eol-reference' else emit_reference_records(role, mapped, subject_table, subject_key, _key(archive, 'reference', t, n)))
+                    for name, record in records:
                         add(name, record, t, n)
-                humboldt_groups[group] = (signature, survey_key)
-                for term in consumed: column_consumption[(t, term)].add(n)
-                withheld_values.extend({'source_table': table.name, 'source_row': n + 1, 'term': term,
-                                        'value': source[term], 'reason': reason} for term, reason in withheld.items())
-            elif role.startswith('germplasm-'):
-                family = SUPPORTED_EXTENSIONS[table.row_type]; derived = derived_source(t, row)
-                raw = _source(table.terms, row)
-                subject_table = role.rsplit('-', 1)[-1] if family == 'germplasm-score' else {'germplasm-accession': 'material', 'germplasm-trait': 'protocol', 'germplasm-trial': 'event'}[family]
-                if subject_table == 'material':
-                    material = materials_by_source.get(source_id)
-                    if not material or not material.get('materialEntityID'):
-                        raise ImportFailure('Germplasm material conversion requires an explicitly approved material with a supplied identifier on every linked core row.')
-                    subject_key = material['materialEntity_pk']
-                    if family == 'germplasm-score' and (not raw.get(G + 'germplasmID') or raw[G + 'germplasmID'] not in material_identifiers[subject_key]):
-                        raise ImportFailure('Score germplasmID must exactly match an identifier of its reviewed material subject.')
-                elif subject_table == 'protocol': subject_key = _key(archive, 'trait-protocol', t, n)
-                elif subject_table == 'event': subject_key = event_keys[source_id]
-                else: subject_key = occurrence_keys[source_id]
-                records = emit_germplasm_records(family, derived, mapped, subject_table, subject_key, _key(archive, 'germplasm-reference', t, n))
-                if family == 'germplasm-score' and decisions.get(f'trait-link:{t}') == 'exact' and raw.get(G + 'measurementTraitID'):
-                    matches = trait_protocols[raw[G + 'measurementTraitID']]
-                    if len(matches) != 1:
-                        raise ImportFailure('A Score trait ID must exactly match one converted Trait Descriptor protocol ID; missing or duplicate matches cannot be linked.')
-                    for _, record in records: record['assertionProtocol_fk'] = matches[0]
-                    column_consumption[(t, G + 'measurementTraitID')].add(n)
-                extension_subjects.append({'source_table': table.name, 'source_row': n + 1, 'subject_table': subject_table,
-                                           'subject_key': subject_key, 'decision': role,
-                                           'matched_germplasmID': raw.get(G + 'germplasmID', '') if family == 'germplasm-score' and subject_table == 'material' else ''})
-                consumed_records(t, n, row, records, derived)
-                for name, record in records:
-                    add_extension(name, record, t, n)
-                    if name == 'material-identifier': material_identifiers[subject_key].add(record['identifier'])
-                    if name == 'protocol' and record.get('protocolID'): trait_protocols[record['protocolID']].append(subject_key)
-            elif role in {'bmde-context', 'nbn-context'}:
-                family = SUPPORTED_EXTENSIONS[table.row_type]; derived = derived_source(t, row)
-                # Absent optional registry columns carry no source value. Present columns must be approved together.
-                present = set(table.terms)
-                groups = GROUPS + [dict.fromkeys(UTM), dict.fromkeys(TIMES)] if family == 'bmde' else [dict.fromkeys(NBN_DATE)]
-                for group in groups:
-                    if any(term in derived for term in group):
-                        for term in group:
-                            if term not in present: derived[term] = ''
-                if family == 'nbn' and any(term in derived for term in NBN_DATE):
-                    if any(term in present and term not in derived for term in NBN_DATE):
-                        raise ImportFailure('NBN vague date columns must be approved or preserved together.')
-                    try:
-                        date_value = nbn_event_date(*(derived.get(term, '') for term in NBN_DATE))
-                        reason = 'Unsupported NBN vague date code; original endpoints are retained.' if date_value is None else None
-                    except ImportFailure as error:
-                        reason = str(error)
-                    if reason:
-                        for term in NBN_DATE:
-                            value = derived.pop(term, '')
-                            if value: withheld_values.append({'source_table': table.name, 'source_row': n + 1, 'term': term, 'value': value, 'reason': reason})
-                records = []
-                if family == 'bmde' and core.row_type == DWC + 'Occurrence':
-                    occurrence_source = {term: value for term, value in derived.items() if any(term in group for group in GROUPS)}
-                    records.extend(emit_legacy_records(family, occurrence_source, {}, 'occurrence', occurrence_keys[source_id], _key(archive, 'legacy', t, n)))
-                    event_source = {term: value for term, value in derived.items() if term in UTM + TIMES}
-                else: event_source = derived
-                records.extend(emit_legacy_records(family, event_source, mapped, 'event', event_keys[source_id], _key(archive, 'legacy', t, n)))
-                consumed_records(t, n, row, records, derived)
-                for name, record in records: add_extension(name, record, t, n)
-            elif role.startswith('media-'):
-                media = {field: value for field, value in mapped.get('media', {}).items() if value}
-                if not media:
-                    raise ImportFailure('A converted media row needs at least one mapped media value; preserve the extension instead of creating empty records.')
-                media_key = _key(archive, 'media', t, n)
-                media['media_pk'] = media_key
-                for target, primary, foreign in (('usage-policy', 'usagePolicy_pk', 'usagePolicy_fk'), ('provenance', 'provenance_pk', 'provenance_fk')):
-                    description = {field: value for field, value in mapped.get(target, {}).items() if value}
-                    if not description:
-                        continue
-                    signature = json.dumps(description, sort_keys=True, ensure_ascii=False)
-                    key = _key(archive, target, signature)
-                    media[foreign] = key
-                    if signature not in media_groups[target]:
-                        media_groups[target][signature] = key
-                        add(target, {**description, primary: key}, t, n)
+                elif role.startswith('humboldt-'):
+                    event_key = event_keys[source_id]; event = events_by_key[event_key]
+                    if event['eventCategory'] != 'survey':
+                        if decisions[f'hum-category:{t}'] != 'confirm' or event_key in supplied_categories:
+                            raise ConversionError('Humboldt rows need reviewed survey events; a supplied non-survey eventCategory cannot be overwritten.',
+                                                  category='decision', decision_ids=[f'hum-category:{t}', 'event-category', f'table:{t}'])
+                        event['eventCategory'] = 'survey'
+                    source = approved_source(t, row)
+                    scope_decision = decisions.get(f'hum-scope:{t}:{n}', 'source')
+                    group = (t, event_key) if role in {'humboldt-grouped', 'humboldt-merge'} else (t, n)
+                    signature = (source_signature(t, row), json.dumps(mapped, sort_keys=True), scope_decision)
+                    if group in humboldt_groups and humboldt_groups[group][0] != signature:
+                        first_row = humboldt_groups[group][2]
+                        raise ConversionError('Combining Humboldt surveys requires identical source values and scope decisions; retain separate surveys instead.',
+                                              category='conflict', decision_ids=[f'table:{t}', f'hum-scope:{t}:{first_row}', f'hum-scope:{t}:{n}'],
+                                              evidence={'source_table': table.name, 'source_rows': [first_row + 1, n + 1]})
+                    survey_key = _key(archive, 'survey', *group)
+                    records, consumed, withheld = emit_humboldt_records(
+                        source, mapped, event_key, survey_key, scope_decision,
+                        original_source=_source(table.terms, row))
+                    for name, record in records:
+                        if group in humboldt_groups:
+                            keys = TABLE_SPECS[name].primary_key or [field for field in record if field.endswith('_fk')]
+                            trace(name, {field: record.get(field) for field in keys}, t, n)
+                        else:
+                            add(name, record, t, n)
+                    humboldt_groups.setdefault(group, (signature, survey_key, n))
+                    for term in consumed: column_consumption[(t, term)].add(n)
+                    withheld_values.extend({'source_table': table.name, 'source_row': n + 1, 'term': term,
+                                            'value': source[term], 'reason': reason} for term, reason in withheld.items())
+                elif role.startswith('germplasm-'):
+                    family = SUPPORTED_EXTENSIONS[table.row_type]; derived = derived_source(t, row)
+                    raw = _source(table.terms, row)
+                    subject_table = role.rsplit('-', 1)[-1] if family == 'germplasm-score' else {'germplasm-accession': 'material', 'germplasm-trait': 'protocol', 'germplasm-trial': 'event'}[family]
+                    if subject_table == 'material':
+                        material = materials_by_source.get(source_id)
+                        if not material or not material.get('materialEntityID'):
+                            raise ConversionError('Germplasm material conversion requires an explicitly approved material with a supplied identifier on every linked core row.',
+                                                  category='conflict', decision_ids=[f'table:{t}', f'material:{core_index}'],
+                                                  evidence={'source_table': table.name, 'source_row': n + 1})
+                        subject_key = material['materialEntity_pk']
+                        if family == 'germplasm-score' and (not raw.get(G + 'germplasmID') or raw[G + 'germplasmID'] not in material_identifiers[subject_key]):
+                            raise ConversionError('Score germplasmID must exactly match an identifier of its reviewed material subject.',
+                                                  category='conflict', decision_ids=[f'table:{t}', f'material:{core_index}'],
+                                                  evidence={'source_table': table.name, 'source_row': n + 1, 'germplasmID': raw.get(G + 'germplasmID', '')})
+                    elif subject_table == 'protocol': subject_key = _key(archive, 'trait-protocol', t, n)
+                    elif subject_table == 'event': subject_key = event_keys[source_id]
+                    else: subject_key = occurrence_keys[source_id]
+                    records = emit_germplasm_records(family, derived, mapped, subject_table, subject_key, _key(archive, 'germplasm-reference', t, n))
+                    if family == 'germplasm-score' and decisions.get(f'trait-link:{t}') == 'exact' and raw.get(G + 'measurementTraitID'):
+                        matches = trait_protocols[raw[G + 'measurementTraitID']]
+                        if len(matches) != 1:
+                            raise ConversionError('A Score trait ID must exactly match one converted Trait Descriptor protocol ID; missing or duplicate matches cannot be linked.',
+                                                  category='conflict', decision_ids=[f'trait-link:{t}'],
+                                                  evidence={'source_table': table.name, 'source_row': n + 1, 'traitID': raw[G + 'measurementTraitID']})
+                        for _, record in records: record['assertionProtocol_fk'] = matches[0]
+                        column_consumption[(t, G + 'measurementTraitID')].add(n)
+                    extension_subjects.append({'source_table': table.name, 'source_row': n + 1, 'subject_table': subject_table,
+                                               'subject_key': subject_key, 'decision': role,
+                                               'matched_germplasmID': raw.get(G + 'germplasmID', '') if family == 'germplasm-score' and subject_table == 'material' else ''})
+                    consumed_records(t, n, row, records, derived)
+                    for name, record in records:
+                        add_extension(name, record, t, n)
+                        if name == 'material-identifier': material_identifiers[subject_key].add(record['identifier'])
+                        if name == 'protocol' and record.get('protocolID'): trait_protocols[record['protocolID']].append(subject_key)
+                elif role in {'bmde-context', 'nbn-context'}:
+                    family = SUPPORTED_EXTENSIONS[table.row_type]; derived = derived_source(t, row)
+                    # Absent optional registry columns carry no source value. Present columns must be approved together.
+                    present = set(table.terms)
+                    groups = GROUPS + [dict.fromkeys(UTM), dict.fromkeys(TIMES)] if family == 'bmde' else [dict.fromkeys(NBN_DATE)]
+                    for group in groups:
+                        if any(term in derived for term in group):
+                            for term in group:
+                                if term not in present: derived[term] = ''
+                    if family == 'nbn' and any(term in derived for term in NBN_DATE):
+                        if any(term in present and term not in derived for term in NBN_DATE):
+                            raise ConversionError('NBN vague date columns must be approved or preserved together.', category='decision',
+                                                  decision_ids=[item['id'] for item in columns_by_table[t] if item['term'] in NBN_DATE])
+                        try:
+                            date_value = nbn_event_date(*(derived.get(term, '') for term in NBN_DATE))
+                            reason = 'Unsupported NBN vague date code; original endpoints are retained.' if date_value is None else None
+                        except ImportFailure as error:
+                            reason = str(error)
+                        if reason:
+                            for term in NBN_DATE:
+                                value = derived.pop(term, '')
+                                if value: withheld_values.append({'source_table': table.name, 'source_row': n + 1, 'term': term, 'value': value, 'reason': reason})
+                    records = []
+                    if family == 'bmde' and core.row_type == DWC + 'Occurrence':
+                        occurrence_source = {term: value for term, value in derived.items() if any(term in group for group in GROUPS)}
+                        records.extend(emit_legacy_records(family, occurrence_source, {}, 'occurrence', occurrence_keys[source_id], _key(archive, 'legacy', t, n)))
+                        event_source = {term: value for term, value in derived.items() if term in UTM + TIMES}
+                    else: event_source = derived
+                    records.extend(emit_legacy_records(family, event_source, mapped, 'event', event_keys[source_id], _key(archive, 'legacy', t, n)))
+                    consumed_records(t, n, row, records, derived)
+                    for name, record in records: add_extension(name, record, t, n)
+                elif role.startswith('media-'):
+                    media = {field: value for field, value in mapped.get('media', {}).items() if value}
+                    if not media:
+                        raise ConversionError('A converted media row needs at least one mapped media value; preserve the extension instead of creating empty records.',
+                                              category='conflict', decision_ids=[f'table:{t}', f'row:{t}:{n}'],
+                                              evidence={'source_table': table.name, 'source_row': n + 1})
+                    media_key = _key(archive, 'media', t, n)
+                    media['media_pk'] = media_key
+                    for target, primary, foreign in (('usage-policy', 'usagePolicy_pk', 'usagePolicy_fk'), ('provenance', 'provenance_pk', 'provenance_fk')):
+                        description = {field: value for field, value in mapped.get(target, {}).items() if value}
+                        if not description:
+                            continue
+                        signature = json.dumps(description, sort_keys=True, ensure_ascii=False)
+                        key = _key(archive, target, signature)
+                        media[foreign] = key
+                        if signature not in media_groups[target]:
+                            media_groups[target][signature] = key
+                            add(target, {**description, primary: key}, t, n)
+                        else:
+                            trace(target, {primary: key}, t, n)
+                    add('media', media, t, n)
+                    subject = None
+                    if role == 'media-occurrence':
+                        subject = occurrence_keys[source_id]
+                        add('occurrence-media', {'media_fk': media_key, 'occurrence_fk': subject}, t, n)
+                    elif role == 'media-event':
+                        subject = event_keys[source_id]
+                        add('event-media', {'media_fk': media_key, 'event_fk': subject}, t, n)
+                    media_subjects.append({'source_table': table.name, 'source_row': n + 1, 'media_pk': media_key,
+                                           'decision': role, 'subject_key': subject, 'subject_basis': 'reviewed_core_attachment' if subject else 'explicitly_unlinked'})
+                elif role == "molecular":
+                    sequence = mapped.get("nucleotide-sequence", {}).get("sequence", "")
+                    if not sequence:
+                        raise ConversionError("Molecular conversion requires a mapped nonempty DNA sequence for each analysis.", category='conflict',
+                                              decision_ids=[f'table:{t}'], evidence={'source_table': table.name, 'source_row': n + 1})
+                    sequence_key = _key(archive, 'sequence', sequence)
+                    protocol = mapped.get('molecular-protocol', {})
+                    protocol_signature = json.dumps(protocol, sort_keys=True)
+                    protocol_key = _key(archive, 'protocol', protocol_signature)
+                    if sequence not in sequence_groups:
+                        sequence_groups[sequence] = sequence_key
+                        add('nucleotide-sequence', {'nucleotideSequence_pk': sequence_key, 'sequence': sequence}, t, n)
                     else:
-                        trace(target, {primary: key}, t, n)
-                add('media', media, t, n)
-                subject = None
-                if role == 'media-occurrence':
-                    subject = occurrence_keys[source_id]
-                    add('occurrence-media', {'media_fk': media_key, 'occurrence_fk': subject}, t, n)
-                elif role == 'media-event':
-                    subject = event_keys[source_id]
-                    add('event-media', {'media_fk': media_key, 'event_fk': subject}, t, n)
-                media_subjects.append({'source_table': table.name, 'source_row': n + 1, 'media_pk': media_key,
-                                       'decision': role, 'subject_key': subject, 'subject_basis': 'reviewed_core_attachment' if subject else 'explicitly_unlinked'})
-            elif role == "molecular":
-                sequence = mapped.get("nucleotide-sequence", {}).get("sequence", "")
-                if not sequence:
-                    raise ImportFailure("Molecular conversion requires a mapped nonempty DNA sequence for each analysis.")
-                sequence_key = _key(archive, 'sequence', sequence)
-                protocol = mapped.get('molecular-protocol', {})
-                protocol_signature = json.dumps(protocol, sort_keys=True)
-                protocol_key = _key(archive, 'protocol', protocol_signature)
-                if sequence not in sequence_groups:
-                    sequence_groups[sequence] = sequence_key
-                    add('nucleotide-sequence', {'nucleotideSequence_pk': sequence_key, 'sequence': sequence}, t, n)
-                else:
-                    trace('nucleotide-sequence', {'nucleotideSequence_pk': sequence_key}, t, n)
-                if protocol_signature not in protocol_groups:
-                    protocol_groups[protocol_signature] = protocol_key
-                    add('molecular-protocol', {**protocol, 'molecularProtocol_pk': protocol_key}, t, n)
-                else:
-                    trace('molecular-protocol', {'molecularProtocol_pk': protocol_key}, t, n)
-                add("nucleotide-analysis", {"nucleotideAnalysis_pk": _key(archive, "analysis", t, n), "nucleotideSequence_fk": sequence_key,
-                    "molecularProtocol_fk": protocol_key, "event_fk": event_keys[source_id]}, t, n)
+                        trace('nucleotide-sequence', {'nucleotideSequence_pk': sequence_key}, t, n)
+                    if protocol_signature not in protocol_groups:
+                        protocol_groups[protocol_signature] = protocol_key
+                        add('molecular-protocol', {**protocol, 'molecularProtocol_pk': protocol_key}, t, n)
+                    else:
+                        trace('molecular-protocol', {'molecularProtocol_pk': protocol_key}, t, n)
+                    add("nucleotide-analysis", {"nucleotideAnalysis_pk": _key(archive, "analysis", t, n), "nucleotideSequence_fk": sequence_key,
+                        "molecularProtocol_fk": protocol_key, "event_fk": event_keys[source_id]}, t, n)
+            except ConversionError:
+                raise
+            except ImportFailure as error:
+                # Emitter and raw-source failures for one extension row: retaining the table or row remedies them.
+                raise ConversionError(f'{table.name}, row {n + 1}: {error}', category='conflict',
+                                      decision_ids=[f'table:{t}', *([f'row:{t}:{n}'] if f'row:{t}:{n}' in issues_by_id else [])],
+                                      evidence={'source_table': table.name, 'source_row': n + 1}) from error
     for column in plan["columns"]:
         target = decisions.get(column["id"], column["default"])
         if not archive.tables[column["table"]].is_core and decisions.get(f"table:{column['table']}") == "preserve":
@@ -1149,7 +1260,9 @@ def convert(archive, plan, decisions):
     for survey in resources.get('survey', []):
         if survey.get('surveyID'): survey_ids[survey['surveyID']].add(survey['survey_pk'])
     if any(len(keys) > 1 for keys in survey_ids.values()):
-        raise ImportFailure('A supplied surveyID would identify several separate surveys. Combine identical survey rows per event, or keep surveyID in the originals.')
+        raise ConversionError('A supplied surveyID would identify several separate surveys. Combine identical survey rows per event, or keep surveyID in the originals.',
+                              category='conflict', decision_ids=[item['id'] for item in plan['columns'] if item['term'] == ECO_SURVEY_ID],
+                              evidence={'surveyIDs': sorted(value for value, keys in survey_ids.items() if len(keys) > 1)[:5]})
     for group, material in material_groups.items():
         evidence = material_evidence[group]
         if len(evidence) == 1:

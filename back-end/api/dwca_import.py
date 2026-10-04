@@ -26,6 +26,28 @@ class ImportFailure(ValueError):
     pass
 
 
+class ConversionError(ImportFailure):
+    """A failure with a category, the decisions that can remedy it, and bounded evidence.
+
+    Categories: stale-plan, decision, conflict, source, internal, transient. A plain
+    ImportFailure is treated as a source failure.
+    """
+
+    def __init__(self, message, category='source', decision_ids=(), evidence=None):
+        super().__init__(message)
+        self.category = category
+        self.decision_ids = list(dict.fromkeys(decision_ids))
+        self.evidence = evidence or {}
+
+    def as_conflict(self):
+        return {'id': f"{self.category}:{hashlib.sha256(str(self).encode()).hexdigest()[:12]}", 'category': self.category,
+                'reason': str(self), 'decision_ids': self.decision_ids, 'evidence': self.evidence}
+
+
+def failure_category(error):
+    return getattr(error, 'category', 'source')
+
+
 @dataclass
 class SourceTable:
     name: str
@@ -245,6 +267,8 @@ def _loose_tables(files):
         for column in header:
             candidates = names.get(column, REGISTRY["terms"].get(column, []))
             terms.append(column if column.startswith(("http://", "https://")) else candidates[0] if len(candidates) == 1 else "header:" + column)
+        if len(set(terms)) != len(terms):
+            raise ImportFailure(f"{name} has several headers for the same term; keep one column per term.")
         tables.append(SourceTable(name, role, terms, rows, [], loose=True, join_basis='No verified link', row_sources=[{'file': name, 'data_record': index+1} for index in range(len(rows))]))
     cores = ([table for table in tables if table.row_type == DWC + "Taxon"] or
              [table for table in tables if table.row_type == DWC + "Event"] or

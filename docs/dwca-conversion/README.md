@@ -108,6 +108,12 @@ other or invalid dates are withheld with reasons. Neither family invents absence
 coordinate uncertainty, survey completeness, agents or organisms. All non-exact
 aliases and derived rules in these families require individual approval.
 
+Rule version 10 adds the [tiered review contract](tiered-review.md): every question has a
+kind and per-option assertion flags, row questions with identical meaning are grouped,
+convert-time failures are precomputed as option requirements evaluated against the
+effective decisions, and remaining failures are categorised (decision, conflict,
+source, internal, transient, stale plan) with the choices that can remedy them.
+
 The [streamlined review policy](streamlined-review.md) separates required choices
 from conversion notices. Direct numeric, integer and boolean mappings copy
 compatible cells automatically and record every withheld value; `NA` is never
@@ -161,7 +167,7 @@ and failed export/storage work leaves sources available for retry.
 Run migrations and workers through the normal Docker Compose startup. Targeted checks:
 
 ```sh
-docker compose exec back-end python manage.py test api.test_dwca_review_policy api.test_dwca_scientific api.test_dwca_scientific_conversion api.test_dwca_hierarchy api.test_dwca_humboldt_vocabulary api.test_dwca_conversion api.test_dwca_media api.test_dwca_references api.test_dwca_humboldt api.test_dwca_eol api.test_dwca_germplasm api.test_dwca_legacy api.test_dwca_extensions api.test_dwca_taxon api.test_conversion_advice api.test_dwc_dp_validation api.test_agent_turns api.test_source_coverage --noinput
+docker compose exec back-end python manage.py test api.test_dwca_review_policy api.test_dwca_scientific api.test_dwca_scientific_conversion api.test_dwca_hierarchy api.test_dwca_humboldt_vocabulary api.test_dwca_conversion api.test_dwca_media api.test_dwca_references api.test_dwca_humboldt api.test_dwca_eol api.test_dwca_germplasm api.test_dwca_legacy api.test_dwca_extensions api.test_dwca_taxon api.test_dwca_tiered_review api.test_conversion_advice api.test_dwc_dp_validation api.test_agent_turns api.test_source_coverage --noinput
 docker compose exec front-end npm test
 docker compose exec front-end npm run lint
 docker compose exec front-end npm run build

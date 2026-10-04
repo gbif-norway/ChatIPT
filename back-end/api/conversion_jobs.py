@@ -8,17 +8,39 @@ from pathlib import Path
 
 from django.conf import settings
 from django.core.files.base import ContentFile
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from api.dwca_import import ImportFailure, read_inputs, source_zip
+from api.dwca_import import ConversionError, ImportFailure, read_inputs, source_zip
 from api.dwca_conversion import build_plan, convert, validate_decisions
 from api.dwc_dp_specs import TABLE_SPECS, create_dwc_dp_archive, validate_dwc_dp_archive, validate_eml
 from api.models import DwcConversion, DwcConversionJob, OpenAIUsage, Table
 
 logger = logging.getLogger(__name__)
 ADVICE_BATCH_SIZE = 40
+
+
+def classify_failure(exc):
+    """A structured record for any job failure (docs/dwca-conversion/tiered-review.md, 2c)."""
+    if isinstance(exc, ConversionError):
+        return exc.as_conflict()
+    category = 'source' if isinstance(exc, ImportFailure) else 'transient' if isinstance(exc, (OSError, DatabaseError)) else 'internal'
+    return ConversionError(str(exc)[:2000], category=category).as_conflict()
+
+
+def apply_failure(conversion, record):
+    """Return to review only when a decision can remedy the failure, or a retry can."""
+    conversion.error = record['reason'][:5000]
+    conversion.conflicts = [record]
+    conversion.retryable = record['category'] == 'transient'
+    remedy = record['category'] in {'conflict', 'decision'} and record['decision_ids']
+    if conversion.plan and (remedy or record['category'] in {'stale-plan', 'transient'}):
+        conversion.status = 'review'
+    elif record['category'] in {'source', 'conflict', 'decision'}:
+        conversion.status = 'blocked'
+    else:
+        conversion.status = 'failed'
 
 
 def pending_advice(conversion):
@@ -128,7 +150,7 @@ def process_next_conversion():
             archive = load_sources(conversion)
             conversion.plan = build_plan(archive)
             conversion.decisions = {}; conversion.suggestions = []; conversion.report = {}
-            conversion.advice_reviewed = []
+            conversion.advice_reviewed = []; conversion.conflicts = []; conversion.retryable = False
             conversion.status = 'review'
         elif job.action == 'suggest':
             batch = pending_advice(conversion)[:ADVICE_BATCH_SIZE]
@@ -145,7 +167,8 @@ def process_next_conversion():
                 additional_tables = taxonomy_tables(archive, report)
             conversion.report = report
             if not report['validation']['valid']:
-                raise ImportFailure('Validation needs attention: ' + '; '.join(report['validation']['errors'][:10]))
+                # Preflight should make this unreachable; a failing validator indicates a converter defect.
+                raise ConversionError('Validation needs attention: ' + '; '.join(report['validation']['errors'][:10]), category='internal')
             original_eml = [content for name, content in archive.files.items() if Path(name).name.lower() == 'eml.xml']
             eml = original_eml[0] if len(original_eml) == 1 and not validate_eml(original_eml[0]) else None
             report['metadata'] = {'eml': 'original EML 2.2.0 included' if eml else 'original metadata retained in source-originals.zip; no replacement metadata invented'}
@@ -165,13 +188,18 @@ def process_next_conversion():
                 report['archive_validation'] = validate_dwc_dp_archive(output, require_eml=eml is not None,
                     allow_generic=report.get('output_format') == 'taxonomy-data-package')
                 output_content = output.read_bytes()
+            conversion.conflicts = []; conversion.retryable = False
             conversion.status = 'complete'
         else:
             raise ImportFailure('Unknown conversion job action.')
     except Exception as exc:
         logger.exception('Conversion %s failed', conversion.pk)
-        conversion.error = str(exc)[:5000]
-        conversion.status = 'review' if conversion.plan else 'failed'
+        if job.action == 'suggest':
+            # Advice failures leave the plan and decisions untouched.
+            conversion.error = str(exc)[:5000]
+            conversion.status = 'review'
+        else:
+            apply_failure(conversion, classify_failure(exc))
     old_output = conversion.output_file.name
     try:
         with transaction.atomic():
@@ -200,6 +228,8 @@ def process_next_conversion():
         with transaction.atomic():
             claimed_job = DwcConversionJob.objects.select_for_update().filter(pk=job.pk, claimed_at=now).first()
             if claimed_job:
-                DwcConversion.objects.filter(pk=conversion.pk).update(status='review' if conversion.plan else 'failed', error=f'Could not save output: {exc}'[:5000], updated_at=timezone.now())
+                record = ConversionError(f'Could not save output: {exc}'[:2000], category='transient').as_conflict()
+                DwcConversion.objects.filter(pk=conversion.pk).update(status='review' if conversion.plan else 'failed', error=record['reason'],
+                                                                      conflicts=[record], retryable=True, updated_at=timezone.now())
                 claimed_job.delete()
     return True

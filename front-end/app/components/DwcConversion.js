@@ -1,10 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import config from '../config'
 import { getCsrfToken } from '../utils/csrf'
 import { useDataset } from '../contexts/DatasetContext'
-import { pendingAdvice, unresolvedIssues } from '../utils/conversionReview.mjs'
+import { attentionItems, conflictsFor, optionState, pendingAdvice, unresolvedIssues } from '../utils/conversionReview.mjs'
 
 async function request(url, body) {
   const headers = body ? { 'Content-Type': 'application/json', 'X-CSRFToken': await getCsrfToken() } : {}
@@ -46,12 +46,62 @@ export function ConversionUpload({ onDatasetCreated }) {
   </div>
 }
 
+const PAGE = 50
+
+function GroupExceptions({ item, decisions, disabled, onChoose }) {
+  const [page, setPage] = useState(0)
+  const pages = Math.ceil(item.members.length / PAGE)
+  const exceptions = item.members.filter(member => decisions[member]).length
+  return <details className="small mt-2"><summary>Exceptions for individual rows{exceptions ? ` (${exceptions})` : ''}</summary>
+    <p className="mb-1">A row choice here overrides the group choice for that row.</p>
+    {item.members.slice(page * PAGE, (page + 1) * PAGE).map((member, index) => <div className="row align-items-center my-1" key={member}>
+      <label htmlFor={member} className="col-4">Row {item.rows[page * PAGE + index]}</label>
+      <div className="col-8"><select id={member} className="form-select form-select-sm" value={decisions[member] || ''} disabled={disabled} onChange={event => onChoose(member, event.target.value)}>
+        <option value="">Same as the group</option>{item.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+      </select></div></div>)}
+    {pages > 1 && <div className="d-flex align-items-center gap-2 mt-2">
+      <button type="button" className="btn btn-sm btn-outline-secondary" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button>
+      <span>Rows {item.rows[page * PAGE]}–{item.rows[Math.min((page + 1) * PAGE, item.rows.length) - 1]} ({page + 1} of {pages})</span>
+      <button type="button" className="btn btn-sm btn-outline-secondary" disabled={page === pages - 1} onClick={() => setPage(page + 1)}>Next</button>
+    </div>}
+  </details>
+}
+
+function ChoiceCard({ item, state, decisions, disabled, onChoose, selected, suggestion }) {
+  const value = selected(item.id, item.default)
+  const current = optionState(state, item.id, value)
+  const conflicts = conflictsFor(state, item.id)
+  return <div className={`card card-body mb-3 ${conflicts.length || !current.available ? 'border-warning' : ''}`}>
+    {item.table !== undefined && <small className="text-muted mb-1">{state.plan.tables[item.table]?.name}</small>}
+    <label htmlFor={item.id} className="fw-semibold">{item.title || item.term?.split('/').pop()}
+      {item.authority === 'user-assertion' && <span className="badge text-bg-secondary ms-2">Needs your confirmation</span>}</label>
+    {item.reason && <p className="small mb-2">{item.reason}</p>}
+    {item.members && <p className="small mb-2">Applies to {item.count.toLocaleString()} rows with the same question (rows {item.sample_rows.join(', ')}{item.count > item.sample_rows.length ? ', …' : ''}).</p>}
+    {item.samples?.length > 0 && <div className="small text-muted mb-2" style={{ overflowWrap: 'anywhere' }}>Examples: {item.samples.join(' · ')}</div>}
+    <select id={item.id} className="form-select" value={decisions[item.id] ?? (item.default || '')} disabled={disabled} onChange={event => onChoose(item.id, event.target.value)}>
+      {!item.default && <option value="">Choose…</option>}
+      {item.options.map(option => <option key={option.value} value={option.value}>
+        {option.label}{optionState(state, item.id, option.value).available ? '' : ' (not possible with other current choices)'}</option>)}
+    </select>
+    {!current.available && <div className="small text-warning-emphasis mt-2">{current.reasons.join(' ')}</div>}
+    {item.unavailable_options?.length > 0 && <details className="small mt-2"><summary>{item.unavailable_options.length} {item.unavailable_options.length === 1 ? 'option is' : 'options are'} not possible for this data</summary>
+      <ul className="mb-0">{item.unavailable_options.map(option => <li key={option.value}><strong>{option.label}:</strong> {option.reason}</li>)}</ul></details>}
+    {item.members && <GroupExceptions item={item} decisions={decisions} disabled={disabled} onChoose={onChoose} />}
+    {conflicts.map(conflict => <div key={conflict.id} className="small text-warning-emphasis mt-2">Conversion stopped here: {conflict.reason}</div>)}
+    {suggestion && <div className="small mt-2">AI suggests {item.options.find(option => option.value === suggestion.option)?.label}: {suggestion.reason}
+      <button className="btn btn-sm btn-outline-primary ms-2" disabled={disabled} onClick={() => onChoose(item.id, suggestion.option)}>Use suggestion</button>
+    </div>}
+  </div>
+}
+
 export default function DwcConversion() {
   const { currentDataset } = useDataset()
   const [state, setState] = useState(null)
   const [decisions, setDecisions] = useState({})
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const saves = useRef(0)
+  const saving = useRef(Promise.resolve())
   const datasetId = currentDataset?.id
   const url = `${config.baseUrl}/api/datasets/${datasetId}/conversion/`
   const load = useCallback(async () => {
@@ -69,15 +119,29 @@ export default function DwcConversion() {
     setBusy(true); setError('')
     try { setState(await request(url, { action, plan_id: state?.plan?.id, decisions })) } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
+  // Every change is saved, so the server's unresolved list and option availability stay current.
+  // Saves run one at a time, so the server always ends with the latest complete set of choices.
+  const choose = (id, value) => {
+    const next = { ...decisions, [id]: value }
+    if (!value) delete next[id]
+    setDecisions(next)
+    const sequence = ++saves.current
+    saving.current = saving.current.then(async () => {
+      try {
+        const saved = await request(url, { action: 'save', plan_id: state?.plan?.id, decisions: next })
+        if (sequence === saves.current) { setState(saved); setError('') }
+      } catch (err) { if (sequence === saves.current) setError(err.message) }
+    })
+  }
   const automaticChoices = state?.plan?.automatic_choices || []
   const defaults = Object.fromEntries(automaticChoices.map(choice => [choice.id, choice.default]))
   const selected = (id, fallback) => decisions[id] ?? defaults[id] ?? fallback
-  const rowChoice = issue => issue.id.startsWith('taxon-occurrence:')
-    ? `taxon-occurrence:${issue.table}:row:0:${issue.row - 1}` : `row:${issue.table}:${issue.row - 1}`
-  const retainedIssue = (issue) => selected(`table:${issue.table}`) === 'preserve' ||
-    (issue.row !== undefined && selected(rowChoice(issue)) === 'preserve')
-  const unresolved = unresolvedIssues(state?.plan, decisions)
-  const pending = pendingAdvice(state, decisions)
+  // The server's unresolved list already accounts for retained rows; here only retained tables hide cards.
+  const retainedIssue = (issue) => selected(`table:${issue.table}`) === 'preserve'
+  const unresolved = unresolvedIssues(state)
+  const attention = attentionItems(state)
+  const outstanding = unresolved.length + attention.length
+  const pending = pendingAdvice(state)
   const batchSize = state?.advice_progress?.batch_size || 40
   const reviewedCount = state?.advice_progress?.reviewed || 0
   const disabled = busy || working
@@ -89,14 +153,28 @@ export default function DwcConversion() {
     : Object.entries(state?.plan?.taxonomy?.scientific_hierarchies || {})
   const scientificAudits = [...(scientific ? [['core', scientific]] : []), ...nestedScientific].filter(([, audit]) => audit)
   const notices = state?.status === 'complete' ? state.report?.warnings || [] : state?.plan?.warnings || []
+  const cardProps = { state, decisions, disabled, onChoose: choose, selected }
   return <div className="container p-4">
     <h1>{currentDataset?.title || 'Darwin Core Archive conversion'}</h1>
     <p>Inspect files → resolve any ambiguous choices → convert and validate → download</p>
     {error && <div className="alert alert-danger" role="alert">{error}<button className="btn btn-sm btn-outline-danger ms-2" onClick={load}>Reload</button></div>}
-    {state?.error && <div className="alert alert-warning" role="alert">{state.error}</div>}
+    {state?.status === 'blocked' && <div className="alert alert-danger" role="alert">
+      <p className="fw-semibold mb-1">The source files need correcting before they can be converted.</p>
+      <p className="mb-1">{state.error}</p>
+      <p className="small mb-0">No choice here can resolve this. Correct the files and start a new conversion.</p>
+    </div>}
+    {state?.status === 'failed' && <div className="alert alert-danger" role="alert">
+      {state.retryable ? 'A temporary problem interrupted this conversion.' : 'The converter hit an internal problem. It has been logged.'} {state.error}
+      {state.retryable && <button className="btn btn-sm btn-primary ms-2" disabled={disabled} onClick={() => perform(state.plan?.id ? 'convert' : 'inspect')}>Try again</button>}
+    </div>}
+    {state?.status === 'review' && state.error && !state.conflicts?.length && <div className="alert alert-warning" role="alert">{state.error}</div>}
+    {state?.status === 'review' && state.conflicts?.map(conflict => <div key={conflict.id} className="alert alert-warning" role="alert">
+      {conflict.category === 'stale-plan' ? <>{conflict.reason} <button className="btn btn-sm btn-outline-secondary ms-2" disabled={disabled} onClick={() => perform('inspect')}>Inspect again</button></>
+        : conflict.category === 'transient' ? <>{conflict.reason} You can convert again.</>
+        : <>Conversion stopped: {conflict.reason} The highlighted choices below can resolve this.</>}
+    </div>)}
     {!state && <p>Loading conversion…</p>}
     {working && <p role="status"><span className="spinner-border spinner-border-sm me-2" />{state.status === 'reviewing' ? 'Preparing AI suggestions…' : state.status === 'converting' ? 'Converting and validating…' : 'Inspecting source files…'} You can leave and return while this runs.</p>}
-    {state?.status === 'failed' && <button className="btn btn-primary" disabled={disabled} onClick={() => perform('inspect')}>Inspect again</button>}
     {state?.plan?.tables && <>
       {state.plan.taxonomy && <div className="alert alert-info">
         Your Taxon core and its extensions will be preserved as additional taxonomy tables with explicit source links.
@@ -125,37 +203,23 @@ export default function DwcConversion() {
       <details className="small"><summary>View notices</summary><ul>{notices.map((notice, index) => <li key={`${notice.id}:${index}`}><strong>{notice.title}:</strong> {notice.reason}</li>)}</ul></details>
     </div>}
     {state?.status === 'review' && <>
-      {state.plan.event_grouping_evidence && !state.plan.event_grouping_evidence.checks_passed && <div className="alert alert-info">
-        Some event identifiers are missing or their rows disagree on {Object.keys(state.plan.event_grouping_evidence.conflicting_fields).map(field => field.split('.').pop()).join(', ') || 'event details'}. Combining those rows requires resolving these differences. Separate context events retain them.
-      </div>}
-      <div className="d-flex flex-wrap gap-2 align-items-center mb-3"><h2 className="me-auto mb-0">{unresolved.length ? 'Choices needing your input' : 'Ready to convert'}</h2>
+      <div className="d-flex flex-wrap gap-2 align-items-center mb-3"><h2 className="me-auto mb-0">{outstanding ? 'Choices needing your input' : 'Ready to convert'}</h2>
         {unresolved.length > 0 && <button className="btn btn-outline-secondary" disabled={disabled || !pending.length} onClick={() => perform('suggest')}>
           {reviewedCount ? `Suggest next ${Math.min(batchSize, pending.length)} choices with AI` : 'Suggest choices with AI'}
         </button>}
       </div>
-      <p>{unresolved.length ? `Resolve ${unresolved.length} remaining choices. AI suggestions need your approval.` : 'Supported mappings are selected automatically. You can adjust them below.'} Preserving a column keeps its values in the original files without asserting a new meaning.</p>
+      <p>{outstanding ? `Resolve ${outstanding} remaining choices. Your choices are saved as you go. AI suggestions need your approval.` : 'Supported mappings are selected automatically. You can adjust them below.'} Preserving a column keeps its values in the original files without asserting a new meaning.</p>
       {unresolved.length > 0 && <p className="small text-muted">AI reviews up to {batchSize} unresolved choices per request. {reviewedCount} choices reviewed; {pending.length} still available for AI review.
         {!!state.advice_progress?.without_suggestion && ` AI could not recommend a choice for ${state.advice_progress.without_suggestion} reviewed items; review those manually.`}
       </p>}
-      {(state.plan.issues || []).filter(issue => (!retainedIssue(issue) || issue.id === rowChoice(issue)) && selected(`table:${issue.table}`) !== 'preserve' || issue.id === `table:${issue.table}`).map(issue => {
-        const suggestion = suggestionFor(issue.id)
-        return <div className="card card-body mb-3" key={issue.id}>
-          {issue.table !== undefined && <small className="text-muted mb-1">{state.plan.tables[issue.table]?.name}</small>}
-          <label htmlFor={issue.id} className="fw-semibold">{issue.title}</label><p className="small mb-2">{issue.reason}</p>
-          {issue.samples?.length > 0 && <div className="small text-muted mb-2" style={{ overflowWrap: 'anywhere' }}>Examples: {issue.samples.join(' · ')}</div>}
-          <select id={issue.id} className="form-select" value={decisions[issue.id] || ''} disabled={disabled} onChange={event => setDecisions(previous => ({ ...previous, [issue.id]: event.target.value }))}>
-            <option value="">Choose…</option>{issue.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-          {suggestion && <div className="small mt-2">AI suggests {issue.options.find(option => option.value === suggestion.option)?.label}: {suggestion.reason}
-            <button className="btn btn-sm btn-outline-primary ms-2" disabled={disabled} onClick={() => setDecisions(previous => ({ ...previous, [issue.id]: suggestion.option }))}>Use suggestion</button>
-          </div>}
-        </div>
-      })}
+      {attention.map(item => <ChoiceCard key={item.id} item={item} {...cardProps} />)}
+      {(state.plan.issues || []).filter(issue => !retainedIssue(issue) || issue.id === `table:${issue.table}`)
+        .map(issue => <ChoiceCard key={issue.id} item={issue} suggestion={suggestionFor(issue.id)} {...cardProps} />)}
       <details className="mb-3"><summary>Automatic mappings and choices</summary>
-        {automaticChoices.filter(choice => !state.plan.columns.some(column => column.id === choice.id) && (!retainedIssue(choice) || choice.id === `table:${choice.table}`)).map(choice => <div className="my-3" key={choice.id}><label htmlFor={choice.id} className="small fw-semibold">{choice.title}</label><p className="small mb-1">{choice.reason}</p><select id={choice.id} className="form-select form-select-sm" disabled={disabled} value={selected(choice.id)} onChange={event => setDecisions(previous => ({ ...previous, [choice.id]: event.target.value }))}>{choice.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>)}
-        {state.plan.columns.filter(column => !column.review && selected(`table:${column.table}`) !== 'preserve').map(column => <div className="row align-items-center my-2" key={column.id}><label htmlFor={column.id} className="col-md-6 small">{state.plan.tables[column.table].name} · {column.term.split('/').pop()}</label><div className="col-md-6"><select id={column.id} className="form-select form-select-sm" disabled={disabled} value={selected(column.id, column.default)} onChange={event => setDecisions(previous => ({ ...previous, [column.id]: event.target.value }))}>{column.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div></div>)}
+        {automaticChoices.filter(choice => !state.plan.columns.some(column => column.id === choice.id) && (!retainedIssue(choice) || choice.id === `table:${choice.table}`)).map(choice => <div className="my-3" key={choice.id}><label htmlFor={choice.id} className="small fw-semibold">{choice.title}</label><p className="small mb-1">{choice.reason}</p><select id={choice.id} className="form-select form-select-sm" disabled={disabled} value={selected(choice.id)} onChange={event => choose(choice.id, event.target.value)}>{choice.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>)}
+        {state.plan.columns.filter(column => !column.review && selected(`table:${column.table}`) !== 'preserve').map(column => <div className="row align-items-center my-2" key={column.id}><label htmlFor={column.id} className="col-md-6 small">{state.plan.tables[column.table].name} · {column.term.split('/').pop()}</label><div className="col-md-6"><select id={column.id} className="form-select form-select-sm" disabled={disabled} value={selected(column.id, column.default)} onChange={event => choose(column.id, event.target.value)}>{column.options.map(option => <option key={option.value} value={option.value}>{option.label}{optionState(state, column.id, option.value).available ? '' : ' (not possible with other current choices)'}</option>)}</select></div></div>)}
       </details>
-      <button className="btn btn-primary" disabled={disabled || unresolved.length > 0} onClick={() => perform('convert')}>Convert and validate package</button>
+      <button className="btn btn-primary" disabled={disabled || outstanding > 0} onClick={() => perform('convert')}>Convert and validate package</button>
     </>}
     {state?.status === 'complete' && <div className="card card-body">
       <h2>Converted package ready</h2>
