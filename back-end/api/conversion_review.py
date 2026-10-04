@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from contextlib import contextmanager
 from decimal import Decimal, InvalidOperation
@@ -84,7 +85,9 @@ def ai_available():
 
 def apply_kinds():
     configured = setting('CONVERSION_AI_APPLY_KINDS', None)
-    return set(configured) if configured is not None else set(ISSUE_POLICY) - {'event-grain'}
+    # Event merging waits for its benchmark bar. Event details on occurrence rows are only asked when copying is
+    # impossible, leaving a confirmation (each row its own event) or dropping the details, so a person decides.
+    return set(configured) if configured is not None else set(ISSUE_POLICY) - {'event-grain', 'occurrence-events'}
 
 
 def review_model():
@@ -529,6 +532,10 @@ def judge(issue, packet, refs, item, kinds):
         return 'escalated', 'model-needs-user', choice, excerpts
     if item.get('confidence') != 'high':
         return 'escalated', 'low-confidence', choice, excerpts
+    column_issue = issue.get('id', '').startswith('column:') or re.match(r'^taxon-occurrence:\d+:column:', issue.get('id', ''))
+    if (column_issue and choice == 'preserve'
+            and any(option['available'] and option['value'] != 'preserve' for option in packet['options'])):
+        return 'escalated', 'drops-field', choice, excerpts
     if issue.get('kind') not in kinds:
         return 'escalated', 'kind-not-enabled', choice, excerpts
     return 'apply', '', choice, excerpts

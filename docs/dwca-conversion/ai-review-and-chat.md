@@ -252,10 +252,11 @@ duplicates and unknown ids ignored):
 | 6 | issue `authority == "user-assertion"` or `option.assertion` | escalated with recommendation | `assertion` |
 | 7 | `needs_user` | escalated with recommendation | `model-needs-user` |
 | 8 | `confidence != "high"` | escalated with recommendation | `low-confidence` |
-| 9 | kind not in `CONVERSION_AI_APPLY_KINDS` (default: all except `event-grain`) | escalated with recommendation | `kind-not-enabled` |
-| 10 | item now has a `user` or `chat` decision, or its basis or availability differs from the packet's | no change | `superseded` / `stale-basis` |
-| 11 | `apply_decision_changes` rejects it (§7.1: a structural `validate_decisions` error, a new requirement violation, or removal of another AI choice) | escalated with recommendation | `rejected` (+ message) |
-| 12 | otherwise | **applied** | — |
+| 9 | column-like issue chooses `preserve` while another available option maps the column to a target | escalated with recommendation | `drops-field` |
+| 10 | kind not in `CONVERSION_AI_APPLY_KINDS` (default: all except `event-grain`) | escalated with recommendation | `kind-not-enabled` |
+| 11 | item now has a `user` or `chat` decision, or its basis or availability differs from the packet's | no change | `superseded` / `stale-basis` |
+| 12 | `apply_decision_changes` rejects it (§7.1: a structural `validate_decisions` error, a new requirement violation, or removal of another AI choice) | escalated with recommendation | `rejected` (+ message) |
+| 13 | otherwise | **applied** | — |
 
 Rules 10–12 run inside the application transaction (§5.6) against the decisions
 current at that moment, one item at a time in item order, so each application is
@@ -883,7 +884,7 @@ require a rerun.
 | `CONVERSION_REVIEW_BATCH_SIZE` | 12 |
 | `CONVERSION_REVIEW_MAX_ITEMS` | 120 per run |
 | `CONVERSION_REVIEW_MAX_RUNS_PER_PLAN` | 6 automatic runs |
-| `CONVERSION_AI_APPLY_KINDS` | every kind except `event-grain` until the offline benchmark meets its 95% bar (assertion rules still apply) |
+| `CONVERSION_AI_APPLY_KINDS` | every kind except `event-grain` (until the offline benchmark meets its 95% bar) and `occurrence-events` (its remaining options either need confirmation or drop details); assertion rules still apply |
 | `CONVERSION_JOB_LEASE_SECONDS` | 3,600 (minimum; raised to the derived call bound, §5.9) |
 | `OPENAI_DATASET_COST_LIMIT_USD` | existing, now enforced for conversion calls |
 | `CONVERSION_AI_REVIEW_ENABLED` | on, but always off under the test runner (tests opt in with mocked responses) |

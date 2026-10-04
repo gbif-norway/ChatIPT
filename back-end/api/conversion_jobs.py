@@ -12,11 +12,29 @@ from django.utils import timezone
 
 from api.dwca_import import ConversionError, ImportFailure, read_inputs, source_zip
 from api.dwca_conversion import build_plan, convert
-from api.dwc_dp_specs import create_dwc_dp_archive, validate_dwc_dp_archive, validate_dwc_dp_resources, validate_eml
+from api.conversion_evidence import extract_eml
 from api.conversion_names import LEASE_SECONDS
+from api.dwc_dp_specs import create_dwc_dp_archive, validate_dwc_dp_archive, validate_dwc_dp_resources, validate_eml
 from api.models import DwcConversion, DwcConversionJob, Table
 
 logger = logging.getLogger(__name__)
+
+
+def _eml_dataset_metadata(archive):
+    extracted = extract_eml(archive)
+    sections = extracted.get('sections', {}) if extracted.get('available') else {}
+    return {
+        'title': ' '.join(sections.get('eml:title', '').split())[:5000],
+        'description': ' '.join(sections.get('eml:abstract', '').split())[:5000],
+    }
+
+
+def _metadata_source(value, eml_value):
+    value = ' '.join((value or '').split())
+    if not value:
+        return 'none'
+    return 'eml' if eml_value and value == eml_value else 'user'
+
 
 def classify_failure(exc):
     """A structured record for any job failure (docs/dwca-conversion/tiered-review.md, 2c)."""
@@ -94,6 +112,11 @@ def process_next_conversion():
         if job.action == 'inspect':
             archive = load_sources(conversion)
             conversion.plan = build_plan(archive)
+            eml_metadata = _eml_dataset_metadata(archive)
+            if not (conversion.dataset.title or '').strip() and eml_metadata['title']:
+                conversion.dataset.title = eml_metadata['title']
+            if not (conversion.dataset.description or '').strip() and eml_metadata['description']:
+                conversion.dataset.description = eml_metadata['description']
             conversion.decisions = {}; conversion.review = {}; conversion.report = {}
             conversion.conflicts = []; conversion.retryable = False
             conversion.name_review = _collect_names(archive, conversion.plan)
@@ -111,7 +134,12 @@ def process_next_conversion():
                 raise ConversionError('Validation needs attention: ' + '; '.join(report['validation']['errors'][:10]), category='internal')
             original_eml = [content for name, content in archive.files.items() if Path(name).name.lower() == 'eml.xml']
             eml = original_eml[0] if len(original_eml) == 1 and not validate_eml(original_eml[0]) else None
-            report['metadata'] = {'eml': 'original EML 2.2.0 included' if eml else 'original metadata retained in source-originals.zip; no replacement metadata invented'}
+            eml_metadata = _eml_dataset_metadata(archive)
+            report['metadata'] = {
+                'eml': 'original EML 2.2.0 included' if eml else 'original metadata retained in source-originals.zip; no replacement metadata invented',
+                'title_source': _metadata_source(conversion.dataset.title, eml_metadata['title']),
+                'description_source': _metadata_source(conversion.dataset.description, eml_metadata['description']),
+            }
             from api.conversion_review import report_section
             report.update(report_section(conversion))
             report['uploads'] = conversion.plan['uploads']
@@ -152,6 +180,8 @@ def process_next_conversion():
                     Table.objects.create(dataset=conversion.dataset, title=name, df=table['dataframe'])
                 if old_output and old_output != conversion.output_file.name:
                     transaction.on_commit(lambda: conversion.output_file.storage.delete(old_output), robust=True)
+            elif job.action == 'inspect' and conversion.status == 'review':
+                conversion.dataset.save(update_fields=['title', 'description'])
             conversion.save()
             if _chain_names(conversion, claimed_job, job.action) or _chain_review(conversion, claimed_job, job.action):
                 return True
