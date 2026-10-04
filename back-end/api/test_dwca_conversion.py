@@ -315,10 +315,11 @@ class ConversionAPITests(TransactionTestCase):
         self.assertIn('eml', conversion.report['metadata'])
 
     def test_inspect_does_not_overwrite_user_metadata(self):
-        dataset = self.upload_with_eml('My title', 'My description')
+        # A user title identical to the EML title is still the user's, recorded at inspection.
+        dataset = self.upload_with_eml('Forest birds', 'My description')
         self.assertTrue(process_next_conversion())
         dataset.refresh_from_db()
-        self.assertEqual(dataset.title, 'My title')
+        self.assertEqual(dataset.title, 'Forest birds')
         self.assertEqual(dataset.description, 'My description')
         conversion = dataset.conversion
         response = self.client.post(f'/api/datasets/{dataset.pk}/conversion/',

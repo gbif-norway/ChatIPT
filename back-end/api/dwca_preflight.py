@@ -246,6 +246,32 @@ class Preflight:
                         self.require(decision, 'patch', _requirement([{'type': 'unsatisfiable'}],
                             f'{name} on occurrence rows disagrees with the linked event in {self.core.name} for {len(bad)} events.',
                             {'events': len(bad), 'examples': bad[:EXAMPLES]}, when=[chosen(column, target), chosen(core_column, target)]))
+        # Another Occurrence extension copying onto the same events must agree with this one.
+        for other in self.tables('occurrence'):
+            if other == t or 'patch' not in self.options(f'occurrence-events:{other}'):
+                continue
+            rows = self.archive.tables[other].rows
+            theirs_by_event = defaultdict(list)
+            for n, source_id in enumerate(self.archive.tables[other].ids):
+                theirs_by_event[source_id].append(n)
+            for column in extension:
+                for target in self.targets(column):
+                    if not target.startswith('event.'):
+                        continue
+                    for other_column in self.by_table[other]:
+                        if other_column['default'] == 'join' or target not in self.targets(other_column):
+                            continue
+                        bad = [event for event in by_event if event in theirs_by_event
+                               and (mine := supplied(t, column, target, event))
+                               and (theirs := {value for n in theirs_by_event[event]
+                                               if (value := self.copied(other, target, rows[n][other_column['column']]))})
+                               and mine != theirs]
+                        if bad:
+                            self.require(decision, 'patch', _requirement([{'type': 'unsatisfiable'}],
+                                f'{_short(column["term"])} disagrees with {self.archive.tables[other].name} for {len(bad)} events, '
+                                'so both cannot be copied onto the same events.', {'events': len(bad), 'examples': bad[:EXAMPLES]},
+                                when=[chosen(column, target), chosen(other_column, target),
+                                      {'type': 'decision_in', 'id': f'occurrence-events:{other}', 'values': ['patch']}]))
         # An event without a supplied category gets the missing-category choice before details are copied.
         category = next((column for column in self.by_table[self.ci] if 'event.eventCategory' in self.targets(column)), None)
         for column in extension:

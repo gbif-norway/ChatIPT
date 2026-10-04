@@ -171,3 +171,34 @@ class PublicationMetadataTests(SimpleTestCase):
         self.assertTrue(metadata['description'].endswith('Second.') or len(metadata['description']) == 5000)
         self.assertGreater(len(metadata['description']), 2000)
         self.assertNotIn('…', metadata['description'])
+
+
+DWC = 'http://rs.tdwg.org/dwc/terms/'
+
+
+def two_extensions(first, second):
+    extension = ('<extension rowType="' + DWC + 'Occurrence" fieldsTerminatedBy="," ignoreHeaderLines="1"><files><location>{name}</location></files>'
+                 '<coreid index="0"/><field index="1" term="' + DWC + 'occurrenceID"/><field index="2" term="' + DWC + 'locality"/>'
+                 '<field term="' + DWC + 'occurrenceStatus" default="present"/></extension>')
+    meta = ('<archive xmlns="http://rs.tdwg.org/dwc/text/"><core rowType="' + DWC + 'Event" fieldsTerminatedBy="," ignoreHeaderLines="1">'
+            '<files><location>event.csv</location></files><id index="0"/><field index="0" term="' + DWC + 'eventID"/>'
+            '<field term="' + DWC + 'eventCategory" default="survey"/></core>'
+            + extension.format(name='birds.csv') + extension.format(name='plants.csv') + '</archive>')
+    return read_inputs([('meta.xml', meta.encode()), ('event.csv', b'eventID\ne1\n'),
+                        ('birds.csv', first), ('plants.csv', second)])
+
+
+class SeveralExtensionTests(SimpleTestCase):
+    def test_two_extensions_copying_different_details_onto_one_event_need_a_choice(self):
+        source = two_extensions(b'event,occ,locality\ne1,b1,Lake\n', b'event,occ,locality\ne1,p1,Hill\n')
+        plan = build_plan(source)
+        both = {'occurrence-events:1': 'patch', 'occurrence-events:2': 'patch'}
+        self.assertFalse(option_status(plan, both)['occurrence-events:1']['patch']['available'])
+        self.assertTrue(option_status(plan, {**both, 'occurrence-events:2': 'per-row'})['occurrence-events:1']['patch']['available'])
+        frames, _ = convert(source, plan, {**answers(plan), **both, 'occurrence-events:2': 'per-row'})
+        self.assertEqual(frames['event'].set_index('eventID').loc['e1', 'locality'], 'Lake')
+
+    def test_agreeing_extensions_both_copy(self):
+        source = two_extensions(b'event,occ,locality\ne1,b1,Lake\n', b'event,occ,locality\ne1,p1,Lake\n')
+        plan = build_plan(source)
+        self.assertEqual({entry(plan, f'occurrence-events:{t}')['default'] for t in (1, 2)}, {'patch'})

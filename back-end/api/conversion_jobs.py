@@ -25,13 +25,6 @@ def _eml_dataset_metadata(archive):
     return publication_metadata(archive, 5000)
 
 
-def _metadata_source(value, eml_value):
-    value = (value or '').strip()
-    if not value:
-        return 'none'
-    return 'eml' if eml_value and value == eml_value.strip() else 'user'
-
-
 def classify_failure(exc):
     """A structured record for any job failure (docs/dwca-conversion/tiered-review.md, 2c)."""
     if isinstance(exc, ConversionError):
@@ -109,10 +102,17 @@ def process_next_conversion():
             archive = load_sources(conversion)
             conversion.plan = build_plan(archive)
             eml_metadata = _eml_dataset_metadata(archive)
-            if not (conversion.dataset.title or '').strip() and eml_metadata['title']:
-                conversion.dataset.title = eml_metadata['title']
-            if not (conversion.dataset.description or '').strip() and eml_metadata['description']:
-                conversion.dataset.description = eml_metadata['description']
+            sources = {}
+            for field in ('title', 'description'):
+                if (getattr(conversion.dataset, field) or '').strip():
+                    sources[field] = 'user'
+                elif eml_metadata[field]:
+                    setattr(conversion.dataset, field, eml_metadata[field])
+                    sources[field] = 'eml'
+                else:
+                    sources[field] = 'none'
+            conversion.metadata_sources = {**sources, **({'truncated_from_eml': sorted(eml_metadata['truncated'])}
+                                                         if eml_metadata['truncated'] else {})}
             conversion.decisions = {}; conversion.review = {}; conversion.report = {}
             conversion.conflicts = []; conversion.retryable = False
             conversion.name_review = _collect_names(archive, conversion.plan)
@@ -130,12 +130,13 @@ def process_next_conversion():
                 raise ConversionError('Validation needs attention: ' + '; '.join(report['validation']['errors'][:10]), category='internal')
             original_eml = [content for name, content in archive.files.items() if Path(name).name.lower() == 'eml.xml']
             eml = original_eml[0] if len(original_eml) == 1 and not validate_eml(original_eml[0]) else None
-            eml_metadata = _eml_dataset_metadata(archive)
+            sources = conversion.metadata_sources or {}
             report['metadata'] = {
                 'eml': 'original EML 2.2.0 included' if eml else 'original metadata retained in source-originals.zip; no replacement metadata invented',
-                'title_source': _metadata_source(conversion.dataset.title, eml_metadata['title']),
-                'description_source': _metadata_source(conversion.dataset.description, eml_metadata['description']),
-                **({'truncated_from_eml': sorted(eml_metadata['truncated'])} if eml_metadata['truncated'] else {}),
+                # Recorded when inspection filled the fields, not inferred from matching text.
+                'title_source': sources.get('title', 'user' if (conversion.dataset.title or '').strip() else 'none'),
+                'description_source': sources.get('description', 'user' if (conversion.dataset.description or '').strip() else 'none'),
+                **({'truncated_from_eml': sources['truncated_from_eml']} if sources.get('truncated_from_eml') else {}),
             }
             from api.conversion_review import report_section
             report.update(report_section(conversion))

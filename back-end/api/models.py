@@ -471,6 +471,8 @@ class DwcConversion(models.Model):
     # Structured failures: [{id, category, reason, decision_ids, evidence}].
     conflicts = models.JSONField(default=list)
     retryable = models.BooleanField(default=False)
+    # Where the dataset title and description came from at inspection: user, eml or none.
+    metadata_sources = models.JSONField(default=dict)
     output_file = models.FileField(upload_to='user_files/conversions', blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
