@@ -28,6 +28,8 @@ GBIF_PARSER_URL = 'https://api.gbif.org/v1/parser/name'
 # Source tables whose names are reviewed, and the converted tables the decisions are applied to.
 SOURCE_TABLES = {DWC + 'Occurrence': 'occurrence', DWC + 'Identification': 'identification'}
 OUTPUT_TABLES = ('occurrence', 'identification')
+MAX_LABEL_CHARS = 500  # longer cells are not names; they never reach the state or a service
+MAX_CONTEXT_CHARS = 100
 MAX_LABELS = 5000  # most frequent first; the rest keep the converter's output
 CHUNK = 100  # labels matched, parsed and saved together
 MAX_RUNS = 30
@@ -63,6 +65,7 @@ def normal(value):
 def collect_state(archive, plan):
     """Distinct labels with row counts and consistent classification context, most frequent first."""
     found = {}
+    too_long = {'rows': 0, 'hashes': set()}
     for table in archive.tables:
         target = SOURCE_TABLES.get(table.row_type)
         if target is None or NAME not in table.terms:
@@ -73,11 +76,15 @@ def collect_state(archive, plan):
             label = normal(row[name_at])
             if not label:
                 continue
+            if len(label) > MAX_LABEL_CHARS:
+                too_long['rows'] += 1
+                too_long['hashes'].add(hash(label))
+                continue
             record = found.setdefault(label, {'label': label, 'rows': 0, 'tables': {}, 'context': defaultdict(set)})
             record['rows'] += 1
             record['tables'][target] = record['tables'].get(target, 0) + 1
             for rank, index in context_at.items():
-                if normal(row[index]):
+                if 0 < len(normal(row[index])) <= MAX_CONTEXT_CHARS:
                     record['context'][rank].add(normal(row[index]))
     ordered = sorted(found.values(), key=lambda record: (-record['rows'], record['label']))
     labels = []
@@ -89,7 +96,8 @@ def collect_state(archive, plan):
                        'hints': {rank: value for rank, value in context.items() if rank in HINT_RANKS},
                        'source_rank': context.get('taxonRank', '').lower() or None, 'qualifier': qualifier})
     return {'plan_id': plan['id'], 'status': 'pending' if labels else 'none', 'error': '', 'runs': 0,
-            'truncated': max(len(ordered) - MAX_LABELS, 0), 'col_release': {}, 'labels': labels, 'decisions': {}}
+            'truncated': max(len(ordered) - MAX_LABELS, 0),
+            'skipped_long': {'labels': len(too_long['hashes']), 'rows': too_long['rows']}, 'col_release': {}, 'labels': labels, 'decisions': {}}
 
 
 def current(conversion):
@@ -191,11 +199,12 @@ def build_decision(record, spec, state, by='user'):
         if kind == 'col':
             usage = match.get('usage')
         else:
-            usage = next((item for item in match.get('alternatives') or [] if item['id'] == spec.get('usage_id')), None)
+            wanted = str(spec.get('usage_id')) if spec.get('usage_id') is not None else None
+            usage = next((item for item in match.get('alternatives') or [] if wanted and str(item['id']) == wanted), None)
         if not usage or not usage.get('scientificName'):
             raise NameDecisionError(f'There is no such Catalogue of Life name to accept for "{record["label"]}".')
         snapshot.update(source='col', scientificName=usage['scientificName'], scientificNameAuthorship=usage.get('scientificNameAuthorship'),
-                        taxonRank=usage.get('taxonRank'), usageId=usage.get('id'), taxonomicStatus=usage.get('status'),
+                        taxonRank=usage.get('taxonRank'), usageId=str(usage['id']) if usage.get('id') is not None else None, taxonomicStatus=usage.get('status'),
                         matchType=match.get('matchType') if kind == 'col' else usage.get('matchType'), checklist=_checklist(state))
     return snapshot
 
@@ -268,10 +277,40 @@ def request_check(conversion, refresh=False):
 
 # Applying decisions ------------------------------------------------------------------------------
 
-def apply_name_decisions(frames, name_review):
+def row_source_names(archive, row_crosswalk, frames):
+    """Per output table, the source scientificName text behind each frame row ('' when it has none or the sources disagree).
+
+    A crosswalk entry's `target_row` is the 1-based position in the converted frame (offset-corrected for nested Taxon plans),
+    and `source_table_index` indexes the archive's tables.
+    """
+    found = {table: [''] * len(frames[table]) for table in OUTPUT_TABLES if table in frames}
+    for entry in row_crosswalk or []:
+        names, position = found.get(entry.get('target_table')), (entry.get('target_row') or 0) - 1
+        if names is None or not 0 <= position < len(names):
+            continue
+        if entry.get('source_table_index') is None:
+            continue
+        table = archive.tables[entry['source_table_index']]
+        if SOURCE_TABLES.get(table.row_type) is None or NAME not in table.terms:
+            continue
+        text = table.rows[entry['source_row'] - 1][table.terms.index(NAME)]
+        if not normal(text):
+            continue
+        if not names[position]:
+            names[position] = text
+        elif normal(names[position]) != normal(text):
+            names[position] = CONFLICT
+    return {table: ['' if value is CONFLICT else value for value in values] for table, values in found.items()}
+
+
+CONFLICT = object()
+
+
+def apply_name_decisions(frames, name_review, source_names):
     """Overlay reviewed names on converted frames; returns (new frames, report section or None).
 
-    Rows are found by their own `verbatimIdentification` (never borrowed from a linked row), which is never changed. A decided name replaces
+    Rows are found by their own source scientificName text (`source_names`: per output table, one text per frame row,
+    from `row_source_names`; never borrowed from a linked row). verbatimIdentification is never read or changed. A decided name replaces
     scientificName; authorship and rank only fill blank cells (a differing supplied authorship is kept and
     counted), so supplied values are never overwritten. Unreviewed labels leave the converter's output as it is.
     """
@@ -289,11 +328,11 @@ def apply_name_decisions(frames, name_review):
     result = dict(frames)
     for table in OUTPUT_TABLES:
         frame = frames.get(table)
-        # Each row is keyed on its own source name text only; a row without one is left untouched.
-        if frame is None or not decisions or not len(frame) or 'verbatimIdentification' not in frame.columns:
+        # A row without a source name of its own is left untouched.
+        verbatim = (source_names or {}).get(table) or []
+        if frame is None or not decisions or not len(frame) or len(verbatim) != len(frame):
             continue
         fields = set(get_table_spec(table).fields)
-        verbatim = frame['verbatimIdentification'].tolist()
         positions = defaultdict(list)
         for position, value in enumerate(verbatim):
             if normal(value) in decisions:
@@ -336,9 +375,9 @@ def apply_name_decisions(frames, name_review):
     section = {
         'status': state.get('status'), 'error': state.get('error') or None, 'checklist': state.get('col_release') or None,
         'labels': len(state['labels']), 'checked': sum(1 for record in state['labels'] if checked(record)),
-        'not_reviewed_limit': state.get('truncated', 0), 'reviewed': len(decisions), 'unreviewed': len(state['labels']) - len(decisions),
+        'not_reviewed_limit': state.get('truncated', 0), 'skipped_long': state.get('skipped_long'), 'reviewed': len(decisions), 'unreviewed': len(state['labels']) - len(decisions),
         'decision_counts': dict(Counter(decision['decision'] for decision in decisions.values())),
-        'policy': 'verbatimIdentification keeps the source text. Names only are published; COL usage ids are provenance, not taxonID. '
+        'policy': 'Decisions apply to rows by their own source scientificName text; verbatimIdentification is never changed. Names only are published; COL usage ids are provenance, not taxonID. '
                   'Unreviewed labels are exactly as the converter produced them.',
         'entries': [entries[label] for label in sorted(entries)],
     }
@@ -371,7 +410,8 @@ def state_section(conversion, offset=0, limit=PAGE_SIZE, view='all'):
     decisions = state.get('decisions', {})
     statuses = Counter((record.get('match') or {}).get('status') for record in labels if checked(record))
     summary = {'labels': len(labels), 'rows': sum(record['rows'] for record in labels), 'checked': sum(1 for record in labels if checked(record)),
-               'decided': len(decisions), 'truncated': state.get('truncated', 0), 'match_status': dict(statuses),
+               'decided': len(decisions), 'truncated': state.get('truncated', 0),
+               'skipped_long': state.get('skipped_long') or {'labels': 0, 'rows': 0}, 'max_label_chars': MAX_LABEL_CHARS, 'match_status': dict(statuses),
                'bulk_col': sum(1 for record in labels if bulk_acceptable(record, decisions)),
                'bulk_parsed': sum(1 for record in labels if parse_acceptable(record, decisions))}
     shown = [record for record in labels if view != 'pending' or record['label'] not in decisions]
@@ -408,7 +448,8 @@ def process_job(conversion_id, job_id, claim):
 
 
 def _run(conversion_id, job_id, claim):
-    from api.conversion_review import Fenced, fence
+    from api import conversion_chat
+    from api.conversion_review import Fenced, fence, review_state
     from api.models import DwcConversion
     snapshot = DwcConversion.objects.select_related('dataset').get(pk=conversion_id)
     plan_id = (snapshot.plan or {}).get('id')
@@ -470,6 +511,10 @@ def _run(conversion_id, job_id, claim):
             if release and not state.get('col_release'):
                 state['col_release'] = release
             conversion.save(update_fields=['name_review', 'updated_at'])
+            # A waiting chat message or manual review gets its turn at this batch boundary.
+            waiting = bool(conversion_chat.unanswered(conversion) or review_state(conversion).get('manual'))
+        if waiting:
+            break
     with fence(conversion_id, job_id, claim, 'names', REVIEW_STATUSES) as (conversion, _):
         state = current(conversion)
         if not state or state['plan_id'] != plan_id:

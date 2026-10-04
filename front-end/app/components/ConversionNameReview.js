@@ -5,7 +5,7 @@ import config from '../config'
 import { STATUS_LABELS, formatName } from '../utils/taxonReview.mjs'
 import {
   DECISION_LABELS, PAGE_SIZE, bulkActions, bulkBody, checkMessage, decisionBody, decisionResult,
-  isChecking, isEditable, pageCount, pageQuery, parseNote,
+  isChecking, isEditable, pageCount, pageQuery, parseNote, skippedMessage,
 } from '../utils/conversionNames.mjs'
 
 function Parsed({ entry }) {
@@ -108,7 +108,7 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
     try { await send(body) } catch (err) { setError(err.message) } finally { setBusy(false) }
   }, [send])
 
-  if (!nameReview?.summary?.labels) return null
+  if (!nameReview?.summary?.labels && !skippedMessage(nameReview?.summary)) return null
   const { summary } = nameReview
   const message = checkMessage(nameReview)
   const bulk = bulkActions(nameReview)
@@ -127,6 +127,7 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
       verbatimIdentification, and names you do not review are converted as they are.
       {' '}{summary.decided.toLocaleString()} of {summary.labels.toLocaleString()} names decided, covering {summary.rows.toLocaleString()} rows.
     </p>
+    {skippedMessage(summary) && <p className="small text-warning-emphasis">{skippedMessage(summary)}</p>}
     {summary.truncated > 0 && <p className="small text-muted">Only the {summary.labels.toLocaleString()} most frequent names are listed; {summary.truncated.toLocaleString()} others are converted as they are.</p>}
     {message && <div className={`alert alert-${message.variant} small py-2`} role="status">
       {message.spinner && <span className="spinner-border spinner-border-sm me-2" />}{message.text}</div>}

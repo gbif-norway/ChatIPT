@@ -3,6 +3,7 @@
 All HTTP is mocked; nothing here reaches GBIF or ChecklistBank.
 """
 import copy
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -182,6 +183,14 @@ def review(decisions, status='complete'):
             'labels': [{'label': 'Aus bus L.', 'rows': 3}, {'label': 'Eus sp.', 'rows': 1}, {'label': 'Unreviewed', 'rows': 1}]}
 
 
+def apply(frames, state, sources=None):
+    """Overlay with each row's source name taken from its verbatimIdentification column unless given."""
+    if sources is None:
+        sources = {table: frame['verbatimIdentification'].tolist() if 'verbatimIdentification' in frame.columns else [''] * len(frame)
+                   for table, frame in frames.items()}
+    return names.apply_name_decisions(frames, state, sources)
+
+
 def decision(kind, name, authorship=None, rank=None, **extra):
     return {'decision': kind, 'source': extra.pop('source', 'parser'), 'scientificName': name, 'scientificNameAuthorship': authorship,
             'taxonRank': rank, 'by': 'user', 'at': '2026-10-04T10:00:00+00:00', **extra}
@@ -191,7 +200,7 @@ class OverlayTests(SimpleTestCase):
     def test_a_parsed_split_sets_name_and_fills_only_blank_authorship_and_rank(self):
         source = frames()
         before = copy.deepcopy({key: value.to_dict('records') for key, value in source.items()})
-        result, section = names.apply_name_decisions(source, review({'Aus bus L.': decision('parsed', 'Aus bus', 'L.', 'species')}))
+        result, section = apply(source, review({'Aus bus L.': decision('parsed', 'Aus bus', 'L.', 'species')}))
         occurrence = result['occurrence'].to_dict('records')
         self.assertEqual([row['scientificName'] for row in occurrence], ['Aus bus', 'Aus bus', '', ''])
         # Supplied authorship is never overwritten; a blank cell is filled.
@@ -209,7 +218,7 @@ class OverlayTests(SimpleTestCase):
     def test_identification_rows_with_their_own_verbatim_text_are_matched_directly(self):
         identification = pd.DataFrame([{'identification_pk': 'i1', 'occurrence_fk': 'o4', 'verbatimIdentification': 'Aus bus L.',
                                         'scientificName': '', 'scientificNameAuthorship': ''}])
-        result, _ = names.apply_name_decisions(frames(identification=identification), review({'Aus bus L.': decision('parsed', 'Aus bus', 'L.')}))
+        result, _ = apply(frames(identification=identification), review({'Aus bus L.': decision('parsed', 'Aus bus', 'L.')}))
         row = result['identification'].iloc[0]
         self.assertEqual((row['scientificName'], row['scientificNameAuthorship'], row['verbatimIdentification']), ('Aus bus', 'L.', 'Aus bus L.'))
 
@@ -222,7 +231,7 @@ class OverlayTests(SimpleTestCase):
         state = {'plan_id': 'plan', 'status': 'complete', 'labels': [{'label': 'Species A'}, {'label': 'Species B'}], 'truncated': 0}
 
         def names_for(decisions):
-            result, section = names.apply_name_decisions({'occurrence': occurrence, 'identification': identification},
+            result, section = apply({'occurrence': occurrence, 'identification': identification},
                                                          {**state, 'decisions': decisions})
             return result['occurrence']['scientificName'].tolist(), result['identification']['scientificName'].tolist(), section
 
@@ -233,24 +242,24 @@ class OverlayTests(SimpleTestCase):
         self.assertEqual(only_b[2]['entries'][0]['rows'], {'identification': 1})
 
     def test_keep_fills_blank_names_only_and_empty_clears(self):
-        result, _ = names.apply_name_decisions(frames(), review({
+        result, _ = apply(frames(), review({
             'Aus bus L.': decision('keep', None, source='verbatim'), 'Eus sp.': decision('empty', '', source='none')}))
         occurrence = result['occurrence']
         self.assertEqual(occurrence['scientificName'].tolist(), ['Aus bus L.', 'Aus bus L.', '', ''])
         blank = frames()
         blank['occurrence'].loc[0, 'scientificName'] = ''
         blank['occurrence'].loc[1, 'scientificName'] = ''
-        result, _ = names.apply_name_decisions(blank, review({'Aus bus L.': decision('keep', None, source='verbatim')}))
+        result, _ = apply(blank, review({'Aus bus L.': decision('keep', None, source='verbatim')}))
         # The supplied text fills a blank scientificName exactly as written, including whitespace.
         self.assertEqual(result['occurrence']['scientificName'].tolist()[:2], ['Aus bus L.', 'Aus  bus L.'])
         cleared = frames()
-        result, _ = names.apply_name_decisions(cleared, review({'Aus bus L.': decision('empty', '', source='none')}))
+        result, _ = apply(cleared, review({'Aus bus L.': decision('empty', '', source='none')}))
         self.assertEqual(result['occurrence']['scientificName'].tolist()[:2], ['', ''])
 
     def test_col_decisions_carry_provenance_into_the_report(self):
         col = decision('col', 'Aus bus', 'L.', 'species', source='col', usageId='COL-AUS', matchType='EXACT',
                        checklist={'checklistKey': 'col-key', 'alias': 'COL26.6 XR'}, taxonomicStatus='accepted')
-        _, section = names.apply_name_decisions(frames(), review({'Aus bus L.': col}))
+        _, section = apply(frames(), review({'Aus bus L.': col}))
         entry = section['entries'][0]
         self.assertEqual((entry['decision'], entry['source'], entry['colUsageId'], entry['checklist']['alias']),
                          ('col', 'col', 'COL-AUS', 'COL26.6 XR'))
@@ -261,24 +270,24 @@ class OverlayTests(SimpleTestCase):
 
     def test_unreviewed_labels_and_missing_tables_leave_frames_unchanged(self):
         source = frames()
-        result, section = names.apply_name_decisions(source, review({}))
+        result, section = apply(source, review({}))
         for key in source:
             pd.testing.assert_frame_equal(result[key], source[key])
         self.assertEqual((section['reviewed'], section['entries']), (0, []))
-        self.assertEqual(names.apply_name_decisions({'event': pd.DataFrame([{'event_pk': 'e'}])}, review({'Aus bus L.': decision('parsed', 'Aus bus')}))[1]['entries'][0]['rows'], {})
-        passthrough, none = names.apply_name_decisions(source, {})
+        self.assertEqual(apply({'event': pd.DataFrame([{'event_pk': 'e'}])}, review({'Aus bus L.': decision('parsed', 'Aus bus')}))[1]['entries'][0]['rows'], {})
+        passthrough, none = apply(source, {})
         self.assertIs(passthrough, source)
         self.assertIsNone(none)
 
     def test_columns_missing_from_the_frame_are_added_when_the_table_has_the_field(self):
         occurrence = pd.DataFrame([{'occurrence_pk': 'o1', 'verbatimIdentification': 'Aus bus L.'}])
-        result, _ = names.apply_name_decisions({'occurrence': occurrence}, review({'Aus bus L.': decision('parsed', 'Aus bus', 'L.', 'species')}))
+        result, _ = apply({'occurrence': occurrence}, review({'Aus bus L.': decision('parsed', 'Aus bus', 'L.', 'species')}))
         row = result['occurrence'].iloc[0]
         self.assertEqual((row['scientificName'], row['scientificNameAuthorship'], row['taxonRank']), ('Aus bus', 'L.', 'species'))
         self.assertNotIn('scientificName', occurrence.columns)
 
     def test_public_report_drops_only_the_entries(self):
-        _, section = names.apply_name_decisions(frames(), review({'Aus bus L.': decision('parsed', 'Aus bus')}))
+        _, section = apply(frames(), review({'Aus bus L.': decision('parsed', 'Aus bus')}))
         public = names.public_report({'name_review': section, 'resources': {}})
         self.assertNotIn('entries', public['name_review'])
         self.assertEqual(public['name_review']['reviewed'], 1)
@@ -655,11 +664,12 @@ class ExtensionNamesTests(SimpleTestCase):
         self.assertEqual({record['label']: record['tables'] for record in state['labels']},
                          {'Species A': {'occurrence': 1}, 'Species B': {'identification': 1}})
         plan = build_plan(archive)
-        frames, _ = convert(archive, plan, decisions_for(plan))
+        frames, report = convert(archive, plan, decisions_for(plan))
+        sources = names.row_source_names(archive, report['row_crosswalk'], frames)
 
         def converted(label, name):
             decided = {**state, 'decisions': {label: decision('parsed', name)}}
-            result, section = names.apply_name_decisions(frames, decided)
+            result, section = names.apply_name_decisions(frames, decided, sources)
             return result['occurrence']['scientificName'].tolist(), result['identification']['scientificName'].tolist(), section
 
         only_a = converted('Species A', 'Species Alpha')
@@ -669,6 +679,92 @@ class ExtensionNamesTests(SimpleTestCase):
         self.assertEqual(only_b[0], ['Species A'])
         self.assertEqual(only_b[1].count('Species Beta'), 1)
         self.assertEqual(only_b[2]['entries'][0]['rows'], {'identification': 1})
+
+
+class SourceNameKeyTests(SimpleTestCase):
+    def converted(self, content):
+        archive = read_inputs([('occurrence.csv', content)])
+        plan = build_plan(archive)
+        frames, report = convert(archive, plan, decisions_for(plan))
+        return archive, frames, report
+
+    def test_decisions_follow_the_source_scientific_name_not_a_different_verbatim_identification(self):
+        archive, frames, report = self.converted(
+            b'occurrenceID,scientificName,verbatimIdentification,kingdom\n'
+            b'a,Aus bus,A. bus?,Animalia\nb,Cus dus,Aus bus,Animalia\nc,Aus bus,,Animalia\n')
+        state = names.collect_state(archive, {'id': 'plan'})
+        self.assertEqual({record['label'] for record in state['labels']}, {'Aus bus', 'Cus dus'})
+        sources = names.row_source_names(archive, report['row_crosswalk'], frames)
+        self.assertEqual(sources['occurrence'], ['Aus bus', 'Cus dus', 'Aus bus'])
+        self.assertEqual(sorted(sources['identification']), ['Aus bus', 'Aus bus', 'Cus dus'])
+        result, section = names.apply_name_decisions(frames, {**state, 'decisions': {'Aus bus': decision('parsed', 'Aus busus')}}, sources)
+        occurrence = result['occurrence'].set_index('occurrenceID')
+        self.assertEqual(occurrence['scientificName'].to_dict(), {'a': 'Aus busus', 'b': 'Cus dus', 'c': 'Aus busus'})
+        # verbatimIdentification stays as supplied, and the row whose verbatim text equals the label is not touched.
+        self.assertEqual(occurrence['verbatimIdentification'].tolist(), ['A. bus?', 'Aus bus', 'Aus bus'])
+        self.assertEqual(section['entries'][0]['rows'], {'occurrence': 2, 'identification': 2})
+
+    def test_crosswalk_positions_offsets_and_disagreeing_sources(self):
+        def table(row_type, rows):
+            return SimpleNamespace(row_type=row_type, terms=[DWC + 'occurrenceID', names.NAME], rows=rows)
+        archive = SimpleNamespace(tables=[
+            table(DWC + 'Occurrence', [['a', 'Aus bus'], ['b', ''], ['c', 'Eus eus']]),
+            table(DWC + 'Event', [['e', 'Not a name']]),
+            table(DWC + 'Identification', [['a', 'Fus fus'], ['b', 'Gus gus']])])
+        frames = {'occurrence': pd.DataFrame({'x': [1, 2, 3]}), 'identification': pd.DataFrame({'x': [1, 2, 3, 4]}), 'event': pd.DataFrame({'x': [1]})}
+
+        def entry(table_name, index, row, target_row, source_index=0):
+            return {'target_table': table_name, 'target_row': target_row, 'source_table_index': index, 'source_row': row}
+        crosswalk = [entry('occurrence', 0, 1, 1), entry('occurrence', 0, 2, 2), entry('occurrence', 0, 3, 3),
+                     entry('occurrence', 1, 1, 1),  # an event source supplies no name
+                     entry('identification', 2, 1, 2), entry('identification', 2, 2, 4),
+                     entry('identification', 0, 3, 4),  # a second, different name for the same target row: ambiguous
+                     {'target_table': 'identification', 'target_row': None, 'source_table_index': 2, 'source_row': 1},
+                     {'target_table': 'identification', 'target_row': 99, 'source_table_index': 2, 'source_row': 1},
+                     {'target_table': 'event', 'target_row': 1, 'source_table_index': 1, 'source_row': 1}]
+        self.assertEqual(names.row_source_names(archive, crosswalk, frames),
+                         {'occurrence': ['Aus bus', '', 'Eus eus'], 'identification': ['', 'Fus fus', '', '']})
+
+    def test_nested_taxon_plans_keep_source_tables_and_row_offsets(self):
+        from api.dwca_import import DWC as IMPORT_DWC
+        from api.test_dwca_taxon import decisions as taxon_decisions, manifest_archive
+        terms = [IMPORT_DWC + 'occurrenceID', IMPORT_DWC + 'scientificName', IMPORT_DWC + 'occurrenceStatus']
+        archive = read_inputs(manifest_archive([
+            ('first.csv', IMPORT_DWC + 'Occurrence', terms, [['join-a', 'occ-1', 'Aus bus', 'present'], ['join-a', 'occ-2', 'Cus dus', 'present']]),
+            ('second.csv', IMPORT_DWC + 'Occurrence', terms, [['join-b', 'occ-3', 'Eus eus', 'present']])]).items())
+        plan = build_plan(archive)
+        frames, report = convert(archive, plan, taxon_decisions(plan))
+        sources = names.row_source_names(archive, report['row_crosswalk'], frames)
+        self.assertEqual(sources['occurrence'], ['Aus bus', 'Cus dus', 'Eus eus'])
+        state = names.collect_state(archive, {'id': 'plan'})
+        result, _ = names.apply_name_decisions(frames, {**state, 'decisions': {'Eus eus': decision('parsed', 'Eus eus L.')}}, sources)
+        self.assertEqual(result['occurrence']['scientificName'].tolist(), ['Aus bus', 'Cus dus', 'Eus eus L.'])
+
+
+class AlternativeIdTests(SimpleTestCase):
+    def test_numeric_and_string_alternative_ids_match(self):
+        match = {'matchType': 'NONE', 'usage': None, 'alternatives': [
+            {'id': 12345, 'scientificName': 'Aus bus', 'scientificNameAuthorship': 'L.', 'taxonRank': 'species', 'matchType': 'VARIANT'}]}
+        record = {'label': 'Aus bsu', 'parsed': {}, 'match': match}
+        for given in ('12345', 12345):
+            result = names.build_decision(record, {'decision': 'alternative', 'usage_id': given}, {'col_release': RELEASE})
+            self.assertEqual((result['scientificName'], result['usageId']), ('Aus bus', '12345'))
+        with self.assertRaises(names.NameDecisionError):
+            names.build_decision(record, {'decision': 'alternative', 'usage_id': '1234'}, {})
+
+
+class LabelLengthTests(SimpleTestCase):
+    def test_overlong_cells_are_counted_and_never_stored_or_sent(self):
+        huge = 'Aus ' + 'b' * 600
+        content = (f'occurrenceID,scientificName,kingdom,family\na,Aus bus,{"K" * 300},Fam\nb,{huge},Animalia,\nc,{huge},Animalia,\nd,Cus dus,,\n').encode()
+        state = names.collect_state(read_inputs([('occurrence.csv', content)]), {'id': 'plan'})
+        self.assertEqual([record['label'] for record in state['labels']], ['Aus bus', 'Cus dus'])
+        self.assertEqual(state['skipped_long'], {'labels': 1, 'rows': 2})
+        self.assertNotIn('bbbbbbbbbb', str(state))
+        # An oversized context cell is not a hint and is not sent to the matcher either.
+        self.assertEqual(state['labels'][0]['hints'], {'family': 'Fam'})
+        exact = 'A' * names.MAX_LABEL_CHARS
+        self.assertEqual(len(names.collect_state(read_inputs([('occurrence.csv', f'occurrenceID,scientificName\na,{exact}\n'.encode())]), {'id': 'p'})['labels']), 1)
 
 
 def respond(payload, max_retries=None):
@@ -769,3 +865,34 @@ class JobOrderingTests(NamesCase):
         with override_settings(CONVERSION_NAME_CHECKS_ENABLED=False):
             self.assertFalse(names.pending(DwcConversion(plan=self.conversion.plan, name_review={**state, 'runs': 1, 'requested': False})))
             self.assertTrue(names.pending(DwcConversion(plan=self.conversion.plan, name_review={**state, 'runs': 1})))
+
+    def test_a_waiting_chat_message_stops_the_run_after_the_current_chunk(self):
+        self.inspect_without_ai()
+        calls = []
+
+        def match(queries, deadline=None):
+            calls.append(len(queries))
+            if len(calls) == 1:
+                self.assertEqual(self.post('chat', message='Wait for me').status_code, 202)
+            return fake_match(queries)
+
+        with patch.object(names, 'CHUNK', 1), patch('api.conversion_review.should_auto_review', return_value=False):
+            self.run_names(match=match)
+        self.assertEqual(calls, [1])  # the remaining labels wait for the next run
+        self.assertEqual(sum(names.checked(record) for record in self.conversion.name_review['labels']), 1)
+        self.assertEqual((self.conversion.name_review['status'], self.job().action), ('incomplete', 'chat'))
+
+    def test_a_manual_review_request_stops_the_run_after_the_current_chunk(self):
+        self.inspect_without_ai()
+        calls = []
+
+        def match(queries, deadline=None):
+            calls.append(len(queries))
+            if len(calls) == 1:
+                self.assertEqual(self.post('review').status_code, 202)
+            return fake_match(queries)
+
+        with patch.object(names, 'CHUNK', 1):
+            self.run_names(match=match)
+        self.assertEqual(calls, [1])
+        self.assertEqual((self.job().action, self.conversion.status), ('review', 'reviewing'))
