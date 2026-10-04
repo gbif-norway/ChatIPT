@@ -4,14 +4,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import config from '../config'
 import { getCsrfToken } from '../utils/csrf'
 import { useDataset } from '../contexts/DatasetContext'
-import { attentionItems, chatVisible, conflictsFor, openQuestions, optionState, shownRecommendation, unresolvedIssues } from '../utils/conversionReview.mjs'
-import { conversionTitle, dedupeNotices, makeSelector, statusLine } from '../utils/conversionPlan.mjs'
+import { attentionItems, chatVisible, conflictsFor, optionState, shownRecommendation, unresolvedIssues } from '../utils/conversionReview.mjs'
+import { conversionTitle, dedupeNotices, makeSelector } from '../utils/conversionPlan.mjs'
 import { focusDecision } from '../utils/focusDecision'
 import ConversionAiDecisions from './ConversionAiDecisions'
 import ConversionChat from './ConversionChat'
 import ConversionColumnSummary from './ConversionColumnSummary'
 import ConversionNameReview from './ConversionNameReview'
-import ConversionOpenQuestions from './ConversionOpenQuestions'
 import ConversionPlanDiagram from './ConversionPlanDiagram'
 import ConversionSteps from './ConversionSteps'
 import PackageExplorer, { openPackageExplorer } from './PackageExplorer'
@@ -41,18 +40,18 @@ export function ConversionUpload({ onDatasetCreated }) {
       onDatasetCreated(data.id)
     } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
-  return <div className="container p-4" style={{ maxWidth: 900 }}>
-    <h1>Convert a Darwin Core Archive to a Data Package</h1>
-    <p>Upload your archive as a ZIP file, or upload its files together. ChatIPT maps the fields it supports automatically, asks you only about what is ambiguous, and checks the converted package.</p>
-    <p className="text-muted">Include meta.xml and eml.xml if you have them, because they describe how the files fit together. If you upload loose tables instead, name the main table occurrence.csv, event.csv or taxon.csv. Your original files, and any fields that cannot be mapped, are kept in the download.</p>
+  return <div className="container p-4 upload-page">
+    <header className="upload-heading"><span className="eyebrow">Archive conversion</span><h1>Give your archive a new format</h1>
+      <p>Upload a Darwin Core Archive. We’ll map its fields, help you review any ambiguous choices, and create a checked Data Package.</p></header>
     <form onSubmit={submit} className="card card-body gap-3">
       <label className="form-label">Title (optional)<input className="form-control mt-1" value={title} onChange={event => setTitle(event.target.value)} disabled={busy} aria-describedby="conversion-title-help" />
         <span id="conversion-title-help" className="form-text">Leave this blank to use the title in the archive&apos;s metadata, or the file name.</span></label>
       <label className="form-label">Archive or loose files<input type="file" multiple accept=".zip,.dwca,.csv,.tsv,.txt,.xml" className="form-control mt-1" disabled={busy} onChange={event => setFiles(Array.from(event.target.files || []))} /></label>
+      <p className="small text-body-secondary mb-0">Add a ZIP, or select all the archive&apos;s files together. Include meta.xml and eml.xml if available. For loose tables, name the main table occurrence.csv, event.csv or taxon.csv.</p>
       {files.length > 0 && <ul>{files.map(file => <li key={file.name}>{file.name} · {(file.size / 1024).toFixed(0)} KB</li>)}</ul>}
       <small className="text-muted">Maximum 200 MB uploaded or expanded. Archives built around events, occurrences or taxa (a species checklist) are accepted. A checklist on its own produces a taxonomy data package; actual occurrence records can also be converted to the Data Package standard after you review them.</small>
       {error && <div className="alert alert-danger" role="alert">{error}</div>}
-      <button className="btn btn-primary align-self-start" disabled={busy || !files.length}>{busy ? 'Uploading…' : 'Inspect my files and prepare the mappings'}</button>
+      <button className="btn btn-primary align-self-start" disabled={busy || !files.length}>{busy ? 'Uploading…' : 'Inspect my archive'}<i className="bi bi-arrow-right ms-2" aria-hidden="true" /></button>
     </form>
   </div>
 }
@@ -78,30 +77,47 @@ function GroupExceptions({ item, decisions, disabled, onChoose }) {
   </details>
 }
 
-function ChoiceCard({ item, state, decisions, disabled, onChoose, selected }) {
+function ChoiceCard({ item, state, decisions, disabled, onChoose, selected, number }) {
   const recommendation = shownRecommendation(state, item.id)
   const deferred = state.review?.deferred?.[item.id]
   const value = selected(item.id, item.default)
   const current = optionState(state, item.id, value)
   const conflicts = conflictsFor(state, item.id)
-  return <div data-decision-id={item.id} className={`card card-body mb-3 ${conflicts.length || !current.available ? 'border-warning' : ''}`}>
+  const guided = number !== undefined
+  const eventLinks = guided && item.id.startsWith('occurrence-events:')
+  return <div data-decision-id={item.id} className={`card card-body choice-card mb-3 ${conflicts.length || !current.available ? 'border-warning' : ''}`}>
+    {guided && <div className="d-flex align-items-center justify-content-between mb-2"><span className="choice-number mb-0">Question {number}</span>{!state.unresolved?.includes(item.id) && decisions[item.id] && <span className="answer-saved"><i className="bi bi-check-circle me-1" aria-hidden="true" />Answer saved</span>}</div>}
     {item.table !== undefined && <small className="text-muted mb-1">{state.plan.tables[item.table]?.name}</small>}
-    <label htmlFor={item.id} className="fw-semibold">{item.title || item.term?.split('/').pop()}
-      {item.authority === 'user-assertion' && <span className="badge text-bg-secondary ms-2">Needs your confirmation</span>}</label>
-    {item.reason && <p className="small mb-2">{item.reason}</p>}
+    {guided ? <h3 id={`title-${item.id}`} className="choice-title fw-semibold">{eventLinks ? 'How should these records link to events?' : item.title || item.term?.split('/').pop()}</h3>
+      : <label id={`title-${item.id}`} htmlFor={item.id} className="choice-title fw-semibold">{item.title || item.term?.split('/').pop()}</label>}
+    {eventLinks ? <><p className="small mb-2">In a Data Package, dates and locations belong to events. Choose how to keep the details recorded on these occurrence rows.</p><details className="small mb-2"><summary>See what we found in your files</summary><p className="mt-2 mb-0">{item.reason}</p></details></> : item.reason && <p className="small mb-2">{item.reason}</p>}
     {item.members && <p className="small mb-2">Applies to {item.count.toLocaleString()} rows that raise the same question (rows {item.sample_rows.join(', ')}{item.count > item.sample_rows.length ? ', …' : ''}).</p>}
     {item.samples?.length > 0 && <div className="small text-muted mb-2" style={{ overflowWrap: 'anywhere' }}>Examples: {item.samples.join(' · ')}</div>}
-    <select id={item.id} className="form-select" value={decisions[item.id] ?? (item.default || '')} disabled={disabled} onChange={event => onChoose(item.id, event.target.value)}>
+    {guided ? <fieldset id={item.id} className="choice-options" aria-labelledby={`title-${item.id}`}>
+      <legend className="visually-hidden">Choose an answer</legend>
+      {item.options.map((option, index) => {
+        const availability = optionState(state, item.id, option.value)
+        const suggested = recommendation?.option === option.value
+        return <div key={option.value}><label className={`choice-option${value === option.value ? ' is-selected' : ''}${suggested ? ' is-suggested' : ''}${!availability.available ? ' is-unavailable' : ''}`}>
+          <input type="radio" name={item.id} value={option.value} checked={value === option.value} disabled={disabled || !availability.available}
+            onChange={() => onChoose(item.id, option.value, suggested ? { accepted_recommendations: [item.id] } : {})} aria-describedby={!availability.available ? `reason-${item.id}-${index}` : undefined} />
+          <span>{option.label}{suggested && <small className="suggested-label"><i className="bi bi-stars me-1" aria-hidden="true" />Suggested by ChatIPT</small>}{!availability.available && <small id={`reason-${item.id}-${index}`} className="d-block text-body-secondary mt-1">Not available with your current data and choices.</small>}</span>
+          {value === option.value && <i className="bi bi-check2 ms-auto" aria-hidden="true" />}
+        </label>{!availability.available && availability.reasons?.length > 0 && <details className="small unavailable-reason"><summary>Why this option isn&apos;t available</summary><p className="mt-2 mb-0">{availability.reasons.join(' ')}</p></details>}</div>
+      })}
+    </fieldset> : <select id={item.id} className="form-select" value={decisions[item.id] ?? (item.default || '')} disabled={disabled} onChange={event => onChoose(item.id, event.target.value)}>
       {!item.default && <option value="">Choose…</option>}
       {item.options.map(option => <option key={option.value} value={option.value}>
         {option.label}{optionState(state, item.id, option.value).available ? '' : ' (not available with your other choices)'}</option>)}
-    </select>
+    </select>}
+    {guided && recommendation?.rationale && <details className="small mt-2"><summary>Why ChatIPT suggests this answer</summary><p className="mt-2 mb-0">{recommendation.rationale}</p></details>}
+    {guided && (item.authority === 'user-assertion' || item.options.some(option => option.assertion)) && <p className="choice-confirmation small text-body-secondary mb-0 mt-2"><i className="bi bi-info-circle me-1" aria-hidden="true" />Some answers add information the files don&apos;t provide. Choose them only if they describe your data.</p>}
     {!current.available && <div className="small text-warning-emphasis mt-2">{current.reasons.join(' ')}</div>}
     {item.unavailable_options?.length > 0 && <details className="small mt-2"><summary>{item.unavailable_options.length} {item.unavailable_options.length === 1 ? 'option is' : 'options are'} not available for this data</summary>
       <ul className="mb-0">{item.unavailable_options.map(option => <li key={option.value}><strong>{option.label}:</strong> {option.reason}</li>)}</ul></details>}
     {item.members && <GroupExceptions item={item} decisions={decisions} disabled={disabled} onChoose={onChoose} />}
     {conflicts.map(conflict => <div key={conflict.id} className="small text-warning-emphasis mt-2">The last conversion stopped because of this choice: {conflict.reason}</div>)}
-    {recommendation && <div className="small mt-2">Recommended: <strong>{recommendation.option_label}</strong>{recommendation.rationale ? ` — ${recommendation.rationale}` : ''}
+    {!guided && recommendation && <div className="small mt-2">Recommended: <strong>{recommendation.option_label}</strong>{recommendation.rationale ? ` — ${recommendation.rationale}` : ''}
       <button className="btn btn-sm btn-outline-primary ms-2" disabled={disabled || !optionState(state, item.id, recommendation.option).available}
         onClick={() => onChoose(item.id, recommendation.option, { accepted_recommendations: [item.id] })}>Use this recommendation</button>
     </div>}
@@ -115,6 +131,9 @@ export default function DwcConversion() {
   const [decisions, setDecisions] = useState({})
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [pendingSaves, setPendingSaves] = useState(0)
+  // Keep a card in place after it is answered, so keyboard focus and the user's place are preserved.
+  const [answeredHere, setAnsweredHere] = useState([])
   const saves = useRef(0)
   const saving = useRef(Promise.resolve())
   const saveFailed = useRef(false)
@@ -122,7 +141,7 @@ export default function DwcConversion() {
   const datasetId = currentDataset?.id
   const url = `${config.baseUrl}/api/datasets/${datasetId}/conversion/`
   const load = useCallback(async () => {
-    try { const data = await request(url); setState(data); setError('') } catch (err) { setError(err.message) }
+    try { const data = await request(url); saveFailed.current = false; setState(data); setError('') } catch (err) { setError(err.message) }
   }, [url])
   useEffect(() => { if (datasetId) load() }, [datasetId, load])
   useEffect(() => { setDecisions(state?.decisions || {}) }, [state?.plan?.id, state?.decisions])
@@ -149,11 +168,16 @@ export default function DwcConversion() {
       setState(await request(url, { action, plan_id: state?.plan?.id }))
     } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
-  const send = async (body) => setState(await request(url, body))
+  const send = async (body) => {
+    await saving.current
+    if (saveFailed.current) throw new Error('Your last change could not be saved. Reload before sending another answer.')
+    setState(await request(url, body))
+  }
   // Every change is saved, so the server's unresolved list and option availability stay current.
   // Saves send only the changed choice, so choices the AI reviewer applied meanwhile are kept.
   const save = (changes, extra = {}) => {
     const sequence = ++saves.current
+    setPendingSaves(count => count + 1)
     saving.current = saving.current.then(async () => {
       try {
         const saved = await request(url, { action: 'save', plan_id: state?.plan?.id, changes, ...extra })
@@ -165,7 +189,7 @@ export default function DwcConversion() {
         saveFailed.current = true
         setError(err.message)
         try { setState(await request(url)); saveFailed.current = false } catch { /* Stay blocked until a reload succeeds. */ }
-      }
+      } finally { setPendingSaves(count => count - 1) }
     })
   }
   const choose = (id, value, extra = {}) => {
@@ -200,13 +224,19 @@ export default function DwcConversion() {
   const nameQuestions = (state?.plan?.issues || []).filter(issue => nameQuestionIds.has(issue.id) && !retainedIssue(issue))
   const needsInputIssues = (state?.plan?.issues || []).filter(issue => needsInput.has(issue.id) && !nameQuestionIds.has(issue.id) &&
     !retainedIssue(issue) && !(state?.review?.applied || []).includes(issue.id))
-  // The questions panel (conversation and recommendations) and the choices list are two views of the same saved decisions.
-  const showQuestions = chatVisible(state) || openQuestions(state).length > 0
   const title = conversionTitle(currentDataset, state)
   const packageExplorable = state?.status === 'complete' && state.report?.output_format === 'dwc-dp'
-  return <div className="container p-4">
-    <h1 className="mb-1">{title}</h1>
-    <p className="text-body-secondary mb-3">Converting a Darwin Core Archive to a Darwin Core Data Package</p>
+  const openItems = [...new Map([...attention, ...needsInputIssues].map(item => [item.id, item])).values()]
+  const openIds = new Set(openItems.map(item => item.id))
+  const choiceOrder = [...(state?.plan?.issues || []), ...automaticChoices, ...(state?.plan?.columns || [])]
+  const answeredItems = [...new Map(choiceOrder.filter(item => answeredHere.includes(item.id) && !openIds.has(item.id) && !retainedIssue(item)).map(item => [item.id, item])).values()]
+  const guidedItems = [...openItems, ...answeredItems].sort((a, b) => choiceOrder.findIndex(item => item.id === a.id) - choiceOrder.findIndex(item => item.id === b.id))
+  return <div className="container conversion-workspace">
+    <header className="workspace-heading">
+      <span className="eyebrow"><i className="bi bi-arrow-left-right me-2" aria-hidden="true" />Archive conversion</span>
+      <h1>{title}</h1>
+      <p className="text-body-secondary mb-0">Darwin Core Archive <i className="bi bi-arrow-right mx-2" aria-hidden="true" /><span className="visually-hidden">to </span>Darwin Core Data Package</p>
+    </header>
     <ConversionSteps state={state} />
     {error && <div className="alert alert-danger" role="alert">{error}<button className="btn btn-sm btn-outline-danger ms-2" onClick={load}>Reload</button></div>}
     {state?.status === 'blocked' && <div className="alert alert-danger" role="alert">
@@ -228,7 +258,62 @@ export default function DwcConversion() {
     {working && <p role="status"><span className="spinner-border spinner-border-sm me-2" />{state.status === 'converting' ? 'Converting and checking your data…' : 'Inspecting your files…'} You can leave and return while this runs.</p>}
     {state?.status === 'reviewing' && <p role="status"><span className="spinner-border spinner-border-sm me-2" />The AI reviewer is checking the remaining choices against your files. You can keep answering meanwhile.</p>}
     {inReview && state.review?.error && <div className="alert alert-info small" role="status">{state.review.error}</div>}
-    {state?.plan?.tables && <>
+    {state?.plan?.tables && <div className="conversion-layout">
+    <div className="conversion-main">
+    {inReview && <section className="review-section" aria-labelledby="conversion-options-heading">
+      <div className="review-heading">
+        <div><span className="eyebrow">Step 3 · Review</span>
+          <h2 id="conversion-options-heading">{outstanding > 0 ? `${outstanding} ${outstanding === 1 ? 'choice' : 'choices'} to finish your conversion` : blockers.length ? 'Check the highlighted choices' : 'You’re ready to convert'}</h2>
+          <p className="text-body-secondary">{outstanding > 0 ? 'Help us understand your data. Choose an answer below; each answer is saved automatically.' : blockers.length ? 'Review the AI choices below before continuing.' : 'Your choices are saved. Review them below or create your package.'}</p>
+        </div>
+        {reviewable > 0 && state.status === 'review' && <button className="btn btn-sm btn-outline-secondary" disabled={disabled} onClick={() => perform('review')}>
+          <i className="bi bi-stars me-1" aria-hidden="true" />Review {reviewable} {reviewable === 1 ? 'choice' : 'choices'} with AI
+        </button>}
+      </div>
+      {guidedItems.map((item, index) => <ChoiceCard key={item.id} item={item} number={index + 1} {...cardProps} onChoose={(...args) => {
+        setAnsweredHere(ids => ids.includes(item.id) ? ids : [...ids, item.id])
+        choose(...args)
+      }} />)}
+      <ConversionNameReview state={state} send={send} disabled={disabled} datasetId={datasetId} onRefresh={load}
+        questions={nameQuestions} decisions={decisions} onChoose={choose} />
+      <ConversionAiDecisions state={state} disabled={disabled} onChoose={choose} onKeep={keep} />
+      {chatVisible(state) && <details className="review-disclosure chat-disclosure">
+        <summary><i className="bi bi-chat-dots me-2" aria-hidden="true" /><span>Need help deciding?</span><small>Talk it through with ChatIPT</small></summary>
+        <ConversionChat state={state} send={send} disabled={busy || working} onFocusDecision={focusDecision} />
+      </details>}
+      <details className="review-disclosure conversion-choices">
+        <summary><i className="bi bi-sliders me-2" aria-hidden="true" /><span>All mapping choices</span><small>Advanced</small></summary>
+        <p className="small text-body-secondary mt-3">Review or change the choices already made for your data. Values kept in the original files remain in your download.</p>
+        {(state.plan.issues || []).filter(issue => !needsInput.has(issue.id) && !guidedItems.some(item => item.id === issue.id) && !nameQuestionIds.has(issue.id) && (!retainedIssue(issue) || issue.id === `table:${issue.table}`) && !(state.review?.applied || []).includes(issue.id))
+          .map(issue => <ChoiceCard key={issue.id} item={issue} {...cardProps} />)}
+        {automaticChoices.filter(choice => !state.plan.columns.some(column => column.id === choice.id) && !guidedItems.some(item => item.id === choice.id) && (!retainedIssue(choice) || choice.id === `table:${choice.table}`)).map(choice => <div className="my-3" key={choice.id} data-decision-id={choice.id}><label htmlFor={choice.id} className="small fw-semibold">{choice.title}</label><p className="small mb-1">{choice.reason}</p><select id={choice.id} className="form-select form-select-sm" disabled={disabled} value={selected(choice.id)} onChange={event => choose(choice.id, event.target.value)}>{choice.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>)}
+        {state.plan.columns.filter(column => !column.review && !guidedItems.some(item => item.id === column.id) && selected(`table:${column.table}`) !== 'preserve').map(column => <div className="row align-items-center my-3" key={column.id} data-decision-id={column.id}><label htmlFor={column.id} className="col-md-6 small">{state.plan.tables[column.table].name} · {column.term.split('/').pop()}</label><div className="col-md-6"><select id={column.id} className="form-select form-select-sm" disabled={disabled} value={selected(column.id, column.default)} onChange={event => choose(column.id, event.target.value)}>{column.options.map(option => <option key={option.value} value={option.value}>{option.label}{optionState(state, column.id, option.value).available ? '' : ' (not available with your other choices)'}</option>)}</select></div></div>)}
+      </details>
+      <div className="conversion-action-bar">
+        <div role="status" aria-live="polite"><strong>{pendingSaves ? 'Saving your answer…' : outstanding > 0 ? `${outstanding} ${outstanding === 1 ? 'choice' : 'choices'} remaining` : blockers.length ? `${blockers.length} AI ${blockers.length === 1 ? 'choice' : 'choices'} to check` : 'Ready for the next step'}</strong>
+          <small>{saveFailed.current ? 'Could not save. Reload to try again.' : outstanding > 0 || blockers.length ? 'Answer the questions above to continue.' : 'Create and validate your converted package.'}</small></div>
+        <button className="btn btn-primary" disabled={disabled || pendingSaves > 0 || saveFailed.current || outstanding > 0 || blockers.length > 0} onClick={() => perform('convert')}>Convert my data<i className="bi bi-arrow-right ms-2" aria-hidden="true" /></button>
+      </div>
+    </section>}
+    {state?.status === 'complete' && <div className="card card-body">
+      <h2>Your converted package is ready</h2>
+      <p>All checks passed. The download contains the connected tables, a mapping report showing where each source row went, and every original file.</p>
+      {state.report.output_format === 'taxonomy-data-package' && <p>This is a taxonomy data package containing your checklist and its attached tables. It has none of the standard Darwin Core Data Package tables.</p>}
+      {state.report.output_format === 'dwc-dp' && state.report.taxonomy && <p>This Data Package has the standard occurrence tables, plus additional taxonomy tables that preserve your original checklist and its attached tables.</p>}
+      <ul>{Object.entries(state.report.resources || {}).map(([name, count]) => <li key={name}>{name}: {count.toLocaleString()} {count === 1 ? 'row' : 'rows'}</li>)}</ul>
+      <p className="small">{state.report.columns?.filter(column => column.disposition === 'retained-unmapped' && column.nonempty).length || 0} columns that contain data stay in your original files because they have no Darwin Core Data Package field.</p>
+      {!!state.report.withheld_values?.length && <p className="small">{state.report.withheld_values.length.toLocaleString()} values were left out of the mapped tables because they did not meet the conversion rules. The report explains each one, and your original files still hold them.</p>}
+      {!!state.report.preserved_extension_rows?.length && <p className="small">{state.report.preserved_extension_rows.length.toLocaleString()} rows from additional tables stay in your original files. The report records the reason and any choice you made.</p>}
+      {state.report.archive_validation?.warnings?.map(warning => <p key={warning} className="small text-muted">{warning}</p>)}
+      <p className="small text-muted">{state.report.metadata?.eml}. The check covers structure and values; it cannot confirm that the meaning is unchanged.</p>
+      <div className="d-flex flex-wrap gap-2">
+        <a className="btn btn-primary" href={`${config.baseUrl}/api/datasets/${datasetId}/conversion-download/`}>{state.report.output_format === 'taxonomy-data-package' ? 'Download taxonomy data package' : 'Download Darwin Core Data Package'}</a>
+        {packageExplorable && <button type="button" className="btn btn-outline-primary" onClick={openPackageExplorer}><i className="bi bi-diagram-3 me-2" aria-hidden="true" />Explore how your data connects</button>}
+      </div>
+    </div>}
+    <details className="review-disclosure conversion-details" >
+      <summary><i className="bi bi-diagram-3 me-2" aria-hidden="true" /><span>Conversion details</span><small>{scientificAudits.some(([, audit]) => audit.has_findings) ? 'Includes hierarchy findings' : 'Files, columns & checks'}</small></summary>
+      <div className="mt-3">
       {state.plan.taxonomy && <div className="alert alert-info">
         The Darwin Core Data Package standard has no table of its own for taxon (checklist) data. Your checklist and any tables attached to it are stored as additional taxonomy tables that link back to your original files.
         A checklist on its own produces a taxonomy data package. If your archive also holds actual occurrence records, those can be converted to the standard tables too.
@@ -243,7 +328,6 @@ export default function DwcConversion() {
         <p className="small text-muted">{state.plan.taxonomy ? 'Taxonomy data package; converting occurrence records uses' : 'Target:'} Darwin Core Data Package (DwC-DP) version {state.plan.schema.version}. {state.plan.files.length} original files are kept.</p>
       </details>
       {state.status !== 'complete' && <ConversionColumnSummary state={state} selected={selected} />}
-    </>}
     {scientificAudits.map(([index, scientific]) => {
       const scientificFindings = scientific.finding_sample || (scientific.checks || []).filter(check =>
         ['contradiction', 'conflict-signal', 'reporting-gap'].includes(check.status) ||
@@ -261,59 +345,19 @@ export default function DwcConversion() {
       <p className="mb-1">{notices.length} {notices.length === 1 ? 'notice' : 'notices'} about this conversion. Your original files keep every source value; the report explains what could not be mapped and which values were left out of the mapped tables.</p>
       <details className="small"><summary>View notices</summary><ul>{notices.map((notice, index) => <li key={`${notice.id}:${index}`}><strong>{notice.title}:</strong> {notice.reason}</li>)}</ul></details>
     </div>}
-    {inReview && <section aria-labelledby="conversion-options-heading">
-      <div className="d-flex flex-wrap gap-2 align-items-center mb-1"><h2 className="me-auto mb-0" id="conversion-options-heading">Conversion options</h2>
-        {reviewable > 0 && state.status === 'review' && <button className="btn btn-outline-secondary" disabled={disabled} onClick={() => perform('review')}>
-          Review {reviewable} {reviewable === 1 ? 'choice' : 'choices'} with AI
-        </button>}
       </div>
-      <p className="mb-1" role="status">{statusLine(state, outstanding, blockers.length)}</p>
-      <p className="small text-body-secondary">Keeping something in your original files means its values are not lost. They just aren&apos;t mapped to a Darwin Core Data Package field.</p>
-      <ConversionAiDecisions state={state} disabled={disabled} onChoose={choose} onKeep={keep} />
-      <ConversionNameReview state={state} send={send} disabled={disabled} datasetId={datasetId} onRefresh={load}
-        questions={nameQuestions} decisions={decisions} onChoose={choose} />
-      <div className="row g-3 align-items-start mb-3">
-        {showQuestions && <div className="col-12 col-lg-6">
-          <h3 className="h5">Questions about your data</h3>
-          <ConversionOpenQuestions state={state} disabled={disabled} onChoose={choose} onFocusDecision={focusDecision} />
-          {chatVisible(state) && <ConversionChat state={state} send={send} disabled={busy || working} onFocusDecision={focusDecision} />}
-        </div>}
-        <div className={showQuestions ? 'col-12 col-lg-6' : 'col-12'}>
-          {/* Choices that need input lead the list, so each question appears once and links straight to its choice. */}
-          {(attention.length > 0 || needsInputIssues.length > 0) && <section className="mb-3" aria-labelledby="needs-input-heading">
-            <h3 className="h5" id="needs-input-heading">Needs your input</h3>
-            {attention.map(item => <ChoiceCard key={item.id} item={item} {...cardProps} />)}
-            {needsInputIssues.map(issue => <ChoiceCard key={issue.id} item={issue} {...cardProps} />)}
-          </section>}
-          <details open={showQuestions} className="conversion-choices">
-            <summary className="h5">All choices (advanced)</summary>
-            <p className="small text-body-secondary mt-2">The same saved choices as the questions {showQuestions ? 'beside' : 'above'}. Change any of them here.</p>
-            <div className={showQuestions ? 'conversion-choices-scroll' : ''}>
-        {(state.plan.issues || []).filter(issue => !needsInput.has(issue.id) && !nameQuestionIds.has(issue.id) && (!retainedIssue(issue) || issue.id === `table:${issue.table}`))
-          .map(issue => <ChoiceCard key={issue.id} item={issue} {...cardProps} />)}
-        {automaticChoices.filter(choice => !state.plan.columns.some(column => column.id === choice.id) && (!retainedIssue(choice) || choice.id === `table:${choice.table}`)).map(choice => <div className="my-3" key={choice.id} data-decision-id={choice.id}><label htmlFor={choice.id} className="small fw-semibold">{choice.title}</label><p className="small mb-1">{choice.reason}</p><select id={choice.id} className="form-select form-select-sm" disabled={disabled} value={selected(choice.id)} onChange={event => choose(choice.id, event.target.value)}>{choice.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>)}
-        {state.plan.columns.filter(column => !column.review && selected(`table:${column.table}`) !== 'preserve').map(column => <div className="row align-items-center my-2" key={column.id} data-decision-id={column.id}><label htmlFor={column.id} className="col-md-6 small">{state.plan.tables[column.table].name} · {column.term.split('/').pop()}</label><div className="col-md-6"><select id={column.id} className="form-select form-select-sm" disabled={disabled} value={selected(column.id, column.default)} onChange={event => choose(column.id, event.target.value)}>{column.options.map(option => <option key={option.value} value={option.value}>{option.label}{optionState(state, column.id, option.value).available ? '' : ' (not available with your other choices)'}</option>)}</select></div></div>)}
-            </div>
-          </details>
-        </div>
-      </div>
-      <button className="btn btn-primary" disabled={disabled || outstanding > 0 || blockers.length > 0} onClick={() => perform('convert')}>Convert and check my data</button>
-    </section>}
-    {state?.status === 'complete' && <div className="card card-body">
-      <h2>Your converted package is ready</h2>
-      <p>All checks passed. The download contains the connected tables, a mapping report showing where each source row went, and every original file.</p>
-      {state.report.output_format === 'taxonomy-data-package' && <p>This is a taxonomy data package containing your checklist and its attached tables. It has none of the standard Darwin Core Data Package tables.</p>}
-      {state.report.output_format === 'dwc-dp' && state.report.taxonomy && <p>This Data Package has the standard occurrence tables, plus additional taxonomy tables that preserve your original checklist and its attached tables.</p>}
-      <ul>{Object.entries(state.report.resources || {}).map(([name, count]) => <li key={name}>{name}: {count.toLocaleString()} {count === 1 ? 'row' : 'rows'}</li>)}</ul>
-      <p className="small">{state.report.columns?.filter(column => column.disposition === 'retained-unmapped' && column.nonempty).length || 0} columns that contain data stay in your original files because they have no Darwin Core Data Package field.</p>
-      {!!state.report.withheld_values?.length && <p className="small">{state.report.withheld_values.length.toLocaleString()} values were left out of the mapped tables because they did not meet the conversion rules. The report explains each one, and your original files still hold them.</p>}
-      {!!state.report.preserved_extension_rows?.length && <p className="small">{state.report.preserved_extension_rows.length.toLocaleString()} rows from additional tables stay in your original files. The report records the reason and any choice you made.</p>}
-      {state.report.archive_validation?.warnings?.map(warning => <p key={warning} className="small text-muted">{warning}</p>)}
-      <p className="small text-muted">{state.report.metadata?.eml}. The check covers structure and values; it cannot confirm that the meaning is unchanged.</p>
-      <div className="d-flex flex-wrap gap-2">
-        <a className="btn btn-primary" href={`${config.baseUrl}/api/datasets/${datasetId}/conversion-download/`}>{state.report.output_format === 'taxonomy-data-package' ? 'Download taxonomy data package' : 'Download Darwin Core Data Package'}</a>
-        {packageExplorable && <button type="button" className="btn btn-outline-primary" onClick={openPackageExplorer}><i className="bi bi-diagram-3 me-2" aria-hidden="true" />Explore how your data connects</button>}
-      </div>
+    </details>
+    </div>
+    <aside className="conversion-sidebar" aria-label="Conversion summary">
+      <section className="card card-body conversion-summary">
+        <span className="eyebrow">Your archive</span>
+        <h2 className="h5">A new home for your data</h2>
+        <p className="small text-body-secondary">{state.plan.taxonomy ? 'Your checklist is kept in additional taxonomy tables. Occurrence records, if included, can also fill standard Data Package tables.' : 'We’ll turn your archive into connected tables in a Darwin Core Data Package.'}</p>
+        <ul className="source-file-list">{state.plan.tables.map((table, index) => <li key={index}><i className="bi bi-file-earmark-spreadsheet" aria-hidden="true" /><span><strong>{table.name}</strong><small>{table.rows.toLocaleString()} rows · {table.columns.length} columns</small></span></li>)}</ul>
+        <div className="originals-note"><i className="bi bi-shield-check" aria-hidden="true" /><div><strong>Your originals stay safe</strong><p className="small mb-0">Every original file is included in your download, even when a column can’t be mapped.</p></div></div>
+      </section>
+      <p className="small text-body-secondary sidebar-help">You can leave and come back at any time. Your saved choices will be here.</p>
+    </aside>
     </div>}
     {packageExplorable && <PackageExplorer datasetId={datasetId} />}
   </div>

@@ -145,32 +145,32 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   // Helper function to fetch data with timeout
   const fetchData = async (url, options = {}) => {
     const { timeout = 30000, retries = 2 } = options; // 30 second timeout for table requests
-    
+
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), timeout);
-        
+
         const response = await fetch(url, {
           credentials: 'include',
           signal: controller.signal,
           ...options
         });
-        
+
         clearTimeout(timeoutId);
-        
+
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
         return response.json();
       } catch (error) {
         console.log(`Fetch attempt ${attempt + 1} failed for ${url}:`, error.message);
-        
+
         // If this is the last attempt, or if it's not a network error, throw
         if (attempt === retries || (!error.name?.includes('Abort') && !error.message?.includes('fetch'))) {
           throw error;
         }
-        
+
         // Wait before retrying
         const delay = 1000 * (attempt + 1);
         console.log(`Retrying in ${delay}ms...`);
@@ -349,8 +349,8 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
           <div className="message assistant-message assistant-message-error">
             <div className="inner-message">
               <strong>Connection Error</strong><br />
-              {error.includes('fetch') || error.includes('network') ? 
-                'There was a temporary network issue. The processing is continuing in the background. Please refresh the page to see the latest updates.' : 
+              {error.includes('fetch') || error.includes('network') ?
+                'There was a temporary network issue. The processing is continuing in the background. Please refresh the page to see the latest updates.' :
                 error
               }
             </div>
@@ -618,12 +618,12 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   };
 
   return (
-    <div className="container">
+    <div className="container publication-workspace">
       <div className="row mx-auto p-4 no-bottom-margin no-bottom-padding no-left-padding">
         <div className="col-12 alerts-div">
-          <div className="mb-3">
+          <div className="mb-3"><span className="eyebrow">Dataset workspace</span>
             <div className="d-flex flex-wrap align-items-center gap-2">
-              <h2 className="mb-0 me-2">{title || 'Untitled Dataset'}</h2>
+              <h1 className="h3 mb-0 me-2">{title || 'Untitled Dataset'}</h1>
               <span className={`badge ${statusMeta.badgeClass}`}>
                 <i className={`bi ${statusMeta.icon} me-1`} aria-hidden="true"></i>
                 {statusMeta.label}
@@ -646,9 +646,9 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                 </a>
               )}
               {(currentDataset.structure_notes || uploadedFiles.length > 0) && (
-                <button 
-                  className="btn btn-outline-secondary btn-sm" 
-                  data-bs-toggle="modal" 
+                <button
+                  className="btn btn-outline-secondary btn-sm"
+                  data-bs-toggle="modal"
                   data-bs-target="#structureNotesModal"
                   title="View data provenance and structure notes"
                 >
@@ -667,9 +667,9 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                 Edit metadata
               </button>
               {currentDataset.can_visualize_tree && (
-                <button 
-                  className="btn btn-outline-primary btn-sm" 
-                  data-bs-toggle="modal" 
+                <button
+                  className="btn btn-outline-primary btn-sm"
+                  data-bs-toggle="modal"
                   data-bs-target="#treeVisualizationModal"
                   onClick={handleVisualizeTreeClick}
                   title="Visualize phylogenetic tree"

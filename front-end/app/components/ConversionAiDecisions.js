@@ -7,10 +7,10 @@ export default function ConversionAiDecisions({ state, disabled, onChoose, onKee
   const items = aiDecidedItems(state)
   if (!items.length) return null
   const stale = items.filter(entry => entry.stale || entry.conflict).length
-  return <details className="card card-body mb-3" open={stale > 0}>
+  return <details className="review-disclosure" open={stale > 0}>
     <summary className="fw-semibold">Decided by the AI reviewer ({items.length}){stale ? ` · ${stale} to check` : ''}</summary>
     <p className="small text-muted mt-2 mb-2">These choices only interpret values already in your files. Change any of them; your choice replaces the AI reviewer’s.</p>
-    {items.map(({ id, item, value, source, stale: needsCheck, conflict }) => <div key={id} className={`border rounded p-2 mb-2 ${needsCheck || conflict ? 'border-warning' : ''}`}>
+    {items.map(({ id, item, value, source, stale: needsCheck, conflict }) => <div key={id} data-decision-id={id} className={`border rounded p-2 mb-2 ${needsCheck || conflict ? 'border-warning' : ''}`}>
       <label htmlFor={`ai-${id}`} className="small fw-semibold">{item.title}</label>
       {source?.rationale && <p className="small mb-1">{source.rationale}</p>}
       {source?.evidence?.length > 0 && <details className="small mb-1"><summary>Evidence it relied on</summary>

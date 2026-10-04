@@ -12,6 +12,6 @@ export function focusDecision(id) {
   void card.offsetWidth // Restart the highlight if the card was highlighted a moment ago.
   card.classList.add('decision-highlight')
   window.setTimeout(() => card.classList.remove('decision-highlight'), 2500)
-  card.querySelector('select')?.focus({ preventScroll: true })
+  card.querySelector('input:not(:disabled), select:not(:disabled), button:not(:disabled)')?.focus({ preventScroll: true })
   return true
 }

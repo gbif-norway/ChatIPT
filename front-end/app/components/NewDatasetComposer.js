@@ -203,15 +203,10 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
   ].join(' ');
 
   return (
-    <div className="container p-4">
+    <div className="container p-4 upload-page">
       <div className="row justify-content-center">
         <div className="col-lg-9">
-          <div className="message assistant-message mb-4">
-            <div className="inner-message">
-              <strong>Hello {displayName}.</strong><br />
-              Upload data files, tree files, or manuscript PDFs to start a new dataset.
-            </div>
-          </div>
+          <header className="upload-heading"><span className="eyebrow">A new beginning</span><h1>Let’s bring your data to life</h1><p>Hello {displayName}. Add your data files or a manuscript, and ChatIPT will guide you from here.</p></header>
 
           <form className={composerClassName} onSubmit={handleSubmit}>
             <div className="d-flex flex-wrap align-items-start gap-2">
@@ -223,7 +218,7 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
                 disabled={isSubmitting}
               >
                 <i className="bi bi-paperclip" aria-hidden="true"></i>
-                <span className="visually-hidden">Attach files</span>
+                <span>Add files</span>
               </button>
               <div className="flex-grow-1">
                 <textarea
@@ -251,7 +246,7 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
                 ) : (
                   <>
                     <i className="bi bi-send-fill" aria-hidden="true"></i>
-                    <span className="d-none d-md-inline">Send</span>
+                    <span>Start dataset</span>
                   </>
                 )}
               </button>

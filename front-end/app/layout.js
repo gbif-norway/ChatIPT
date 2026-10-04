@@ -1,22 +1,22 @@
+import { Inter } from 'next/font/google'
+import 'bootstrap/dist/css/bootstrap.min.css';
+import 'bootstrap-icons/font/bootstrap-icons.css';
 import './globals.css'
 import './app.css'
 import './conversion.css'
-import { Inter, IBM_Plex_Serif } from 'next/font/google'
-import 'bootstrap/dist/css/bootstrap.min.css';
-import 'bootstrap-icons/font/bootstrap-icons.css';
+import './refresh.css'
 import { AuthProvider } from './contexts/AuthContext'
 import { ThemeProvider } from './contexts/ThemeContext'
 import HeaderWrapper, { NavigationProvider } from './components/HeaderWrapper'
 
 const inter = Inter({ subsets: ['latin'] })
-const ibmPlexSerif = IBM_Plex_Serif({ subsets: ['latin'], weight: '400' });
 
 export const metadata = {
   title: 'ChatIPT',
   description: 'Clean, standardise, and organise biodiversity data into DwC-DP and DwC-A publication packages',
   icons: {
     icon: [
-      { url: '/images/chatipt.webp', type: 'image/webp' },
+      { url: '/images/chatipt-mark.svg', type: 'image/svg+xml' },
     ],
   },
 }
@@ -25,7 +25,7 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <link rel="icon" href="/images/chatipt.webp" type="image/webp" />
+        <link rel="icon" href="/images/chatipt-mark.svg" type="image/svg+xml" />
       </head>
       <body className={inter.className}>
         <ThemeProvider>

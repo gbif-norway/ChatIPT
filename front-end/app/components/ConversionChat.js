@@ -18,9 +18,8 @@ export default function ConversionChat({ state, send, disabled, onFocusDecision 
   }
   const messages = chat.messages || []
   const firstCurrent = messages.findIndex(message => message.current_plan)
-  return <section className="card card-body mb-3" aria-label="Conversation about your data">
-    <h3 className="h6">Conversation</h3>
-    <p className="small text-muted mb-2">Answer here in your own words, or choose directly in the list. Both change the same saved choices. The conversation is kept with this conversion; the downloaded report records which choices were answered here, but not the conversation itself.</p>
+  return <section className="conversion-chat mt-3" aria-label="Conversation about your data">
+    <p className="small text-muted mb-3">Ask a question or explain your data in your own words. ChatIPT will suggest answers for you to confirm.</p>
     <div className="d-flex flex-column gap-2 mb-2" style={{ maxHeight: 480, overflowY: 'auto' }}>
       {messages.map((message, index) => <div key={message.id}>
         {index === firstCurrent && index > 0 && <div className="small text-muted text-center my-1">Files inspected again; earlier messages refer to the previous inspection.</div>}
@@ -50,5 +49,6 @@ export default function ConversionChat({ state, send, disabled, onFocusDecision 
         placeholder={canDecide ? 'Answer in your own words…' : 'Ask about the problem…'} onChange={event => setText(event.target.value)} />
       <button className="btn btn-outline-primary align-self-end" disabled={disabled || busy || !text.trim()}>Send</button>
     </form>}
+    <p className="small text-body-secondary mt-2 mb-0">This conversation is saved here. The download report includes your confirmed choices, without the conversation.</p>
   </section>
 }

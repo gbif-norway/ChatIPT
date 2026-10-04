@@ -1,5 +1,6 @@
 'use client'
 
+import Brand from './Brand'
 import { useAuth } from '../contexts/AuthContext'
 import { useSearchParams } from 'next/navigation'
 
@@ -38,79 +39,34 @@ const Login = () => {
   }
 
   return (
-    <div className="container mt-5">
-      <div className="row justify-content-center">
-        <div className="col-md-8 col-lg-6">
-          <div className="card shadow">
-            <div className="card-body p-5">
-              <div className="text-center mb-4">
-                <h2 className="card-title">Welcome to ChatIPT</h2>
-                <p className="text-muted">
-                  A chatbot for students and researchers who are new to data publication
-                </p>
-              </div>
-
-              {errorMessage && (
-                <div className="alert alert-warning" role="alert">
-                  <strong>Sign-in issue:</strong> {errorMessage}
-                </div>
-              )}
-
-              <div className="alert alert-info" role="alert">
-                <h5 className="alert-heading">Why ORCID Login?</h5>
-                <p className="mb-0">
-                  ChatIPT requires ORCID authentication to ensure data quality and provide 
-                  personalized assistance. Your ORCID account helps us understand your 
-                  research background and institution.
-                </p>
-              </div>
-
-              <div className="d-grid gap-3">
-                <button 
-                  onClick={login}
-                  className="btn btn-primary btn-lg"
-                  style={{ backgroundColor: '#A6CE39', borderColor: '#A6CE39' }}
-                >
-                  <i className="bi bi-person-circle me-2"></i>
-                  Sign in with ORCID
-                </button>
-              </div>
-
-              <div className="mt-4">
-                <small className="text-muted">
-                  <strong>What is ORCID?</strong> ORCID provides a persistent digital identifier 
-                  that distinguishes you from every other researcher. It is free to register at{' '}
-                  <a href="https://orcid.org" target="_blank" rel="noopener noreferrer">
-                    orcid.org
-                  </a>
-                </small>
-              </div>
-
-              <hr className="my-4" />
-
-              <div className="row text-center">
-                <div className="col-md-4">
-                  <i className="bi bi-shield-check text-primary fs-1"></i>
-                  <h6 className="mt-2">Secure</h6>
-                  <small className="text-muted">Your data is protected</small>
-                </div>
-                <div className="col-md-4">
-                  <i className="bi bi-person-check text-primary fs-1"></i>
-                  <h6 className="mt-2">Verified</h6>
-                  <small className="text-muted">Academic identity verified</small>
-                </div>
-                <div className="col-md-4">
-                  <i className="bi bi-globe text-primary fs-1"></i>
-                  <h6 className="mt-2">Global</h6>
-                  <small className="text-muted">Used by researchers worldwide</small>
-                </div>
-              </div>
-            </div>
+    <div className="container login-page">
+      <div className="login-layout">
+        <section className="login-intro">
+          <Brand />
+          <h1>Good data.<br />Greater discoveries.</h1>
+          <p>Turn your biodiversity data into something the world can build on. We’ll help you clean it, connect it, and prepare it for GBIF.</p>
+          <svg className="login-botanical" viewBox="0 0 380 170" fill="none" aria-hidden="true">
+            <path d="M15 150h350M95 150V65m95 85V30m95 120V80" stroke="currentColor" strokeWidth="1.5" opacity=".4" />
+            <path d="M95 110C49 112 46 81 47 63c30-3 51 15 48 47Zm0-25c-2-36 22-57 51-55 2 30-17 55-51 55Zm95 22c-39 1-62-26-62-56 40 0 64 19 62 56Zm0-40c0-37 21-56 48-57 1 33-16 58-48 57Zm95 64c-37 2-49-21-51-45 31-1 52 16 51 45Zm0-28c-1-31 16-53 45-55 2 34-14 53-45 55Z" fill="currentColor" opacity=".2" />
+            <circle cx="348" cy="27" r="10" fill="currentColor" opacity=".2" />
+          </svg>
+        </section>
+        <section className="login-form" aria-labelledby="signin-heading">
+          <span className="eyebrow">Let’s get started</span>
+          <h2 id="signin-heading">Welcome to ChatIPT</h2>
+          <p>A guided workspace for students and researchers. Sign in to start a dataset or pick up where you left off.</p>
+          {errorMessage && <div className="alert alert-warning" role="alert"><strong>Sign-in issue:</strong> {errorMessage}</div>}
+          <button onClick={login} className="btn btn-primary"><i className="bi bi-person-circle me-2" aria-hidden="true" />Sign in with ORCID<i className="bi bi-arrow-right ms-2" aria-hidden="true" /></button>
+          <div className="login-orcid-note">
+            <h3 className="h6">One research identity, fewer passwords</h3>
+            <p>ORCID is a free identifier for researchers. ChatIPT uses your public ORCID profile to connect your name and institution to your account.</p>
+            <a href="https://orcid.org" target="_blank" rel="noopener noreferrer" className="small">Learn about ORCID<i className="bi bi-arrow-up-right ms-1" aria-hidden="true" /></a>
           </div>
-        </div>
+        </section>
       </div>
+      <p className="login-footnote">From spreadsheets to connected biodiversity data.</p>
     </div>
   )
 }
 
-export default Login 
+export default Login

@@ -121,9 +121,12 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
   const pages = pageCount(total)
   const locked = disabled || busy
   const unfinished = summary.checked < summary.labels
-  return <section className="card card-body mb-3" aria-labelledby="scientific-names-heading">
+  const skipped = skippedMessage(summary)
+  const needsReview = summary.decided < summary.labels || checking || unfinished || nameReview.status === 'error' || Boolean(skipped) || questions.some(question => state.unresolved?.includes(question.id))
+  return <details className="review-disclosure name-review" open={needsReview}>
+    <summary><i className={`bi ${needsReview ? 'bi-flower1' : 'bi-check-circle'} me-2`} aria-hidden="true" /><span id="scientific-names-heading">Scientific names</span><small>{checking ? 'Checking…' : skipped ? 'Some names weren’t checked' : nameReview.status === 'error' ? 'Check interrupted' : `${summary.decided.toLocaleString()} of ${summary.labels.toLocaleString()} reviewed`}</small></summary>
+    <div className="mt-3">
     <div className="d-flex flex-wrap align-items-center gap-2">
-      <h3 className="h5 mb-0 me-auto" id="scientific-names-heading">Scientific names</h3>
       {editable && (unfinished || nameReview.status === 'error') && !checking && <button type="button" className="btn btn-sm btn-outline-secondary" disabled={locked}
         onClick={() => act({ action: 'check_names', plan_id: planId })}>Check names again</button>}
     </div>
@@ -184,5 +187,6 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
           {fallbackLabel(option, Boolean(state?.plan?.columns?.find(column => column.id === question.id)?.verbatim_source))}</option>)}
       </select>
     </div>)}
-  </section>
+    </div>
+  </details>
 }
