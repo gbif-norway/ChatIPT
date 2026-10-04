@@ -54,7 +54,7 @@ function DecisionCell({ entry, editable, busy, onDecide }) {
       <button type="button" className="btn btn-sm btn-outline-secondary" disabled={busy}
         onClick={() => onDecide(entry.label, 'keep')} title="Copy the supplied text to scientificName where it is empty">Keep as supplied</button>
       <button type="button" className="btn btn-sm btn-outline-secondary" disabled={busy}
-        onClick={() => onDecide(entry.label, 'empty')} title="Leave scientificName empty; the supplied text goes to verbatimIdentification unless your file supplies its own there">Leave empty</button>
+        onClick={() => onDecide(entry.label, 'empty')} title="Leave scientificName empty; the supplied text fills verbatimIdentification wherever that would otherwise be empty">Leave empty</button>
     </div>
     {alternatives.length > 0 && <select className="form-select form-select-sm mt-1" aria-label={`Other COL names for ${entry.label}`} value="" disabled={busy}
       onChange={event => event.target.value && onDecide(entry.label, 'alternative', event.target.value)}>
@@ -66,7 +66,7 @@ function DecisionCell({ entry, editable, busy, onDecide }) {
 
 // The scientificName question asks what happens to names without a decision here; each option is phrased for that.
 const fallbackLabel = (option, partial) => option.value === 'preserve'
-  ? (partial ? 'Leave scientificName empty (the text goes to verbatimIdentification where your file leaves that empty; otherwise only your original files keep it)'
+  ? (partial ? 'Leave scientificName empty (the text fills verbatimIdentification wherever that would otherwise be empty)'
     : 'Leave scientificName empty (the text stays in verbatimIdentification)')
   : `Copy the supplied text into scientificName${option.value.startsWith('identification.') ? ' (identification)' : ''}`
 
@@ -129,8 +129,8 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
     </div>
     <p className="small text-muted mt-2 mb-2">
       Your names are checked with the GBIF name parser and Catalogue of Life, the taxonomy GBIF.org uses{nameReview.checklist ? ` (${nameReview.checklist})` : ''}.
-      A match shows that a name was found, not that the identification is right. Nothing changes unless you decide: the supplied text goes to
-      verbatimIdentification unless your file supplies its own there, and your original files keep everything{questions.length ? ', and names you don\'t decide follow the choice at the end of this section' : ', and names you do not review are converted as they are'}.
+      A match shows that a name was found, not that the identification is right. Nothing changes unless you decide: the supplied text fills
+      verbatimIdentification wherever that would otherwise be empty, and your original files keep everything{questions.length ? ', and names you don\'t decide follow the choice at the end of this section' : ', and names you do not review are converted as they are'}.
       {' '}{summary.decided.toLocaleString()} of {summary.labels.toLocaleString()} names decided, covering {summary.rows.toLocaleString()} rows.
     </p>
     {skippedMessage(summary) && <p className="small text-warning-emphasis">{skippedMessage(summary)}</p>}
@@ -181,7 +181,7 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
         onChange={event => onChoose(question.id, event.target.value)}>
         {!decisions[question.id] && <option value="">Choose…</option>}
         {question.options.map(option => <option key={option.value} value={option.value}>
-          {fallbackLabel(option, state?.plan?.columns?.find(column => column.id === question.id)?.verbatim_copy_partial)}</option>)}
+          {fallbackLabel(option, Boolean(state?.plan?.columns?.find(column => column.id === question.id)?.verbatim_source))}</option>)}
       </select>
     </div>)}
   </section>

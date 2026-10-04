@@ -224,11 +224,16 @@ test('a scientificName left empty still counts as written to verbatimIdentificat
   assert.deepEqual(planDiagram(state, selected).targets.map(target => target.name), ['occurrence'])
 })
 
-test('a partial verbatim copy is described and not counted as written', () => {
+test('a partial verbatim copy follows whether the file\'s own verbatimIdentification is converted', () => {
   const state = { plan: { tables: [{ name: 'occurrence.txt', core: true, rows: 1 }], automatic_choices: [], issues: [],
-    columns: [{ id: 'column:0:0', table: 0, term: 'http://rs.tdwg.org/dwc/terms/scientificName', default: 'preserve', verbatim_copy_partial: true,
-      verbatim_copy: 'occurrence.verbatimIdentification', options: [{ value: 'occurrence.scientificName' }, { value: 'preserve' }] }] } }
-  const selected = (id, fallback) => fallback
-  assert.equal(summariseColumns(state, selected).mapped, 0)
-  assert.match(columnDetails(state, selected)[0].outcome, /where your file leaves it empty/)
+    columns: [{ id: 'column:0:0', table: 0, term: 'http://rs.tdwg.org/dwc/terms/scientificName', default: 'preserve', verbatim_source: 'column:0:1',
+      verbatim_copy: 'occurrence.verbatimIdentification', options: [{ value: 'occurrence.scientificName' }, { value: 'preserve' }] },
+    { id: 'column:0:1', table: 0, term: 'http://rs.tdwg.org/dwc/terms/verbatimIdentification', default: 'occurrence.verbatimIdentification',
+      options: [{ value: 'occurrence.verbatimIdentification' }, { value: 'preserve' }] }] } }
+  const converted = (id, fallback) => fallback
+  assert.equal(summariseColumns(state, converted).mapped, 1)
+  assert.match(columnDetails(state, converted)[0].outcome, /where your file leaves it empty/)
+  const retained = (id, fallback) => (id === 'column:0:1' ? 'preserve' : fallback)
+  assert.equal(summariseColumns(state, retained).mapped, 1)
+  assert.doesNotMatch(columnDetails(state, retained)[0].outcome, /where your file leaves it empty/)
 })

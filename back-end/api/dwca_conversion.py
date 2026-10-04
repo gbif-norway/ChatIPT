@@ -600,9 +600,9 @@ def build_plan(archive):
                 item['verbatim_copy'] = ('identification' if family == 'identification' else 'occurrence') + '.verbatimIdentification'
                 partial = VERBATIM_NAME in table.terms
                 if partial:
-                    item['verbatim_copy_partial'] = True  # Only rows without their own verbatimIdentification receive it.
-                label = ('Leave scientificName empty; the name text goes to verbatimIdentification where your file leaves that empty, '
-                         'otherwise it stays only in your original files' if partial
+                    # Rows whose own verbatimIdentification is converted keep it; the copy fills only empty ones.
+                    item['verbatim_source'] = _column_id(t, table.terms.index(VERBATIM_NAME))
+                label = ('Leave scientificName empty; the name text fills verbatimIdentification wherever that would otherwise be empty' if partial
                          else 'Leave scientificName empty; the name text is kept in verbatimIdentification')
                 item['options'] = [{**option, 'label': label} if option['value'] == 'preserve' else option for option in item['options']]
             columns.append(item); profile["columns"].append({key: item[key] for key in ("term", "nonempty", "distinct", "samples")})
@@ -614,7 +614,7 @@ def build_plan(archive):
                 issues.append(_issue(item["id"], term.rsplit("/", 1)[-1],
                     kind='name-semantics' if name_ambiguity and not media_reason else 'column-mapping', reason=media_reason or (
                         "Some names look like they include an author, a qualifier such as 'cf.', or another unusual form. In a Darwin Core Data Package, scientificName holds only the name, without its author. "
-                        + ("The full text goes to verbatimIdentification where your file leaves it empty; otherwise only your original files keep it. "
+                        + ("The full text fills verbatimIdentification wherever that would otherwise be empty, and your original files keep everything. "
                            if VERBATIM_NAME in table.terms else "The full text is always kept in verbatimIdentification. ")
                         + "Copy the names into scientificName as they are, or leave scientificName empty."
                         if name_ambiguity else "This column could describe more than one thing, for example the occurrence or its identification. Choose where it belongs, or keep it only in your original files." if options

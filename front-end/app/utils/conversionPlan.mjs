@@ -36,8 +36,13 @@ export function unmappedReason(column) {
 }
 
 // A scientificName column always reaches verbatimIdentification, even when scientificName itself is left empty.
-// When the table supplies its own verbatimIdentification, only rows without one receive the copy, so it is not counted.
-const writtenTarget = (column, value) => value === 'preserve' && column.verbatim_copy && !column.verbatim_copy_partial ? column.verbatim_copy : value
+// When the table's own verbatimIdentification is converted, only rows without one receive the copy, so it is not counted.
+const partialCopy = (state, column, selected) => {
+  const source = column.verbatim_source && (state?.plan?.columns || []).find(item => item.id === column.verbatim_source)
+  return Boolean(source) && !retainedTable(state, selected, source.table) && selected(source.id, source.default) !== 'preserve'
+}
+const writtenTarget = (state, column, value, selected) =>
+  value === 'preserve' && column.verbatim_copy && !partialCopy(state, column, selected) ? column.verbatim_copy : value
 
 export function summariseColumns(state, selected) {
   const summary = { total: 0, mapped: 0, review: 0, groups: {}, retainedTables: [] }
@@ -50,7 +55,7 @@ export function summariseColumns(state, selected) {
       retainedColumns[column.table] = (retainedColumns[column.table] || 0) + 1
       continue
     }
-    const value = writtenTarget(column, selected(column.id, column.default))
+    const value = writtenTarget(state, column, selected(column.id, column.default), selected)
     const events = value === 'preserve' ? null : eventDetailsChoice(state, selected, column, value)
     if (value !== 'preserve' && eventDetailsMapped(events)) {
       if (column.review) summary.review += 1; else summary.mapped += 1
@@ -113,7 +118,7 @@ export function columnDetails(state, selected) {
     let outcome
     if (retained) outcome = 'Kept in your original files with its table'
     else if (eventsKept) outcome = events === '' ? 'Waiting for your choice about event details on these rows' : 'Kept in your original files; event details on these rows are not copied'
-    else if (value === 'preserve' && column.verbatim_copy) outcome = column.verbatim_copy_partial
+    else if (value === 'preserve' && column.verbatim_copy) outcome = partialCopy(state, column, selected)
       ? `The text goes to ${column.verbatim_copy.split('.').pop()} where your file leaves it empty; scientificName comes from the name check or stays empty`
       : `The text goes to ${column.verbatim_copy.split('.').pop()}; scientificName comes from the name check or stays empty`
     else if (value === 'preserve') outcome = {
@@ -213,7 +218,7 @@ export function planDiagram(state, selected) {
   }
   for (const column of state?.plan?.columns || []) {
     if (retainedTable(state, selected, column.table)) continue
-    const value = writtenTarget(column, selected(column.id, column.default))
+    const value = writtenTarget(state, column, selected(column.id, column.default), selected)
     if (!eventDetailsMapped(eventDetailsChoice(state, selected, column, value))) continue
     const target = targetTable(value)
     if (target) add(column.table, target, 1)
