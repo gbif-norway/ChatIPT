@@ -7,6 +7,7 @@ import { useDataset } from '../contexts/DatasetContext'
 import { attentionItems, chatVisible, conflictsFor, optionState, shownRecommendation, unresolvedIssues } from '../utils/conversionReview.mjs'
 import ConversionAiDecisions from './ConversionAiDecisions'
 import ConversionChat from './ConversionChat'
+import ConversionNameReview from './ConversionNameReview'
 
 async function request(url, body) {
   const headers = body ? { 'Content-Type': 'application/json', 'X-CSRFToken': await getCsrfToken() } : {}
@@ -238,6 +239,7 @@ export default function DwcConversion() {
       </div>
       <p>{outstanding ? `Resolve ${outstanding} remaining choices. Your choices are saved as you go.` : 'Supported mappings are selected automatically. You can adjust them below.'} Preserving a column keeps its values in the original files without asserting a new meaning.</p>
       <ConversionAiDecisions state={state} disabled={disabled} onChoose={choose} onKeep={keep} />
+      <ConversionNameReview state={state} send={send} disabled={disabled} datasetId={datasetId} onRefresh={load} />
       {attention.map(item => <ChoiceCard key={item.id} item={item} {...cardProps} />)}
       {(state.plan.issues || []).filter(issue => needsInput.has(issue.id) && !retainedIssue(issue) && !(state.review?.applied || []).includes(issue.id))
         .map(issue => <ChoiceCard key={issue.id} item={issue} {...cardProps} />)}

@@ -18,11 +18,12 @@ from api.test_conversion_review import ConversionTestCase
 from api.test_dwca_conversion import decisions_for
 
 RELEASE = {'checklistKey': 'col-key', 'alias': 'COL26.6 XR', 'checklistBankDatasetKey': '315557'}
-OCCURRENCE = (b'occurrenceID,scientificName,verbatimIdentification,kingdom,taxonRank,scientificNameAuthorship\n'
-              b'a,Aus bus L.,Aus bus L.,Animalia,,\n'
-              b'b,Aus bus L.,Aus bus L.,Animalia,,\n'
-              b'c,Cus dus (Smith) Jones 1900,Cus dus (Smith) Jones 1900,Plantae,species,Jones\n'
-              b'd,Eus sp.,Eus sp.,,,\n')
+# The converter copies each source name to verbatimIdentification itself.
+OCCURRENCE = (b'occurrenceID,scientificName,kingdom,taxonRank,scientificNameAuthorship\n'
+              b'a,Aus bus L.,Animalia,,\n'
+              b'b,Aus bus L.,Animalia,,\n'
+              b'c,Cus dus (Smith) Jones 1900,Plantae,species,Jones\n'
+              b'd,Eus sp.,,,\n')
 
 
 def parser_item(complete, canonical, marker=None, type='SCIENTIFIC', parsed=True, authorship=None):
@@ -323,7 +324,7 @@ class NameJobTests(NamesCase):
                          ['Aus bus L.', 'Cus dus (Smith) Jones 1900', 'Eus sp.'])
         self.assertEqual(DwcConversionJob.objects.get(conversion=conversion).action, 'names')
         # The conversion stays editable while names are checked.
-        self.assertEqual(self.state()['name_review']['status'], 'pending')
+        self.assertEqual((self.state()['name_review']['status'], self.state()['name_review']['checking']), ('pending', True))
         mocks = self.run_names()
         conversion = self.conversion
         self.assertEqual(conversion.status, 'review')
@@ -336,7 +337,7 @@ class NameJobTests(NamesCase):
         self.assertEqual(mocks.match.call_args.args[0][0], {'kingdom': 'Animalia', 'scientificName': 'Aus bus L.'})
         self.assertEqual(mocks.match.call_args.args[0][2], {'scientificName': 'Eus'})
         public = self.state()['name_review']
-        self.assertEqual(public['summary']['checked'], 3)
+        self.assertEqual((public['summary']['checked'], public['checking']), (3, False))
         aus, cus, eus = public['labels']
         self.assertEqual((aus['match']['status'], aus['parsed']['canonical'], aus['bulk']), ('exact', 'Aus bus', {'col': True, 'parsed': True}))
         # A variant match and a parse that rewrites the supplied text are offered, but never in bulk.
@@ -567,7 +568,9 @@ class NameDecisionAPITests(NamesCase):
         self.assertEqual(occurrence['verbatimIdentification'].to_dict(),
                          {'a': 'Aus bus L.', 'b': 'Aus bus L.', 'c': 'Cus dus (Smith) Jones 1900', 'd': 'Eus sp.'})
         identification = Table.objects.get(dataset_id=self.dataset_id, title='identification').df
-        self.assertEqual(sorted(identification['scientificName']), ['Aus bus', 'Aus bus', 'Cus dus', 'Eus sp.'])
+        # Rows without a kingdom emit no identification record, so "Eus sp." has none.
+        self.assertEqual(sorted(identification['scientificName']), ['Aus bus', 'Aus bus', 'Cus dus'])
+        self.assertEqual(sorted(identification['verbatimIdentification']), ['Aus bus L.', 'Aus bus L.', 'Cus dus (Smith) Jones 1900'])
         section = conversion.report['name_review']
         self.assertTrue(conversion.report['validation']['valid'])
         self.assertEqual((section['reviewed'], section['unreviewed'], section['checked'], section['checklist']['alias']), (3, 0, 3, 'COL26.6 XR'))
@@ -601,3 +604,18 @@ class NameDecisionAPITests(NamesCase):
         state = self.conversion.name_review
         self.assertEqual((state['status'], state['decisions'], [('match' in record) for record in state['labels']]),
                          ('pending', {}, [False, False, False]))
+
+    def test_names_fill_a_scientific_name_column_the_converter_left_empty(self):
+        self.reviewed()
+        self.post('names', name_decisions={'Aus bus L.': {'decision': 'parsed'}, 'Eus sp.': {'decision': 'keep'}})
+        decisions = {**decisions_for(self.conversion.plan), 'column:0:1': 'preserve'}
+        self.assertEqual(self.post('convert', decisions=decisions).status_code, 202)
+        process_next_conversion()
+        self.assertEqual(self.conversion.status, 'complete', self.conversion.error)
+        occurrence = Table.objects.get(dataset_id=self.dataset_id, title='occurrence').df.set_index('occurrenceID')
+        # Only reviewed labels get a name; the rest stay empty, and the source text is untouched.
+        self.assertEqual(occurrence['scientificName'].to_dict(), {'a': 'Aus bus', 'b': 'Aus bus', 'c': '', 'd': 'Eus sp.'})
+        self.assertEqual(occurrence.loc['a', 'verbatimIdentification'], 'Aus bus L.')
+        identification = Table.objects.get(dataset_id=self.dataset_id, title='identification').df
+        self.assertEqual(sorted(identification['scientificName']), ['', 'Aus bus', 'Aus bus'])
+        self.assertTrue(self.conversion.report['validation']['valid'])

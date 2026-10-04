@@ -1,4 +1,4 @@
-"""Scientific-name checks for archive conversion (docs/dwca-conversion/scientific-names.md).
+"""Scientific-name checks for archive conversion.
 
 After inspection a `names` job collects the distinct source name labels of the Occurrence and
 Identification tables, parses each with GBIF's name parser and matches it against Catalogue of Life XR
@@ -380,7 +380,9 @@ def state_section(conversion, offset=0, limit=PAGE_SIZE, view='all'):
     shown = [record for record in labels if view != 'pending' or record['label'] not in decisions]
     offset = max(int(offset), 0)
     limit = min(max(int(limit), 1), MAX_PAGE_SIZE)
-    return {'status': state.get('status', 'none'), 'error': state.get('error', ''), 'runs': state.get('runs', 0),
+    from api.models import DwcConversionJob
+    checking = DwcConversionJob.objects.filter(conversion=conversion, action='names').exists()
+    return {'status': state.get('status', 'none'), 'checking': checking, 'error': state.get('error', ''), 'runs': state.get('runs', 0),
             'plan_id': state.get('plan_id'), 'checklist': (state.get('col_release') or {}).get('alias'), 'summary': summary,
             'page': {'offset': offset, 'limit': limit, 'total': len(shown), 'view': view},
             'labels': [_entry(record, decisions) for record in shown[offset:offset + limit]]}
