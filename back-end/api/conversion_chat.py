@@ -38,6 +38,7 @@ REASON_TEXT = {
     'no-answer': 'the automatic review did not answer it',
     'invalid-option': 'the automatic review did not give a usable answer',
     'unavailable-option': 'the option it preferred is not possible with your other choices',
+    'drops-field': 'keeping this column only in the original files would leave it out of the converted tables',
     'ai-unavailable': 'automatic review was unavailable',
     'cost-limit': 'automatic review reached its processing limit',
     'review-limit': 'automatic review reached its limit for one run',

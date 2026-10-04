@@ -252,10 +252,11 @@ duplicates and unknown ids ignored):
 | 6 | issue `authority == "user-assertion"` or `option.assertion` | escalated with recommendation | `assertion` |
 | 7 | `needs_user` | escalated with recommendation | `model-needs-user` |
 | 8 | `confidence != "high"` | escalated with recommendation | `low-confidence` |
-| 9 | kind not in `CONVERSION_AI_APPLY_KINDS` (default: all except `event-grain`) | escalated with recommendation | `kind-not-enabled` |
-| 10 | item now has a `user` or `chat` decision, or its basis or availability differs from the packet's | no change | `superseded` / `stale-basis` |
-| 11 | `apply_decision_changes` rejects it (§7.1: a structural `validate_decisions` error, a new requirement violation, or removal of another AI choice) | escalated with recommendation | `rejected` (+ message) |
-| 12 | otherwise | **applied** | — |
+| 9 | column-like issue chooses `preserve` while another available option maps the column to a target | escalated with recommendation | `drops-field` |
+| 10 | kind not in `CONVERSION_AI_APPLY_KINDS` (default: all except `event-grain`) | escalated with recommendation | `kind-not-enabled` |
+| 11 | item now has a `user` or `chat` decision, or its basis or availability differs from the packet's | no change | `superseded` / `stale-basis` |
+| 12 | `apply_decision_changes` rejects it (§7.1: a structural `validate_decisions` error, a new requirement violation, or removal of another AI choice) | escalated with recommendation | `rejected` (+ message) |
+| 13 | otherwise | **applied** | — |
 
 Rules 10–12 run inside the application transaction (§5.6) against the decisions
 current at that moment, one item at a time in item order, so each application is
