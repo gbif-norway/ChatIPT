@@ -40,10 +40,21 @@ class AttentionNotificationRateThrottle(UserRateThrottle):
 
 
 class ConversionReviewRateThrottle(UserRateThrottle):
+    scope = 'conversion_review'
     rate = '10/hour'
 
     def allow_request(self, request, view):
-        if request.method == 'GET' or request.data.get('action') != 'suggest':
+        if request.method == 'GET' or request.data.get('action') != 'review':
+            return True
+        return super().allow_request(request, view)
+
+
+class ConversionChatRateThrottle(UserRateThrottle):
+    scope = 'conversion_chat'
+    rate = '60/hour'
+
+    def allow_request(self, request, view):
+        if request.method == 'GET' or request.data.get('action') != 'chat' or 'confirm' in request.data:
             return True
         return super().allow_request(request, view)
 
@@ -469,17 +480,16 @@ class DatasetViewSet(viewsets.ModelViewSet):
 
     @staticmethod
     def _conversion_state(conversion):
-        from api.conversion_jobs import advice_progress
+        from api.conversion_review import state_section
         from api.dwca_conversion import option_status, validate_decisions
         plan = conversion.plan
         return {'status': conversion.status, 'plan': plan, 'decisions': conversion.decisions,
                 'unresolved': validate_decisions(plan, conversion.decisions, require_complete=False) if plan else [],
                 'option_status': option_status(plan, conversion.decisions) if plan else {},
-                'conflicts': conversion.conflicts, 'retryable': conversion.retryable,
-                'advice_reviewed': conversion.advice_reviewed, 'advice_progress': advice_progress(conversion),
-                'suggestions': conversion.suggestions, 'error': conversion.error,
+                'conflicts': conversion.conflicts, 'retryable': conversion.retryable, 'error': conversion.error,
                 'report': {key: value for key, value in conversion.report.items() if key != 'row_crosswalk'},
-                'updated_at': conversion.updated_at, 'download_ready': conversion.status == 'complete' and bool(conversion.output_file)}
+                'updated_at': conversion.updated_at, 'download_ready': conversion.status == 'complete' and bool(conversion.output_file),
+                **state_section(conversion)}
 
     @staticmethod
     def _unaffected_conflicts(conversion, decisions):
@@ -492,51 +502,115 @@ class DatasetViewSet(viewsets.ModelViewSet):
         changed |= {member['group'] for member in conversion.plan.get('row_issues', []) if member['id'] in changed}
         return [conflict for conflict in conversion.conflicts if not changed & set(conflict.get('decision_ids', []))]
 
-    @action(detail=True, methods=['get', 'post'], url_path='conversion', throttle_classes=[ConversionReviewRateThrottle])
+    @action(detail=True, methods=['get', 'post'], url_path='conversion',
+            throttle_classes=[ConversionReviewRateThrottle, ConversionChatRateThrottle])
     def conversion(self, request, *args, **kwargs):
+        from api import conversion_review
         from api.models import DwcConversion, DwcConversionJob
         from api.dwca_conversion import validate_decisions
-        from api.dwca_import import ImportFailure
+        from api.dwca_import import ConversionError, ImportFailure
 
         dataset = self.get_object()
         if dataset.workflow_type != Dataset.WorkflowType.DWCA_CONVERSION:
             raise ValidationError('This dataset is not an archive conversion.')
         if request.method == 'GET':
             return Response(self._conversion_state(dataset.conversion))
+        operation = request.data.get('action', 'convert')
+        if operation not in {'convert', 'review', 'inspect', 'save', 'chat'}:
+            raise ValidationError('Unknown conversion action.')
         with transaction.atomic():
+            # Lock order: conversion, then job (docs/dwca-conversion/ai-review-and-chat.md §5.9).
             conversion = DwcConversion.objects.select_for_update().get(dataset=dataset)
-            if DwcConversionJob.objects.filter(conversion=conversion).exists():
+            job = DwcConversionJob.objects.select_for_update().filter(conversion=conversion).first()
+            ai_job = job is not None and job.action in {'review', 'chat'}
+            if job is not None and not ai_job:
                 return Response({'detail': 'Conversion work is already queued or running.'}, status=409)
-            operation = request.data.get('action', 'convert')
-            if operation not in {'convert', 'suggest', 'inspect', 'save'}:
-                raise ValidationError('Unknown conversion action.')
-            if operation != 'inspect' and conversion.status != 'review':
+            if operation == 'inspect':
+                if ai_job:
+                    conversion_review.supersede_job(conversion)
+                conversion.status = 'queued'
+                conversion.error = ''; conversion.save()
+                DwcConversionJob.objects.create(conversion=conversion, action='inspect')
+                return Response(self._conversion_state(conversion), status=202)
+            if request.data.get('plan_id') != conversion.plan.get('id'):
+                return Response({'detail': 'The plan changed. Reload before submitting decisions.'}, status=409)
+            if operation == 'chat':
+                return self._conversion_chat(request, conversion, job)
+            if conversion.status not in {'review', 'reviewing'}:
                 # A completed, blocked or failed conversion's choices must stay those of its result.
                 return Response({'detail': 'Choices can only be changed while the conversion is in review.'}, status=409)
-            if operation != 'inspect' and request.data.get('plan_id') != conversion.plan.get('id'):
-                return Response({'detail': 'The plan changed. Reload before submitting decisions.'}, status=409)
-            if operation in {'convert', 'suggest', 'save'}:
-                decisions = request.data.get('decisions', {})
-                try:
-                    validate_decisions(conversion.plan, decisions, require_complete=operation == 'convert')
-                except ImportFailure as exc:
-                    record = exc.as_conflict() if hasattr(exc, 'as_conflict') else {'reason': str(exc), 'decision_ids': []}
-                    return Response({'detail': str(exc), 'conflict': record}, status=400)
-                conversion.conflicts = self._unaffected_conflicts(conversion, decisions)
-                conversion.decisions = decisions
+            if operation == 'review':
+                if ai_job:
+                    return Response({'detail': 'AI review or a reply is already running.'}, status=409)
+                if not conversion_review.ai_available():
+                    raise ValidationError('AI review is unavailable because no API key is configured. You can review the choices yourself.')
+                if not conversion_review.reviewable_items(conversion, manual=True):
+                    return Response(self._conversion_state(conversion))
+                conversion_review.review_state(conversion)['manual'] = True
+                conversion.status = 'reviewing'
+                conversion.save(update_fields=['review', 'status', 'updated_at'])
+                DwcConversionJob.objects.create(conversion=conversion, action='review')
+                return Response(self._conversion_state(conversion), status=202)
+            # save and convert: partial `changes` (preferred, so AI choices made meanwhile survive) or a full `decisions` map.
+            if 'changes' in request.data:
+                changes = request.data.get('changes')
+                if not isinstance(changes, dict) or any(value is not None and not isinstance(value, str) for value in changes.values()):
+                    raise ValidationError('Changes must map decision IDs to option strings or null.')
+            else:
+                decisions = request.data.get('decisions', conversion.decisions)
+                if not isinstance(decisions, dict):
+                    raise ValidationError('Decisions must be a mapping of decision IDs to option strings.')
+                changes = {key: decisions.get(key) for key in {*conversion.decisions, *decisions}
+                           if conversion.decisions.get(key) != decisions.get(key)}
+            requested = {key: value for key, value in {**conversion.decisions, **changes}.items() if value is not None}
+            conflicts = self._unaffected_conflicts(conversion, requested)
+            try:
+                with transaction.atomic():
+                    conversion_review.apply_decision_changes(
+                        conversion, changes, 'user',
+                        accepted_recommendation_ids=request.data.get('accepted_recommendations') or [],
+                        confirm_ids=request.data.get('confirm') or [])
+                    if operation == 'convert':
+                        blockers = conversion_review.convert_blockers(conversion)
+                        if blockers:
+                            raise ConversionError(f'Check {len(blockers)} AI choices made before a choice they depend on changed.',
+                                                  category='decision', decision_ids=blockers)
+                        validate_decisions(conversion.plan, conversion.decisions, require_complete=True)
+            except ImportFailure as exc:
+                conversion.refresh_from_db()
+                record = exc.as_conflict() if hasattr(exc, 'as_conflict') else {'reason': str(exc), 'decision_ids': []}
+                return Response({'detail': str(exc), 'conflict': record}, status=400)
+            conversion.conflicts = conflicts
             if operation == 'save':
                 if not conversion.conflicts and conversion.status == 'review':
                     conversion.error = ''  # The stored failure has been remedied.
-                conversion.save(update_fields=['decisions', 'conflicts', 'error', 'updated_at'])
+                conversion.save(update_fields=['conflicts', 'error', 'updated_at'])
                 return Response(self._conversion_state(conversion))
-            if operation == 'suggest':
-                from api.conversion_jobs import pending_advice
-                if not pending_advice(conversion):
-                    conversion.save(update_fields=['decisions', 'updated_at'])
-                    return Response(self._conversion_state(conversion))
-            conversion.status = {'inspect': 'queued', 'convert': 'converting', 'suggest': 'reviewing'}[operation]
+            if ai_job:
+                conversion_review.supersede_job(conversion)
+            conversion.status = 'converting'
             conversion.error = ''; conversion.save()
-            DwcConversionJob.objects.create(conversion=conversion, action=operation)
+            DwcConversionJob.objects.create(conversion=conversion, action='convert')
+        return Response(self._conversion_state(conversion), status=202)
+
+    def _conversion_chat(self, request, conversion, job):
+        """Post a message (answered by a `chat` job) or apply confirmed proposals (no model, no job)."""
+        from api import conversion_chat, conversion_review
+        from api.models import DwcConversionJob
+        if not conversion.plan or conversion.status not in {'review', 'reviewing', 'blocked'}:
+            return Response({'detail': 'The conversation is not available in this state.'}, status=409)
+        if 'confirm' in request.data:
+            conversion_chat.confirm(conversion, request.data.get('confirm'), request.data.get('plan_id'))
+            if job is None and conversion.status == 'review' and conversion_review.should_auto_review(conversion):
+                conversion.status = 'reviewing'
+                conversion.save(update_fields=['status', 'updated_at'])
+                DwcConversionJob.objects.create(conversion=conversion, action='review')
+            return Response(self._conversion_state(conversion))
+        if not conversion_review.ai_available():
+            raise ValidationError('The conversation assistant is not available. You can answer the choices in the list.')
+        conversion_chat.post_user_message(conversion, request.data.get('message'))
+        if job is None:
+            DwcConversionJob.objects.create(conversion=conversion, action='chat')
         return Response(self._conversion_state(conversion), status=202)
 
     @action(detail=True, methods=['get'], url_path='conversion-download')

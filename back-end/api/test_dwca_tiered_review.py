@@ -197,7 +197,7 @@ class SaveAndConflictAPITests(TransactionTestCase):
         self.assertEqual(self.conversion.status, 'complete')
         # The completed package reflects the converted choices; they cannot change underneath it.
         self.assertEqual(self.post('save', decisions).status_code, 409)
-        self.assertEqual(self.post('suggest', {**decisions, 'table:1': 'preserve'}).status_code, 409)
+        self.assertEqual(self.post('review', {**decisions, 'table:1': 'preserve'}).status_code, 409)
 
     def test_rejected_decisions_return_a_structured_conflict(self):
         response = self.post('convert', {})

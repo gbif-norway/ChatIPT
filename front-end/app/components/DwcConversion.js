@@ -4,7 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import config from '../config'
 import { getCsrfToken } from '../utils/csrf'
 import { useDataset } from '../contexts/DatasetContext'
-import { attentionItems, conflictsFor, optionState, pendingAdvice, unresolvedIssues } from '../utils/conversionReview.mjs'
+import { attentionItems, chatVisible, conflictsFor, optionState, shownRecommendation, unresolvedIssues } from '../utils/conversionReview.mjs'
+import ConversionAiDecisions from './ConversionAiDecisions'
+import ConversionChat from './ConversionChat'
 
 async function request(url, body) {
   const headers = body ? { 'Content-Type': 'application/json', 'X-CSRFToken': await getCsrfToken() } : {}
@@ -67,7 +69,9 @@ function GroupExceptions({ item, decisions, disabled, onChoose }) {
   </details>
 }
 
-function ChoiceCard({ item, state, decisions, disabled, onChoose, selected, suggestion }) {
+function ChoiceCard({ item, state, decisions, disabled, onChoose, selected }) {
+  const recommendation = shownRecommendation(state, item.id)
+  const deferred = state.review?.deferred?.[item.id]
   const value = selected(item.id, item.default)
   const current = optionState(state, item.id, value)
   const conflicts = conflictsFor(state, item.id)
@@ -88,9 +92,11 @@ function ChoiceCard({ item, state, decisions, disabled, onChoose, selected, sugg
       <ul className="mb-0">{item.unavailable_options.map(option => <li key={option.value}><strong>{option.label}:</strong> {option.reason}</li>)}</ul></details>}
     {item.members && <GroupExceptions item={item} decisions={decisions} disabled={disabled} onChoose={onChoose} />}
     {conflicts.map(conflict => <div key={conflict.id} className="small text-warning-emphasis mt-2">Conversion stopped here: {conflict.reason}</div>)}
-    {suggestion && <div className="small mt-2">AI suggests {item.options.find(option => option.value === suggestion.option)?.label}: {suggestion.reason}
-      <button className="btn btn-sm btn-outline-primary ms-2" disabled={disabled} onClick={() => onChoose(item.id, suggestion.option)}>Use suggestion</button>
+    {recommendation && <div className="small mt-2">Recommended: <strong>{recommendation.option_label}</strong>{recommendation.rationale ? ` — ${recommendation.rationale}` : ''}
+      <button className="btn btn-sm btn-outline-primary ms-2" disabled={disabled || !optionState(state, item.id, recommendation.option).available}
+        onClick={() => onChoose(item.id, recommendation.option, { accepted_recommendations: [item.id] })}>Use this recommendation</button>
     </div>}
+    {deferred && <div className="small text-muted mt-2">AI review waits until “{state.plan.issues.find(issue => issue.id === deferred)?.title || deferred}” is answered.</div>}
   </div>
 }
 
@@ -109,30 +115,40 @@ export default function DwcConversion() {
   }, [url])
   useEffect(() => { if (datasetId) load() }, [datasetId, load])
   useEffect(() => { setDecisions(state?.decisions || {}) }, [state?.plan?.id, state?.decisions])
-  const working = ['queued', 'inspecting', 'converting', 'reviewing'].includes(state?.status)
+  // Choices stay editable while the AI reviews (status `reviewing`); only inspection and conversion lock them.
+  const working = ['queued', 'inspecting', 'converting'].includes(state?.status)
+  const polling = working || state?.status === 'reviewing' || Boolean(state?.chat?.pending)
   useEffect(() => {
-    if (!working) return
+    if (!polling) return
     const interval = setInterval(load, 3000)
     return () => clearInterval(interval)
-  }, [working, load])
+  }, [polling, load])
   const perform = async (action) => {
     setBusy(true); setError('')
-    try { setState(await request(url, { action, plan_id: state?.plan?.id, decisions })) } catch (err) { setError(err.message) } finally { setBusy(false) }
+    try {
+      await saving.current  // Convert only after every pending change is saved.
+      setState(await request(url, { action, plan_id: state?.plan?.id }))
+    } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
+  const send = async (body) => setState(await request(url, body))
   // Every change is saved, so the server's unresolved list and option availability stay current.
-  // Saves run one at a time, so the server always ends with the latest complete set of choices.
-  const choose = (id, value) => {
-    const next = { ...decisions, [id]: value }
-    if (!value) delete next[id]
-    setDecisions(next)
+  // Saves send only the changed choice, so choices the AI reviewer applied meanwhile are kept.
+  const save = (changes, extra = {}) => {
     const sequence = ++saves.current
     saving.current = saving.current.then(async () => {
       try {
-        const saved = await request(url, { action: 'save', plan_id: state?.plan?.id, decisions: next })
+        const saved = await request(url, { action: 'save', plan_id: state?.plan?.id, changes, ...extra })
         if (sequence === saves.current) { setState(saved); setError('') }
       } catch (err) { if (sequence === saves.current) setError(err.message) }
     })
   }
+  const choose = (id, value, extra = {}) => {
+    const next = { ...decisions, [id]: value }
+    if (!value) delete next[id]
+    setDecisions(next)
+    save({ [id]: value || null }, extra)
+  }
+  const keep = id => save({}, { confirm: [id] })
   const automaticChoices = state?.plan?.automatic_choices || []
   const defaults = Object.fromEntries(automaticChoices.map(choice => [choice.id, choice.default]))
   const selected = (id, fallback) => decisions[id] ?? defaults[id] ?? fallback
@@ -141,11 +157,11 @@ export default function DwcConversion() {
   const unresolved = unresolvedIssues(state)
   const attention = attentionItems(state)
   const outstanding = unresolved.length + attention.length
-  const pending = pendingAdvice(state)
-  const batchSize = state?.advice_progress?.batch_size || 40
-  const reviewedCount = state?.advice_progress?.reviewed || 0
+  const blockers = state?.review?.blockers || []
+  const reviewable = state?.review?.reviewable || 0
   const disabled = busy || working
-  const suggestionFor = (id) => state?.suggestions?.find(item => item.id === id)
+  const inReview = ['review', 'reviewing'].includes(state?.status)
+  const needsInput = new Set([...unresolved.map(issue => issue.id), ...(state?.review?.escalated || []), ...(state?.conflicts || []).flatMap(conflict => conflict.decision_ids || [])])
   const scientific = state?.status === 'complete'
     ? state.report?.event_hierarchy?.scientific_consistency : state?.plan?.scientific_hierarchy
   const nestedScientific = state?.status === 'complete'
@@ -174,7 +190,10 @@ export default function DwcConversion() {
         : <>Conversion stopped: {conflict.reason} The highlighted choices below can resolve this.</>}
     </div>)}
     {!state && <p>Loading conversion…</p>}
-    {working && <p role="status"><span className="spinner-border spinner-border-sm me-2" />{state.status === 'reviewing' ? 'Preparing AI suggestions…' : state.status === 'converting' ? 'Converting and validating…' : 'Inspecting source files…'} You can leave and return while this runs.</p>}
+    {working && <p role="status"><span className="spinner-border spinner-border-sm me-2" />{state.status === 'converting' ? 'Converting and validating…' : 'Inspecting source files…'} You can leave and return while this runs.</p>}
+    {state?.status === 'reviewing' && <p role="status"><span className="spinner-border spinner-border-sm me-2" />The AI reviewer is checking the remaining choices against your files. You can keep answering meanwhile.</p>}
+    {inReview && state.review?.error && <div className="alert alert-info small" role="status">{state.review.error}</div>}
+    {chatVisible(state) && <ConversionChat state={state} send={send} disabled={busy || working} />}
     {state?.plan?.tables && <>
       {state.plan.taxonomy && <div className="alert alert-info">
         Your Taxon core and its extensions will be preserved as additional taxonomy tables with explicit source links.
@@ -202,24 +221,24 @@ export default function DwcConversion() {
       <p className="mb-1">{notices.length} conversion notices. Original files retain every source value; the report explains unsupported mappings and values omitted from mapped tables.</p>
       <details className="small"><summary>View notices</summary><ul>{notices.map((notice, index) => <li key={`${notice.id}:${index}`}><strong>{notice.title}:</strong> {notice.reason}</li>)}</ul></details>
     </div>}
-    {state?.status === 'review' && <>
-      <div className="d-flex flex-wrap gap-2 align-items-center mb-3"><h2 className="me-auto mb-0">{outstanding ? 'Choices needing your input' : 'Ready to convert'}</h2>
-        {unresolved.length > 0 && <button className="btn btn-outline-secondary" disabled={disabled || !pending.length} onClick={() => perform('suggest')}>
-          {reviewedCount ? `Suggest next ${Math.min(batchSize, pending.length)} choices with AI` : 'Suggest choices with AI'}
+    {inReview && <>
+      <div className="d-flex flex-wrap gap-2 align-items-center mb-3"><h2 className="me-auto mb-0">{outstanding || blockers.length ? 'Choices needing your input' : 'Ready to convert'}</h2>
+        {reviewable > 0 && state.status === 'review' && <button className="btn btn-outline-secondary" disabled={disabled} onClick={() => perform('review')}>
+          Review {reviewable} {reviewable === 1 ? 'choice' : 'choices'} with AI
         </button>}
       </div>
-      <p>{outstanding ? `Resolve ${outstanding} remaining choices. Your choices are saved as you go. AI suggestions need your approval.` : 'Supported mappings are selected automatically. You can adjust them below.'} Preserving a column keeps its values in the original files without asserting a new meaning.</p>
-      {unresolved.length > 0 && <p className="small text-muted">AI reviews up to {batchSize} unresolved choices per request. {reviewedCount} choices reviewed; {pending.length} still available for AI review.
-        {!!state.advice_progress?.without_suggestion && ` AI could not recommend a choice for ${state.advice_progress.without_suggestion} reviewed items; review those manually.`}
-      </p>}
+      <p>{outstanding ? `Resolve ${outstanding} remaining choices. Your choices are saved as you go.` : 'Supported mappings are selected automatically. You can adjust them below.'} Preserving a column keeps its values in the original files without asserting a new meaning.</p>
+      <ConversionAiDecisions state={state} disabled={disabled} onChoose={choose} onKeep={keep} />
       {attention.map(item => <ChoiceCard key={item.id} item={item} {...cardProps} />)}
-      {(state.plan.issues || []).filter(issue => !retainedIssue(issue) || issue.id === `table:${issue.table}`)
-        .map(issue => <ChoiceCard key={issue.id} item={issue} suggestion={suggestionFor(issue.id)} {...cardProps} />)}
-      <details className="mb-3"><summary>Automatic mappings and choices</summary>
+      {(state.plan.issues || []).filter(issue => needsInput.has(issue.id) && !retainedIssue(issue) && !(state.review?.applied || []).includes(issue.id))
+        .map(issue => <ChoiceCard key={issue.id} item={issue} {...cardProps} />)}
+      <details className="mb-3"><summary>All choices (advanced)</summary>
+        <div className="mt-3">{(state.plan.issues || []).filter(issue => !needsInput.has(issue.id) && (!retainedIssue(issue) || issue.id === `table:${issue.table}`))
+          .map(issue => <ChoiceCard key={issue.id} item={issue} {...cardProps} />)}</div>
         {automaticChoices.filter(choice => !state.plan.columns.some(column => column.id === choice.id) && (!retainedIssue(choice) || choice.id === `table:${choice.table}`)).map(choice => <div className="my-3" key={choice.id}><label htmlFor={choice.id} className="small fw-semibold">{choice.title}</label><p className="small mb-1">{choice.reason}</p><select id={choice.id} className="form-select form-select-sm" disabled={disabled} value={selected(choice.id)} onChange={event => choose(choice.id, event.target.value)}>{choice.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>)}
         {state.plan.columns.filter(column => !column.review && selected(`table:${column.table}`) !== 'preserve').map(column => <div className="row align-items-center my-2" key={column.id}><label htmlFor={column.id} className="col-md-6 small">{state.plan.tables[column.table].name} · {column.term.split('/').pop()}</label><div className="col-md-6"><select id={column.id} className="form-select form-select-sm" disabled={disabled} value={selected(column.id, column.default)} onChange={event => choose(column.id, event.target.value)}>{column.options.map(option => <option key={option.value} value={option.value}>{option.label}{optionState(state, column.id, option.value).available ? '' : ' (not possible with other current choices)'}</option>)}</select></div></div>)}
       </details>
-      <button className="btn btn-primary" disabled={disabled || outstanding > 0} onClick={() => perform('convert')}>Convert and validate package</button>
+      <button className="btn btn-primary" disabled={disabled || outstanding > 0 || blockers.length > 0} onClick={() => perform('convert')}>Convert and validate package</button>
     </>}
     {state?.status === 'complete' && <div className="card card-body">
       <h2>Converted package ready</h2>

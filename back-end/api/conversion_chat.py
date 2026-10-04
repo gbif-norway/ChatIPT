@@ -30,6 +30,7 @@ OUTPUT_TOKENS = 6000
 OPENER_ITEMS = 4
 SUPERSEDED_NOTICE = 'Conversion work started before I could answer. Ask again if this still matters.'
 ERROR_NOTICE = 'I could not answer because of a server problem. You can try again, or answer the choices in the list below.'
+UNAVAILABLE_NOTICE = 'The conversation assistant is not available right now. You can answer every choice in the list below.'
 COST_LIMIT_NOTICE = ('Automated help for this dataset has reached its processing limit. '
                      'You can still answer every choice in the list below.')
 REASON_TEXT = {
@@ -210,7 +211,7 @@ def chat_state(conversion):
     messages = list(conversion.messages.order_by('-id')[:100])[::-1]
     job = DwcConversionJob.objects.filter(conversion=conversion).values_list('action', flat=True).first()
     return {
-        'available': bool(conversion.plan) and conversion.status in {'review', 'reviewing', 'blocked'},
+        'available': review.ai_available() and bool(conversion.plan) and conversion.status in {'review', 'reviewing', 'blocked'},
         'can_decide': conversion.status in {'review', 'reviewing'},
         'pending': job == 'chat' or bool(unanswered(conversion)),
         'messages': [{'id': message.id, 'role': message.role, 'kind': message.kind, 'content': message.content,
@@ -500,6 +501,9 @@ def run_chat_turn(conversion_id, job_id, claim):
         if not batch:
             return
         through = batch[-1].id
+        if not review.ai_available():
+            _post(conversion, UNAVAILABLE_NOTICE, 'notice', answers_through=through)
+            return
         context = review.Context(conversion)
         input_items = [{'role': 'system', 'content': SYSTEM_PROMPT},
                        {'role': 'system', 'content': _summary(conversion, context)}, *_transcript(conversion)]

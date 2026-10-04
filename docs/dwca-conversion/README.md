@@ -134,19 +134,20 @@ accepted determination; repeated core/history classifications are not merged
 by name similarity. Identical sequence strings and complete protocol descriptions
 share target records, while analyses retain source row multiplicity.
 
-"Suggest choices with AI" uses the configured efficient model (currently
-`gpt-6-luna`) through the Responses API, with structured output, bounded profiles,
-no tools, and dataset-level usage accounting. It handles at most 40 review items
-per request. Successive requests select unresolved questions not already reviewed,
-skip preserved tables/rows, and retain earlier suggestions. A completed batch
-records every question attempted, including model abstentions; abstentions need
-manual review and do not block later batches. Failed requests can be retried.
-The UI shows review progress and offers the next batch. Suggestions cannot add targets or execute changes, and require
-individual user approval. AI integration tests use mocked responses; recommendation
-quality and the proposed automatic-discharge criteria still need evaluation on
-reviewed examples. API compatibility was checked against the official
-[structured-output guide](https://developers.openai.com/api/docs/guides/structured-outputs)
-and [model documentation](https://developers.openai.com/api/docs/models/gpt-6-luna).
+After inspection, an automatic AI reviewer (`gpt-6-sol`, high effort, Flex) checks the
+remaining choices against bounded evidence packets: column profiles, sample rows, option
+requirements, group evidence, pinned target definitions and the archive's EML. It may
+apply only non-assertion options on AI-reviewable issues, with high confidence and cited
+evidence, and never merges events (`event-grain`) until the offline benchmark supports it.
+Everything else is escalated with its recommendation to a conversation that asks the user
+in plain language. The conversation records answers to questions it asked through the
+same validation; options that assert a new fact are applied only when the user clicks
+Confirm on that exact option. Every decision has a provenance event (user, AI reviewer,
+chat or system), later changes invalidate AI choices that depended on earlier ones, and
+the dataset cost ceiling covers all conversion calls. Review and conversation run as
+`review` and `chat` jobs on the conversion queue. See
+[AI reviewer and conversation fallback](ai-review-and-chat.md). Tests use mocked model
+responses; `CONVERSION_AI_REVIEW_ENABLED` is always off under the test runner.
 
 The export validates the serialized tar.gz and includes `datapackage.json`,
 mapped CSV resources, `conversion-report.json` (decisions, column dispositions,
@@ -167,7 +168,7 @@ and failed export/storage work leaves sources available for retry.
 Run migrations and workers through the normal Docker Compose startup. Targeted checks:
 
 ```sh
-docker compose exec back-end python manage.py test api.test_dwca_review_policy api.test_dwca_scientific api.test_dwca_scientific_conversion api.test_dwca_hierarchy api.test_dwca_humboldt_vocabulary api.test_dwca_conversion api.test_dwca_media api.test_dwca_references api.test_dwca_humboldt api.test_dwca_eol api.test_dwca_germplasm api.test_dwca_legacy api.test_dwca_extensions api.test_dwca_taxon api.test_dwca_tiered_review api.test_conversion_advice api.test_dwc_dp_validation api.test_agent_turns api.test_source_coverage --noinput
+docker compose exec back-end python manage.py test api.test_dwca_review_policy api.test_dwca_scientific api.test_dwca_scientific_conversion api.test_dwca_hierarchy api.test_dwca_humboldt_vocabulary api.test_dwca_conversion api.test_dwca_media api.test_dwca_references api.test_dwca_humboldt api.test_dwca_eol api.test_dwca_germplasm api.test_dwca_legacy api.test_dwca_extensions api.test_dwca_taxon api.test_dwca_tiered_review api.test_conversion_review api.test_conversion_chat api.test_dwc_dp_validation api.test_agent_turns api.test_source_coverage --noinput
 docker compose exec front-end npm test
 docker compose exec front-end npm run lint
 docker compose exec front-end npm run build

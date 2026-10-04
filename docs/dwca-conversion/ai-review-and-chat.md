@@ -1,6 +1,7 @@
 # AI reviewer and conversation fallback (steps 4–5)
 
-Status: design, conforming to [tiered-review.md](tiered-review.md) (rule version 10).
+Status: implemented (`api/conversion_evidence.py`, `api/conversion_review.py`,
+`api/conversion_chat.py`), conforming to [tiered-review.md](tiered-review.md) (rule version 10).
 Steps 1–3 own the plan, `kind`/`assertion`/`authority`, groups, `option_status`,
 `effective_decisions`, `validate_decisions`, structured `conflicts` and the `save`
 action. This document specifies what runs on top of them. Nothing here changes
@@ -143,6 +144,9 @@ a stable `ref` that the model must cite:
   requirement-driven items, the requirement's example rows; otherwise a fixed spread
   (first, ¼, ½, ¾, last). At most 5 rows × 20 nonempty columns × 200 chars.
   Row numbers are 1-based source rows.
+- **Table**: the item's table, the index in its id (`status:<t>`, `material:<t>`, …) or,
+  for global items, the core table. Layout and taxonomy-package items also list every
+  table with its row type, rows and join basis.
 - **Requirements** come from the plan's precomputed `requirements` evidence (counts and
   ≤ 5 examples) and the current `option_status` (`satisfied`).
 - **Targets**: pinned DwC-DP definitions for every `table.field` option value
@@ -627,7 +631,8 @@ against the schema server-side, is retried once; then the turn posts a fixed err
 notice. Usage is recorded per response (`task_name="DwC-A conversion chat"`).
 
 Input: a fixed system prompt; a state summary (status, open items compactly with
-recommendations, conflicts, EML title and the first 600 characters of the abstract);
+recommendations, and conflicts; metadata is fetched with `get_dataset_metadata` so a
+turn does not load the archive unless it needs evidence);
 the last 30 messages for the current plan (≤ 2,000 chars each, assistant proposals
 rendered as text). Tool exchanges of earlier turns are not replayed; their effects
 are visible in the state summary and in `actions`.
@@ -772,7 +777,11 @@ Confirmations (path B) never call a model and remain available.
 }
 ```
 
-`suggestions`, `advice_reviewed` and `advice_progress` are removed.
+`suggestions`, `advice_reviewed` and `advice_progress` are removed. `save` and
+`convert` accept partial `changes` (`{id: value | null}`), so a form change never
+removes a choice the AI reviewer applied meanwhile; `accepted_recommendations` and
+`confirm` mark adopted recommendations and kept choices. `review.deferred` maps waiting
+items to the choice they wait for, and `review.blockers` lists retained stale AI choices.
 
 ## 11. Interface
 
@@ -874,6 +883,7 @@ require a rerun.
 | `CONVERSION_AI_APPLY_KINDS` | every kind except `event-grain` until the offline benchmark meets the 98% bar (assertion rules still apply) |
 | `CONVERSION_JOB_LEASE_SECONDS` | 3,600 (minimum; raised to the derived call bound, §5.9) |
 | `OPENAI_DATASET_COST_LIMIT_USD` | existing, now enforced for conversion calls |
+| `CONVERSION_AI_REVIEW_ENABLED` | on, but always off under the test runner (tests opt in with mocked responses) |
 
 ## 15. Integration points needed from steps 1–3
 

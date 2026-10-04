@@ -4,7 +4,6 @@ import tempfile
 import tarfile
 import zipfile
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -14,8 +13,8 @@ from rest_framework.test import APIClient
 from api.dwca_import import DWC, ImportFailure, read_inputs, source_zip
 from api.dwca_conversion import build_plan, convert, option_status, validate_decisions
 from api.dwc_dp_specs import create_dwc_dp_archive, validate_dwc_dp_archive
-from api.models import CustomUser, Dataset, DwcConversion, DwcConversionJob, OpenAIUsage
-from api.conversion_jobs import process_next_conversion, suggest_mappings
+from api.models import CustomUser, Dataset, DwcConversion, DwcConversionJob
+from api.conversion_jobs import process_next_conversion
 
 
 def occurrence(content=None):
@@ -340,16 +339,3 @@ class ConversionAPITests(TransactionTestCase):
         self.assertEqual(conversion.status, 'review'); self.assertIn('Storage is unavailable', conversion.error)
         self.assertFalse(DwcConversionJob.objects.filter(conversion=conversion).exists()); self.assertTrue(dataset.user_files.exists())
 
-    @override_settings(OPENAI_API_KEY='test', OPENAI_MODEL_EFFICIENT='gpt-6-luna')
-    def test_ai_is_bounded_and_cannot_create_arbitrary_decisions(self):
-        dataset = self.upload(); process_next_conversion(); conversion = DwcConversion.objects.get(dataset=dataset)
-        response = SimpleNamespace(id='test-review-response', status='completed', model='gpt-6-luna', usage={}, output_text=json.dumps({'suggestions': [
-            {'id': 'loose-links', 'option': 'confirm', 'reason': 'A suggestion only'},
-            {'id': 'column:0:0', 'option': 'invented.field', 'reason': 'Invalid'},
-            {'id': 'loose-links', 'option': 'confirm', 'reason': 'Duplicate'},
-        ]}))
-        with patch('api.helpers.openai_helpers.query_responses_api', return_value=response) as query:
-            suggestions = suggest_mappings(conversion)
-        self.assertEqual(len(suggestions), 1); self.assertEqual(conversion.decisions, {})
-        self.assertNotIn('tools', query.call_args.args[0]); self.assertLessEqual(query.call_args.args[0]['max_output_tokens'], 4000)
-        self.assertTrue(OpenAIUsage.objects.filter(dataset=dataset, agent__isnull=True).exists())

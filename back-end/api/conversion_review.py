@@ -78,7 +78,8 @@ def setting(name, default):
 
 
 def ai_available():
-    return bool(getattr(settings, 'OPENAI_API_KEY', None) or os.environ.get('OPENAI_API_KEY'))
+    return bool(setting('CONVERSION_AI_REVIEW_ENABLED', False)
+                and (getattr(settings, 'OPENAI_API_KEY', None) or os.environ.get('OPENAI_API_KEY')))
 
 
 def apply_kinds():
@@ -131,8 +132,8 @@ def latest_events(conversion):
 
 def latest_sources(conversion, events=None):
     events = events if events is not None else latest_events(conversion)
-    return {decision_id: ('user' if decision_id not in events or not events[decision_id].value
-                          and events[decision_id].source == 'system' else events[decision_id].source)
+    # A decision without an event predates provenance and counts as the user's.
+    return {decision_id: events[decision_id].source if decision_id in events and events[decision_id].value else 'user'
             for decision_id in conversion.decisions}
 
 
@@ -180,7 +181,7 @@ def apply_decision_changes(conversion, changes, source, *, model='', reasoning_e
             if record.get('outcome') == 'applied' and record.get('option') != candidate.get(key):
                 record['outcome'] = 'overridden'
             record.pop('stale_basis', None)
-    ai_keys = [key for key in candidate if sources.get(key) == 'ai-reviewer' and key not in changes]
+    ai_keys = [key for key in candidate if sources.get(key) == 'ai-reviewer' and key not in changes and key not in confirm_ids]
     removed = {}
     while True:
         status = option_status(plan, candidate)
@@ -404,7 +405,7 @@ def release_on_error(reservation, exc):
 def fence(conversion_id, job_id, claim, action, statuses):
     """Lock conversion then job; require the same claim, action and an expected status (§5.9)."""
     with transaction.atomic():
-        conversion = DwcConversion.objects.select_for_update().select_related('dataset').filter(pk=conversion_id).first()
+        conversion = DwcConversion.objects.select_for_update(of=('self',)).select_related('dataset').filter(pk=conversion_id).first()
         job = DwcConversionJob.objects.select_for_update().filter(
             pk=job_id, conversion_id=conversion_id, action=action, claimed_at=claim).first() if conversion else None
         if job is None or (statuses is not None and conversion.status not in statuses):

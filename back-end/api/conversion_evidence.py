@@ -250,11 +250,22 @@ def _short(term):
     return term.rsplit('/', 1)[-1].rsplit('#', 1)[-1]
 
 
+def item_table(plan, item):
+    """The source table an item is about: its own, the index in its id, or the core for global items."""
+    if isinstance(item.get('table'), int):
+        return item['table']
+    _, local = split_nested(item['id'])
+    tail = local.rsplit(':', 1)[-1]
+    if ':' in local and tail.isdigit():
+        return int(tail)
+    return next((index for index, table in enumerate(plan.get('tables', [])) if table.get('core')), None)
+
+
 def _source_table(archive, plan, item):
     """The archive table rows for an item; nested Taxon items read their occurrence table."""
-    if archive is None or 'table' not in item:
+    t = item_table(plan, item)
+    if archive is None or t is None:
         return None
-    t = item['table']
     return archive.tables[t] if 0 <= t < len(archive.tables) else None
 
 
@@ -270,7 +281,7 @@ def _profile(table, c, column):
 
 
 def _columns_for(plan, item, table):
-    t = item.get('table')
+    t = item_table(plan, item)
     if t is None:
         return []
     columns = [column for column in plan.get('columns', []) if column['table'] == t
@@ -287,6 +298,8 @@ def _columns_for(plan, item, table):
     elif kind in {'survey-classification', 'survey-completeness'}:
         chosen.extend(column for column in columns if any(word in _short(column['term']).lower()
                                                           for word in ('scope', 'complete', 'survey', 'target', 'event')))
+    elif kind == 'layout':
+        chosen.extend(column for column in plan.get('columns', []) if _short(column['term']) in {'id', 'coreid', 'occurrenceID', 'eventID', 'taxonID'})
     elif kind == 'row-handling' and table is not None:
         rows = item.get('rows') or ([item['row']] if 'row' in item else [])
         populated = {column['column'] for column in columns for n in rows[:ROW_LIMIT]
@@ -400,16 +413,22 @@ def evidence_packet(plan, archive, decisions, item_id, *, status=None, sources=N
                 for option in item.get('unavailable_options', [])]
     evidence = {}
     profiles = plan.get('tables', [])
-    if 'table' in item and 0 <= item['table'] < len(profiles):
-        profile = profiles[item['table']]
-        evidence['table'] = {'ref': f"table:{item['table']}", 'name': clip(profile['name'], 200),
+    t = item_table(plan, item)
+    if t is not None and 0 <= t < len(profiles):
+        profile = profiles[t]
+        evidence['table'] = {'ref': f"table:{t}", 'name': clip(profile['name'], 200),
                              'row_type': profile.get('row_type', ''), 'core': profile.get('core', False),
                              'rows': profile.get('rows'), 'join_basis': clip(profile.get('join_basis', ''), 200)}
+    if item.get('kind') in {'layout', 'taxonomy-package'}:
+        evidence['tables'] = [{'ref': f'table:{index}', 'name': clip(profile['name'], 200), 'row_type': profile.get('row_type', ''),
+                               'core': profile.get('core', False), 'rows': profile.get('rows'),
+                               'unique_join_ids': profile.get('unique_join_ids'), 'join_basis': clip(profile.get('join_basis', ''), 200)}
+                              for index, profile in enumerate(profiles[:12])]
     columns = _columns_for(plan, item, table)
     evidence['columns'] = [_profile(table, column['column'], column) for column in columns]
     row_columns = [column for column in columns if table is not None]
     if table is not None and item.get('kind') in {'row-handling', 'survey-completeness'}:
-        row_columns = [column for column in plan.get('columns', []) if column['table'] == item['table']
+        row_columns = [column for column in plan.get('columns', []) if column['table'] == t
                        and split_nested(column['id'])[0] == split_nested(item_id)[0]]
     rows = []
     for n in _rows_for(item, table, requirement_rows):
@@ -418,7 +437,7 @@ def evidence_packet(plan, archive, decisions, item_id, *, status=None, sources=N
             c = column['column']
             if c < len(table.rows[n - 1]) and table.rows[n - 1][c] != '' and len(values) < ROW_COLUMNS:
                 values[_short(column['term'])] = clip(table.rows[n - 1][c], 200)
-        rows.append({'ref': f"row:{item['table']}:{n}", 'row': n, 'values': values})
+        rows.append({'ref': f"row:{t}:{n}", 'row': n, 'values': values})
     evidence['rows'] = rows
     evidence['requirements'] = requirements
     if item.get('members'):
@@ -465,9 +484,9 @@ def excerpts(packet):
     """{ref: short fact} for every citable fact in a packet."""
     found = {}
     evidence = packet['evidence']
-    if 'table' in evidence:
-        table = evidence['table']
-        found[table['ref']] = clip(f"Table {table['name']}: {table['rows']} rows, {_short(table['row_type'])}", 300)
+    for table in [*([evidence['table']] if 'table' in evidence else []), *evidence.get('tables', [])]:
+        found[table['ref']] = clip(f"Table {table['name']}: {table['rows']} rows, {_short(table['row_type']) or 'unrecognised'}, "
+                                   f"{'core' if table['core'] else 'extension'}; joined by {table['join_basis']}", 300)
     for column in evidence['columns']:
         values = ', '.join(f'{value} ({count})' if count is not None else value for value, count in column['top_values'][:5])
         found[column['ref']] = clip(f"{column['header']}: {column['nonempty']} values, {column['distinct']} distinct; {values}", 300)
