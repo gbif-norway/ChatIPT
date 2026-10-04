@@ -72,6 +72,16 @@ class OccurrenceEventDetailTests(SimpleTestCase):
         question = next(item for item in plan['issues'] if item['id'] == 'occurrence-events:1')
         self.assertIn('year disagrees with the eventDate for 1 events', question['reason'])
 
+    def test_years_inside_an_event_date_interval_agree(self):
+        events = b'eventID,eventCategory,eventDate\ne1,survey,1938/2016\n'
+        source = archive(b'eventID,occurrenceID,occurrenceStatus,year\ne1,o1,present,1938\ne1,o2,present,1938\n', events)
+        plan = build_plan(source)
+        self.assertEqual(entry(plan, 'occurrence-events:1')['default'], 'patch')
+        outside = archive(b'eventID,occurrenceID,occurrenceStatus,year\ne1,o1,present,1937\n', events)
+        question = next(item for item in build_plan(outside)['issues'] if item['id'] == 'occurrence-events:1')
+        self.assertTrue(question['reason'].startswith('occurrence.csv has event details'))
+        self.assertIn('year disagrees with the eventDate', question['reason'])
+
     def test_details_disagreeing_with_the_event_itself_cannot_be_copied(self):
         events = b'eventID,eventCategory,decimalLatitude,decimalLongitude\ne1,survey,59,9\n'
         source = archive(b'eventID,occurrenceID,occurrenceStatus,decimalLatitude,decimalLongitude\ne1,o1,present,60,10\n', events)

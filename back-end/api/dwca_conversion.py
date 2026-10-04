@@ -105,9 +105,13 @@ def _copied(row_type, target, value):
 
 
 def _year_disagrees(year, event_date):
-    """An event year contradicts every four-digit year stated in its eventDate."""
-    years = re.findall(r'(?<!\d)(\d{4})(?=-|/|$)', event_date or '')
-    return bool(year and years and any(int(found) != int(year) for found in years))
+    """A year outside its eventDate: a single date's year, or an interval's start and end years."""
+    years = [int(found) for found in re.findall(r'(?<!\d)(\d{4})(?=-|/|$)', event_date or '')]
+    if not year or not years:
+        return False
+    if '/' in event_date:
+        return not min(years) <= int(year) <= max(years)
+    return any(found != int(year) for found in years)
 
 
 def _source(terms, row):
@@ -368,7 +372,8 @@ def _streamline_plan(archive, core, plan, warnings):
         if default is None:
             required.append(issue)
             continue
-        automatic.append({**issue, 'default': default, 'reason': reason})
+        # The question's own explanation is kept for when a failing requirement turns this back into a question.
+        automatic.append({**issue, 'default': default, 'reason': reason, 'question_reason': issue['reason']})
         if issue['id'] in columns:
             columns[issue['id']]['review'] = False
         # Unmapped columns are summarised from the column list, so they need no separate notice.
@@ -763,7 +768,8 @@ def _require_valid_defaults(plan):
             reasons = ' '.join(requirement['reason'] for requirement in failed_requirements(plan, effective, choice['id'], choice['default']))
             plan['automatic_choices'].remove(choice)
             plan['warnings'] = [warning for warning in plan['warnings'] if warning['id'] != choice['id']]
-            plan['issues'].append({key: value for key, value in choice.items() if key != 'default'} | {'reason': choice['reason'] + ' ' + reasons})
+            question = {key: value for key, value in choice.items() if key not in {'default', 'question_reason'}}
+            plan['issues'].append(question | {'reason': choice.get('question_reason', choice['reason']) + ' ' + reasons})
             for column in plan['columns']:
                 if column['id'] == choice['id']:
                     column['review'] = True
