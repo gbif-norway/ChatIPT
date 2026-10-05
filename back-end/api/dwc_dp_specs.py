@@ -283,7 +283,7 @@ def _explorer_join_keys(df: pd.DataFrame, fields: list[str]) -> list[tuple[str, 
 
 
 def build_dwc_dp_explorer_model(dataset: Any) -> Dict[str, Any]:
-    """Build a compact, schema-accurate model for the interactive package explorer."""
+    """Build the explorer model for standard and converted taxonomy resources."""
     resource_tables = {
         table["title"]: table
         for table in dataset.table_set.filter(title__in=RESERVED_TABLE_NAMES)
@@ -379,8 +379,69 @@ def build_dwc_dp_explorer_model(dataset: Any) -> Dict[str, Any]:
                 }
             )
 
+    conversion = getattr(dataset, "conversion", None) if dataset.workflow_type == dataset.WorkflowType.DWCA_CONVERSION else None
+    if conversion and conversion.status == "complete" and "taxonomy" in conversion.plan:
+        taxonomy_tables = {
+            table["title"]: table
+            for table in dataset.table_set.filter(title__startswith="taxonomy-")
+            .order_by("title", "id")
+            .values("id", "title", "row_count", "columns")
+        }
+        source_tables = conversion.plan.get("tables", [])
+        for name, table in taxonomy_tables.items():
+            if name == "taxonomy-taxon":
+                source = next((item for item in source_tables if item.get("core")), {})
+                primary_key = "archive_join_id"
+            elif name.startswith("taxonomy-extension-") and name.removeprefix("taxonomy-extension-").isdigit():
+                index = int(name.removeprefix("taxonomy-extension-"))
+                source = source_tables[index] if index < len(source_tables) else {}
+                primary_key = "source_row_id"
+            else:
+                source = {}
+                primary_key = ""
+            source_name = source.get("name")
+            fields = [{"name": field, "title": str(field).rsplit("/", 1)[-1],
+                       "description": "Source value copied into the package." if "://" in str(field) else "",
+                       "type": "string", "primary": field == primary_key, "weakPrimary": False}
+                      for field in table["columns"]]
+            nodes.append({"id": name, "tableId": table["id"],
+                          "title": source_name or name.replace("-", " ").title(),
+                          "description": (f"Original {source_name} table retained in the package."
+                                          if source_name else "Explicit links between checklist and occurrence records."),
+                          "comments": "", "examples": "", "rowCount": table["row_count"],
+                          "columnCount": len(table["columns"]), "primaryKey": [primary_key] if primary_key else [],
+                          "weakPrimaryKey": [], "fields": fields})
+
+        def add_taxonomy_link(source_name, target_name, source_field, target_field, predicate):
+            source_table = taxonomy_tables.get(source_name)
+            target_table = taxonomy_tables.get(target_name) or resource_tables.get(target_name)
+            if not source_table or not target_table:
+                return
+            source_df = dataset.table_set.only("df").get(id=source_table["id"]).df
+            target_df = dataset.table_set.only("df").get(id=target_table["id"]).df
+            source_keys = _explorer_join_keys(source_df, [source_field])
+            target_keys = _explorer_join_keys(target_df, [target_field])
+            if not source_keys or not target_keys:
+                return
+            populated_keys = [key for key in source_keys if key is not None]
+            target_key_set = {key for key in target_keys if key is not None}
+            linked_rows = sum(key in target_key_set for key in populated_keys)
+            edges.append({"id": f"{source_name}:foreign:{target_name}",
+                          "source": source_name, "target": target_name, "predicate": predicate,
+                          "kind": "foreign", "sourceFields": [source_field], "targetFields": [target_field],
+                          "sourceRows": source_table["row_count"], "populatedRows": len(populated_keys),
+                          "linkedRows": linked_rows, "unmatchedRows": len(populated_keys) - linked_rows,
+                          "blankRows": source_table["row_count"] - len(populated_keys)})
+
+        for name, table in taxonomy_tables.items():
+            if name != "taxonomy-taxon" and "archive_taxon_id" in table["columns"]:
+                add_taxonomy_link(name, "taxonomy-taxon", "archive_taxon_id", "archive_join_id", "belongs to taxon")
+        if "taxonomy-occurrence-links" in taxonomy_tables:
+            add_taxonomy_link("taxonomy-occurrence-links", "occurrence", "occurrence_fk", "occurrence_pk", "identifies occurrence")
+
     return {
         "schema": dwc_dp_schema_snapshot(),
+        "packageType": "taxonomy-data-package" if conversion and conversion.report.get("output_format") == "taxonomy-data-package" else "dwc-dp",
         "nodes": nodes,
         "edges": edges,
     }

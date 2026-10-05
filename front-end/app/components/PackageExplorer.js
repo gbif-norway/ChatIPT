@@ -10,6 +10,7 @@ import TableRowsView from './TableRowsView'
 const NODE_PRIORITY = [
   'event',
   'occurrence',
+  'taxonomy-taxon',
   'material',
   'identification',
   'organism',
@@ -25,6 +26,8 @@ const formatResourceName = (name) => String(name || '')
 
 
 const graphCategory = (name) => {
+  if (name === 'taxonomy-occurrence-links') return 'claims'
+  if (name.startsWith('taxonomy-extension-')) return 'evidence'
   if (name.includes('assertion') || name.includes('relationship')) return 'claims'
   if (
     name.includes('agent')
@@ -348,7 +351,7 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
     const link = foreignKeys.get(column)
     return (
       <span title={field?.description || column}>
-        {column}
+        {column.startsWith('http') ? field?.title || column : column}
         {(field?.primary || field?.weakPrimary) && (
           <i
             className={`bi ${field.primary ? 'bi-key-fill' : 'bi-key'} ms-1`}
@@ -380,6 +383,7 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
     )
   }
   const totalRows = (model?.nodes || []).reduce((sum, node) => sum + node.rowCount, 0)
+  const taxonomyOnly = model?.packageType === 'taxonomy-data-package'
   const examples = selectedNode ? parseExamples(selectedNode.examples).slice(0, 2) : []
 
   return (
@@ -394,7 +398,7 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
         <div className="modal-content package-explorer-modal">
           <div className="modal-header package-explorer-header">
             <div>
-              <div className="package-explorer-kicker">Darwin Core Data Package</div>
+              <div className="package-explorer-kicker">{taxonomyOnly ? 'Taxonomy data package' : 'Darwin Core Data Package'}</div>
               <h5 className="modal-title" id="packageExplorerModalLabel">Explore how your data connects</h5>
             </div>
             <button type="button" className="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -425,7 +429,7 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
                       {pluralize(model.nodes.length, 'linked table')} containing {pluralize(totalRows, 'package row')}
                     </strong>
                     <span>
-                      {pluralize(model.edges.length, 'schema relationship')} in DwC-DP schema {model.schema?.version || 'Unknown'}
+                      {pluralize(model.edges.length, 'table relationship')}{taxonomyOnly ? '' : ` · DwC-DP schema ${model.schema?.version || 'Unknown'}`}
                     </span>
                   </div>
                   <span className="badge text-bg-success">
@@ -438,10 +442,12 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
                   <section className="package-graph-panel" aria-label="Interactive package relationship map">
                     <div className="package-graph-toolbar">
                       <div className="package-graph-legend" aria-label="Table type legend">
-                        <span><i className="legend-dot legend-records"></i>Core records</span>
-                        <span><i className="legend-dot legend-evidence"></i>Evidence</span>
-                        <span><i className="legend-dot legend-context"></i>Context</span>
-                        <span><i className="legend-dot legend-claims"></i>Claims</span>
+                        <span><i className="legend-dot legend-records"></i>{taxonomyOnly ? 'Checklist' : 'Core records'}</span>
+                        <span><i className="legend-dot legend-evidence"></i>{taxonomyOnly ? 'Attached tables' : 'Evidence'}</span>
+                        {!taxonomyOnly && <>
+                          <span><i className="legend-dot legend-context"></i>Context</span>
+                          <span><i className="legend-dot legend-claims"></i>Claims</span>
+                        </>}
                       </div>
                       <button type="button" className="btn btn-sm btn-outline-secondary" onClick={fitGraph}>
                         <i className="bi bi-arrows-fullscreen me-1" aria-hidden="true"></i>
@@ -539,7 +545,7 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
                             {selectedNode.fields.map((field) => (
                               <div key={field.name}>
                                 <dt>
-                                  {field.name}
+                                  {field.name.startsWith('http') ? field.title : field.name}
                                   {field.primary && <span className="badge text-bg-success ms-2">Primary key</span>}
                                   {field.weakPrimary && <span className="badge text-bg-secondary ms-2">Public ID</span>}
                                 </dt>

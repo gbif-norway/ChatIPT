@@ -66,7 +66,7 @@ from .helpers.openai_helpers import (
     query_responses_api,
 )
 from .helpers import discord_bot
-from .models import Agent, CustomUser, Dataset, Message, OpenAIUsage, Table, Task, TaxonNameMatch, UserFile
+from .models import Agent, CustomUser, Dataset, DwcConversion, Message, OpenAIUsage, Table, Task, TaxonNameMatch, UserFile
 from .openai_usage import record_response_usage, response_usage_defaults, usage_summary
 from .serializers import DatasetListSerializer, DatasetSerializer, UserFileSerializer
 from .dwc_dp_specs import (
@@ -4560,6 +4560,34 @@ class DatasetSummarySerializerTests(TestCase):
         self.assertEqual(relationship["linkedRows"], 1)
         self.assertEqual(relationship["unmatchedRows"], 1)
         self.assertEqual(relationship["blankRows"], 1)
+
+    def test_package_explorer_shows_taxonomy_conversion_and_archive_links(self):
+        dataset = Dataset.objects.create(title="Checklist explorer", workflow_type=Dataset.WorkflowType.DWCA_CONVERSION)
+        DwcConversion.objects.create(
+            dataset=dataset, status="complete",
+            plan={"taxonomy": {}, "tables": [
+                {"name": "taxon.txt", "core": True},
+                {"name": "vernacularname.txt", "core": False},
+            ]},
+            report={"output_format": "taxonomy-data-package"},
+        )
+        Table.objects.create(dataset=dataset, title="taxonomy-taxon", df=pd.DataFrame([
+            {"archive_join_id": "taxon-1", "http://rs.tdwg.org/dwc/terms/scientificName": "Example species"},
+        ]))
+        Table.objects.create(dataset=dataset, title="taxonomy-extension-1", df=pd.DataFrame([
+            {"source_row_id": "row-1", "archive_taxon_id": "taxon-1", "http://rs.tdwg.org/dwc/terms/vernacularName": "Example"},
+            {"source_row_id": "row-2", "archive_taxon_id": "missing", "http://rs.tdwg.org/dwc/terms/vernacularName": "Other"},
+        ]))
+
+        model = build_dwc_dp_explorer_model(dataset)
+
+        self.assertEqual(model["packageType"], "taxonomy-data-package")
+        self.assertEqual({node["id"] for node in model["nodes"]}, {"taxonomy-taxon", "taxonomy-extension-1"})
+        self.assertEqual(next(node for node in model["nodes"] if node["id"] == "taxonomy-extension-1")["title"],
+                         "vernacularname.txt")
+        self.assertEqual(model["edges"][0]["sourceFields"], ["archive_taxon_id"])
+        self.assertEqual(model["edges"][0]["linkedRows"], 1)
+        self.assertEqual(model["edges"][0]["unmatchedRows"], 1)
 
     def test_reports_relational_resource_counts_without_calling_the_sum_records(self):
         dataset = Dataset.objects.create(title="Relational counts")

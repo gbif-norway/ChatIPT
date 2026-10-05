@@ -232,7 +232,8 @@ export default function DwcConversion() {
   const needsInputIssues = (state?.plan?.issues || []).filter(issue => needsInput.has(issue.id) && !nameQuestionIds.has(issue.id) &&
     !retainedIssue(issue) && !(state?.review?.applied || []).includes(issue.id))
   const title = conversionTitle(currentDataset, state)
-  const packageExplorable = state?.status === 'complete' && state.report?.output_format === 'dwc-dp'
+  const packageExplorable = state?.status === 'complete' &&
+    ['dwc-dp', 'taxonomy-data-package'].includes(state.report?.output_format)
   const openItems = [...new Map([...attention, ...needsInputIssues].map(item => [item.id, item])).values()]
   const openIds = new Set(openItems.map(item => item.id))
   const choiceOrder = [...(state?.plan?.issues || []), ...automaticChoices, ...(state?.plan?.columns || [])]
@@ -242,7 +243,7 @@ export default function DwcConversion() {
     <header className="workspace-heading">
       <span className="eyebrow"><i className="bi bi-arrow-left-right me-2" aria-hidden="true" />Archive conversion</span>
       <h1>{title}</h1>
-      <p className="text-body-secondary mb-0">Darwin Core Archive <i className="bi bi-arrow-right mx-2" aria-hidden="true" /><span className="visually-hidden">to </span>Darwin Core Data Package</p>
+      <p className="text-body-secondary mb-0">Darwin Core Archive <i className="bi bi-arrow-right mx-2" aria-hidden="true" /><span className="visually-hidden">to </span>{state?.status === 'complete' && state.report?.output_format === 'taxonomy-data-package' ? 'Taxonomy data package' : 'Darwin Core Data Package'}</p>
     </header>
     <ConversionSteps state={state} />
     {error && <div className="alert alert-danger" role="alert">{error}<button className="btn btn-sm btn-outline-danger ms-2" onClick={load}>Reload</button></div>}
