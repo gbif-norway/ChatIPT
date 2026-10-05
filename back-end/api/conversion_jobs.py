@@ -28,9 +28,15 @@ def _eml_dataset_metadata(archive):
 def classify_failure(exc):
     """A structured record for any job failure (docs/dwca-conversion/tiered-review.md, 2c)."""
     if isinstance(exc, ConversionError):
-        return exc.as_conflict()
+        record = exc.as_conflict()
+        if record['category'] == 'source' and not record['reason'].startswith('Unable to process'):
+            record['reason'] = f"Unable to process this archive: {record['reason']}"
+        return record
     category = 'source' if isinstance(exc, ImportFailure) else 'transient' if isinstance(exc, (OSError, DatabaseError)) else 'internal'
-    return ConversionError(str(exc)[:2000], category=category).as_conflict()
+    message = str(exc)[:2000]
+    if category == 'source' and not message.startswith('Unable to process'):
+        message = f'Unable to process this archive: {message}'
+    return ConversionError(message, category=category).as_conflict()
 
 def apply_failure(conversion, record):
     """Return to review only when a decision can remedy the failure, or a retry can."""
@@ -50,7 +56,7 @@ def load_sources(conversion):
     for source in conversion.dataset.user_files.order_by('id'):
         with source.file.open('rb') as stream:
             sources.append((source.source_manifest['original_name'], stream.read()))
-    return read_inputs(sources)
+    return read_inputs(sources, drop_unlinked_extension_rows=conversion.drop_unlinked_extension_rows)
 
 def _claim(now):
     """Lock a conversion with a due job, then its job (one lock order: conversion, then job; §5.9)."""

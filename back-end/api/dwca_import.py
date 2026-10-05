@@ -69,6 +69,7 @@ class SourceArchive:
     fingerprint: str
     has_meta: bool
     uploaded_files: dict[str, bytes]
+    dropped_extension_rows: list[dict] = field(default_factory=list)
 
 
 def safe_path(name):
@@ -79,7 +80,7 @@ def safe_path(name):
     return path.as_posix()
 
 
-def read_inputs(inputs):
+def read_inputs(inputs, *, drop_unlinked_extension_rows=False):
     """Inputs are (original filename, bytes), never storage-renamed filenames."""
     inputs = list(inputs)
     if not inputs or sum(len(content) for _, content in inputs) > MAX_BYTES:
@@ -128,10 +129,52 @@ def read_inputs(inputs):
     if not all(core.ids) or len(set(core.ids)) != len(core.ids):
         raise ImportFailure("Core join IDs must be nonempty and unique. They are distinct from persistent identifiers.")
     keys = set(core.ids)
-    for table in tables:
-        if not table.is_core and table.row_type and table.ids and any(value not in keys for value in table.ids):
-            raise ImportFailure(f"{table.name} contains extension links absent from the core.")
-    return SourceArchive(files, tables, digest.hexdigest(), bool(meta), dict(inputs))
+    unlinked = [(table, [index for index, value in enumerate(table.ids) if value not in keys])
+                for table in tables if not table.is_core and table.row_type and table.ids]
+    unlinked = [(table, indexes) for table, indexes in unlinked if indexes]
+    dropped_extension_rows = []
+    if unlinked and not drop_unlinked_extension_rows:
+        extensions = []
+        for table, indexes in unlinked:
+            records = []
+            for index in indexes[:3]:
+                source = table.row_sources[index] if index < len(table.row_sources) else {}
+                values = [{'field': term.rsplit('/', 1)[-1], 'value': value[:240]}
+                          for term, value in zip(table.terms, table.rows[index]) if value][:8]
+                records.append({'file': source.get('file', table.name),
+                                'data_record': source.get('data_record', index + 1),
+                                'core_link': table.ids[index], 'values': values})
+            extensions.append({'name': table.name, 'count': len(indexes), 'records': records})
+        summary = '; '.join(f"{item['name']}: {item['count']} {('record' if item['count'] == 1 else 'records')}"
+                            for item in extensions)
+        total = sum(item['count'] for item in extensions)
+        issue = ('record has a blank core link or points' if total == 1
+                 else 'records have a blank core link or point')
+        raise ConversionError(
+            f"Unable to process this archive: {total} extension {issue} to an ID not found in the core ({summary}).",
+            category='source', evidence={'kind': 'unlinked-extension-records', 'tables': extensions})
+    if unlinked:
+        rejected = {id(table): set(indexes) for table, indexes in unlinked}
+        filtered_tables = []
+        for table in tables:
+            indexes = rejected.get(id(table))
+            if indexes:
+                dropped_extension_rows.append({'name': table.name, 'rows': len(indexes)})
+                table.rows = [row for index, row in enumerate(table.rows) if index not in indexes]
+                table.ids = [value for index, value in enumerate(table.ids) if index not in indexes]
+                table.row_sources = [value for index, value in enumerate(table.row_sources) if index not in indexes]
+                if not table.rows:
+                    continue
+            filtered_tables.append(table)
+        tables = filtered_tables
+    return SourceArchive(files, tables, digest.hexdigest(), bool(meta), dict(inputs), dropped_extension_rows)
+
+
+def dropped_extension_warnings(archive):
+    return [{'id': f'dropped-extension-rows:{index}', 'title': 'Unlinked extension records left out',
+             'reason': f"{item['rows']} records from {item['name']} were left out because their core link was blank or did not match a core record. The original records remain in your uploaded files.",
+             'rows': item['rows']}
+            for index, item in enumerate(archive.dropped_extension_rows)]
 
 
 def _number(value, label, default=None):

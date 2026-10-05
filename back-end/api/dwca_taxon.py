@@ -10,7 +10,7 @@ from collections import defaultdict
 
 import pandas as pd
 
-from api.dwca_import import DWC, ConversionError, SourceArchive, SourceTable
+from api.dwca_import import DWC, ConversionError, SourceArchive, SourceTable, dropped_extension_warnings
 from api.dwc_dp_specs import TABLE_SPECS, dwc_dp_schema_snapshot, validate_dwc_dp_resources
 
 
@@ -132,7 +132,7 @@ def build_taxon_plan(archive):
         issues.append(_issue('loose-links', 'Confirm the Taxon-core loose-file layout',
             'Known filenames identify roles. Extensions join by supplied taxonID, never by row position.',
             [{'value': 'confirm', 'label': 'Confirm these table roles and taxonID joins'}]))
-    columns, profiles, nested, conflicts, automatic, warnings, row_issues = [], [], {}, [], [], [], []
+    columns, profiles, nested, conflicts, automatic, warnings, row_issues = [], [], {}, [], [], dropped_extension_warnings(archive), []
     for t, table in enumerate(archive.tables):
         profile = {'name': table.name, 'row_type': table.row_type, 'core': table.is_core,
                    'rows': len(table.rows), 'unique_join_ids': len(set(table.ids)), 'join_basis': table.join_basis, 'columns': []}

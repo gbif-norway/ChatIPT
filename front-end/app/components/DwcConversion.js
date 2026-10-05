@@ -207,6 +207,10 @@ export default function DwcConversion() {
   const attention = attentionItems(state)
   const outstanding = unresolved.length + attention.length
   const blockers = state?.review?.blockers || []
+  const unlinkedExtensionConflict = state?.conflicts?.find(conflict =>
+    conflict.evidence?.kind === 'unlinked-extension-records')
+  const unlinkedExtensionTables = unlinkedExtensionConflict?.evidence?.tables || []
+  const unlinkedExtensionCount = unlinkedExtensionTables.reduce((total, table) => total + table.count, 0)
   const reviewable = state?.review?.reviewable || 0
   const disabled = busy || working
   const inReview = ['review', 'reviewing'].includes(state?.status)
@@ -240,9 +244,28 @@ export default function DwcConversion() {
     <ConversionSteps state={state} />
     {error && <div className="alert alert-danger" role="alert">{error}<button className="btn btn-sm btn-outline-danger ms-2" onClick={load}>Reload</button></div>}
     {state?.status === 'blocked' && <div className="alert alert-danger" role="alert">
-      <p className="fw-semibold mb-1">The files need correcting before they can be converted.</p>
-      <p className="mb-1">{state.error}</p>
-      <p className="small mb-0">No choice here can fix this. Correct the files and start a new conversion.</p>
+      <h2 className="h5">Unable to process this archive</h2>
+      <p className="mb-2">{(state.error || '').replace(/^Unable to process this archive(?: because|:)?\s*/i, '')}</p>
+      {unlinkedExtensionConflict ? <>
+        <p className="small">{unlinkedExtensionCount.toLocaleString()} extension {unlinkedExtensionCount === 1 ? 'record has' : 'records have'} a blank core link or refer to an identifier that is not in the core. Here are the first three from each extension table, with up to eight nonempty fields shown for each record:</p>
+        {unlinkedExtensionTables.map((table, tableIndex) => <section className="mb-3" key={`${table.name}:${tableIndex}`}>
+          <h3 className="h6 mb-1">{table.name}</h3>
+          <p className="small mb-1">{table.count.toLocaleString()} unlinked {table.count === 1 ? 'record' : 'records'}</p>
+          {table.records.map((record, recordIndex) => <div className="border-top pt-2 mt-2 small" key={`${record.file}:${record.data_record}:${recordIndex}`}>
+            <strong>Record {record.data_record} · {record.file}</strong>
+            <div>Core link: <code>{record.core_link || '(blank)'}</code></div>
+            {!!record.values?.length && <dl className="row mb-0 mt-1">
+              {record.values.map((value, valueIndex) => <div className="col-sm-6" key={`${value.field}:${valueIndex}`}>
+                <dt className="d-inline fw-semibold">{value.field}: </dt><dd className="d-inline" style={{ overflowWrap: 'anywhere' }}>{value.value}</dd>
+              </div>)}
+            </dl>}
+          </div>)}
+        </section>)}
+        <p className="small">You can remove these unlinked records from the conversion. Your uploaded files, including these records, will still be kept in the download.</p>
+        <button type="button" className="btn btn-primary" disabled={disabled} onClick={() => perform('drop_unlinked_extension_rows')}>
+          Drop these records and continue
+        </button>
+      </> : <p className="small mb-0">Correct the source files and start a new conversion.</p>}
     </div>}
     {state?.status === 'failed' && <div className="alert alert-danger" role="alert">
       {state.retryable ? 'A temporary problem interrupted this conversion.' : 'The converter hit an internal problem. It has been logged.'} {state.error}

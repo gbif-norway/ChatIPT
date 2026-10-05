@@ -485,6 +485,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
         from api.dwca_conversion import option_status, validate_decisions
         plan = conversion.plan
         return {'status': conversion.status, 'plan': plan, 'decisions': conversion.decisions,
+                'drop_unlinked_extension_rows': conversion.drop_unlinked_extension_rows,
                 'unresolved': validate_decisions(plan, conversion.decisions, require_complete=False) if plan else [],
                 'option_status': option_status(plan, conversion.decisions) if plan else {},
                 'conflicts': conversion.conflicts, 'retryable': conversion.retryable, 'error': conversion.error,
@@ -522,7 +523,8 @@ class DatasetViewSet(viewsets.ModelViewSet):
                           'view': 'pending' if query.get('names_view') == 'pending' else 'all'}
             return Response(self._conversion_state(dataset.conversion, names_page))
         operation = request.data.get('action', 'convert')
-        if operation not in {'convert', 'review', 'inspect', 'save', 'chat', 'names', 'check_names'}:
+        if operation not in {'convert', 'review', 'inspect', 'save', 'chat', 'names', 'check_names',
+                             'drop_unlinked_extension_rows'}:
             raise ValidationError('Unknown conversion action.')
         with transaction.atomic():
             # Lock order: conversion, then job (docs/dwca-conversion/ai-review-and-chat.md §5.9).
@@ -536,6 +538,21 @@ class DatasetViewSet(viewsets.ModelViewSet):
                     conversion_review.supersede_job(conversion)
                 conversion.status = 'queued'
                 conversion.error = ''; conversion.save()
+                DwcConversionJob.objects.create(conversion=conversion, action='inspect')
+                return Response(self._conversion_state(conversion), status=202)
+            if operation == 'drop_unlinked_extension_rows':
+                has_unlinked_records = any(
+                    conflict.get('evidence', {}).get('kind') == 'unlinked-extension-records'
+                    for conflict in conversion.conflicts)
+                if conversion.status != 'blocked' or not has_unlinked_records:
+                    return Response({'detail': 'There are no unlinked extension records to remove.'}, status=409)
+                conversion.drop_unlinked_extension_rows = True
+                conversion.status = 'queued'
+                conversion.error = ''
+                conversion.conflicts = []
+                conversion.retryable = False
+                conversion.save(update_fields=['drop_unlinked_extension_rows', 'status', 'error', 'conflicts',
+                                               'retryable', 'updated_at'])
                 DwcConversionJob.objects.create(conversion=conversion, action='inspect')
                 return Response(self._conversion_state(conversion), status=202)
             if request.data.get('plan_id') != conversion.plan.get('id'):

@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 
 import pandas as pd
 
-from api.dwca_import import DWC, ConversionError, ImportFailure, REGISTRY
+from api.dwca_import import DWC, ConversionError, ImportFailure, REGISTRY, dropped_extension_warnings
 from api.dwca_media import MEDIA_FAMILIES, MEDIA_SUBJECT_TERMS, media_targets
 from api.dwca_references import REFERENCE_FAMILIES, NON_EXACT_TARGETS, IDENTIFIER_ROW_TYPE, REFERENCE_ROW_TYPE, DC, reference_targets, emit_reference_records
 from api.dwca_humboldt import HUMBOLDT_FAMILIES, IRI_DIRECT, DIRECT, blocked_fields, humboldt_targets, scope_review, emit_humboldt_records, valid_value
@@ -392,7 +392,7 @@ def build_plan(archive):
     material_context = core.row_type == DWC + 'Occurrence' and any(
         term in core.terms and any(row[core.terms.index(term)] for row in core.rows)
         for term in (DWC + 'materialSampleID', DWC + 'materialEntityID'))
-    issues, columns, profiles, warnings, row_issues = [], [], [], [], []
+    issues, columns, profiles, warnings, row_issues = [], [], [], dropped_extension_warnings(archive), []
     nodes, hierarchy_unsupported, hierarchy = _hierarchy(archive, core)
     scientific = _scientific_hierarchy(archive, core, nodes, hierarchy)
     if not archive.has_meta:
