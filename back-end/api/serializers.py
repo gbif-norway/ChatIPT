@@ -410,14 +410,18 @@ class DatasetSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
     def _create_conversion(self, validated_data, uploads):
-        from api.dwca_import import ImportFailure, MAX_BYTES, read_inputs
+        from api.dwca_import import ConversionError, ImportFailure, MAX_BYTES, read_inputs
         from api.models import DwcConversion, DwcConversionJob
 
         if sum(file.size for file in uploads) > MAX_BYTES:
             raise serializers.ValidationError('Upload at most 200 MB.')
         try:
-            # Validate the input layout before storing files. Detailed profiling runs in the worker.
+            # Validate the input layout before storing files. A recoverable link mismatch
+            # must reach the worker so its preview and row-removal action can be shown.
             read_inputs((file.name, file.read()) for file in uploads)
+        except ConversionError as exc:
+            if exc.evidence.get('kind') != 'unlinked-extension-records':
+                raise serializers.ValidationError(str(exc)) from exc
         except ImportFailure as exc:
             raise serializers.ValidationError(str(exc)) from exc
         stored_files = []
