@@ -1,5 +1,6 @@
 import time
 
+from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from api.agent_turns import process_next_agent_turn, reconcile_recent_work
@@ -15,6 +16,14 @@ class Command(BaseCommand):
         parser.add_argument('--reconcile', action='store_true', help='Recover recently active work without a queued turn.')
 
     def handle(self, *args, **options):
+        if options['watch'] and settings.DEBUG:
+            # These workers start beside runserver, so its autoreloader does not
+            # restart them when conversion code changes in a local container.
+            from django.utils.autoreload import run_with_reloader
+            return run_with_reloader(self.run_loop, options)
+        return self.run_loop(options)
+
+    def run_loop(self, options):
         next_reconcile_at = 0
         while True:
             if options['reconcile'] and time.monotonic() >= next_reconcile_at:

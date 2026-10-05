@@ -209,8 +209,11 @@ export default function DwcConversion() {
   const blockers = state?.review?.blockers || []
   const unlinkedExtensionConflict = state?.conflicts?.find(conflict =>
     conflict.evidence?.kind === 'unlinked-extension-records')
-  const unlinkedExtensionTables = unlinkedExtensionConflict?.evidence?.tables || []
-  const unlinkedExtensionCount = unlinkedExtensionTables.reduce((total, table) => total + table.count, 0)
+  const unlinkedExtensionTables = (unlinkedExtensionConflict?.evidence?.tables || []).map(table => ({
+    ...table,
+    columns: [...new Set((table.records || []).flatMap(record =>
+      (record.values || []).map(value => value.field)))].slice(0, 8),
+  }))
   const reviewable = state?.review?.reviewable || 0
   const disabled = busy || working
   const inReview = ['review', 'reviewing'].includes(state?.status)
@@ -247,19 +250,26 @@ export default function DwcConversion() {
       <h2 className="h5">Unable to process this archive</h2>
       <p className="mb-2">{(state.error || '').replace(/^Unable to process this archive(?: because|:)?\s*/i, '')}</p>
       {unlinkedExtensionConflict ? <>
-        <p className="small">{unlinkedExtensionCount.toLocaleString()} extension {unlinkedExtensionCount === 1 ? 'record has' : 'records have'} a blank core link or refer to an identifier that is not in the core. Here are the first three from each extension table, with up to eight nonempty fields shown for each record:</p>
+        <p className="small">First three unlinked records from each extension table:</p>
         {unlinkedExtensionTables.map((table, tableIndex) => <section className="mb-3" key={`${table.name}:${tableIndex}`}>
           <h3 className="h6 mb-1">{table.name}</h3>
           <p className="small mb-1">{table.count.toLocaleString()} unlinked {table.count === 1 ? 'record' : 'records'}</p>
-          {table.records.map((record, recordIndex) => <div className="border-top pt-2 mt-2 small" key={`${record.file}:${record.data_record}:${recordIndex}`}>
-            <strong>Record {record.data_record} · {record.file}</strong>
-            <div>Core link: <code>{record.core_link || '(blank)'}</code></div>
-            {!!record.values?.length && <dl className="row mb-0 mt-1">
-              {record.values.map((value, valueIndex) => <div className="col-sm-6" key={`${value.field}:${valueIndex}`}>
-                <dt className="d-inline fw-semibold">{value.field}: </dt><dd className="d-inline" style={{ overflowWrap: 'anywhere' }}>{value.value}</dd>
-              </div>)}
-            </dl>}
-          </div>)}
+          <div className="table-responsive">
+            <table className="table table-sm table-bordered small mb-0">
+              <thead><tr>
+                <th scope="col">Record</th>
+                <th scope="col">Core link</th>
+                {table.columns.map(field => <th scope="col" key={field}>{field}</th>)}
+              </tr></thead>
+              <tbody>{(table.records || []).map((record, recordIndex) => <tr key={`${record.file}:${record.data_record}:${recordIndex}`}>
+                <th scope="row">{record.data_record}</th>
+                <td><code style={{ overflowWrap: 'anywhere' }}>{record.core_link || '(blank)'}</code></td>
+                {table.columns.map(field => <td key={field} style={{ minWidth: '10rem', overflowWrap: 'anywhere' }}>
+                  {record.values?.find(value => value.field === field)?.value || '—'}
+                </td>)}
+              </tr>)}</tbody>
+            </table>
+          </div>
         </section>)}
         <p className="small">You can remove these unlinked records from the conversion. Your uploaded files, including these records, will still be kept in the download.</p>
         <button type="button" className="btn btn-primary" disabled={disabled} onClick={() => perform('drop_unlinked_extension_rows')}>
