@@ -232,8 +232,6 @@ export default function DwcConversion() {
   const needsInputIssues = (state?.plan?.issues || []).filter(issue => needsInput.has(issue.id) && !nameQuestionIds.has(issue.id) &&
     !retainedIssue(issue) && !(state?.review?.applied || []).includes(issue.id))
   const title = conversionTitle(currentDataset, state)
-  const packageExplorable = state?.status === 'complete' &&
-    ['dwc-dp', 'taxonomy-data-package'].includes(state.report?.output_format)
   const openItems = [...new Map([...attention, ...needsInputIssues].map(item => [item.id, item])).values()]
   const openIds = new Set(openItems.map(item => item.id))
   const choiceOrder = [...(state?.plan?.issues || []), ...automaticChoices, ...(state?.plan?.columns || [])]
@@ -342,7 +340,7 @@ export default function DwcConversion() {
       <p className="small text-muted">{state.report.metadata?.eml}. The check covers structure and values; it cannot confirm that the meaning is unchanged.</p>
       <div className="d-flex flex-wrap gap-2">
         <a className="btn btn-primary" href={`${config.baseUrl}/api/datasets/${datasetId}/conversion-download/`}>{state.report.output_format === 'taxonomy-data-package' ? 'Download taxonomy data package' : 'Download Darwin Core Data Package'}</a>
-        {packageExplorable && <button type="button" className="btn btn-outline-primary" onClick={openPackageExplorer}><i className="bi bi-diagram-3 me-2" aria-hidden="true" />Explore how your data connects</button>}
+        <button type="button" className="btn btn-outline-primary" onClick={openPackageExplorer}><i className="bi bi-diagram-3 me-2" aria-hidden="true" />Explore how your data connects</button>
       </div>
     </div>}
     <details className="review-disclosure conversion-details" >
@@ -393,6 +391,6 @@ export default function DwcConversion() {
       <p className="small text-body-secondary sidebar-help">You can leave and come back at any time. Your saved choices will be here.</p>
     </aside>
     </div>}
-    {packageExplorable && <PackageExplorer datasetId={datasetId} />}
+    {state?.status === 'complete' && <PackageExplorer datasetId={datasetId} />}
   </div>
 }
