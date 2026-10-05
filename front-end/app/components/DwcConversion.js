@@ -201,8 +201,9 @@ export default function DwcConversion() {
   const keep = id => save({}, { confirm: [id] })
   const automaticChoices = state?.plan?.automatic_choices || []
   const selected = makeSelector(state, decisions)
-  // The server's unresolved list already accounts for retained rows; here only retained tables hide cards.
-  const retainedIssue = (issue) => selected(`table:${issue.table}`) === 'preserve'
+  // The server's unresolved list accounts for retained rows; hide choices under retained tables or columns.
+  const retainedIssue = (issue) => selected(`table:${issue.table}`) === 'preserve' ||
+    (issue.source_column != null && selected(`column:${issue.table}:${issue.source_column}`) === 'preserve')
   const unresolved = unresolvedIssues(state)
   const attention = attentionItems(state)
   const outstanding = unresolved.length + attention.length
@@ -225,6 +226,10 @@ export default function DwcConversion() {
     : Object.entries(state?.plan?.taxonomy?.scientific_hierarchies || {})
   const scientificAudits = [...(scientific ? [['core', scientific]] : []), ...nestedScientific].filter(([, audit]) => audit)
   const notices = dedupeNotices(state, state?.status === 'complete' ? state.report?.warnings || [] : state?.plan?.warnings || [], selected)
+  const valueLedger = state?.report?.value_disposition?.source_terms || []
+  const semanticFindings = state?.report?.semantic_value_audit?.findings || []
+  const reviewedValueRoutes = state?.report?.reviewed_value_routes || []
+  const agentRoles = state?.report?.agent_roles
   const cardProps = { state, decisions, disabled, onChoose: choose, selected }
   // scientificName questions are answered inside the name check when it has names to check.
   const nameQuestionIds = new Set(state?.name_review?.question_ids || [])
@@ -335,6 +340,27 @@ export default function DwcConversion() {
       <ul>{Object.entries(state.report.resources || {}).map(([name, count]) => <li key={name}>{name}: {count.toLocaleString()} {count === 1 ? 'row' : 'rows'}</li>)}</ul>
       <p className="small">{state.report.columns?.filter(column => column.disposition === 'retained-unmapped' && column.nonempty).length || 0} columns that contain data stay in your original files because they have no Darwin Core Data Package field.</p>
       {!!state.report.withheld_values?.length && <p className="small">{state.report.withheld_values.length.toLocaleString()} values were left out of the mapped tables because they did not meet the conversion rules. The report explains each one, and your original files still hold them.</p>}
+      {semanticFindings.length > 0 && <details className="small mb-3"><summary>Source values that need a closer look ({semanticFindings.length})</summary>
+        <ul className="mt-2">{semanticFindings.map(finding => <li key={finding.source_term}>
+          <strong>{finding.source_term.split('/').pop()}</strong>: {finding.count.toLocaleString()} values. {finding.guidance}
+          {finding.examples?.length > 0 && <span className="text-muted"> Examples: {finding.examples.slice(0, 3).map(example => `${example.source_table} row ${example.source_row}: ${example.value}`).join(' · ')}</span>}
+        </li>)}</ul>
+      </details>}
+      {reviewedValueRoutes.length > 0 && <details className="small mb-3"><summary>Reviewed country labels and organism remarks ({reviewedValueRoutes.length})</summary>
+        <ul className="mt-2">{reviewedValueRoutes.map(route => <li key={route.decision_id}>
+          {route.source_table}: <strong>{route.source_value}</strong> ({route.count.toLocaleString()} source rows) → {route.target}
+        </li>)}</ul>
+      </details>}
+      {agentRoles && <details className="small mb-3"><summary>People and organizations in Agent roles ({Object.values(agentRoles.roles_created || {}).reduce((sum, count) => sum + count, 0).toLocaleString()} links)</summary>
+        <p className="mt-2 mb-1">Names without identifiers create one Agent for each source mention. Repeated names are kept separate until their shared identity is confirmed. Composite names are kept in the mapped text field and listed in the report.</p>
+        <p className="mb-0">New Agents: {(agentRoles.agents_created?.per_mention || 0).toLocaleString()} separate name-only mentions, {(agentRoles.agents_created?.shared_name || 0).toLocaleString()} confirmed shared names, {(agentRoles.agents_created?.explicit_id || 0).toLocaleString()} explicit IDs. Skipped ambiguous mentions: {Object.values(agentRoles.skipped || {}).reduce((sum, count) => sum + count, 0).toLocaleString()}.</p>
+      </details>}
+      {valueLedger.length > 0 && <details className="small mb-3"><summary>Where each source column's values went ({valueLedger.length})</summary>
+        <p className="text-muted mt-2">Counts refer to source values. Mapped and derived values can share a target row. Your download has the complete report and original files.</p>
+        <div className="table-responsive"><table className="table table-sm"><thead><tr><th>Source</th><th>Mapped</th><th>Derived</th><th>Originals only</th><th>Withheld</th><th>Unverified</th></tr></thead><tbody>
+          {valueLedger.map(row => <tr key={`${row.source_table_index}:${row.source_column}`}><td>{row.source_table} · {row.source_term.split('/').pop()}</td><td>{row.mapped_values.toLocaleString()}</td><td>{row.derived_values.toLocaleString()}</td><td>{row.originals_only_values.toLocaleString()}</td><td>{row.withheld_invalid_values.toLocaleString()}</td><td>{row.unverified_values.toLocaleString()}</td></tr>)}
+        </tbody></table></div>
+      </details>}
       {!!state.report.preserved_extension_rows?.length && <p className="small">{state.report.preserved_extension_rows.length.toLocaleString()} rows from additional tables stay in your original files. The report records the reason and any choice you made.</p>}
       {state.report.archive_validation?.warnings?.map(warning => <p key={warning} className="small text-muted">{warning}</p>)}
       <p className="small text-muted">{state.report.metadata?.eml}. The check covers structure and values; it cannot confirm that the meaning is unchanged.</p>

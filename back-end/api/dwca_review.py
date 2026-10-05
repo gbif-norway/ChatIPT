@@ -20,6 +20,7 @@ ISSUE_POLICY = {
     'taxon-occurrences': ('convert',),
     'material-identity': ALL,
     'column-mapping': (),
+    'agent-identity': ('shared',),
     'name-semantics': (),
     'external-identifier': ALL,
     'row-handling': (),
@@ -33,6 +34,8 @@ _PREFIX_KINDS = (
     ('loose-links', 'layout'), ('taxonomy-package', 'taxonomy-package'), ('event-grain', 'event-grain'),
     ('event-category', 'event-category'), ('status:', 'occurrence-status'), ('table:', 'extension-role'),
     ('material:', 'material-identity'), ('column:', 'column-mapping'), ('row-group:', 'row-handling'),
+    ('country-label:', 'column-mapping'), ('age-remark:', 'column-mapping'),
+    ('agent-share:', 'agent-identity'),
     ('row:', 'row-handling'), ('trait-link:', 'trait-link'), ('hum-category:', 'survey-classification'),
     ('hum-scope-group:', 'survey-completeness'), ('hum-scope:', 'survey-completeness'),
     ('occurrence-events:', 'occurrence-events'),
@@ -173,10 +176,12 @@ def _entries(plan):
 
 
 def _active(plan, effective, entry):
-    """Choices under a preserved extension table or preserved row do not apply."""
+    """Choices under a preserved table, row, or source column do not apply."""
     t = entry.get('table')
     if t is None or entry['id'] == f'table:{t}':
         return True
+    if entry.get('source_column') is not None and effective.get(f"column:{t}:{entry['source_column']}") == 'preserve':
+        return False
     tables = plan.get('tables', [])
     if t < len(tables) and not tables[t]['core'] and effective.get(f'table:{t}') == 'preserve':
         return False

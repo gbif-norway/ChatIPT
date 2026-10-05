@@ -988,6 +988,7 @@ def build_datapackage_descriptor(
     description: str | None = None,
     version: str | None = None,
     additional_tables: Mapping[str, Mapping[str, Any]] | None = None,
+    descriptor_metadata: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     additional_tables = additional_tables or {}
     validation = validate_dwc_dp_resources(resources) if resources or not additional_tables else {'valid': True}
@@ -1009,6 +1010,10 @@ def build_datapackage_descriptor(
         descriptor["title"] = title
     if description:
         descriptor["description"] = description
+    for key, value in (descriptor_metadata or {}).items():
+        if key not in {'licenses', 'contributors', 'keywords'}:
+            raise ValueError(f'Unsupported descriptor metadata field: {key}')
+        descriptor[key] = deepcopy(value)
 
     for raw_name, df in resources.items():
         name = normalize_resource_name(raw_name)
@@ -1288,6 +1293,7 @@ def create_dwc_dp_archive(
     eml_content: bytes | None = None,
     declare_additional_resources: bool = False,
     additional_tables: Mapping[str, Mapping[str, Any]] | None = None,
+    descriptor_metadata: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     descriptor = build_datapackage_descriptor(
         resources,
@@ -1296,6 +1302,7 @@ def create_dwc_dp_archive(
         description=description,
         version=version,
         additional_tables=additional_tables,
+        descriptor_metadata=descriptor_metadata,
     )
 
     with tempfile.TemporaryDirectory() as temp_dir:

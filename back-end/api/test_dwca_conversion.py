@@ -115,6 +115,44 @@ class ArchiveTests(SimpleTestCase):
         self.assertEqual(frames['event'].iloc[0]['decimalLatitude'], '0')
         self.assertEqual(frames['occurrence'].iloc[0]['occurrenceRemarks'], 'line one\nline two')
 
+    def test_individual_count_becomes_individual_quantity_with_row_level_accounting(self):
+        archive = occurrence(b'occurrenceID,individualCount,organismQuantity,organismQuantityType,occurrenceStatus\n'
+                             b'one,7,,,present\nzero,0,,,present\nexplicit,4,2,pairs,present\n'
+                             b'unit-only,3,,nests,present\nbad,1.5,,,present\n')
+        plan = build_plan(archive)
+        frames, report = convert(archive, plan, decisions_for(plan))
+        rows = frames['occurrence'].set_index('occurrenceID')
+        self.assertEqual((rows.loc['one', 'organismQuantity'], rows.loc['one', 'organismQuantityType']), ('7', 'individuals'))
+        self.assertEqual((rows.loc['zero', 'organismQuantity'], rows.loc['zero', 'organismQuantityType']), ('0', 'individuals'))
+        self.assertEqual(rows.loc['zero', 'occurrenceStatus'], 'present')
+        self.assertEqual((rows.loc['explicit', 'organismQuantity'], rows.loc['explicit', 'organismQuantityType']), ('2', 'pairs'))
+        self.assertEqual(rows.loc['unit-only', 'organismQuantityType'], 'nests')
+        self.assertEqual(rows.loc['unit-only', 'organismQuantity'], '')
+        self.assertEqual(rows.loc['bad', 'organismQuantity'], '')
+        disposition = next(item for item in report['columns'] if item['term'] == DWC + 'individualCount')
+        self.assertEqual(disposition['disposition'], 'derived')
+        self.assertEqual((disposition['mapped_rows'], disposition['retained_only_rows']), (2, 3))
+        self.assertEqual(disposition['retained_reasons'], {'explicit_quantity_present': 2, 'invalid_nonnegative_integer': 1})
+        self.assertIn('source individualCount remains in the originals', disposition['mapping_rule'])
+        self.assertEqual(disposition['derived_value_examples'], [
+            {'source_row': 1, 'source_value': '7', 'target_table': 'occurrence', 'target_row': 1,
+             'target_fields': {'organismQuantity': '7', 'organismQuantityType': 'individuals'}},
+            {'source_row': 2, 'source_value': '0', 'target_table': 'occurrence', 'target_row': 2,
+             'target_fields': {'organismQuantity': '0', 'organismQuantityType': 'individuals'}},
+        ])
+        self.assertEqual(disposition['derived_value_examples_omitted'], 0)
+        self.assertTrue(report['validation']['valid'])
+
+    def test_individual_count_provenance_examples_are_bounded(self):
+        rows = b''.join(f'{n},1,present\n'.encode() for n in range(25))
+        archive = occurrence(b'occurrenceID,individualCount,occurrenceStatus\n' + rows)
+        plan = build_plan(archive)
+        _, report = convert(archive, plan, decisions_for(plan))
+        item = next(column for column in report['columns'] if column['term'] == DWC + 'individualCount')
+        self.assertEqual(item['mapped_rows'], 25)
+        self.assertEqual(len(item['derived_value_examples']), 20)
+        self.assertEqual(item['derived_value_examples_omitted'], 5)
+
     def test_missing_status_is_reviewed_not_assumed(self):
         plan = build_plan(occurrence(b'occurrenceID,scientificName\na,Apus apus\n'))
         self.assertIn('status:0', [issue['id'] for issue in plan['issues']])
@@ -126,6 +164,7 @@ class ArchiveTests(SimpleTestCase):
         coordinates = [c for c in plan['columns'] if c['term'] in {DWC + 'decimalLatitude', DWC + 'decimalLongitude'}]
         self.assertTrue(all(c['review'] is False for c in coordinates))
         self.assertTrue(all(next(iter(c['incompatible_values'].values())) == 1 for c in coordinates))
+
         decisions = decisions_for(plan)
         self.assertTrue(all(c['id'] not in decisions for c in coordinates))
         self.assertTrue(all(any(w['id'] == c['id'] for w in plan['warnings']) for c in coordinates))
@@ -143,6 +182,71 @@ class ArchiveTests(SimpleTestCase):
             create_dwc_dp_archive(output, frames, 'Reviewed coordinates', '', include_eml=False,
                 additional_files=[('source-originals.zip', source_zip(archive.files)), ('conversion-report.json', json.dumps(report).encode())], declare_additional_resources=True)
             self.assertTrue(validate_dwc_dp_archive(output, require_eml=False)['valid'])
+
+    def test_invalid_country_code_and_identification_date_are_withheld(self):
+        archive = occurrence(
+            b'occurrenceID,countryCode,dateIdentified,minimumElevationInMeters,occurrenceStatus\n'
+            b'one,Norway,0-0-0,0,present\n'
+            b'two,NO,2024-01-01,0,present\n')
+        plan = build_plan(archive)
+        country_issue = next(issue for issue in plan['issues'] if issue['id'].startswith('country-label:'))
+        choices = decisions_for(plan)
+        choices[country_issue['id']] = 'event.country'
+        frames, report = convert(archive, plan, choices)
+        self.assertEqual(len(report['withheld_values']), 1)
+        self.assertEqual(report['withheld_values'][0]['value'], '0-0-0')
+        self.assertEqual(frames['event'].iloc[0]['country'], 'Norway')
+        self.assertEqual(frames['event'].iloc[0].get('countryCode', ''), '')
+        self.assertEqual(frames['event'].iloc[1]['countryCode'], 'NO')
+        self.assertEqual(list(frames['event']['minimumElevationInMeters']), ['0', '0'])
+        country_disposition = next(item for item in report['columns'] if item['term'] == DWC + 'countryCode')
+        self.assertEqual(country_disposition['target_counts'], {'event.country': 1, 'event.countryCode': 1})
+        self.assertTrue(report['validation']['valid'])
+
+    def test_reviewed_country_label_can_describe_water_body(self):
+        archive = occurrence(b'occurrenceID,countryCode,occurrenceStatus\na,Mediterranean Sea,present\n')
+        plan = build_plan(archive)
+        issue = next(item for item in plan['issues'] if item['id'].startswith('country-label:'))
+        decisions = {**decisions_for(plan), issue['id']: 'event.waterBody'}
+        frames, report = convert(archive, plan, decisions)
+        self.assertEqual(frames['event'].iloc[0]['waterBody'], 'Mediterranean Sea')
+        self.assertNotIn('countryCode', frames['event'])
+        self.assertEqual(report['columns'][1]['target_counts'], {'event.waterBody': 1})
+        self.assertTrue(report['validation']['valid'])
+
+    def test_preserved_country_column_does_not_require_its_value_reviews(self):
+        archive = occurrence(b'occurrenceID,countryCode,occurrenceStatus\na,Norway,present\n')
+        plan = build_plan(archive)
+        decisions = decisions_for(plan)
+        for issue in plan['issues']:
+            if issue['id'].startswith('country-label:'):
+                decisions.pop(issue['id'])
+        column = next(item for item in plan['columns'] if item['term'] == DWC + 'countryCode')
+        decisions[column['id']] = 'preserve'
+        frames, report = convert(archive, plan, decisions)
+        self.assertNotIn('countryCode', frames['event'])
+        self.assertEqual(report['reviewed_value_routes'][0]['target'], 'inactive: source column preserved')
+        self.assertTrue(report['validation']['valid'])
+
+    def test_age_like_event_remarks_require_review_before_occurrence_mapping(self):
+        archive = occurrence(
+            b'occurrenceID,eventRemarks,occurrenceStatus\n'
+            b'a,ad,present\nb,juv.,present\nc,1 juv.,present\nd,sampled by hand,present\n')
+        plan = build_plan(archive)
+        issues = {item['source_value']: item for item in plan['issues'] if item['id'].startswith('age-remark:')}
+        self.assertEqual(set(issues), {'ad', 'juv.', '1 juv.'})
+        choices = decisions_for(plan)
+        choices[issues['ad']['id']] = 'occurrence.lifeStage'
+        choices[issues['1 juv.']['id']] = 'occurrence.occurrenceRemarks'
+        frames, report = convert(archive, plan, choices)
+        self.assertEqual(frames['occurrence'].iloc[0]['lifeStage'], 'ad')
+        self.assertEqual(frames['occurrence'].iloc[2]['occurrenceRemarks'], '1 juv.')
+        self.assertEqual(frames['event'].iloc[1]['eventRemarks'], 'juv.')
+        self.assertEqual(frames['event'].iloc[3]['eventRemarks'], 'sampled by hand')
+        item = next(column for column in report['columns'] if column['term'] == DWC + 'eventRemarks')
+        self.assertEqual(item['target_counts'], {
+            'event.eventRemarks': 2, 'occurrence.lifeStage': 1, 'occurrence.occurrenceRemarks': 1})
+        self.assertTrue(report['validation']['valid'])
 
     def test_coordinate_bounds_nonfinite_values_and_integer_lexical_forms_are_retained(self):
         archive = occurrence(b'occurrenceID,decimalLatitude,decimalLongitude,year,occurrenceStatus\ninvalid,91,Infinity,2025.0,present\nvalid,-90,180,2025,present\n')
@@ -350,6 +454,33 @@ class ArchiveTests(SimpleTestCase):
         self.assertTrue(report['validation']['valid']); self.assertEqual(frames['material'].iloc[0]['evidenceForOccurrenceID'], 'persistent-occ')
         self.assertEqual(frames['material'].iloc[0]['materialEntityID'], 'physical-sample')
 
+    def test_preserved_specimen_catalog_triples_create_material_records(self):
+        archive = occurrence(
+            b'occurrenceID,basisOfRecord,institutionCode,collectionCode,catalogNumber,preparations,occurrenceStatus\n'
+            b'one,PreservedSpecimen,RMZ,Araneae,1,fluid,present\n'
+            b'two,PreservedSpecimen,RMZ,Araneae,2,fluid,present\n')
+        plan = build_plan(archive)
+        automatic = {choice['id']: choice['default'] for choice in plan['automatic_choices']}
+        self.assertEqual(automatic['material:0'], 'per_row')
+        frames, report = convert(archive, plan, decisions_for(plan))
+        self.assertTrue(report['validation']['valid'])
+        self.assertEqual(len(frames['material']), 2)
+        self.assertEqual(set(frames['material']['catalogNumber']), {'1', '2'})
+        self.assertEqual(set(frames['material']['preparations']), {'fluid'})
+        self.assertEqual(set(frames['material']['evidenceForOccurrenceID']), {'one', 'two'})
+        self.assertNotIn('materialEntityID', frames['material'])
+
+    def test_specimen_material_needs_review_when_catalog_identity_repeats(self):
+        archive = occurrence(
+            b'occurrenceID,basisOfRecord,institutionCode,collectionCode,catalogNumber,occurrenceStatus\n'
+            b'one,PreservedSpecimen,RMZ,Araneae,1,present\n'
+            b'two,PreservedSpecimen,RMZ,Araneae,1,present\n')
+        plan = build_plan(archive)
+        self.assertNotIn('material:0', {choice['id'] for choice in plan['automatic_choices']})
+        self.assertIn('material:0', {issue['id'] for issue in plan['issues']})
+        frames, _ = convert(archive, plan, decisions_for(plan))
+        self.assertNotIn('material', frames)
+
     def test_material_merging_blocks_conflicting_descriptions(self):
         archive = occurrence(b'occurrenceID,eventID,materialSampleID,catalogNumber,occurrenceStatus\na,e,m,catalog-a,present\nb,e,m,catalog-b,present\n')
         plan = build_plan(archive); decisions = decisions_for(plan); decisions.update({'material:0': 'by_id', 'event-grain': 'by_id'})
@@ -492,7 +623,11 @@ class ConversionAPITests(TransactionTestCase):
         return Dataset.objects.get(pk=response.data['id'])
 
     def upload_with_eml(self, title='', description=''):
-        eml = b'<eml><dataset><title>  Forest   birds </title><abstract><para>Point counts   in forest.</para></abstract></dataset></eml>'
+        eml = (b'<eml><dataset><title>  Forest   birds </title><abstract><para>Point counts   in forest.</para></abstract>'
+               b'<creator><organizationName>Field Team</organizationName></creator>'
+               b'<keywordSet><keyword>birds</keyword></keywordSet>'
+               b'<intellectualRights>https://creativecommons.org/licenses/by/4.0/</intellectualRights>'
+               b'<citation><para>Forest birds dataset</para></citation></dataset></eml>')
         files = [SimpleUploadedFile('meta.xml', manifest().replace(b'<archive ', b'<archive metadata="metadata.xml" ')),
                  SimpleUploadedFile('metadata.xml', eml), SimpleUploadedFile('occ.csv', b'join,occurrenceID\na,persistent\n')]
         response = self.client.post('/api/datasets/', {'workflow_type': 'dwca_conversion', 'title': title,
@@ -510,13 +645,24 @@ class ConversionAPITests(TransactionTestCase):
         response = self.client.post(f'/api/datasets/{dataset.pk}/conversion/',
                                     {'plan_id': conversion.plan['id'], 'decisions': decisions_for(conversion.plan)}, format='json')
         self.assertEqual(response.status_code, 202, response.data)
-        with patch('api.conversion_jobs.validate_eml', return_value=None):
-            self.assertTrue(process_next_conversion())
+        self.assertTrue(process_next_conversion())
         conversion.refresh_from_db()
         self.assertEqual(conversion.status, 'complete', conversion.error)
         self.assertEqual(conversion.report['metadata']['title_source'], 'eml')
         self.assertEqual(conversion.report['metadata']['description_source'], 'eml')
         self.assertIn('eml', conversion.report['metadata'])
+        self.assertEqual(conversion.report['metadata']['descriptor_fields_from_source_eml'],
+                         ['contributors', 'keywords', 'licenses'])
+        self.assertEqual(conversion.report['metadata']['source_only']['citation'], 'Forest birds dataset')
+        self.assertIn('source_terms', conversion.report['value_disposition'])
+        with conversion.output_file.open('rb') as stream, tarfile.open(fileobj=stream, mode='r:gz') as output:
+            descriptor = json.load(output.extractfile('datapackage.json'))
+            package_report = json.load(output.extractfile('conversion-report.json'))
+        self.assertEqual(descriptor['keywords'], ['birds'])
+        self.assertEqual(descriptor['licenses'][0]['name'], 'cc-by-4.0')
+        self.assertEqual(descriptor['contributors'][0]['title'], 'Field Team')
+        self.assertIn('value_disposition', package_report)
+        self.assertIn('semantic_value_audit', package_report)
 
     def test_inspect_does_not_overwrite_user_metadata(self):
         # A user title identical to the EML title is still the user's, recorded at inspection.

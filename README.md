@@ -128,8 +128,10 @@ remain reproducible while the deployed profile is a prerelease.
 When updating the snapshot, replace the profile and complete `table-schemas`
 directory together, update the local index/version metadata and
 `DWC_DP_SCHEMA_REVISION` in `back-end/api/dwc_dp_specs.py`, then run the backend
-tests in Docker. Once DwC-DP 1.0 is ratified, update the snapshot and profile URL
-atomically from `1.0_DEV` to the final versioned release.
+tests in Docker. Once a final DwC-DP 1.0 profile is published and accessible,
+update the snapshot and profile URL atomically from `1.0_DEV` to the final
+versioned release. The [conversion fidelity audit](docs/dwca-conversion/fidelity-audit.md)
+records the current schema status and value-level checks.
 
 Exported packages are validated offline with checks ported from GBIF's
 [dwc-dp-analyser](https://github.com/gbif/dwc-dp-analyser): the descriptor against

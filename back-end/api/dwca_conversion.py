@@ -25,8 +25,11 @@ from api.dwc_dp_specs import TABLE_SPECS, dwc_dp_schema_snapshot, validate_dwc_d
 from api.dwca_preflight import preflight
 from api.dwca_review import (apply_policy, effective_decisions, failed_requirements, group_rows,  # noqa: F401
                              option_status, remove_unavailable, violations)
+from api.dwca_semantic_audit import is_age_like_remark, semantic_target_rejection
+from api.dwca_agents import ROLE_FIELDS, build_agent_roles, composite_name_reason
 
-RULE_VERSION = "14"
+RULE_VERSION = "22"
+DERIVED_VALUE_EXAMPLE_LIMIT = 20
 ECO_SURVEY_ID = 'http://rs.tdwg.org/eco/terms/surveyID'
 REGISTERED_TERMS = {term for terms in REGISTRY['terms'].values() for term in terms}
 # Terms some field of the pinned DwC-DP schema is a version of; others have no Data Package field at all.
@@ -75,6 +78,15 @@ def _column_id(t, c):
     return f"column:{t}:{c}"
 
 
+def _reviewed_value_id(kind, t, c, value):
+    digest = hashlib.sha256(value.encode('utf-8')).hexdigest()
+    return f'{kind}:{t}:{c}:{digest}'
+
+
+def _agent_name_id(value):
+    return 'agent-share:' + hashlib.sha256(value.encode('utf-8')).hexdigest()
+
+
 def _key(archive, *parts):
     # Internal keys are reproducible, never replacements for source identifiers.
     return str(uuid.uuid5(NAMESPACE, json.dumps([archive.fingerprint, *parts], ensure_ascii=False)))
@@ -102,12 +114,21 @@ def _typed_field(target):
     return descriptor if descriptor.get('type') in {'integer', 'number', 'boolean'} else None
 
 
-def _copied(row_type, target, value):
-    """The value conversion copies to target, or None when it is withheld as invalid."""
+def _copy_rejection(row_type, target, value):
+    """Reason a value cannot be copied to this target, or None."""
+    from api.dwca_semantic_audit import semantic_target_rejection
+    semantic_reason = semantic_target_rejection(target, value)
+    if semantic_reason:
+        return semantic_reason
     descriptor = _typed_field(target)
     if value and descriptor is not None and SUPPORTED_EXTENSIONS.get(row_type) != 'humboldt' and not valid_value(descriptor, value):
-        return None
-    return value
+        return 'Value fails the approved target type or bounds; retained without normalization.'
+    return None
+
+
+def _copied(row_type, target, value):
+    """Preflight's view of the value that would reach a mapped target."""
+    return None if _copy_rejection(row_type, target, value) else value
 
 
 def _year_disagrees(year, event_date):
@@ -378,6 +399,14 @@ def _streamline_plan(archive, core, plan, warnings):
         elif issue['id'] == 'event-grain' and len({row[event_ids] for row in core.rows}) == len(core.rows):
             default = 'by_id'
             reason = 'Every occurrence supplies a distinct eventID. Each row creates its own context event; no records are merged.'
+        elif issue['id'].startswith('material:') and issue.get('strong_specimen_signal'):
+            default = 'per_row'
+            reason = ('Every source row explicitly declares PreservedSpecimen and has a distinct, complete '
+                      'institutionCode, collectionCode, catalogNumber triple. One material entity is created '
+                      'for each source row; no persistent material identifier is inferred.')
+        elif issue['id'].startswith('agent-share:'):
+            default = 'separate'
+            reason = 'Equal name text does not prove that separate source mentions identify the same agent. You can confirm this exact name in the advanced choices.'
         elif issue['id'].startswith('table:'):
             table = archive.tables[issue['table']]
             family = SUPPORTED_EXTENSIONS.get(table.row_type)
@@ -523,15 +552,30 @@ def build_plan(archive):
                 **({'subject_review_signals': media_signals} if family == 'media' else {}),
                 table=t, row_type=table.row_type, rows=len(table.rows)))
         own = "event" if table.row_type == DWC + "Event" else "occurrence"
+        specimen_terms = (DWC + 'institutionCode', DWC + 'collectionCode', DWC + 'catalogNumber')
+        specimen_columns = [table.terms.index(term) for term in specimen_terms] if all(term in table.terms for term in specimen_terms) else []
+        basis_column = table.terms.index(DWC + 'basisOfRecord') if DWC + 'basisOfRecord' in table.terms else None
+        specimen_keys = [tuple(row[c].strip() for c in specimen_columns) for row in table.rows] if specimen_columns else []
+        specimen_context = bool(table.is_core and table.row_type == DWC + 'Occurrence' and table.rows
+            and basis_column is not None and specimen_columns
+            and all(row[basis_column].strip() == 'PreservedSpecimen' for row in table.rows)
+            and any(any(key) for key in specimen_keys))
+        strong_specimen = bool(specimen_context
+            and all(all(value and not missing_reference(value, ()) for value in key) for key in specimen_keys)
+            and len(set(specimen_keys)) == len(specimen_keys))
         has_material = (table.is_core or family == 'occurrence') and own == 'occurrence' and any(
             term in table.terms and any(row[table.terms.index(term)] for row in table.rows)
-            for term in (DWC + 'materialSampleID', DWC + 'materialEntityID'))
+            for term in (DWC + 'materialSampleID', DWC + 'materialEntityID')) or specimen_context
         if has_material:
             issues.append(_issue(f'material:{t}', f'{table.name}: do these identify physical specimens or samples?',
-                'Some rows have material sample identifiers. If they identify physical things, such as a specimen, tissue or soil sample, they can become material records: '
+                ('Every row declares PreservedSpecimen and has a distinct institutionCode, collectionCode, catalogNumber triple. '
+                 if strong_specimen else 'The source declares preserved specimens with catalog fields, but some catalog identities repeat or are incomplete. '
+                 if specimen_context else 'Some rows have material sample identifiers. ') +
+                'If these identify physical things, such as a specimen, tissue or soil sample, they can become material records: '
                 'one per row, or one per identifier when all of its rows agree. Otherwise keep the identifiers only in your original files.',
                 [PRESERVE, {'value': 'per_row', 'label': 'Yes: one material record per row'},
-                 {'value': 'by_id', 'label': 'Yes: one material record per identifier'}]))
+                 {'value': 'by_id', 'label': 'Yes: one material record per identifier'}],
+                **({'strong_specimen_signal': True, 'table': t} if strong_specimen else {})))
         target_tables = [own] + (["event", "identification"] if own == "occurrence" else []) + (["material"] if has_material else []) if table.is_core or family == "occurrence" else {
             "identification": ["identification"], "assertion": ["occurrence-assertion"],
             "relationship": ["resource-relationship"], "molecular": ["molecular-protocol"],
@@ -626,10 +670,10 @@ def build_plan(archive):
             if join_only:
                 chosen = 'join'
             incompatible = {} if family == 'humboldt' else {
-                target: sum(not valid_value(field, value) for value in values)
-                for target in options if (field := _typed_field(target)) is not None}
+                target: sum(bool(_copy_rejection(table.row_type, target, value)) for value in values)
+                for target in options if '.' in target}
             incompatible = {target: count for target, count in incompatible.items() if count}
-            typed_reason = (f"Some source values fail the target's numeric/boolean type or bounds: "
+            typed_reason = (f"Some source values fail the target's type, bounds, or semantic constraints: "
                             + ', '.join(f'{target} ({count} values)' for target, count in incompatible.items())
                             + '. Mapping copies compatible cells only; invalid values stay in originals and the report. Preserve the column if its meaning needs clarification.') if incompatible else None
             # Prefer an exact field on the declared subject over duplicate annotations
@@ -647,7 +691,8 @@ def build_plan(archive):
                 re.fullmatch(r'[+-]?[0-9]{4}\.[0-9]+', value.strip()) or
                 value.strip().lower() in {'na', 'n/a', 'null', 'none', 'unknown', 'not recorded'} for value in values)
             date_reason = ('Some event dates are float-shaped years or unknown-value tokens. The original text is copied without repair or interpreting these tokens as empty. Their meaning remains unverified.') if date_ambiguity else None
-            subject_move = chosen.startswith('material.') and term not in {DWC + 'materialSampleID', DWC + 'materialEntityID'}
+            subject_move = chosen.startswith('material.') and term not in {DWC + 'materialSampleID', DWC + 'materialEntityID'} and not (
+                strong_specimen and term in {*specimen_terms, DWC + 'preparations'})
             review = bool(not join_only and values and (not options or (len(options) > 1 and not exact_subject_default) or media_reason or subject_move or name_ambiguity or (own == 'occurrence' and term == DWC + 'typeStatus') or chosen.startswith('molecular-protocol.env_') or (has_material and term == DWC + 'recordedBy')))
             item = {"id": _column_id(t, c), "table": t, "column": c, "term": term,
                     "default": chosen, "review": review, "options": ([{'value': 'join', 'label': 'Used to join source rows to the core'}] if join_only else [_choice(value) for value in options] + ([] if chosen in {'occurrence.occurrenceStatus', 'event.eventCategory'} else [PRESERVE])),
@@ -685,6 +730,37 @@ def build_plan(archive):
                         else "Darwin Core Data Packages have no field for this term, so the values stay in your original files." if term not in SCHEMA_TERMS
                         else "This converter does not map this term yet, so the values stay in your original files."),
                     options=item["options"], table=t, nonempty=len(values), samples=[value[:250] for value in item["samples"]]))
+            if table.is_core and own == 'occurrence' and term == DWC + 'countryCode' and chosen == 'event.countryCode':
+                for source_value, count in sorted(Counter(values).items()):
+                    if not semantic_target_rejection('event.countryCode', source_value):
+                        continue
+                    issues.append(_issue(_reviewed_value_id('country-label', t, c, source_value),
+                        f'{table.name}: where does {source_value[:100]!r} belong?',
+                        f'{count} source rows put {source_value[:200]!r} in countryCode, but it is not an ISO country code. '
+                        'Choose whether this exact label names a country, a water body, or belongs only in the originals. '
+                        'The selected target receives the source text unchanged; no ISO code is inferred.',
+                        [PRESERVE, {'value': 'event.country', 'label': 'Country or territory name'},
+                         {'value': 'event.waterBody', 'label': 'Water body name'}],
+                        kind='column-mapping', assertion_values=['event.country', 'event.waterBody'],
+                        table=t, source_column=c, source_value=source_value, count=count))
+            if table.is_core and own == 'occurrence' and term == DWC + 'eventRemarks' and chosen == 'event.eventRemarks':
+                event_ids = [row[table.terms.index(DWC + 'eventID')] for row in table.rows
+                             if row[table.terms.index(DWC + 'eventID')]] if DWC + 'eventID' in table.terms else []
+                if len(event_ids) == len(set(event_ids)):
+                    for source_value, count in sorted(Counter(values).items()):
+                        if not is_age_like_remark(source_value):
+                            continue
+                        issues.append(_issue(_reviewed_value_id('age-remark', t, c, source_value),
+                            f'{table.name}: does {source_value[:100]!r} describe the organism?',
+                            f'{count} source rows use {source_value[:200]!r} as eventRemarks. '
+                            'Choose the subject for this exact text. Life stage keeps the text verbatim, including abbreviations; '
+                            'mixed count, sex, or egg notes may fit occurrenceRemarks better. No value is interpreted or normalized.',
+                            [{'value': 'event.eventRemarks', 'label': 'Keep as an event remark'},
+                             {'value': 'occurrence.lifeStage', 'label': 'Organism life stage (verbatim)'},
+                             {'value': 'occurrence.occurrenceRemarks', 'label': 'Occurrence remark (verbatim)'},
+                             PRESERVE],
+                            kind='column-mapping', assertion_values=['occurrence.lifeStage', 'occurrence.occurrenceRemarks'],
+                            table=t, source_column=c, source_value=source_value, count=count))
         profiles.append(profile)
         if family == 'occurrence' and not table.is_core and core.row_type == DWC + 'Event':
             event_columns = [column for column in columns if column['table'] == t and column['nonempty'] and column['default'] != 'join'
@@ -791,6 +867,32 @@ def build_plan(archive):
                     "A Data Package needs every occurrence to say whether the organism was present or absent, and some rows don't say. Supplied values are kept; this choice only fills the empty ones."
                     + (f' {zero_quantities} of those rows have a zero count. A zero alone doesn\'t prove absence, so please choose deliberately.' if zero_quantities else ''),
                     [{"value": "present", "label": "Present: the organism was recorded"}, {"value": "absent", "label": "Absent: it was looked for but not found"}]))
+    # Reviewable exact-name sharing is offered only for source names that are
+    # candidates for a mapped agent role. The default keeps mentions separate.
+    agent_names = Counter()
+    for column in columns:
+        target = column['default']
+        if '.' not in target or tuple(target.split('.', 1)) not in ROLE_FIELDS:
+            continue
+        table = archive.tables[column['table']]
+        role = target.split('.', 1)[1]
+        id_term = DWC + role + 'ID'
+        id_column = table.terms.index(id_term) if id_term in table.terms else None
+        for row in table.rows:
+            if id_column is not None and row[id_column]:
+                continue
+            name = row[column['column']].strip()
+            if name and composite_name_reason(name) is None:
+                agent_names[name] += 1
+    for name, count in sorted(agent_names.items()):
+        if count < 2:
+            continue
+        issues.append(_issue(_agent_name_id(name), f'Does {name[:100]!r} name one agent throughout?',
+            f'{count} source mentions use this exact name. Confirm sharing only if every mention refers to the same person or organization. '
+            'The source text alone does not establish this identity.',
+            [{'value': 'separate', 'label': 'Keep each mention as a separate Agent'},
+             {'value': 'shared', 'label': 'Use one Agent for this exact name'}],
+            kind='agent-identity', source_value=name, count=count))
     plan = {"version": RULE_VERSION, "source_sha256": archive.fingerprint, "schema": dwc_dp_schema_snapshot(),
             "tables": profiles, "columns": columns, "issues": issues,
             "files": [{"name": name, "sha256": hashlib.sha256(content).hexdigest(), "bytes": len(content)} for name, content in sorted(archive.files.items())]}
@@ -880,6 +982,7 @@ def validate_decisions(plan, decisions, require_complete=True):
         return all(member in effective for member in item['members']) if item.get('members') else item['id'] in effective
 
     unresolved = [item["id"] for item in plan["issues"] if item['id'] not in nested_ids and not resolved(item) and not (
+        item.get('source_column') is not None and effective.get(f"column:{item['table']}:{item['source_column']}") == 'preserve') and not (
         "table" in item and (effective.get(f"table:{item['table']}") == "preserve" or
                             ('row' in item and effective.get(f"row:{item['table']}:{item['row'] - 1}") == 'preserve')))]
     found = violations(plan, decisions)
@@ -976,11 +1079,16 @@ def convert(archive, plan, decisions):
     resources = defaultdict(list); crosswalk = []; dispositions = []; material_groups = {}; material_evidence = defaultdict(set); sequence_groups = {}; protocol_groups = {}; occurrences_by_identifier = defaultdict(list); media_groups = defaultdict(dict); media_subjects = []; core_index = next(i for i,t in enumerate(archive.tables) if t.is_core)
     events_by_key = {}; supplied_categories = set(); humboldt_groups = {}; column_consumption = defaultdict(set); withheld_values = []; preserved_rows = []
     materials_by_source = {}; material_identifiers = defaultdict(set); trait_protocols = defaultdict(list); skipped_by_table = defaultdict(set); extension_subjects = []; typed_withheld = defaultdict(set)
+    reviewed_target_rows = defaultdict(set)
     core = archive.tables[core_index]; event_keys = {}; occurrence_keys = {}
     namespace = archive.fingerprint
     columns_by_table = defaultdict(list)
     issues_by_id = {issue['id']: issue for issue in [*plan['issues'], *plan.get('automatic_choices', [])]}
     issues_by_id.update({member['id']: {**issues_by_id[member['group']], **member} for member in plan.get('row_issues', [])})
+    reviewed_value_issues = {(issue['table'], issue['source_column'], issue['source_value']): issue
+                             for issue in [*plan['issues'], *plan.get('automatic_choices', [])]
+                             if issue['id'].startswith(('country-label:', 'age-remark:'))}
+    reviewed_value_columns = {(t, c) for t, c, _ in reviewed_value_issues}
     for column in plan["columns"]:
         columns_by_table[column["table"]].append(column)
 
@@ -990,22 +1098,31 @@ def convert(archive, plan, decisions):
             target = decisions.get(column["id"], column["default"])
             if target in {"preserve", "join", 'derive', PARENT_LINK}:
                 continue
+            value = row[column['column']]
+            reviewed_issue = reviewed_value_issues.get((t, column['column'], value)) if value else None
+            if reviewed_issue:
+                target = decisions[reviewed_issue['id']]
+                if target == 'preserve':
+                    continue
             if target.startswith('material.') and decisions.get(f'material:{t}', 'preserve') == 'preserve':
                 continue
             table, field = target.split(".", 1)
-            value = row[column['column']]
-            if _copied(archive.tables[t].row_type, target, value) is None:
+            rejection = _copy_rejection(archive.tables[t].row_type, target, value)
+            if rejection:
                 withheld_values.append({'source_table': archive.tables[t].name, 'source_table_index': t, 'source_row': n + 1,
                                        'term': column['term'], 'value': value, 'target': target,
-                                       'reason': 'Value fails the approved target type or bounds; retained without normalization.'})
+                                       'reason': rejection})
                 typed_withheld[(t, column['column'])].add(n)
                 continue
             if field in result[table] and value and result[table][field] and result[table][field] != value:
                 raise ConversionError(f'Conflicting source values map to {target}; preserve one column or correct the source.', category='conflict',
-                                      decision_ids=[item['id'] for item in columns_by_table[t] if decisions.get(item['id'], item['default']) == target],
+                                      decision_ids=([reviewed_issue['id']] if reviewed_issue else []) +
+                                                   [item['id'] for item in columns_by_table[t] if decisions.get(item['id'], item['default']) == target],
                                       evidence={'source_table': archive.tables[t].name, 'source_row': n + 1})
             if value or field not in result[table]:
                 result[table][field] = value
+            if value and column['term'] in {DWC + 'countryCode', DWC + 'eventRemarks'}:
+                reviewed_target_rows[(t, column['column'], target)].add(n)
         return result
 
     def approved_source(t, row):
@@ -1101,6 +1218,20 @@ def convert(archive, plan, decisions):
         return record
 
     def occurrence_row(t, n, source_id, mapped, event_key):
+        # DwC individualCount is a count of organisms, which DwC-DP represents
+        # as a quantity paired with its unit. Only derive it when neither half
+        # of an explicit quantity pair was supplied. Zero remains a quantity;
+        # it never changes occurrenceStatus.
+        table = archive.tables[t]
+        if table.is_core and table.row_type == DWC + 'Occurrence' and DWC + 'individualCount' in table.terms:
+            source_row = table.rows[n]
+            count = source_row[table.terms.index(DWC + 'individualCount')].strip()
+            source = _source(table.terms, source_row)
+            if (count and re.fullmatch(r'\+?\d+', count)
+                    and not source.get(DWC + 'organismQuantity')
+                    and not source.get(DWC + 'organismQuantityType')):
+                mapped.setdefault('occurrence', {})['organismQuantity'] = str(int(count))
+                mapped['occurrence']['organismQuantityType'] = 'individuals'
         occurrence = name_values(t, n, mapped.get("occurrence", {}))
         occurrence.update(occurrence_pk=_key(archive, "occurrence", t, source_id), event_fk=event_key)
         if not occurrence.get("occurrenceStatus"):
@@ -1428,11 +1559,25 @@ def convert(archive, plan, decisions):
                                       decision_ids=[f'table:{t}', *([f'row:{t}:{n}'] if f'row:{t}:{n}' in issues_by_id else [])],
                                       evidence={'source_table': table.name, 'source_row': n + 1}) from error
     for column in plan["columns"]:
+        source_table = archive.tables[column["table"]]
+        if (column['term'] == DWC + 'individualCount' and source_table.is_core
+                and source_table.row_type == DWC + 'Occurrence'):
+            continue  # Replaced below with the row-level derived disposition.
         target = decisions.get(column["id"], column["default"])
         if not archive.tables[column["table"]].is_core and decisions.get(f"table:{column['table']}") == "preserve":
             target = "preserve"
         if target.startswith('material.') and decisions.get(f"material:{column['table']}", 'preserve') == 'preserve':
             target = 'preserve'
+        if (column['table'], column['column']) in reviewed_value_columns:
+            target_counts = {mapped_target: len(rows) for (t, c, mapped_target), rows in sorted(reviewed_target_rows.items())
+                             if (t, c) == (column['table'], column['column']) and rows}
+            mapped_count = sum(target_counts.values())
+            dispositions.append({'source_table': source_table.name, 'term': column['term'],
+                'target': 'reviewed value routes' if mapped_count else 'preserve',
+                'target_counts': target_counts, 'disposition': 'mapped+retained' if mapped_count else 'retained-unmapped',
+                'nonempty': column['nonempty'], 'mapped_rows': mapped_count,
+                'retained_only_rows': column['nonempty'] - mapped_count})
+            continue
         if target.startswith('occurrence-assertion.'):
             role = decisions.get(f"table:{column['table']}")
             if role == 'event-assertion': target = target.replace('occurrence-assertion.', 'event-assertion.')
@@ -1469,6 +1614,50 @@ def convert(archive, plan, decisions):
             if not copied: target = 'preserve'
         dispositions.append({"source_table": archive.tables[column["table"]].name, "term": column["term"], "target": target,
                              "disposition": "retained-unmapped" if target == "preserve" else 'derived' if target == 'join' or target.startswith('derived ') else "mapped+retained", "nonempty": column["nonempty"], **extra})
+    # Account for each occurrence-core individualCount as a value-level
+    # derived disposition, including rows withheld because explicit quantity
+    # fields take precedence or the count is not a nonnegative integer.
+    for t, table in enumerate(archive.tables):
+        count_term = DWC + 'individualCount'
+        if not table.is_core or table.row_type != DWC + 'Occurrence' or count_term not in table.terms:
+            continue
+        quantity, quantity_type = DWC + 'organismQuantity', DWC + 'organismQuantityType'
+        derived_values = []
+        derived_count = 0
+        retained_conflict = invalid = empty = 0
+        output_rows = {(entry['source_row'], entry['source_table_index']): entry['target_row']
+                       for entry in crosswalk if entry['target_table'] == 'occurrence'}
+        for row_number, row in enumerate(table.rows, start=1):
+            source = _source(table.terms, row)
+            count = source.get(count_term, '').strip()
+            if not count:
+                empty += 1
+            elif source.get(quantity) or source.get(quantity_type):
+                retained_conflict += 1
+            elif re.fullmatch(r'\+?\d+', count):
+                derived_count += 1
+                if len(derived_values) < DERIVED_VALUE_EXAMPLE_LIMIT:
+                    derived_values.append({'source_row': row_number, 'source_value': count,
+                                           'target_table': 'occurrence',
+                                           'target_row': output_rows.get((row_number, t)),
+                                           'target_fields': {'organismQuantity': str(int(count)),
+                                                             'organismQuantityType': 'individuals'}})
+            else:
+                invalid += 1
+        dispositions.append({
+            'source_table': table.name, 'term': count_term,
+            'target': 'occurrence.organismQuantity + occurrence.organismQuantityType (individuals)',
+            'disposition': 'derived' if derived_count else 'retained-unmapped',
+            'nonempty': derived_count + retained_conflict + invalid,
+            'mapped_rows': derived_count,
+            'retained_only_rows': retained_conflict + invalid,
+            'empty_rows': empty,
+            'derived_value_examples': derived_values,
+            'derived_value_examples_omitted': derived_count - len(derived_values),
+            'mapping_rule': 'Copy a nonnegative integer individualCount as organismQuantity with organismQuantityType=individuals only when both source quantity fields are empty. Zero does not determine occurrenceStatus; source individualCount remains in the originals.',
+            'retained_reasons': ({'explicit_quantity_present': retained_conflict,
+                                  'invalid_nonnegative_integer': invalid} if retained_conflict or invalid else {}),
+        })
     survey_ids = defaultdict(set)
     for survey in resources.get('survey', []):
         if survey.get('surveyID'): survey_ids[survey['surveyID']].add(survey['survey_pk'])
@@ -1501,7 +1690,7 @@ def convert(archive, plan, decisions):
                     continue
                 evidence = agent_evidence[identifier]
                 name = record.get(field[:-2], '')
-                if name and '|' not in name and ';' not in name:
+                if name and composite_name_reason(name) is None:
                     evidence['names'].add(name)
                 evidence['origins'].update(origins[(resource_name, number)])
     created_agents = 0
@@ -1518,6 +1707,21 @@ def convert(archive, plan, decisions):
         created_agents += 1
         for source_table, source_row in source_rows[1:]:
             trace('agent', {'agent_pk': agent_key}, source_table, source_row)
+    shared_names = [issue['source_value'] for issue in [*plan['issues'], *plan.get('automatic_choices', [])]
+                    if issue['id'].startswith('agent-share:') and decisions.get(issue['id']) == 'shared']
+    agent_roles = build_agent_roles(resources, lambda *parts: _key(archive, *parts),
+                                    shared_names=shared_names, is_agent_identifier=_single_agent_iri)
+    for emitted in agent_roles.rows:
+        source_rows = sorted({source for resource_name, number, _field in emitted.mentions
+                              for source in origins[(resource_name, number)]})
+        if not source_rows:
+            raise ConversionError('An agent role has no traceable source row.', category='internal')
+        source_table, source_row = source_rows[0]
+        add(emitted.table, emitted.row, source_table, source_row)
+        key_fields = TABLE_SPECS[emitted.table].primary_key or [field for field in emitted.row if field.endswith('_fk')]
+        key = {field: emitted.row.get(field) for field in key_fields}
+        for source_table, source_row in source_rows[1:]:
+            trace(emitted.table, key, source_table, source_row, len(resources[emitted.table]))
     frames = {name: pd.DataFrame(rows).fillna("") for name, rows in resources.items()}
     validation = validate_dwc_dp_resources(frames)
     report = {"plan_id": plan["id"], "rule_version": RULE_VERSION, "source_sha256": namespace, "schema": plan["schema"],
@@ -1527,10 +1731,16 @@ def convert(archive, plan, decisions):
               'media_subjects': media_subjects,
               'extension_subjects': extension_subjects,
               'withheld_values': withheld_values, 'preserved_extension_rows': preserved_rows,
+              'reviewed_value_routes': [{'decision_id': issue['id'], 'source_table': archive.tables[issue['table']].name,
+                                         'source_value': issue['source_value'], 'count': issue['count'],
+                                         'target': decisions.get(issue['id'], 'inactive: source column preserved')}
+                                        for issue in [*plan['issues'], *plan.get('automatic_choices', [])]
+                                        if issue['id'].startswith(('country-label:', 'age-remark:'))],
               'agent_mapping': {'created': created_agents,
                                 'without_preferred_name': sum(bool(value['origins']) and len(value['names']) != 1
                                                               for value in agent_evidence.values()),
                                 'non_single_id_cells': skipped_agent_values},
+              'agent_roles': agent_roles.report,
               **({'event_hierarchy': hierarchy_report} if hierarchy_report else {}),
               **({'depth_events': {'combined_events': len(depth_children), 'depth_events': sum(map(len, depth_children.values())),
                                    'fields': [field for field in DEPTH_FIELDS if any(field in event for event in resources['event'])],

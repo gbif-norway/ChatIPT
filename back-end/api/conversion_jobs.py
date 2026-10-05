@@ -12,7 +12,10 @@ from django.utils import timezone
 
 from api.dwca_import import ConversionError, ImportFailure, read_inputs, source_zip
 from api.dwca_conversion import build_plan, convert
-from api.conversion_evidence import publication_metadata
+from api.conversion_evidence import publication_metadata, source_eml_content
+from api.dwca_eml_descriptor import extract_eml_descriptor_metadata
+from api.dwca_value_ledger import build_value_disposition_ledger
+from api.dwca_semantic_audit import audit_semantic_values
 from api.conversion_names import LEASE_SECONDS
 from api.dwc_dp_specs import create_dwc_dp_archive, validate_dwc_dp_archive, validate_dwc_dp_resources, validate_eml
 from api.models import DwcConversion, DwcConversionJob, Table
@@ -134,8 +137,19 @@ def process_next_conversion():
             if not report['validation']['valid']:
                 # Preflight should make this unreachable; a failing validator indicates a converter defect.
                 raise ConversionError('Validation needs attention: ' + '; '.join(report['validation']['errors'][:10]), category='internal')
-            original_eml = [content for name, content in archive.files.items() if Path(name).name.lower() == 'eml.xml']
-            eml = original_eml[0] if len(original_eml) == 1 and not validate_eml(original_eml[0]) else None
+            source_eml = source_eml_content(archive)
+            eml = source_eml if source_eml is not None and not validate_eml(source_eml) else None
+            descriptor_metadata = {}
+            source_metadata = {}
+            metadata_warnings = []
+            if source_eml is not None:
+                try:
+                    promoted = extract_eml_descriptor_metadata(source_eml)
+                    descriptor_metadata = promoted['descriptor']
+                    source_metadata = promoted['source_metadata']
+                    metadata_warnings = promoted['warnings']
+                except (ValueError, TypeError) as error:
+                    metadata_warnings = [{'field': 'eml.xml', 'reason': f'Metadata could not be promoted: {error}'}]
             sources = conversion.metadata_sources or {}
             report['metadata'] = {
                 'eml': 'original EML 2.2.0 included' if eml else 'original metadata retained in source-originals.zip; no replacement metadata invented',
@@ -143,7 +157,12 @@ def process_next_conversion():
                 'title_source': sources.get('title', 'user' if (conversion.dataset.title or '').strip() else 'none'),
                 'description_source': sources.get('description', 'user' if (conversion.dataset.description or '').strip() else 'none'),
                 **({'truncated_from_eml': sources['truncated_from_eml']} if sources.get('truncated_from_eml') else {}),
+                'descriptor_fields_from_source_eml': sorted(descriptor_metadata),
+                'source_only': source_metadata,
+                'warnings': metadata_warnings,
             }
+            report['value_disposition'] = build_value_disposition_ledger(conversion.plan, report, resources)
+            report['semantic_value_audit'] = audit_semantic_values(archive)
             from api.conversion_review import report_section
             report.update(report_section(conversion))
             report['uploads'] = conversion.plan['uploads']
@@ -156,7 +175,8 @@ def process_next_conversion():
                 create_dwc_dp_archive(output, resources, conversion.dataset.title, conversion.dataset.description,
                     dataset_id=str(conversion.dataset_id), include_eml=eml is not None, eml_content=eml,
                     additional_files=originals,
-                    declare_additional_resources=True, additional_tables=additional_tables)
+                    declare_additional_resources=True, additional_tables=additional_tables,
+                    descriptor_metadata=descriptor_metadata)
                 report['archive_validation'] = validate_dwc_dp_archive(output, require_eml=eml is not None,
                     allow_generic=report.get('output_format') == 'taxonomy-data-package')
                 output_content = output.read_bytes()

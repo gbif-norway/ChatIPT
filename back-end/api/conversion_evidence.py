@@ -82,6 +82,16 @@ def _metadata_name(files):
     return True, candidate if candidate in files else None
 
 
+def source_eml_content(archive):
+    """Return the single declared metadata document, or a single eml.xml fallback."""
+    declares, declared = _metadata_name(archive.files)
+    if declares:
+        return archive.files.get(declared) if declared else None
+    candidates = [content for name, content in archive.files.items()
+                  if PurePosixPath(name).name.lower() == 'eml.xml']
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _text(element):
     return ' '.join(' '.join(element.itertext()).split())
 
