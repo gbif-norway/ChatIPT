@@ -365,6 +365,7 @@ class ArchiveTests(SimpleTestCase):
         plan = build_plan(archive)
         issue = next(item for item in [*plan['issues'], *plan['automatic_choices']] if item['id'] == 'table:1')
         self.assertIn('declared-assertions', {option['value'] for option in issue['unavailable_options']})
+        self.assertIn('table:1', {item['id'] for item in plan['issues']})
         with self.assertRaisesRegex(ImportFailure, 'Unsupported mapping decision'):
             validate_decisions(plan, {**decisions_for(plan), 'table:1': 'declared-assertions'})
 
@@ -381,29 +382,86 @@ class ArchiveTests(SimpleTestCase):
         self.assertEqual(report['event_hierarchy']['source_values'][0]['parentEventID'], 'NA')
         self.assertEqual(report['event_hierarchy']['source_values'][0]['status'], 'retained in originals')
 
-    def test_na_is_a_real_identifier_when_a_source_record_uses_it(self):
+    def test_placeholder_ids_do_not_create_structural_links_even_when_both_sides_match(self):
         archive = read_inputs([('event.csv', b'eventID,parentEventID,eventCategory\nNA,,survey\nchild,NA,survey\n'),
             ('extendedmeasurementorfact.csv', b'eventID,occurrenceID,measurementType,measurementValue\nchild,NA,length,5\n'),
             ('occurrence.csv', b'eventID,occurrenceID,occurrenceStatus\nchild,NA,present\n')])
         plan = build_plan(archive)
+        self.assertIn('table:1', {issue['id'] for issue in plan['issues']})
+        self.assertNotIn('table:1', {choice['id'] for choice in plan['automatic_choices']})
+        with self.assertRaises(ImportFailure):
+            convert(archive, plan, {})
         frames, report = convert(archive, plan, decisions_for(plan))
         self.assertTrue(report['validation']['valid'])
-        self.assertEqual(report['event_hierarchy']['linked_events'], 1)
+        self.assertEqual(report['event_hierarchy']['linked_events'], 0)
+        self.assertNotIn('occurrence-assertion', frames)
+        self.assertEqual(len(frames['event-assertion']), 1)
+        self.assertEqual(report['event_hierarchy']['source_values'][0]['withheld_reason'], 'empty-reference-token')
+
+    def test_loose_file_placeholder_keys_do_not_join_extension_rows(self):
+        cases = [
+            ([('event.csv', b'eventID,eventCategory\nNA,survey\ne2,survey\n'),
+              ('occurrence.csv', b'eventID,occurrenceStatus\nNA,present\nNA,present\n')], 2),
+            ([('occurrence.csv', b'occurrenceID,occurrenceStatus\nNA,present\nother,present\n'),
+              ('extendedmeasurementorfact.csv', b'occurrenceID,measurementType,measurementValue\nNA,length,5\n')], 1),
+        ]
+        for files, dropped in cases:
+            with self.subTest(core=files[0][0]):
+                with self.assertRaisesRegex(ImportFailure, 'ambiguous core link'):
+                    read_inputs(files)
+                archive = read_inputs(files, drop_unlinked_extension_rows=True)
+                self.assertEqual(archive.dropped_extension_rows[0]['rows'], dropped)
+
+    def test_manifest_placeholder_core_keys_do_not_join_extension_rows(self):
+        extension = '<extension rowType="http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact" fieldsTerminatedBy="," ignoreHeaderLines="1"><files><location>facts.csv</location></files><coreid index="0"/><field index="1" term="' + DWC + 'measurementValue"/></extension>'
+        files = [('meta.xml', manifest(extension=extension)),
+                 ('occ.csv', b'key,occurrenceID\nNA,persistent\n'),
+                 ('facts.csv', b'key,value\nNA,5\n')]
+        with self.assertRaisesRegex(ImportFailure, 'ambiguous core link'):
+            read_inputs(files)
+
+    def test_placeholder_assertion_id_with_no_core_id_keeps_occurrence_subject(self):
+        extension = '<extension rowType="http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact" fieldsTerminatedBy="," ignoreHeaderLines="1"><files><location>facts.csv</location></files><coreid index="0"/><field index="1" term="' + DWC + 'occurrenceID"/><field index="2" term="' + DWC + 'measurementValue"/></extension>'
+        meta = ('<archive xmlns="http://rs.tdwg.org/dwc/text/"><core rowType="' + DWC + 'Occurrence" fieldsTerminatedBy="," ignoreHeaderLines="1"><files><location>occ.csv</location></files><id index="0"/><field term="' + DWC + 'occurrenceStatus" default="present"/></core>' + extension + '</archive>').encode()
+        archive = read_inputs([('meta.xml', meta), ('occ.csv', b'key\njoin\n'), ('facts.csv', b'key,occurrenceID,value\njoin,NA,5\n')])
+        plan = build_plan(archive)
+        frames, report = convert(archive, plan, decisions_for(plan))
+        self.assertTrue(report['validation']['valid'])
         self.assertEqual(len(frames['occurrence-assertion']), 1)
         self.assertNotIn('event-assertion', frames)
+        archive.tables[1].rows[0][0] = 'real-id'
+        plan = build_plan(archive)
+        self.assertIn('table:1', {issue['id'] for issue in plan['issues']})
+        self.assertNotIn('table:1', {choice['id'] for choice in plan['automatic_choices']})
+
+    def test_placeholder_identifiers_cannot_merge_events_or_material(self):
+        archive = occurrence(b'occurrenceID,eventID,materialSampleID,occurrenceStatus\na,NA,NA,present\nb,NA,NA,present\n')
+        plan = build_plan(archive)
+        grain = next(item for item in [*plan['issues'], *plan['automatic_choices']] if item['id'] == 'event-grain')
+        self.assertEqual(grain['default'], 'per_row')
+        self.assertNotIn('by_id', {option['value'] for option in grain['options']})
+        self.assertFalse(option_status(plan, {**decisions_for(plan), 'material:0': 'by_id'})['material:0']['by_id']['available'])
+        frames, report = convert(archive, plan, decisions_for(plan))
+        self.assertTrue(report['validation']['valid'])
+        self.assertEqual(len(frames['event']), 2)
 
     def test_single_agent_ids_create_records_without_pairing_lists_or_conflicts(self):
         archive = occurrence(b'occurrenceID,recordedBy,recordedByID,identifiedBy,identifiedByID,occurrenceStatus\n'
             b'o1,"Smith, Alice",https://example.org/alice,"Smith, Alice",https://example.org/alice,present\n'
             b'o2,Alice Smith,https://example.org/alice,,NA,present\n'
-            b'o3,Bob | Carol,https://example.org/bob | https://example.org/carol,,https://example.org/id,present\n')
+            b'o3,Bob | Carol,https://example.org/bob | https://example.org/carol,,https://example.org/id,present\n'
+            b'o4,Bob|Carol,https://example.org/bob,,,present\n'
+            b'o5,Bob|Carol,https://example.org/bob;https://example.org/carol,,,present\n'
+            b'o6,"Bob, Carol","https://example.org/bob,https://example.org/carol",,,present\n'
+            b'o7,Smith,Smith:John,,,present\n')
         plan = build_plan(archive)
         frames, report = convert(archive, plan, decisions_for(plan))
         self.assertTrue(report['validation']['valid'])
         agents = frames['agent'].set_index('agentID')
-        self.assertEqual(set(agents.index), {'https://example.org/alice', 'https://example.org/id'})
+        self.assertEqual(set(agents.index), {'https://example.org/alice', 'https://example.org/id', 'https://example.org/bob'})
         self.assertEqual(agents.loc['https://example.org/alice', 'preferredAgentName'], '')
-        self.assertEqual(report['agent_mapping']['non_single_id_cells'], 2)
+        self.assertEqual(agents.loc['https://example.org/bob', 'preferredAgentName'], '')
+        self.assertEqual(report['agent_mapping']['non_single_id_cells'], 5)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'agents.tar.gz'
             create_dwc_dp_archive(output, frames, 'Agents', 'Explicit source agents')

@@ -26,7 +26,7 @@ from api.dwca_preflight import preflight
 from api.dwca_review import (apply_policy, effective_decisions, failed_requirements, group_rows,  # noqa: F401
                              option_status, remove_unavailable, violations)
 
-RULE_VERSION = "13"
+RULE_VERSION = "14"
 ECO_SURVEY_ID = 'http://rs.tdwg.org/eco/terms/surveyID'
 REGISTERED_TERMS = {term for terms in REGISTRY['terms'].values() for term in terms}
 # Terms some field of the pinned DwC-DP schema is a version of; others have no Data Package field at all.
@@ -134,13 +134,15 @@ def _single_agent_iri(value):
     """An explicit single agent identifier, never a name or a list of IDs."""
     if not value or any(character.isspace() for character in value) or '|' in value:
         return False
+    if re.search(r'[;,][A-Za-z][A-Za-z0-9+.-]*:', value) or value.count('://') > 1:
+        return False
     try:
         parsed = urlsplit(value)
     except ValueError:
         return False
     if parsed.scheme in {'http', 'https'}:
         return bool(parsed.netloc)
-    return bool(parsed.scheme and parsed.path)
+    return parsed.scheme in {'urn', 'did', 'mailto', 'tag'} and bool(parsed.path)
 
 
 def _without_authorship(name, authorship):
@@ -361,11 +363,13 @@ def _streamline_plan(archive, core, plan, warnings):
                 plan['tables'][issue['table']].get('conversion_unavailable') or
                 archive.tables[issue['table']].unplaced_reason or
                 'This extension has no supported subject or row-grain mapping for the declared core. It is retained in originals without creating target records.')
-        elif issue['id'] == 'event-grain' and (event_ids is None or any(not row[event_ids] for row in core.rows)):
+        elif issue['id'] == 'event-grain' and (event_ids is None or any(not row[event_ids] or
+                missing_reference(row[event_ids], ()) for row in core.rows)):
             default = 'per_row'
-            reason = 'Not every occurrence supplies an eventID. Separate context events keep each row; no event identities are merged.'
+            reason = 'Not every occurrence supplies a usable eventID. Separate context events keep each row; no event identities are merged.'
             issue = {**issue, 'options': [option for option in issue['options'] if option['value'] == 'per_row']}
-            supplied = [row[event_ids] for row in core.rows if row[event_ids]] if event_ids is not None else []
+            supplied = [row[event_ids] for row in core.rows if row[event_ids] and
+                        not missing_reference(row[event_ids], ())] if event_ids is not None else []
             if len(set(supplied)) != len(supplied):
                 # Splitting a repeated persistent identity is an interpretation,
                 # even when missing IDs make complete grouping unavailable.
@@ -387,7 +391,11 @@ def _streamline_plan(archive, core, plan, warnings):
                 elif family == 'relationship':
                     default = 'resource-relationship'
                 elif family == 'assertion':
-                    default = issue['options'][0]['value']
+                    # A failed occurrence link does not establish that a fact
+                    # describes the surrounding event. Ask for that choice.
+                    if not any(option['value'] in {'occurrence-assertion', 'declared-assertions'}
+                               for option in issue.get('unavailable_options', [])):
+                        default = issue['options'][0]['value']
                 elif family in {'identifier', 'reference'}:
                     default = family
                 elif family == 'humboldt' and core.row_type == DWC + 'Event':
@@ -440,7 +448,9 @@ def build_plan(archive):
             "There is no meta.xml, so file roles were recognised from the file names, and rows are linked by their shared identifiers (never by row order). Confirm that the table above is right.",
             [{"value": "confirm", "label": "Yes, these file roles and links are right"}]))
     if core.row_type == DWC + "Occurrence":
-        supplied_events = [row[core.terms.index(DWC + 'eventID')] for row in core.rows if row[core.terms.index(DWC + 'eventID')]] if DWC + 'eventID' in core.terms else []
+        supplied_events = [row[core.terms.index(DWC + 'eventID')] for row in core.rows
+                           if row[core.terms.index(DWC + 'eventID')] and
+                           not missing_reference(row[core.terms.index(DWC + 'eventID')], ())] if DWC + 'eventID' in core.terms else []
         depth_split = _depth_varies(core)
         issues.append(_issue("event-grain", "Should occurrences that share an eventID share one event?",
             "In a Data Package every occurrence belongs to an event, which holds where and when it was recorded. Occurrences with the same eventID can share one event, "
@@ -468,6 +478,7 @@ def build_plan(archive):
             elif family == "assertion":
                 explicit_occurrences = DWC + 'occurrenceID' in table.terms and any(row[table.terms.index(DWC + 'occurrenceID')] for row in table.rows)
                 if core.row_type == DWC + 'Event' and explicit_occurrences:
+                    options.insert(0, {'value': 'event-assertion', 'label': 'Assertions about linked events'})
                     options.insert(0, {'value': 'declared-assertions', 'label': 'Use supplied occurrenceID; otherwise the linked core event'})
                 else:
                     options.insert(0, {"value": "event-assertion", "label": "Assertions about linked events"})
@@ -488,7 +499,9 @@ def build_plan(archive):
                 if core.row_type == DWC + 'Event':
                     options[:0] = [{'value': 'humboldt-survey', 'label': 'Each source row describes a separate survey of its event'},
                                    {'value': 'humboldt-merge', 'label': 'One survey per event; require identical source rows'}]
-                elif DWC + 'eventID' in core.terms and all(row[core.terms.index(DWC + 'eventID')] for row in core.rows):
+                elif DWC + 'eventID' in core.terms and all(
+                        row[core.terms.index(DWC + 'eventID')] and
+                        not missing_reference(row[core.terms.index(DWC + 'eventID')], ()) for row in core.rows):
                     options.insert(0, {'value': 'humboldt-grouped', 'label': 'Survey of shared eventID; require complete identical coverage'})
             elif family == 'germplasm-accession' and material_context:
                 options.insert(0, {'value': 'germplasm-accession', 'label': 'Accession identifiers and passport statements of reviewed core material'})
@@ -595,7 +608,8 @@ def build_plan(archive):
                 elif hierarchy_unsupported or not hierarchy['links']:
                     parent_blocked = (hierarchy_unsupported or (describe_problems(hierarchy) if hierarchy['problems'] else 'No supplied parentEventID identifies a source event.')
                                       + ' No supplied links can be resolved; keep the column in the originals.')
-                elif own == 'occurrence' and any(not row[core.terms.index(DWC + 'eventID')] for row in core.rows):
+                elif own == 'occurrence' and any(not row[core.terms.index(DWC + 'eventID')] or
+                        missing_reference(row[core.terms.index(DWC + 'eventID')], ()) for row in core.rows):
                     parent_blocked = ('Not every source occurrence supplies an eventID. Parent links require established event identities; '
                                       'values remain in the originals without inferring missing events.')
                 options, media_reason = ([], parent_blocked) if parent_blocked else ([PARENT_LINK], None)
@@ -1092,14 +1106,14 @@ def convert(archive, plan, decisions):
         if not occurrence.get("occurrenceStatus"):
             occurrence["occurrenceStatus"] = decisions.get(f"status:{t}", "")
         occurrence_keys[source_id] = occurrence["occurrence_pk"]
-        if occurrence.get('occurrenceID'):
+        if occurrence.get('occurrenceID') and not missing_reference(occurrence['occurrenceID'], ()):
             occurrences_by_identifier[occurrence['occurrenceID']].append((occurrence['occurrence_pk'], event_key))
         add("occurrence", occurrence, t, n)
         if decisions.get(f'material:{t}', 'preserve') != 'preserve':
             material = dict(mapped.get('material', {}))
             group = (t, source_id) if decisions[f'material:{t}'] == 'per_row' else (t, material.get('materialEntityID', ''))
-            if not group[1]:
-                raise ConversionError('Combining material rows requires a mapped material identifier on every row.', category='decision',
+            if not group[1] or (decisions[f'material:{t}'] == 'by_id' and missing_reference(group[1], ())):
+                raise ConversionError('Combining material rows requires a usable mapped material identifier on every row.', category='decision',
                                       decision_ids=[f'material:{t}'])
             # evidenceForOccurrenceID shares a source IRI with occurrenceID, but is a relationship, not a copied identifier.
             material.pop('evidenceForOccurrenceID', None)
@@ -1112,7 +1126,7 @@ def convert(archive, plan, decisions):
                 material_groups[group] = material; add('material', material, t, n)
             else:
                 trace('material', {'materialEntity_pk': material['materialEntity_pk']}, t, n)
-            if occurrence.get('occurrenceID'):
+            if occurrence.get('occurrenceID') and not missing_reference(occurrence['occurrenceID'], ()):
                 material_evidence[group].add(occurrence['occurrenceID'])
             materials_by_source[source_id] = material
             if material.get('materialEntityID'):
@@ -1136,8 +1150,8 @@ def convert(archive, plan, decisions):
         group_id = source_id
         if core.row_type == DWC + "Occurrence" and decisions["event-grain"] in COMBINED_GRAINS:
             group_id = event.get("eventID", "")
-            if not group_id:
-                raise ConversionError("Combining events requires a nonempty eventID on every core row.", category='decision',
+            if not group_id or missing_reference(group_id, ()):
+                raise ConversionError("Combining events requires a usable eventID on every core row.", category='decision',
                                       decision_ids=['event-grain'])
         event_key = _key(archive, "event", group_id); event_keys[source_id] = group_keys[source_id] = event_key
         event.update(event_pk=event_key)
@@ -1487,7 +1501,7 @@ def convert(archive, plan, decisions):
                     continue
                 evidence = agent_evidence[identifier]
                 name = record.get(field[:-2], '')
-                if name and ' | ' not in name and ';' not in name:
+                if name and '|' not in name and ';' not in name:
                     evidence['names'].add(name)
                 evidence['origins'].update(origins[(resource_name, number)])
     created_agents = 0

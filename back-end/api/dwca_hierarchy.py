@@ -18,13 +18,15 @@ PROBLEM_REASONS = {
     'no-event-id': 'A row with a parentEventID has no eventID, so its event identity is not established.',
 }
 
-# These are common empty-cell tokens in exported archives. They are interpreted
-# as absent only when no source record actually uses the token as its ID.
+# These are common empty-cell tokens in exported archives. A match to an ID
+# with the same token does not establish that either value is a real identifier.
+# Keep the source text, but never create a structural link from such a match.
 EMPTY_REFERENCE_TOKENS = frozenset({'na', 'n/a', 'null', 'none'})
 
 
-def missing_reference(value, known_identifiers):
-    return bool(value) and value not in known_identifiers and value.strip().casefold() in EMPTY_REFERENCE_TOKENS
+def missing_reference(value, _known_identifiers=()):
+    """True for ambiguous empty-cell tokens, even when a source ID matches."""
+    return bool(value) and value.strip().casefold() in EMPTY_REFERENCE_TOKENS
 
 
 def resolve_parents(nodes, archive_keys=()):
@@ -85,7 +87,7 @@ def resolve_parents(nodes, archive_keys=()):
             'events': len(nodes),
             'with_parent': sum(any(node['parents']) for node in nodes),
             'resolvable': len(candidate),
-            'roots': sum(not any(node['parents']) for node in nodes),
+            'roots': len(nodes) - len(candidate),
             'max_depth': depth,
             'problems': len(problems),
         },
@@ -146,5 +148,5 @@ def describe_problems(result):
     first = result['problems'][0]
     example = f" First: {first['problem']} at source row(s) {', '.join(map(str, first['rows'][:5]))}"
     example += f" (parentEventID {first['parentEventID']!r})." if first.get('parentEventID') else '.'
-    return ('Parent events cannot be linked faithfully: '
+    return (('Some parent event links cannot be made faithfully: ' if result['links'] else 'Parent events cannot be linked faithfully: ')
             + ', '.join(f'{count} {kind}' for kind, count in sorted(kinds.items())) + '.' + example)

@@ -13,6 +13,8 @@ from pathlib import Path, PurePosixPath
 
 from lxml import etree
 
+from api.dwca_hierarchy import missing_reference
+
 DWC = "http://rs.tdwg.org/dwc/terms/"
 MAX_BYTES = 200 * 1024 * 1024
 MAX_MEMBERS = 250
@@ -129,7 +131,8 @@ def read_inputs(inputs, *, drop_unlinked_extension_rows=False):
     if not all(core.ids) or len(set(core.ids)) != len(core.ids):
         raise ImportFailure("Core join IDs must be nonempty and unique. They are distinct from persistent identifiers.")
     keys = set(core.ids)
-    unlinked = [(table, [index for index, value in enumerate(table.ids) if value not in keys])
+    unlinked = [(table, [index for index, value in enumerate(table.ids)
+                         if value not in keys or missing_reference(value, keys)])
                 for table in tables if not table.is_core and table.row_type and table.ids]
     unlinked = [(table, indexes) for table, indexes in unlinked if indexes]
     dropped_extension_rows = []
@@ -148,8 +151,8 @@ def read_inputs(inputs, *, drop_unlinked_extension_rows=False):
         summary = '; '.join(f"{item['name']}: {item['count']} {('record' if item['count'] == 1 else 'records')}"
                             for item in extensions)
         total = sum(item['count'] for item in extensions)
-        issue = ('record has a blank core link or points' if total == 1
-                 else 'records have a blank core link or point')
+        issue = ('record has a blank or ambiguous core link, or points' if total == 1
+                 else 'records have blank or ambiguous core links, or point')
         raise ConversionError(
             f"Unable to process this archive: {total} extension {issue} to an ID not found in the core ({summary}).",
             category='source', evidence={'kind': 'unlinked-extension-records', 'tables': extensions})
@@ -172,7 +175,7 @@ def read_inputs(inputs, *, drop_unlinked_extension_rows=False):
 
 def dropped_extension_warnings(archive):
     return [{'id': f'dropped-extension-rows:{index}', 'title': 'Unlinked extension records left out',
-             'reason': f"{item['rows']} records from {item['name']} were left out because their core link was blank or did not match a core record. The original records remain in your uploaded files.",
+             'reason': f"{item['rows']} records from {item['name']} were left out because their core link was blank, ambiguous or did not match a core record. The original records remain in your uploaded files.",
              'rows': item['rows']}
             for index, item in enumerate(archive.dropped_extension_rows)]
 

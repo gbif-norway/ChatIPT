@@ -925,8 +925,8 @@
       ],
       "disposition": "conditional",
       "conditions": [
-        "Create an agent row (deduplicated by exact agentID) only when the *ByID cell holds one value (no ' | ') that is an absolute IRI.",
-        "preferredAgentName is filled from the paired name term (recordedBy/identifiedBy) only when that cell also holds exactly one value and every row with the same ID has the same name; otherwise leave empty and report.",
+        "Create an agent row (deduplicated by exact agentID) only when the *ByID cell holds one supported absolute IRI, not a delimiter-separated list or placeholder token.",
+        "preferredAgentName is filled from the paired name term (recordedBy/identifiedBy) only when that cell has no list delimiter and every row with the same ID has the same name; otherwise leave empty and report.",
         "Lists are never paired by position automatically; pairing lists needs user confirmation."
       ],
       "rationale": "Weak keys do not require agent rows, and name/ID pairing in lists is not guaranteed by the source.",

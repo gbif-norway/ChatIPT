@@ -199,9 +199,11 @@ class Preflight:
             if value not in self.options('event-grain'):
                 continue
             identifier = self.column(self.ci, DWC + 'eventID')
-            missing = [n + 1 for n, row in enumerate(self.core.rows) if identifier is None or not row[identifier['column']]]
+            missing = [n + 1 for n, row in enumerate(self.core.rows)
+                       if identifier is None or not row[identifier['column']]
+                       or missing_reference(row[identifier['column']], ())]
             if missing:
-                self.block('event-grain', value, f'{len(missing)} occurrences supply no eventID.', {'source_rows': missing[:EXAMPLES]})
+                self.block('event-grain', value, f'{len(missing)} occurrences supply no usable eventID.', {'source_rows': missing[:EXAMPLES]})
                 continue
             self.require('event-grain', value, _requirement(
                 [{'type': 'target_in', 'column': identifier['id'], 'targets': ['event.eventID']}],
@@ -381,13 +383,13 @@ class Preflight:
         for columns, selected in self.assignments(t, identifier_target):
             names = ', '.join(_short(column['term']) for column in columns)
             values = [self.combined(t, columns, identifier_target, row) for row in table.rows]
-            missing = [n + 1 for n, value in enumerate(values) if not value]
+            missing = [n + 1 for n, value in enumerate(values) if not value or missing_reference(value, ())]
             groups = defaultdict(list)
             for n, value in enumerate(values):
                 groups[value].append(n)
             groups = {key: members for key, members in groups.items() if len(members) > 1}
             if missing:
-                reason = f'With {names} as the identifier, {len(missing)} rows have no material identifier (e.g. {missing[:EXAMPLES]}).'
+                reason = f'With {names} as the identifier, {len(missing)} rows have no usable material identifier (e.g. {missing[:EXAMPLES]}).'
             elif table.is_core:
                 spans = [key for key, members in groups.items() if event_column is None or
                          len({table.rows[n][event_column['column']] for n in members}) > 1]
@@ -519,10 +521,12 @@ class Preflight:
                         matches[row[core_column['column']]].append(source_id)
             explicit = [(n, value) for n, value in supplied if not missing_reference(value, matches)]
             bad = [n + 1 for n, value in explicit if len(matches[value]) != 1 or matches[value][0] != table.ids[n]]
-            if core_column is None or bad:
+            if explicit and (core_column is None or bad):
                 self.block(decision, 'occurrence-assertion', 'Supplied assertion occurrenceIDs must identify exactly one '
-                           'occurrence, which must be the attached core row.', {'source_rows': bad[:EXAMPLES], 'rows': len(bad)})
-            else:
+                           'occurrence, which must be the attached core row.',
+                           {'source_rows': (bad or [n + 1 for n, _ in explicit])[:EXAMPLES],
+                            'rows': len(bad) if bad else len(explicit)})
+            elif explicit:
                 self.require(decision, 'occurrence-assertion', _requirement(
                     [{'type': 'target_in', 'column': core_column['id'], 'targets': ['occurrence.occurrenceID']}],
                     'Supplied assertion occurrenceIDs resolve through the core occurrenceID, which must stay mapped.'))
@@ -538,6 +542,7 @@ class Preflight:
                     if row[column['column']]:
                         matches[row[column['column']]].append((o, source_id))
             explicit = [(n, value) for n, value in supplied if not missing_reference(value, matches)]
+            ambiguous = [n + 1 for n, value in supplied if missing_reference(value, matches) and value in matches]
             bad, needed = [], set()
             for n, value in explicit:
                 found = matches[value]
@@ -547,7 +552,11 @@ class Preflight:
                     bad.append(n + 1)
                 else:
                     needed.add(found[0][0])
-            if bad:
+            if ambiguous:
+                self.block(decision, 'declared-assertions', 'An assertion occurrenceID uses a common missing-value token '
+                           'that also occurs as a source occurrenceID. Its subject cannot be chosen automatically.',
+                           {'source_rows': ambiguous[:EXAMPLES], 'rows': len(ambiguous)})
+            elif bad:
                 self.block(decision, 'declared-assertions', 'Supplied assertion occurrenceIDs must identify exactly one converted '
                            'occurrence in the archive, within the attached event.', {'source_rows': bad[:EXAMPLES], 'rows': len(bad)})
             for o in sorted(needed):
@@ -658,7 +667,7 @@ class Preflight:
         usable = []
         for columns, selected in self.assignments(self.ci, target):
             values = [self.combined(self.ci, columns, target, row) for row in self.core.rows]
-            if all(values[n] for n in linked):
+            if all(values[n] and not missing_reference(values[n], ()) for n in linked):
                 sharing = defaultdict(list)
                 for n, value in enumerate(values):
                     sharing[value].append(n)

@@ -86,6 +86,7 @@ class HierarchyHelperTests(SimpleTestCase):
                 result = resolve_parents(nodes)
                 self.assertEqual([problem['problem'] for problem in result['problems']], [kind])
                 self.assertEqual(result['links'], {'missing': {1: 0}, 'cycle': {3: 0}}.get(kind, {}))
+                self.assertEqual(result['counts']['roots'], len(nodes) - len(result['links']))
         cycle = resolve_parents(cases['cycle'])['problems'][0]
         self.assertEqual((cycle['eventIDs'], cycle['rows']), (['a', 'c', 'b'], [1, 2, 3]))
         ambiguous = resolve_parents(cases['ambiguous'])['problems'][0]
