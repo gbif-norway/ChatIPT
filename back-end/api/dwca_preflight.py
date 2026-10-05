@@ -7,13 +7,14 @@ An option is removed only when no permitted choices can make it valid.
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from itertools import combinations
 
 from api.dwca_germplasm import G
 from api.dwca_humboldt import ECO
-from api.dwca_import import DWC
-from api.dwca_legacy import NBN_DATE
+from api.dwca_import import DWC, ImportFailure
+from api.dwca_legacy import NBN_DATE, TIMES, UTM, emit_legacy_records
 
 EXAMPLES = 5
 # Columns sharing one target are evaluated in every combination up to this size; beyond it only alone.
@@ -136,6 +137,7 @@ class Preflight:
     def run(self):
         self.duplicate_targets()
         self.event_grain()
+        self.legacy_event_patches()
         self.parent_link()
         for t, table in enumerate(self.archive.tables):
             if f'material:{t}' in self.issues:
@@ -189,22 +191,35 @@ class Preflight:
                                 f'in {len(bad)} rows. Map only one of them to this field.', evidence))
 
     def event_grain(self):
-        if self.core.row_type != DWC + 'Occurrence' or 'by_id' not in self.options('event-grain'):
+        if self.core.row_type != DWC + 'Occurrence':
             return
-        identifier = self.column(self.ci, DWC + 'eventID')
-        missing = [n + 1 for n, row in enumerate(self.core.rows) if identifier is None or not row[identifier['column']]]
-        if missing:
-            self.block('event-grain', 'by_id', f'{len(missing)} occurrences supply no eventID.', {'source_rows': missing[:EXAMPLES]})
-            return
-        self.require('event-grain', 'by_id', _requirement(
-            [{'type': 'target_in', 'column': identifier['id'], 'targets': ['event.eventID']}],
-            'Combining events by eventID requires eventID mapped to the event identifier.'))
-        groups = defaultdict(list)
-        for n, row in enumerate(self.core.rows):
-            groups[row[identifier['column']]].append(n)
-        groups = {key: members for key, members in groups.items() if len(members) > 1}
-        self.mapping_conflicts('event-grain', 'by_id', self.ci, groups, 'event.', {'event.eventID'}, 'eventID',
-                               fills={'event.eventCategory': 'occurrence'})
+        depth_targets = {'event.' + field for field in self.conversion.DEPTH_FIELDS}
+        for value in self.conversion.COMBINED_GRAINS:
+            if value not in self.options('event-grain'):
+                continue
+            identifier = self.column(self.ci, DWC + 'eventID')
+            missing = [n + 1 for n, row in enumerate(self.core.rows) if identifier is None or not row[identifier['column']]]
+            if missing:
+                self.block('event-grain', value, f'{len(missing)} occurrences supply no eventID.', {'source_rows': missing[:EXAMPLES]})
+                continue
+            self.require('event-grain', value, _requirement(
+                [{'type': 'target_in', 'column': identifier['id'], 'targets': ['event.eventID']}],
+                'Combining events by eventID requires eventID mapped to the event identifier.'))
+            groups = defaultdict(list)
+            for n, row in enumerate(self.core.rows):
+                groups[row[identifier['column']]].append(n)
+            groups = {key: members for key, members in groups.items() if len(members) > 1}
+            # Depth children hold their own depth values, so only the combined event's fields must agree.
+            split = value == self.conversion.DEPTH_SPLIT
+            self.mapping_conflicts('event-grain', value, self.ci, groups, 'event.',
+                                   {'event.eventID', *(depth_targets if split else ())}, 'eventID',
+                                   fills={'event.eventCategory': 'occurrence'})
+            if split:
+                depths = [column for column in self.by_table[self.ci] if depth_targets & set(self.targets(column))]
+                self.require('event-grain', value, _requirement(
+                    [{'type': 'any', 'conditions': [{'type': 'target_in', 'column': column['id'], 'targets': sorted(depth_targets)}
+                                                    for column in depths]}],
+                    'A child event per depth requires a depth column mapped to an event depth field.'))
 
     def occurrence_events(self, t):
         """Copying event details from Occurrence rows onto their linked event needs agreement (convert's event patch)."""
@@ -349,7 +364,7 @@ class Preflight:
         column = self.column(self.ci, self.conversion.PARENT)
         if column and self.conversion.PARENT_LINK in self.targets(column):
             self.require(column['id'], self.conversion.PARENT_LINK, _requirement(
-                [{'type': 'decision_in', 'id': 'event-grain', 'values': ['by_id']}],
+                [{'type': 'decision_in', 'id': 'event-grain', 'values': list(self.conversion.COMBINED_GRAINS)}],
                 'Parent links on an Occurrence core require events combined by supplied eventID.'))
 
     def material(self, t):
@@ -386,9 +401,14 @@ class Preflight:
                 continue
             valid += 1
             if table.is_core and groups:
+                # Depth children are separate collection events, so they suffice only when no identifier spans depths.
+                within_depth = all(len({self.conversion._depth_key(table, table.rows[n]) for n in members}) == 1
+                                   for members in groups.values())
                 self.require(decision, 'by_id', _requirement(
-                    [{'type': 'decision_in', 'id': 'event-grain', 'values': ['by_id']}],
-                    'Rows sharing a material identifier must share one combined event.', when=selected))
+                    [{'type': 'decision_in', 'id': 'event-grain',
+                      'values': ['by_id', *([self.conversion.DEPTH_SPLIT] if within_depth else [])]}],
+                    'Rows sharing a material identifier must share one combined event'
+                    + ('.' if within_depth else ' and depth.'), when=selected))
             self.mapping_conflicts(decision, 'by_id', t, groups, 'material.', {identifier_target}, 'material identifier', when=selected)
         if not valid:
             self.block(decision, 'by_id', ' '.join(reasons) or 'No column supplies a material identifier.')
@@ -687,6 +707,115 @@ class Preflight:
             return
         self.require(decision, role, _requirement([*conditions, *alternatives.values()],
                                                   'Score germplasmIDs resolve through approved material identifiers.'))
+
+    def legacy_event_patches(self):
+        """Extension event values must agree with their event (convert's add_extension conflict and year checks).
+
+        A patch reaches the event of its own core row; with events combined by eventID it reaches the
+        event every row of that eventID shares (with depth children, still that combined event).
+        """
+        patches = []
+        for t in [*self.tables('nbn'), *self.tables('bmde')]:
+            table = self.archive.tables[t]
+            family = self.family(table)
+            role = family + '-context'
+            if role not in self.options(f'table:{t}'):
+                continue
+            derived = []
+            for group, label in (((NBN_DATE, 'NBN vague date'),) if family == 'nbn' else ((UTM, 'UTM coordinates'), (TIMES, 'observation times'))):
+                columns = [column for column in self.by_table[t] if column['term'] in group and 'derive' in self.targets(column)]
+                if columns:
+                    derived.append((group, f'{table.name} {label}', [{'type': 'target_in', 'column': column['id'], 'targets': ['derive']}
+                                                                    for column in columns]))
+            mapped = [(column, target) for column in self.by_table[t] for target in self.targets(column) if target.startswith('event.')]
+            for n, (row, source_id) in enumerate(zip(table.rows, table.ids)):
+                core_n = self.core_row.get(source_id)
+                if core_n is None or self.preserved_row(t, n):
+                    continue
+                issue = self.issues.get(f'row:{t}:{n}')
+                rows = [{'type': 'decision_in', 'id': issue['id'], 'values': [option['value'] for option in issue['options']
+                                                                              if option['value'] != 'preserve']}] if issue else []
+                base = [{'type': 'decision_in', 'id': f'table:{t}', 'values': [role]}]
+                for group, label, selected in derived:
+                    source = {term: row[table.terms.index(term)] if term in table.terms else '' for term in group}
+                    try:
+                        records = emit_legacy_records(family, source, {}, 'event', 'event', 'row')
+                    except ImportFailure:
+                        continue  # Invalid or unsupported values are withheld or rejected separately, never patched.
+                    for _, record in records:
+                        for field, value in record.items():
+                            if field != 'event_pk' and value:
+                                patches.append({'field': field, 'value': value, 'label': label, 'core': core_n,
+                                                'when': base + selected, 'rows': rows, 'source': (table.name, n + 1)})
+                for column, target in mapped:
+                    value = self.copied(t, target, row[column['column']])
+                    if value:
+                        patches.append({'field': target.split('.', 1)[1], 'value': value, 'label': f"{table.name} {_short(column['term'])}",
+                                        'core': core_n, 'when': base + [{'type': 'target_in', 'column': column['id'], 'targets': [target]}],
+                                        'rows': rows, 'source': (table.name, n + 1)})
+        if not patches:
+            return
+        conflicts = defaultdict(list)  # (labels, when) -> [(row conditions, evidence)]
+
+        def conflict(first, second, when, rows, evidence):
+            key = (first, second, json.dumps(when, sort_keys=True))
+            conflicts[key].append((rows, evidence))
+
+        core_columns = defaultdict(list)
+        for column in self.by_table[self.ci]:
+            for target in self.targets(column):
+                if target.startswith('event.'):
+                    core_columns[target.split('.', 1)[1]].append(column)
+        for patch in patches:
+            row = self.core.rows[patch['core']]
+            checks = [(column, 'event.' + patch['field'], self.copied(self.ci, 'event.' + patch['field'], row[column['column']]))
+                      for column in core_columns[patch['field']]]
+            if patch['field'] == 'eventDate':
+                checks += [(column, 'event.year', self.copied(self.ci, 'event.year', row[column['column']])) for column in core_columns['year']]
+            for column, target, value in checks:
+                if not value:
+                    continue
+                if target == 'event.year':
+                    bad = not re.fullmatch(r'-?\d{1,4}', value) or self.conversion._year_disagrees(value, patch['value'])
+                else:
+                    bad = value != patch['value']
+                if bad:
+                    conflict(patch['label'], f"{self.core.name} {_short(column['term'])}",
+                             patch['when'] + [{'type': 'target_in', 'column': column['id'], 'targets': [target]}], patch['rows'],
+                             {'field': target, 'values': [patch['value'], value], 'source_rows': [patch['source'], (self.core.name, patch['core'] + 1)]})
+        identifier = self.column(self.ci, DWC + 'eventID') if self.core.row_type == DWC + 'Occurrence' else None
+        grains = [value for value in self.conversion.COMBINED_GRAINS if value in self.options('event-grain')]
+        buckets = defaultdict(list)
+        for patch in patches:
+            buckets[(patch['field'], 'row', patch['core'])].append(patch)
+            event_id = self.core.rows[patch['core']][identifier['column']] if identifier else ''
+            if event_id and grains:
+                buckets[(patch['field'], 'id', event_id)].append(patch)
+        for (field, scope, _), members in buckets.items():
+            for first, second in combinations(members, 2):
+                if first['value'] == second['value'] or (scope == 'id' and first['core'] == second['core']):
+                    continue
+                grain = [{'type': 'decision_in', 'id': 'event-grain', 'values': grains}] if scope == 'id' else []
+                when = [*first['when'], *(condition for condition in second['when'] if condition not in first['when']), *grain]
+                conflict(first['label'], second['label'], when, first['rows'] + second['rows'],
+                         {'field': 'event.' + field, 'values': [first['value'], second['value']], 'source_rows': [first['source'], second['source']]})
+        for (first, second, when), found in conflicts.items():
+            when = json.loads(when)
+            rows = [] if any(not conditions for conditions, _ in found) else [
+                {'type': 'any', 'conditions': [{'type': 'all', 'conditions': conditions} for conditions in
+                                               {json.dumps(conditions, sort_keys=True): conditions for conditions, _ in found}.values()]}]
+            field = found[0][1]['field']
+            reason = (f'{first} and {second} supply different {field} values for the same event ({len(found)} case{"s" if len(found) != 1 else ""}). '
+                      'Keep one of them in the originals' + (', keep events separate' if any(c.get('id') == 'event-grain' for c in when) else '')
+                      + ', or correct the source.')
+            evidence = {'conflicts': len(found), 'examples': [item for _, item in found[:EXAMPLES]]}
+            # The requirement sits on every choice that applies it, conditioned on the others.
+            for condition in when:
+                placements = ([(condition['id'], value) for value in condition['values']] if condition['type'] == 'decision_in'
+                              else [(condition['column'], target) for target in condition['targets']])
+                for decision, value in placements:
+                    others = [other for other in when if other.get('id', other.get('column')) != decision]
+                    self.require(decision, value, _requirement([{'type': 'unsatisfiable'}], reason, evidence, when=others + rows))
 
     def nbn_dates(self, t):
         present = [column for column in self.by_table[t] if column['term'] in NBN_DATE and 'derive' in self.targets(column)]

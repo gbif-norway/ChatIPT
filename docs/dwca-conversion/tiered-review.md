@@ -35,7 +35,7 @@ closed set. Every option gets `assertion: true|false` from
 | --- | --- | --- |
 | `layout` | `loose-links` (both cores) | `confirm` |
 | `taxonomy-package` | `taxonomy-package` | none (single structural confirmation) |
-| `event-grain` | `event-grain` | `per_row` when supplied eventIDs repeat (splits an identity); `by_id` is not |
+| `event-grain` | `event-grain` | `per_row` when supplied eventIDs repeat (splits an identity); `by_id_depth` (splits an event by depth); `by_id` is not |
 | `event-category` | `event-category` | all |
 | `occurrence-status` | `status:t` | all |
 | `extension-role` | `table:t` | `media-occurrence`, `media-event` (what media depicts), `humboldt-*` survey roles are not assertions because `hum-category` carries that |
@@ -80,8 +80,8 @@ examples with source rows). Typed values use the same filtering as `convert()`
 
 | decision / option | precomputed evidence |
 | --- | --- |
-| `event-grain=by_id` | Requires the core eventID column mapped to `event.eventID` (values are nonempty, otherwise unsatisfiable). Per core column with an `event.*` option: eventID groups whose copied values disagree. |
-| `material:t=by_id` | Requires the identifier column mapped to `material.materialEntityID`; missing material identifiers (unsatisfiable); per column with a `material.*` option: identifier groups that disagree. Collection events are compared by their actual event keys: on an Occurrence core, identifier groups spanning several rows require `event-grain=by_id` and groups spanning distinct eventIDs are unsatisfiable; on an Event-core Occurrence extension, groups spanning several core events are unsatisfiable (no `event-grain` decision exists). |
+| `event-grain=by_id` | Requires the core eventID column mapped to `event.eventID` (values are nonempty, otherwise unsatisfiable). Per core column with an `event.*` option: eventID groups whose copied values disagree. `by_id_depth` has the same evidence except that depth fields may differ, and requires a depth column mapped to an event depth field. |
+| `material:t=by_id` | Requires the identifier column mapped to `material.materialEntityID`; missing material identifiers (unsatisfiable); per column with a `material.*` option: identifier groups that disagree. Collection events are compared by their actual event keys: on an Occurrence core, identifier groups spanning several rows require `event-grain=by_id` (or `by_id_depth` when no group spans source depths) and groups spanning distinct eventIDs are unsatisfiable; on an Event-core Occurrence extension, groups spanning several core events are unsatisfiable (no `event-grain` decision exists). |
 | `table:t=humboldt-merge` / `humboldt-grouped` | Non-identical source rows per event (unsatisfiable); grouped coverage gaps (unsatisfiable); `humboldt-grouped` requires `event-grain=by_id`. |
 | Humboldt surveyID | For every Humboldt role: emitted surveys are computed per role (separate rows, merged per event, grouped per eventID) across all Humboldt tables; a supplied surveyID shared by more than one emitted survey requires the surveyID column preserved, or a merging role that makes it one survey. |
 | `table:t=occurrence-assertion` (Occurrence core) | When any assertion supplies an occurrenceID: requires the core occurrenceID column mapped, and each supplied ID must identify exactly one converted occurrence in the whole archive (global uniqueness, as `convert()` requires) and that occurrence must be its own core row. Without supplied IDs, rows attach through their core row and need no mapping. |
@@ -90,8 +90,9 @@ examples with source rows). Typed values use the same filtering as `convert()`
 | germplasm material / score-material | Requires `material:*` not preserved and a mapped material identifier; unmatched germplasmIDs. |
 | `table:t=media-*` | Rows without any mappable media value. |
 | `table:t=molecular` | Rows without a sequence (requires the sequence column mapped). |
-| parent link / `humboldt-grouped` | Require `event-grain=by_id` (currently raised in `convert`). |
+| parent link / `humboldt-grouped` | Parent links require `event-grain` `by_id` or `by_id_depth` (links join the eventID events, never depth children); `humboldt-grouped` requires `by_id` (currently raised in `convert`). |
 | NBN date columns | Must be approved or preserved together. |
+| NBN/BMDE event context (`table:t=nbn-context` / `bmde-context`, its `derive` and `event.*` columns, core `event.*` columns, `event-grain`) | Each converted row's event values (derived vague dates, UTM coordinates, observation times, or directly mapped event fields) must equal any value the core supplies for the same field on that row's event, and a derived eventDate must contain a mapped core year. Extension rows reaching the same event must agree: rows of one core row always, rows of one eventID when `event-grain` combines events (`by_id`, `by_id_depth`). Each conflict is a requirement on every choice that applies it, conditioned on the others and on the rows' own row decisions. |
 
 `validate_decisions` checks every *active effective* choice — explicit choices,
 automatic defaults and group-expanded member choices — and ignores choices under a

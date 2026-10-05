@@ -25,7 +25,7 @@ from api.dwca_preflight import preflight
 from api.dwca_review import (apply_policy, effective_decisions, failed_requirements, group_rows,  # noqa: F401
                              option_status, remove_unavailable, violations)
 
-RULE_VERSION = "11"
+RULE_VERSION = "12"
 ECO_SURVEY_ID = 'http://rs.tdwg.org/eco/terms/surveyID'
 REGISTERED_TERMS = {term for terms in REGISTRY['terms'].values() for term in terms}
 # Terms some field of the pinned DwC-DP schema is a version of; others have no Data Package field at all.
@@ -49,6 +49,11 @@ NAMESPACE = uuid.UUID("7750ccce-e9f9-4fd1-b9d8-a02a9747cae9")
 PRESERVE = {"value": "preserve", "label": "Keep in original files only"}
 PARENT = DWC + "parentEventID"
 PARENT_LINK = "parent-link"
+# event-grain value: events combined by eventID, each distinct depth of a group becoming a child event.
+DEPTH_SPLIT = "by_id_depth"
+DEPTH_FIELDS = ('verbatimDepth', 'minimumDepthInMeters', 'maximumDepthInMeters',
+                'minimumDistanceAboveSurfaceInMeters', 'maximumDistanceAboveSurfaceInMeters')
+COMBINED_GRAINS = ('by_id', DEPTH_SPLIT)
 SUPPORTED_EXTENSIONS = {
     DWC + "Occurrence": "occurrence",
     DWC + "Identification": "identification",
@@ -185,6 +190,23 @@ def _event_nodes(archive, core):
             nodes.append(groups[event_id])
         groups[event_id]["parents"].add(row[parent_column]); groups[event_id]["rows"].append(n + 1); groups[event_id]["join_ids"].append(source_id)
     return nodes, None
+
+
+def _depth_key(core, row):
+    """A row's source depth values. Depth children are keyed by these, so a retained or invalid value never merges distinct depths."""
+    return tuple(value for term, value in zip(core.terms, row) if term in {DWC + field for field in DEPTH_FIELDS})
+
+
+def _depth_varies(core):
+    """Some supplied eventID is shared by occurrence rows with different source depth values."""
+    if DWC + 'eventID' not in core.terms:
+        return False
+    id_column = core.terms.index(DWC + 'eventID')
+    depths = defaultdict(set)
+    for row in core.rows:
+        if row[id_column]:
+            depths[row[id_column]].add(_depth_key(core, row))
+    return any(len(values) > 1 for values in depths.values())
 
 
 def _hierarchy(archive, core):
@@ -401,13 +423,20 @@ def build_plan(archive):
             [{"value": "confirm", "label": "Yes, these file roles and links are right"}]))
     if core.row_type == DWC + "Occurrence":
         supplied_events = [row[core.terms.index(DWC + 'eventID')] for row in core.rows if row[core.terms.index(DWC + 'eventID')]] if DWC + 'eventID' in core.terms else []
+        depth_split = _depth_varies(core)
         issues.append(_issue("event-grain", "Should occurrences that share an eventID share one event?",
             "In a Data Package every occurrence belongs to an event, which holds where and when it was recorded. Occurrences with the same eventID can share one event, "
-            "but only when their event details such as date and place agree. Otherwise each occurrence row keeps its own event.",
+            "but only when their event details such as date and place agree. Otherwise each occurrence row keeps its own event."
+            + (" Some occurrences that share an eventID were sampled at different depths, for example by one cast that sampled several depths. "
+               "Those can share one event for the eventID, with a child event inside it for each depth." if depth_split else ""),
             [{"value": "per_row", "label": "Give each occurrence row its own event"},
-             {"value": "by_id", "label": "Combine occurrences with the same eventID into one event"}],
-            # Splitting a repeated persistent identity asserts that the rows are different events.
-            assertion_values=['per_row'] if len(set(supplied_events)) != len(supplied_events) else []))
+             {"value": "by_id", "label": "Combine occurrences with the same eventID into one event"},
+             *([{"value": DEPTH_SPLIT, "label": "Combine occurrences with the same eventID into one event, with a child event for each depth"}]
+               if depth_split else [])],
+            # Splitting a repeated persistent identity asserts that the rows are different events,
+            # and so does splitting one event into a sub-event per depth.
+            assertion_values=[*(['per_row'] if len(set(supplied_events)) != len(supplied_events) else []),
+                              *([DEPTH_SPLIT] if depth_split else [])]))
     for t, table in enumerate(archive.tables):
         family = SUPPORTED_EXTENSIONS.get(table.row_type)
         sources = [_source(table.terms, row) for row in table.rows] if family in {'humboldt', 'eol-media', 'eol-reference', 'bmde', 'nbn'} else []
@@ -845,7 +874,10 @@ def validate_decisions(plan, decisions, require_complete=True):
 
 
 def _link_parents(archive, core, core_index, plan, decisions, core_columns, event_keys, events_by_key, column_consumption):
-    """Emit supplied parentEvent_fk links after all core events exist, so forward references resolve."""
+    """Emit supplied parentEvent_fk links after all core events exist, so forward references resolve.
+
+    event_keys map source rows to the event their eventID identifies, never to a depth child event.
+    """
     column = next((item for item in core_columns if item['term'] == PARENT), None)
     if column is None:
         return None
@@ -854,7 +886,7 @@ def _link_parents(archive, core, core_index, plan, decisions, core_columns, even
     scientific = _scientific_hierarchy(archive, core, nodes, result)
     links = {}
     if decision == PARENT_LINK:
-        if core.row_type == DWC + 'Occurrence' and decisions.get('event-grain') != 'by_id':
+        if core.row_type == DWC + 'Occurrence' and decisions.get('event-grain') not in COMBINED_GRAINS:
             raise ConversionError('Parent event links on an Occurrence core require events combined by supplied eventID; '
                                   'separate per-row events have no established persistent identity. Preserve parentEventID instead.',
                                   category='decision', decision_ids=['event-grain', column['id']])
@@ -975,6 +1007,8 @@ def convert(archive, plan, decisions):
         if name != 'event':
             add(name, record, t, n)
             return
+        # Extension event details describe the event an eventID names; depth children hold only depth.
+        record = {**record, 'event_pk': depth_parents.get(record['event_pk'], record['event_pk'])}
         event = events_by_key.get(record['event_pk'])
         if event is None:
             raise ConversionError('An extension event patch must refer to an existing core event.', category='internal')
@@ -1065,16 +1099,19 @@ def convert(archive, plan, decisions):
                 if occurrence.get(field): record.setdefault(field, occurrence[field])
             add("identification", record, t, n)
 
-    event_groups = {}
+    event_groups = {}; group_keys = {}; depth_children = defaultdict(set); depth_parents = {}
+    depth_split = core.row_type == DWC + "Occurrence" and decisions.get("event-grain") == DEPTH_SPLIT
     for n, (row, source_id) in enumerate(zip(core.rows, core.ids)):
         mapped = values(core_index, row, n); event = mapped.get("event", {})
+        # Depth stays with each depth's child event; the combined event carries no depth range.
+        depth = {field: event.pop(field) for field in DEPTH_FIELDS if field in event} if depth_split else {}
         group_id = source_id
-        if core.row_type == DWC + "Occurrence" and decisions["event-grain"] == "by_id":
+        if core.row_type == DWC + "Occurrence" and decisions["event-grain"] in COMBINED_GRAINS:
             group_id = event.get("eventID", "")
             if not group_id:
                 raise ConversionError("Combining events requires a nonempty eventID on every core row.", category='decision',
                                       decision_ids=['event-grain'])
-        event_key = _key(archive, "event", group_id); event_keys[source_id] = event_key
+        event_key = _key(archive, "event", group_id); event_keys[source_id] = group_keys[source_id] = event_key
         event.update(event_pk=event_key)
         if not event.get("eventCategory"):
             event["eventCategory"] = "occurrence" if core.row_type == DWC + "Occurrence" else decisions.get("event-category", "")
@@ -1091,11 +1128,22 @@ def convert(archive, plan, decisions):
             trace('event', {'event_pk': event_key}, core_index, n)
         else:
             event_groups[group_id] = event; add("event", event, core_index, n)
+        if depth_split:
+            # One child per distinct source depth; no eventID is invented for it.
+            child_key = _key(archive, "event-depth", group_id, *_depth_key(core, row))
+            if child_key in events_by_key:
+                trace('event', {'event_pk': child_key}, core_index, n)
+            else:
+                child = {field: value for field, value in depth.items() if value}
+                child.update(event_pk=child_key, parentEvent_fk=event_key, eventCategory=event["eventCategory"])
+                add("event", child, core_index, n)
+            depth_children[event_key].add(child_key); depth_parents[child_key] = event_key
+            event_key = event_keys[source_id] = child_key
         if core.row_type == DWC + "Occurrence":
             occurrence_row(core_index, n, source_id, mapped, event_key)
 
     hierarchy_report = _link_parents(archive, core, core_index, plan, decisions, columns_by_table[core_index],
-                                     event_keys, events_by_key, column_consumption)
+                                     group_keys, events_by_key, column_consumption)
 
     extension_order = sorted(enumerate(archive.tables), key=lambda item:
         0 if item[1].row_type == DWC + 'Occurrence' else
@@ -1106,7 +1154,7 @@ def convert(archive, plan, decisions):
         role = decisions[f"table:{t}"]
         if role == "preserve": continue
         if role == 'humboldt-grouped':
-            if decisions.get('event-grain') != 'by_id':
+            if decisions.get('event-grain') != 'by_id':  # Depth children would split each surveyed event.
                 raise ConversionError('Occurrence-core Humboldt surveys require events combined by supplied eventID after consistency checks.',
                                       category='decision', decision_ids=['event-grain', f'table:{t}'])
             expected, attached, signatures = defaultdict(set), defaultdict(set), defaultdict(set)
@@ -1398,6 +1446,12 @@ def convert(archive, plan, decisions):
               'extension_subjects': extension_subjects,
               'withheld_values': withheld_values, 'preserved_extension_rows': preserved_rows,
               **({'event_hierarchy': hierarchy_report} if hierarchy_report else {}),
+              **({'depth_events': {'combined_events': len(depth_children), 'depth_events': sum(map(len, depth_children.values())),
+                                   'fields': [field for field in DEPTH_FIELDS if any(field in event for event in resources['event'])],
+                                   'policy': 'Occurrences sharing an eventID form one event. Each distinct supplied depth becomes a child event '
+                                             'inside it that holds only the depth values, its eventCategory and its parent link; its occurrences '
+                                             'link to it. Combined events carry no depth range, and no child eventID is created.'}}
+                 if depth_split else {}),
               "resources": {name: len(df) for name, df in frames.items()}, "validation": validation,
               "limitations": ["Structural validation does not prove semantic equivalence.", "Original files retain unsupported columns and extensions.",
                               "Internal keys identify converted rows; source identifiers are retained separately.",

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from django.test import SimpleTestCase
 
-from api.dwca_conversion import SUPPORTED_EXTENSIONS, build_plan, convert, validate_decisions
+from api.dwca_conversion import SUPPORTED_EXTENSIONS, build_plan, convert, option_status, validate_decisions
 from api.dwca_eol import DCT, XMP, EOL_MEDIA
 from api.dwca_germplasm import G, GEO
 from api.dwca_legacy import BMDE, NXF
@@ -229,7 +229,9 @@ class ExtensionIntegrationTests(SimpleTestCase):
     def test_nbn_cannot_overwrite_a_conflicting_event_date(self):
         archive = source('nbn.csv', [NXF + 'eventDateTypeCode', NXF + 'eventDateStart', NXF + 'eventDateEnd', NXF + 'sensitiveOccurrence'], [['e1', 'D', '2025-02-01', '2025-02-01', 'false']], ('event.csv', b'eventID,eventCategory,eventDate\ne1,survey,2025-01-01\n'))
         plan, choices = review(archive)
-        with self.assertRaisesMessage(ImportFailure, 'conflicts'):
+        # Found before conversion, so the event date or the NBN columns can be kept in the originals instead.
+        self.assertFalse(option_status(plan, choices)['table:1']['nbn-context']['available'])
+        with self.assertRaisesMessage(ImportFailure, 'different event.eventDate values for the same event'):
             convert(archive, plan, choices)
 
     def test_preserving_extension_disposes_all_fields_and_suppresses_its_reviews(self):

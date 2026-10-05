@@ -208,6 +208,111 @@ class ArchiveTests(SimpleTestCase):
         frames, report = convert(archive, plan, decisions)
         self.assertEqual(len(frames['event']), 2); self.assertTrue(report['validation']['valid'])
 
+    def test_depths_within_one_event_become_child_events(self):
+        """One cast sampling several depths (production dataset 546)."""
+        archive = occurrence(b'occurrenceID,eventID,parentEventID,eventDate,decimalLatitude,decimalLongitude,minimumDepthInMeters,maximumDepthInMeters,occurrenceStatus\n'
+                             b'a,cast-1,cruise,2025-01-01,60,10,0,10,present\nb,cast-1,cruise,2025-01-01,60,10,0,10,present\n'
+                             b'c,cast-1,cruise,2025-01-01,60,10,50,60,present\nd,cast-2,cruise,2025-01-02,61,11,5,5,present\n'
+                             b'e,cruise,,2025-01-01/2025-01-02,60,10,,,present\n')
+        plan = build_plan(archive)
+        grain = next(issue for issue in plan['issues'] if issue['id'] == 'event-grain')
+        self.assertIn('by_id_depth', [option['value'] for option in grain['options']])
+        self.assertTrue(next(option for option in grain['options'] if option['value'] == 'by_id_depth')['assertion'])
+        parent = next(column['id'] for column in plan['columns'] if column['term'] == DWC + 'parentEventID')
+        decisions = {**decisions_for(plan), 'event-grain': 'by_id', parent: 'parent-link'}
+        status = option_status(plan, decisions)['event-grain']
+        self.assertFalse(status['by_id']['available'])
+        self.assertTrue(status['by_id_depth']['available'])
+        frames, report = convert(archive, plan, {**decisions, 'event-grain': 'by_id_depth'})
+        self.assertTrue(report['validation']['valid'], report['validation'])
+        events = frames['event']
+        combined = events[events['eventID'] != ''].set_index('eventID')
+        self.assertEqual(sorted(combined.index), ['cast-1', 'cast-2', 'cruise'])
+        self.assertTrue((combined[['minimumDepthInMeters', 'maximumDepthInMeters']] == '').all().all())
+        self.assertEqual(combined.loc['cast-1', 'parentEvent_fk'], combined.loc['cruise', 'event_pk'])
+        children = events[events['eventID'] == '']
+        self.assertEqual(sorted(zip(children['minimumDepthInMeters'], children['maximumDepthInMeters'])),
+                         [('', ''), ('0', '10'), ('5', '5'), ('50', '60')])
+        self.assertEqual(set(children['eventDate']), {''})
+        occurrences = frames['occurrence'].set_index('occurrenceID')
+        child = events.set_index('event_pk')
+        self.assertEqual(occurrences.loc['a', 'event_fk'], occurrences.loc['b', 'event_fk'])
+        self.assertNotEqual(occurrences.loc['a', 'event_fk'], occurrences.loc['c', 'event_fk'])
+        self.assertEqual(child.loc[occurrences.loc['c', 'event_fk'], 'parentEvent_fk'], combined.loc['cast-1', 'event_pk'])
+        self.assertEqual(report['depth_events']['combined_events'], 3)
+        self.assertEqual(report['depth_events']['depth_events'], 4)
+        # Without a mapped depth column there is nothing to split by.
+        depths = {column['id']: 'preserve' for column in plan['columns'] if column['term'].endswith('DepthInMeters')}
+        self.assertFalse(option_status(plan, {**decisions, **depths, 'event-grain': 'by_id_depth'})['event-grain']['by_id_depth']['available'])
+
+    def test_depth_children_follow_source_depths_and_material_stays_within_one(self):
+        archive = occurrence(b'occurrenceID,eventID,materialSampleID,minimumDepthInMeters,maximumDepthInMeters,occurrenceStatus\n'
+                             b'a,e1,m1,5,20,present\nb,e1,m1,5,20,present\nc,e1,m2,10,20,present\nd,e1,m3,NA,20,present\nf,e1,m4,bad,20,present\n')
+        plan = build_plan(archive)
+        decisions = {**decisions_for(plan), 'event-grain': 'by_id_depth', 'material:0': 'by_id'}
+        self.assertTrue(option_status(plan, decisions)['material:0']['by_id']['available'])
+        minimum = next(column['id'] for column in plan['columns'] if column['term'] == DWC + 'minimumDepthInMeters')
+        frames, report = convert(archive, plan, {**decisions, minimum: 'preserve'})
+        self.assertTrue(report['validation']['valid'], report['validation'])
+        # Retained or invalid depths still keep each source depth its own event.
+        self.assertEqual(report['depth_events']['depth_events'], 4)
+        self.assertEqual(len(frames['material']), 4)
+        spanning = occurrence(b'occurrenceID,eventID,materialSampleID,minimumDepthInMeters,occurrenceStatus\n'
+                              b'a,e1,m1,5,present\nb,e1,m1,10,present\n')
+        plan = build_plan(spanning)
+        decisions = {**decisions_for(plan), 'event-grain': 'by_id_depth', 'material:0': 'by_id'}
+        self.assertFalse(option_status(plan, decisions)['material:0']['by_id']['available'])
+
+    def test_extension_event_details_patch_the_combined_event_not_a_depth_child(self):
+        nxf = 'http://rs.nbn.org.uk/dwc/nxf/0.1/terms/'
+        meta = ('<archive xmlns="http://rs.tdwg.org/dwc/text/">'
+                '<core rowType="' + DWC + 'Occurrence" fieldsTerminatedBy="," ignoreHeaderLines="1"><files><location>occ.csv</location></files><id index="0"/>'
+                '<field index="1" term="' + DWC + 'occurrenceID"/><field index="2" term="' + DWC + 'eventID"/>'
+                '<field index="3" term="' + DWC + 'minimumDepthInMeters"/><field index="4" term="' + DWC + 'eventDate"/>'
+                '<field term="' + DWC + 'occurrenceStatus" default="present"/></core>'
+                '<extension rowType="' + nxf + 'nxfOccurrence" fieldsTerminatedBy="," ignoreHeaderLines="1"><files><location>nbn.csv</location></files><coreid index="0"/>'
+                '<field index="1" term="' + nxf + 'eventDateTypeCode"/><field index="2" term="' + nxf + 'eventDateStart"/>'
+                '<field index="3" term="' + nxf + 'eventDateEnd"/></extension></archive>').encode()
+
+        def source(second, core_date=b''):
+            return read_inputs([('meta.xml', meta), ('occ.csv', b'id,occurrenceID,eventID,minimumDepthInMeters,eventDate\nr1,a,e1,5,' + core_date +
+                                                       b'\nr2,b,e1,10,' + core_date + b'\n'),
+                                ('nbn.csv', b'id,code,start,end\nr1,D,2015-06-03,2015-06-03\nr2,D,' + second + b',' + second + b'\n')])
+
+        def prepare(archive, grain='by_id_depth'):
+            plan = build_plan(archive)
+            return plan, {**decisions_for(plan), 'event-grain': grain, 'row-group:1:0': 'convert', 'table:1': 'nbn-context'}
+
+        archive = source(b'2015-06-03')
+        frames, report = convert(archive, *prepare(archive))
+        events = frames['event']
+        self.assertEqual(events.set_index('eventID').loc['e1', 'eventDate'], '2015-06-03')
+        self.assertEqual(set(events[events['eventID'] == '']['eventDate']), {''})
+        # Different extension dates for one combined event are found before conversion.
+        archive = source(b'2015-07-01')
+        plan, decisions = prepare(archive)
+        status = option_status(plan, decisions)
+        self.assertFalse(status['event-grain']['by_id_depth']['available'])
+        self.assertIn('same event', status['event-grain']['by_id_depth']['reasons'][0])
+        self.assertFalse(status['table:1']['nbn-context']['available'])
+        with self.assertRaises(ImportFailure): validate_decisions(plan, decisions)
+        frames, report = convert(archive, plan, {**decisions, 'event-grain': 'per_row'})
+        self.assertTrue(report['validation']['valid'])
+        # So is an extension date that differs from the core's own eventDate, whatever the event grain.
+        archive = source(b'2015-06-03', b'2015-06-04')
+        plan, decisions = prepare(archive, 'per_row')
+        self.assertFalse(option_status(plan, decisions)['table:1']['nbn-context']['available'])
+        date = next(column['id'] for column in plan['columns'] if column['term'] == DWC + 'eventDate')
+        self.assertTrue(option_status(plan, {**decisions, date: 'preserve'})['table:1']['nbn-context']['available'])
+        self.assertTrue(option_status(plan, {**decisions, 'row-group:1:0': 'preserve'})['table:1']['nbn-context']['available'])
+        frames, report = convert(archive, plan, {**decisions, date: 'preserve'})
+        self.assertEqual(set(frames['event']['eventDate']), {'2015-06-03'})
+
+    def test_depth_children_are_offered_only_when_an_event_spans_depths(self):
+        archive = occurrence(b'occurrenceID,eventID,minimumDepthInMeters,occurrenceStatus\na,e1,5,present\nb,e1,5,present\nc,e2,7,present\n')
+        grain = next(item for item in [*build_plan(archive)['issues'], *build_plan(archive)['automatic_choices']] if item['id'] == 'event-grain')
+        self.assertNotIn('by_id_depth', [option['value'] for option in grain['options']])
+
     def test_keys_are_deterministic_and_invalid_or_stale_decisions_fail(self):
         archive = occurrence(); plan = build_plan(archive)
         first, _ = convert(archive, plan, decisions_for(plan)); second, _ = convert(archive, plan, decisions_for(plan))

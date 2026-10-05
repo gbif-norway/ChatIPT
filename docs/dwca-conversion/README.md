@@ -108,6 +108,18 @@ other or invalid dates are withheld with reasons. Neither family invents absence
 coordinate uncertainty, survey completeness, agents or organisms. All non-exact
 aliases and derived rules in these families require individual approval.
 
+Rule version 12 adds a third `event-grain` choice for Occurrence cores where rows sharing an
+eventID were sampled at different depths (for example one cast sampling several depths). It is
+offered only when the source shows such a group. Occurrences sharing an eventID form one event; each
+distinct supplied depth (`verbatimDepth`, minimum/maximum depth or distance above surface) becomes a
+child event inside it that holds only those depth values, its eventCategory and its parent link,
+and its occurrences link to it. The combined event carries no depth range and no child eventID is
+created. Children are keyed by the source depth values, so retaining a depth column in the originals or
+withholding an invalid value never merges distinct depths. Event details supplied by extensions (such as
+NBN dates) patch the eventID event, never a depth child. Material can be combined by identifier only when
+each identifier stays within one depth. Because it asserts that each depth is a separate sampling
+action, it is a confirmed choice.
+
 Rule version 11 fixes two silent losses found on a production archive. Event details (dates,
 places, coordinates) supplied on Occurrence extension rows of an Event core are copied onto the
 linked event when every occurrence of that event agrees with the others and with the event itself
