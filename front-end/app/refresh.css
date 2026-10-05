@@ -125,10 +125,9 @@ main > .container { padding-top: 2.5rem; padding-bottom: 3rem; }
 .app-header .navbar-brand { margin: 0; padding: 0; color: var(--app-accent); }
 .brand { align-items: center; display: inline-flex; gap: 0.7rem; color: var(--app-accent); }
 .brand-mark { width: 48px; height: 48px; margin: 0; flex-shrink: 0; color: #28634f; }
-.brand-name { color: var(--app-ink); font-size: 1.8rem; font-weight: 650; letter-spacing: -0.075em; line-height: 1; }
-.brand-dot { color: var(--app-accent); }
+.brand-name { color: var(--app-ink); font-size: 2rem; font-weight: 650; letter-spacing: -0.075em; line-height: 1; }
 .brand-compact .brand-mark { width: 36px; height: 36px; }
-.brand-compact .brand-name { font-size: 1.55rem; }
+.brand-compact .brand-name { font-size: 1.7rem; }
 .app-header .nav-link { color: var(--app-muted); font-size: 0.85rem; }
 
 /* Conversion: questions first, supporting information at a quieter level. */
@@ -249,7 +248,7 @@ main > .container { padding-top: 2.5rem; padding-bottom: 3rem; }
   .app-header .navbar-nav { gap: 0.5rem; flex-wrap: wrap; }
   .app-header .nav-item { margin-right: 0 !important; }
   .app-header .navbar-brand { margin-right: auto; }
-  .brand-compact .brand-name { font-size: 1.3rem; }
+  .brand-compact .brand-name { font-size: 1.4rem; }
   .brand-compact .brand-mark { width: 30px; height: 30px; }
   .conversion-workspace { padding: 1.5rem 1rem 2rem; }
   .conversion-steps { padding: 0.8rem 0.4rem; }

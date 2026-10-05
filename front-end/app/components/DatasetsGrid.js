@@ -117,7 +117,7 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset, onConvertArc
       {chooser}
       <div className="dashboard-heading">
         <div><span className="eyebrow">Your workspace</span><h1>My datasets</h1>
-          <p>A little help, from raw data to ready to share.</p></div>
+        </div>
         <div className="d-flex flex-wrap gap-2">
           <button
             className="btn btn-link"

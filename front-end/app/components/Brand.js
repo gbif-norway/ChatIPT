@@ -7,6 +7,6 @@ export default function Brand({ compact = false }) {
       <path d="M24 30c-1-10 6-16 14-16 0 10-5 16-14 16Z" fill="#f4f7ec" />
       <path d="m18 19 6 6m8-4-8 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
-    <span className="brand-name">ChatIPT<span className="brand-dot" aria-hidden="true">.</span></span>
+    <span className="brand-name">ChatIPT</span>
   </span>
 }
