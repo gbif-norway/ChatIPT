@@ -120,6 +120,16 @@ NBN dates) patch the eventID event, never a depth child. Material can be combine
 each identifier stays within one depth. Because it asserts that each depth is a separate sampling
 action, it is a confirmed choice.
 
+Rule version 13 treats conventional empty reference tokens as absent only when
+they do not match a real source identifier. This allows mixed event and occurrence
+measurements to use their respective explicit subjects, and parent-event links to
+resolve, while preserving the original cell text. Independently resolvable parent
+links are emitted even when other source links are missing, ambiguous or cyclic;
+the report identifies each withheld link. Single absolute agent IRIs in mapped
+`*ByID` fields produce deduplicated `agent` rows. A preferred name is included
+only when paired single names agree for that ID. Lists, unresolved names and
+conflicting preferred names are never guessed into identities.
+
 Rule version 11 fixes two silent losses found on a production archive. Event details (dates,
 places, coordinates) supplied on Occurrence extension rows of an Event core are copied onto the
 linked event when every occurrence of that event agrees with the others and with the event itself

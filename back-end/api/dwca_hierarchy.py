@@ -18,6 +18,14 @@ PROBLEM_REASONS = {
     'no-event-id': 'A row with a parentEventID has no eventID, so its event identity is not established.',
 }
 
+# These are common empty-cell tokens in exported archives. They are interpreted
+# as absent only when no source record actually uses the token as its ID.
+EMPTY_REFERENCE_TOKENS = frozenset({'na', 'n/a', 'null', 'none'})
+
+
+def missing_reference(value, known_identifiers):
+    return bool(value) and value not in known_identifiers and value.strip().casefold() in EMPTY_REFERENCE_TOKENS
+
 
 def resolve_parents(nodes, archive_keys=()):
     """Resolve parent links between event nodes.
@@ -28,9 +36,8 @@ def resolve_parents(nodes, archive_keys=()):
     numbers, for reporting). Node positions identify nodes; callers map them back to
     emitted event keys. Values are compared exactly, without trimming or case folding.
 
-    Returns ``links`` ({child position: parent position}) only when there are no
-    problems: one invalid relationship withholds every link, so a partial hierarchy
-    is never presented as the source structure.
+    Returns only individually resolvable links. Invalid, ambiguous, self and
+    cyclic links remain in the originals and are reported separately.
     """
     archive_keys = set(archive_keys)
     by_event_id = defaultdict(list)
@@ -65,11 +72,14 @@ def resolve_parents(nodes, archive_keys=()):
                              'candidate_rows': sorted(row for target in targets for row in nodes[target]['rows'])})
         else:
             candidate[position] = targets[0]
-    problems.extend(_cycles(candidate, nodes))
-    depth = 0 if problems else _max_depth(candidate)
+    cycles, cyclic_children = _cycles(candidate, nodes)
+    problems.extend(cycles)
+    for child in cyclic_children:
+        candidate.pop(child, None)
+    depth = _max_depth(candidate)
     problems.sort(key=lambda item: (item['rows'][:1], item['problem'], item.get('parentEventID', '')))
     return {
-        'links': {} if problems else dict(sorted(candidate.items())),
+        'links': dict(sorted(candidate.items())),
         'problems': problems,
         'counts': {
             'events': len(nodes),
@@ -84,7 +94,7 @@ def resolve_parents(nodes, archive_keys=()):
 
 def _cycles(links, nodes):
     """Report each cycle once, iteratively, starting from its lowest position."""
-    state, cycles = {}, []
+    state, cycles, cyclic_children = {}, [], set()
     for start in sorted(links):
         if start in state:
             continue
@@ -94,6 +104,7 @@ def _cycles(links, nodes):
             node = links.get(node)
         if node is not None and state.get(node) == 'active':
             members = path[index[node]:]
+            cyclic_children.update(members)
             first = members.index(min(members))
             members = members[first:] + members[:first]
             cycles.append({'problem': 'cycle', 'eventIDs': [nodes[member]['event_id'] for member in members],
@@ -101,7 +112,7 @@ def _cycles(links, nodes):
                            'rows': sorted(row for member in members for row in nodes[member]['rows'])})
         for member in path:
             state[member] = 'done'
-    return cycles
+    return cycles, cyclic_children
 
 
 def _max_depth(links):

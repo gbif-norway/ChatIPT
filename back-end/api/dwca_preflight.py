@@ -14,6 +14,7 @@ from itertools import combinations
 from api.dwca_germplasm import G
 from api.dwca_humboldt import ECO
 from api.dwca_import import DWC, ImportFailure
+from api.dwca_hierarchy import missing_reference
 from api.dwca_legacy import NBN_DATE, TIMES, UTM, emit_legacy_records
 
 EXAMPLES = 5
@@ -505,8 +506,8 @@ class Preflight:
         explicit_column = self.column(t, DWC + 'occurrenceID')
         if explicit_column is None:
             return
-        explicit = [(n, row[explicit_column['column']]) for n, row in enumerate(table.rows) if row[explicit_column['column']]]
-        if not explicit:
+        supplied = [(n, row[explicit_column['column']]) for n, row in enumerate(table.rows) if row[explicit_column['column']]]
+        if not supplied:
             return
         roles = self.options(decision)
         if 'occurrence-assertion' in roles:
@@ -516,6 +517,7 @@ class Preflight:
                 for row, source_id in zip(self.core.rows, self.core.ids):
                     if row[core_column['column']]:
                         matches[row[core_column['column']]].append(source_id)
+            explicit = [(n, value) for n, value in supplied if not missing_reference(value, matches)]
             bad = [n + 1 for n, value in explicit if len(matches[value]) != 1 or matches[value][0] != table.ids[n]]
             if core_column is None or bad:
                 self.block(decision, 'occurrence-assertion', 'Supplied assertion occurrenceIDs must identify exactly one '
@@ -535,6 +537,7 @@ class Preflight:
                 for row, source_id in zip(self.archive.tables[o].rows, self.archive.tables[o].ids):
                     if row[column['column']]:
                         matches[row[column['column']]].append((o, source_id))
+            explicit = [(n, value) for n, value in supplied if not missing_reference(value, matches)]
             bad, needed = [], set()
             for n, value in explicit:
                 found = matches[value]

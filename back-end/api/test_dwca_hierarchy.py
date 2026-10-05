@@ -72,7 +72,7 @@ class HierarchyHelperTests(SimpleTestCase):
         self.assertEqual(result['links'], {0: 1, 1: 2})
         self.assertEqual((result['counts']['max_depth'], result['counts']['roots']), (2, 1))
 
-    def test_each_invalid_relationship_withholds_every_link(self):
+    def test_invalid_relationships_leave_independent_links_available(self):
         cases = {
             'missing': [node('a', '', 1), node('b', 'a', 2), node('c', 'zzz', 3)],
             'ambiguous': [node('a', '', 1), node('a', '', 2), node('b', 'a', 3)],
@@ -85,7 +85,7 @@ class HierarchyHelperTests(SimpleTestCase):
             with self.subTest(kind):
                 result = resolve_parents(nodes)
                 self.assertEqual([problem['problem'] for problem in result['problems']], [kind])
-                self.assertEqual(result['links'], {})
+                self.assertEqual(result['links'], {'missing': {1: 0}, 'cycle': {3: 0}}.get(kind, {}))
         cycle = resolve_parents(cases['cycle'])['problems'][0]
         self.assertEqual((cycle['eventIDs'], cycle['rows']), (['a', 'c', 'b'], [1, 2, 3]))
         ambiguous = resolve_parents(cases['ambiguous'])['problems'][0]
@@ -192,10 +192,10 @@ class NestedEventConversionTests(SimpleTestCase):
 
     def test_invalid_relationships_offer_preservation_only_and_fail_clearly_when_forced(self):
         cases = {
-            'missing': b'eventID,parentEventID,eventCategory\na,,survey\nb,a,survey\nc,elsewhere,survey\n',
+            'missing': b'eventID,parentEventID,eventCategory\na,,survey\nc,elsewhere,survey\n',
             'ambiguous': b'eventID,parentEventID,eventCategory\na,,survey\na,,survey\nb,a,survey\n',
             'self': b'eventID,parentEventID,eventCategory\na,,survey\nb,b,survey\n',
-            'cycle': b'eventID,parentEventID,eventCategory\na,b,survey\nb,a,survey\nc,a,survey\n',
+            'cycle': b'eventID,parentEventID,eventCategory\na,b,survey\nb,a,survey\n',
         }
         for kind, events in cases.items():
             with self.subTest(kind):
@@ -218,6 +218,20 @@ class NestedEventConversionTests(SimpleTestCase):
                 self.assertEqual(values, [row.split(',')[1] for row in rows[1:] if row.split(',')[1]])
                 with self.assertRaisesMessage(ImportFailure, 'cannot be linked faithfully'):
                     convert(archive, plan, {**decisions, column['id']: 'parent-link'})
+
+    def test_valid_parent_links_survive_unrelated_missing_and_cyclic_links(self):
+        archive = read_inputs([('event.csv', b'eventID,parentEventID,eventCategory\n'
+            b'root,,survey\nchild,root,survey\norphan,elsewhere,survey\na,b,survey\nb,a,survey\nleaf,a,survey\n')])
+        plan = build_plan(archive)
+        column = parent_column(plan)
+        self.assertIn('parent-link', [option['value'] for option in column['options']])
+        self.assertEqual(plan['event_hierarchy']['problem_kinds'], {'cycle': 1, 'missing': 1})
+        frames, report = convert(archive, plan, decisions_for(plan))
+        self.assertTrue(report['validation']['valid'])
+        self.assertEqual(report['event_hierarchy']['linked_events'], 2)
+        self.assertEqual(by_event_id(frames)['child'], 'root')
+        self.assertEqual(by_event_id(frames)['leaf'], 'a')
+        self.assertEqual(by_event_id(frames)['orphan'], '')
 
     def test_explicit_preservation_emits_no_link_and_reports_every_value(self):
         archive = read_inputs([('nested.zip', source_zip(nested_files()))])

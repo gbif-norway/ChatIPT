@@ -368,6 +368,47 @@ class ArchiveTests(SimpleTestCase):
         with self.assertRaisesRegex(ImportFailure, 'Unsupported mapping decision'):
             validate_decisions(plan, {**decisions_for(plan), 'table:1': 'declared-assertions'})
 
+    def test_unmatched_na_reference_uses_event_subject_without_erasing_original(self):
+        archive = read_inputs([('event.csv', b'eventID,parentEventID,eventCategory\nparent,NA,survey\nchild,parent,survey\n'),
+            ('extendedmeasurementorfact.csv', b'eventID,occurrenceID,measurementType,measurementValue\nchild,occ,length,5\nchild,NA,temperature,20\n'),
+            ('occurrence.csv', b'eventID,occurrenceID,occurrenceStatus\nchild,occ,present\n')])
+        plan = build_plan(archive)
+        frames, report = convert(archive, plan, decisions_for(plan))
+        self.assertTrue(report['validation']['valid'])
+        self.assertEqual(len(frames['occurrence-assertion']), 1)
+        self.assertEqual(len(frames['event-assertion']), 1)
+        self.assertEqual(report['event_hierarchy']['linked_events'], 1)
+        self.assertEqual(report['event_hierarchy']['source_values'][0]['parentEventID'], 'NA')
+        self.assertEqual(report['event_hierarchy']['source_values'][0]['status'], 'retained in originals')
+
+    def test_na_is_a_real_identifier_when_a_source_record_uses_it(self):
+        archive = read_inputs([('event.csv', b'eventID,parentEventID,eventCategory\nNA,,survey\nchild,NA,survey\n'),
+            ('extendedmeasurementorfact.csv', b'eventID,occurrenceID,measurementType,measurementValue\nchild,NA,length,5\n'),
+            ('occurrence.csv', b'eventID,occurrenceID,occurrenceStatus\nchild,NA,present\n')])
+        plan = build_plan(archive)
+        frames, report = convert(archive, plan, decisions_for(plan))
+        self.assertTrue(report['validation']['valid'])
+        self.assertEqual(report['event_hierarchy']['linked_events'], 1)
+        self.assertEqual(len(frames['occurrence-assertion']), 1)
+        self.assertNotIn('event-assertion', frames)
+
+    def test_single_agent_ids_create_records_without_pairing_lists_or_conflicts(self):
+        archive = occurrence(b'occurrenceID,recordedBy,recordedByID,identifiedBy,identifiedByID,occurrenceStatus\n'
+            b'o1,"Smith, Alice",https://example.org/alice,"Smith, Alice",https://example.org/alice,present\n'
+            b'o2,Alice Smith,https://example.org/alice,,NA,present\n'
+            b'o3,Bob | Carol,https://example.org/bob | https://example.org/carol,,https://example.org/id,present\n')
+        plan = build_plan(archive)
+        frames, report = convert(archive, plan, decisions_for(plan))
+        self.assertTrue(report['validation']['valid'])
+        agents = frames['agent'].set_index('agentID')
+        self.assertEqual(set(agents.index), {'https://example.org/alice', 'https://example.org/id'})
+        self.assertEqual(agents.loc['https://example.org/alice', 'preferredAgentName'], '')
+        self.assertEqual(report['agent_mapping']['non_single_id_cells'], 2)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'agents.tar.gz'
+            create_dwc_dp_archive(output, frames, 'Agents', 'Explicit source agents')
+            self.assertTrue(validate_dwc_dp_archive(output)['valid'])
+
     def test_assertion_identifier_must_agree_with_core_attachment(self):
         extension = '<extension rowType="http://rs.iobis.org/obis/terms/ExtendedMeasurementOrFact" fieldsTerminatedBy="," ignoreHeaderLines="1"><files><location>facts.csv</location></files><coreid index="0"/><field index="1" term="' + DWC + 'occurrenceID"/><field index="2" term="' + DWC + 'measurementValue"/></extension>'
         archive = read_inputs([('meta.xml', manifest(extension=extension)), ('occ.csv', b'key,occurrenceID\njoin,persistent\n'), ('facts.csv', b'join,occurrenceID,value\njoin,other,5\n')])

@@ -6,6 +6,7 @@ import json
 import re
 import uuid
 from collections import Counter, defaultdict
+from urllib.parse import urlsplit
 
 import pandas as pd
 
@@ -16,7 +17,7 @@ from api.dwca_humboldt import HUMBOLDT_FAMILIES, IRI_DIRECT, DIRECT, blocked_fie
 from api.dwca_eol import EOL_FAMILIES, EOL_MEDIA, EOL_REFERENCE, TEXT_TYPES, DCT, eol_targets, eol_media_row_review, emit_eol_records
 from api.dwca_germplasm import (GERMPLASM_FAMILIES, GERMPLASM_DERIVED_TERMS, G, GEO,
                                germplasm_targets, emit_germplasm_records)
-from api.dwca_hierarchy import resolve_parents, summary as hierarchy_summary, describe_problems
+from api.dwca_hierarchy import resolve_parents, summary as hierarchy_summary, describe_problems, missing_reference
 from api.dwca_scientific import audit_hierarchy
 from api.dwca_legacy import (LEGACY_FAMILIES, LEGACY_DERIVED_TERMS, BMDE, NXF, GROUPS, UTM, TIMES, NBN_DATE,
                             legacy_targets, legacy_row_review, nbn_event_date, emit_legacy_records)
@@ -25,7 +26,7 @@ from api.dwca_preflight import preflight
 from api.dwca_review import (apply_policy, effective_decisions, failed_requirements, group_rows,  # noqa: F401
                              option_status, remove_unavailable, violations)
 
-RULE_VERSION = "12"
+RULE_VERSION = "13"
 ECO_SURVEY_ID = 'http://rs.tdwg.org/eco/terms/surveyID'
 REGISTERED_TERMS = {term for terms in REGISTRY['terms'].values() for term in terms}
 # Terms some field of the pinned DwC-DP schema is a version of; others have no Data Package field at all.
@@ -129,6 +130,19 @@ def _source(terms, row):
     return source
 
 
+def _single_agent_iri(value):
+    """An explicit single agent identifier, never a name or a list of IDs."""
+    if not value or any(character.isspace() for character in value) or '|' in value:
+        return False
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    if parsed.scheme in {'http', 'https'}:
+        return bool(parsed.netloc)
+    return bool(parsed.scheme and parsed.path)
+
+
 def _without_authorship(name, authorship):
     """Remove an exactly matching, separately supplied authorship suffix; DwC-DP names exclude authorship."""
     if name and authorship and name.endswith(' ' + authorship):
@@ -175,20 +189,24 @@ def _event_nodes(archive, core):
         return None, ("The core declares no dwc:eventID field, so parent values have no persistent identifiers to resolve against. "
                       "Archive row keys are never used as parents. The column stays in the originals.")
     id_column, parent_column = core.terms.index(DWC + "eventID"), core.terms.index(PARENT)
+    known_ids = {row[id_column] for row in core.rows if row[id_column]}
+    def parent_value(row):
+        value = row[parent_column]
+        return '' if missing_reference(value, known_ids) else value
     if core.row_type == DWC + "Event":
-        return [{"event_id": row[id_column], "parents": {row[parent_column]}, "rows": [n + 1], "join_ids": [source_id]}
+        return [{"event_id": row[id_column], "parents": {parent_value(row)}, "rows": [n + 1], "join_ids": [source_id]}
                 for n, (row, source_id) in enumerate(zip(core.rows, core.ids))], None
     nodes, groups = [], {}
     for n, (row, source_id) in enumerate(zip(core.rows, core.ids)):
         event_id = row[id_column]
         if not event_id:
-            if row[parent_column]:
-                nodes.append({"event_id": "", "parents": {row[parent_column]}, "rows": [n + 1], "join_ids": [source_id]})
+            if parent_value(row):
+                nodes.append({"event_id": "", "parents": {parent_value(row)}, "rows": [n + 1], "join_ids": [source_id]})
             continue
         if event_id not in groups:
             groups[event_id] = {"event_id": event_id, "parents": set(), "rows": [], "join_ids": []}
             nodes.append(groups[event_id])
-        groups[event_id]["parents"].add(row[parent_column]); groups[event_id]["rows"].append(n + 1); groups[event_id]["join_ids"].append(source_id)
+        groups[event_id]["parents"].add(parent_value(row)); groups[event_id]["rows"].append(n + 1); groups[event_id]["join_ids"].append(source_id)
     return nodes, None
 
 
@@ -218,7 +236,7 @@ def _hierarchy(archive, core):
 
 def _scientific_hierarchy(archive, core, nodes, hierarchy):
     """Audit original assertions, independently of column filters and emitted values."""
-    if nodes is None or not hierarchy or hierarchy['problems'] or not hierarchy['links']:
+    if nodes is None or not hierarchy or not hierarchy['links']:
         return None
     events, surveys, ambiguous, spatial_ambiguities = {}, defaultdict(list), [], defaultdict(list)
     by_join = {join: position for position, node in enumerate(nodes) for join in node['join_ids']}
@@ -574,13 +592,16 @@ def build_plan(archive):
                 if not table.is_core:
                     parent_blocked = ('parentEventID in an Occurrence extension describes an event, not this occurrence row. '
                                       'Parent links are resolved only from core Event identities; values stay in the originals.')
-                elif hierarchy_unsupported or hierarchy['problems']:
-                    parent_blocked = (hierarchy_unsupported or describe_problems(hierarchy)
-                                      + ' Linking is unavailable until the source is corrected; keep the column in the originals.')
+                elif hierarchy_unsupported or not hierarchy['links']:
+                    parent_blocked = (hierarchy_unsupported or (describe_problems(hierarchy) if hierarchy['problems'] else 'No supplied parentEventID identifies a source event.')
+                                      + ' No supplied links can be resolved; keep the column in the originals.')
                 elif own == 'occurrence' and any(not row[core.terms.index(DWC + 'eventID')] for row in core.rows):
                     parent_blocked = ('Not every source occurrence supplies an eventID. Parent links require established event identities; '
                                       'values remain in the originals without inferring missing events.')
                 options, media_reason = ([], parent_blocked) if parent_blocked else ([PARENT_LINK], None)
+                if not parent_blocked and hierarchy['problems']:
+                    media_reason = (describe_problems(hierarchy)
+                                    + ' Only independently resolvable links are created; unresolved values stay in the originals and report.')
                 if not parent_blocked and own == 'occurrence' and len({row[core.terms.index(DWC + 'eventID')] for row in core.rows}) != len(core.rows):
                     parent_default = 'preserve'
                     media_reason = (media_reason + ' ' if media_reason else '') + ('Occurrence rows do not establish events by themselves. Parent links are available only when events are '
@@ -890,8 +911,9 @@ def _link_parents(archive, core, core_index, plan, decisions, core_columns, even
             raise ConversionError('Parent event links on an Occurrence core require events combined by supplied eventID; '
                                   'separate per-row events have no established persistent identity. Preserve parentEventID instead.',
                                   category='decision', decision_ids=['event-grain', column['id']])
-        if unsupported or result['problems']:
-            raise ConversionError(unsupported or describe_problems(result), category='decision', decision_ids=[column['id']])
+        if unsupported or not result['links']:
+            raise ConversionError(unsupported or (describe_problems(result) if result['problems'] else 'No supplied parentEventID identifies a source event.'),
+                                  category='decision', decision_ids=[column['id']])
         for child, parent in result['links'].items():
             child_key, parent_key = event_keys[nodes[child]['join_ids'][0]], event_keys[nodes[parent]['join_ids'][0]]
             events_by_key[child_key]['parentEvent_fk'] = parent_key
@@ -900,17 +922,23 @@ def _link_parents(archive, core, core_index, plan, decisions, core_columns, even
                 column_consumption[(core_index, PARENT)].add(row - 1)
     parent_index = core.terms.index(PARENT)
     id_index = core.terms.index(DWC + 'eventID') if DWC + 'eventID' in core.terms else None
+    known_ids = {row[id_index] for row in core.rows if row[id_index]} if id_index is not None else set()
+    problem_by_row = {number: problem['problem'] for problem in (result or {}).get('problems', [])
+                      for number in problem['rows']}
     source_values = []
     for n, (row, source_id) in enumerate(zip(core.rows, core.ids)):
         if not row[parent_index]:
             continue
         child_key = event_keys[source_id]
         parent_key, parent_row = links.get(child_key, ('', None))
+        withheld_reason = ('' if parent_key else 'empty-reference-token' if missing_reference(row[parent_index], known_ids)
+                           else problem_by_row.get(n + 1, 'preserved-by-decision'))
         source_values.append({'source_table': core.name, 'source_table_index': core_index, 'source_row': n + 1, **core.row_sources[n],
                               'archive_join_id': source_id, 'eventID': row[id_index] if id_index is not None else '',
                               'parentEventID': row[parent_index], 'event_key': child_key,
                               'parent_event_key': parent_key, 'parent_source_row': parent_row,
-                              'status': 'linked' if parent_key else 'retained in originals'})
+                              'status': 'linked' if parent_key else 'retained in originals',
+                              **({'withheld_reason': withheld_reason} if withheld_reason else {})})
     return {'decision': decision, 'identifier': DWC + 'eventID', 'parent_identifier': PARENT,
             **({'unsupported': unsupported} if unsupported else hierarchy_summary(result)),
             'linked_events': len(links), 'source_values': source_values,
@@ -1202,6 +1230,8 @@ def convert(archive, plan, decisions):
                 elif role.endswith("-assertion") or role == 'declared-assertions':
                     record = dict(mapped.get("occurrence-assertion", {}))
                     explicit_id = row[table.terms.index(DWC + 'occurrenceID')] if DWC + 'occurrenceID' in table.terms else ''
+                    if missing_reference(explicit_id, occurrences_by_identifier):
+                        explicit_id = ''
                     if role == 'declared-assertions' and explicit_id:
                         matches = occurrences_by_identifier.get(explicit_id, [])
                         if len(matches) != 1 or matches[0][1] != event_keys[source_id]:
@@ -1436,6 +1466,44 @@ def convert(archive, plan, decisions):
         evidence = material_evidence[group]
         if len(evidence) == 1:
             material['evidenceForOccurrenceID'] = next(iter(evidence))
+    # A source *ByID identifies an agent only when it is one absolute IRI. The
+    # paired name is descriptive evidence, not an identity key: conflicting or
+    # list-shaped names never get selected as a preferred name.
+    origins = defaultdict(set)
+    for entry in crosswalk:
+        if entry['target_row'] is not None:
+            origins[(entry['target_table'], entry['target_row'])].add(
+                (entry['source_table_index'], entry['source_row'] - 1))
+    agent_evidence = defaultdict(lambda: {'names': set(), 'origins': set()})
+    skipped_agent_values = 0
+    for resource_name, rows in list(resources.items()):
+        descriptors = TABLE_SPECS[resource_name].field_descriptors
+        for number, record in enumerate(rows, start=1):
+            for field, identifier in record.items():
+                if not field.endswith('ByID') or field[:-2] not in descriptors or not identifier:
+                    continue
+                if not _single_agent_iri(identifier):
+                    skipped_agent_values += 1
+                    continue
+                evidence = agent_evidence[identifier]
+                name = record.get(field[:-2], '')
+                if name and ' | ' not in name and ';' not in name:
+                    evidence['names'].add(name)
+                evidence['origins'].update(origins[(resource_name, number)])
+    created_agents = 0
+    for identifier, evidence in sorted(agent_evidence.items()):
+        source_rows = sorted(evidence['origins'])
+        if not source_rows:
+            continue
+        agent_key = _key(archive, 'agent', identifier)
+        row = {'agent_pk': agent_key, 'agentID': identifier, 'preferredAgentName': ''}
+        if len(evidence['names']) == 1:
+            row['preferredAgentName'] = next(iter(evidence['names']))
+        first_table, first_row = source_rows[0]
+        add('agent', row, first_table, first_row)
+        created_agents += 1
+        for source_table, source_row in source_rows[1:]:
+            trace('agent', {'agent_pk': agent_key}, source_table, source_row)
     frames = {name: pd.DataFrame(rows).fillna("") for name, rows in resources.items()}
     validation = validate_dwc_dp_resources(frames)
     report = {"plan_id": plan["id"], "rule_version": RULE_VERSION, "source_sha256": namespace, "schema": plan["schema"],
@@ -1445,6 +1513,10 @@ def convert(archive, plan, decisions):
               'media_subjects': media_subjects,
               'extension_subjects': extension_subjects,
               'withheld_values': withheld_values, 'preserved_extension_rows': preserved_rows,
+              'agent_mapping': {'created': created_agents,
+                                'without_preferred_name': sum(bool(value['origins']) and len(value['names']) != 1
+                                                              for value in agent_evidence.values()),
+                                'non_single_id_cells': skipped_agent_values},
               **({'event_hierarchy': hierarchy_report} if hierarchy_report else {}),
               **({'depth_events': {'combined_events': len(depth_children), 'depth_events': sum(map(len, depth_children.values())),
                                    'fields': [field for field in DEPTH_FIELDS if any(field in event for event in resources['event'])],

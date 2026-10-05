@@ -30,10 +30,10 @@ note explaining why. If the core declares no `dwc:eventID` field, links are
 unsupported and the column stays in the originals.
 
 **Event cores** (loose `event.csv`, `meta.xml`, or ZIP, with Occurrence and
-Humboldt extensions) use one identity per source row. When every value
-resolves, the plan's `parentEventID` column defaults to `parent-link`, which
-needs no review. Selecting `preserve` keeps the column in the originals, and
-no foreign key is emitted.
+Humboldt extensions) use one identity per source row. When every supplied
+relationship resolves, the plan's `parentEventID` column defaults to
+`parent-link`, which needs no review. Selecting `preserve` keeps the column in
+the originals, and no foreign key is emitted.
 
 **Occurrence cores** default to `preserve` and require review. A link is
 possible only when occurrence rows are combined into events by supplied
@@ -52,10 +52,12 @@ the occurrence, so it is offered for preservation only.
 - `inconsistent`: one combined event has different parent values.
 - `no-event-id`: a child row has no eventID.
 
-A single problem withholds every link, so a partial hierarchy is never presented
-as the source structure. The plan then offers only preservation for the column
-and gives the counts and the first problem. If an API caller still submits
-`parent-link`, `validate_decisions` rejects it with the same explanation.
+A problem withholds only its own link. Cyclic edges are all withheld, while
+independent links can still be emitted after review. The report lists every
+supplied parent value and whether it was linked. `NA`, `N/A`, `null`, and `none`
+are treated as empty references only when no source event actually has that ID;
+the original text is retained. When no supplied links resolve, the plan offers
+only preservation and an API caller cannot force `parent-link`.
 Traversal and depth counting are iterative. Tests cover a 20,000-level chain and
 a 20,000-member cycle.
 
