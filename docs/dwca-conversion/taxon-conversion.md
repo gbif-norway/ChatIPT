@@ -150,10 +150,25 @@ The server enforces these rules:
   "Accept N spelling corrections", which lists each correction as from → to.
 - Exact COL matches are accepted in bulk only when every supplied authorship
   agrees with COL's. The supplied authorship is the label's own or the
-  `scientificNameAuthorship` column. The comparison ignores punctuation,
-  spacing, parentheses and a missing year. A differing authorship (a homonym, or
-  an author error) is reviewed one name at a time. The spelling bulk action uses
-  the same rule.
+  `scientificNameAuthorship` column. The spelling bulk action uses the same rule.
+  A differing authorship (a homonym, or an author error) is reviewed one name at
+  a time. The comparison (`taxon_matching.authorships_agree`) works as follows:
+  - years must be equal when both give one;
+  - authors are compared by surname, the last word of each name, so initials,
+    given names, punctuation, spacing and parentheses do not matter;
+  - an abbreviated surname matches by prefix: "L." matches "Linnaeus", and
+    "O.P.-Cambridge" matches "O. Pickard-Cambridge";
+  - "A in B" counts A, and "A ex B" counts B;
+  - "et al." compares the first author only;
+  - when COL has no authorship, nothing is overwritten, so it agrees.
+
+  In the 559/572 dumps this keeps 25 of the 43 bulk decisions that an exact
+  comparison rejected; in 568 it keeps 26 of 36. The rest have different years
+  or different authors.
+- Every COL decision records the change kind it was checked against
+  (`changeKind`, null for the same name). It is trusted from then on, so an
+  accepted spelling correction is applied as is. Only a legacy snapshot without
+  `changeKind` is checked again, against the record's stored usage.
 - A COL decision saved before confirmation was required, which would make such
   a change, is held:
   - it counts as undecided, so it never settles the scientificName fallback;
@@ -168,6 +183,23 @@ the order and the genus). A changing option names what it would do, for example
 "replaces your genus with a phylum", and asks for a second click. Focus moves to
 that click and returns on Cancel. A failed request keeps the confirmation open
 and shows its error next to the row.
+
+**Re-inspection carries name decisions** (`conversion_names.carry_decisions`).
+A new rule version makes a plan stale, and the re-inspection used to drop every
+name decision.
+- **When decisions carry:** the user's own decisions carry over by label when
+  the source is unchanged (same fingerprint) or yields exactly the same labels.
+- **What is not carried:**
+  - bulk decisions, because the bulk actions are offered again under the
+    current rules;
+  - name results, because the names are checked again.
+- **Re-checking:** a carried COL decision loses its `changeKind`, so it is
+  checked again under the current rules. One that now replaces the name is held
+  until confirmed; an explicit earlier confirmation stands.
+- **State:** the counts are kept in `carried`.
+
+Other plan choices are not carried: they belong to decision events tied to the
+plan id, with AI provenance and evidence-basis hashes.
 
 **Don't publish a name** (decision `empty`) is a secondary option. It leaves
 `scientificName`, its authorship and its rank empty. The supplied text fills

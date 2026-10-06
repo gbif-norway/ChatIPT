@@ -12,6 +12,7 @@ stored for review and only reviewer decisions are written back to the data.
 import json
 import re
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
@@ -253,13 +254,53 @@ def coarser_replacement(asserted, usage, match_type=None, asserted_rank=None, hi
     return change if change and change["confirm"] else None
 
 
+def _author_keys(value):
+    """(surname keys, "et al." used) of an authorship: one key per author, the last word of its name.
+
+    Years, parentheses and given names or initials are dropped, so "(O.P.-Cambridge, 1871)" gives ["cambridge"] like
+    "(O. Pickard-Cambridge, 1871)". For "A ex B" only B, the publishing author, counts. An abbreviated key keeps its
+    full stop ("l.") so it can match a full surname by prefix.
+    """
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(character for character in text if not unicodedata.combining(character))
+    text = re.sub(r"\d{4}[a-z]?", " ", text)
+    text = re.split(r"\bex\b", text)[-1]
+    # "A in B": A is the author, B's work only published it ("Fitzinger in Bonaparte").
+    text = re.sub(r"\bin\b[^(),]*", " ", text)
+    et_al = bool(re.search(r"\bet\s+al\b", text, re.IGNORECASE))
+    text = re.sub(r"\bet\s+al\b\.?", " ", text, flags=re.IGNORECASE)
+    keys = []
+    for piece in re.split(r"[(),&;:]|\bet\b|\band\b", text):
+        # Initials may run into the surname: "O.P.Cambridge", "L.Koch", "St.Vincent".
+        words = [word for word in re.split(r"[\s\-]+|(?<=\.)", piece) if word]
+        if words:
+            keys.append(words[-1].casefold())
+    return keys, et_al
+
+
+def _same_author(left, right):
+    left_stem, right_stem = left.rstrip("."), right.rstrip(".")
+    return (left_stem == right_stem
+            or (left.endswith(".") and len(left_stem) > 0 and right_stem.startswith(left_stem))
+            or (right.endswith(".") and len(right_stem) > 0 and left_stem.startswith(right_stem)))
+
+
 def authorships_agree(left, right):
-    """Two authorships name the same authors: punctuation, spacing, parentheses and a missing year are ignored."""
-    def key(value):
-        text = str(value or "").casefold()
-        return "".join(character for character in text if character.isalpha()), re.findall(r"\d{4}", text)
-    (left_letters, left_years), (right_letters, right_years) = key(left), key(right)
-    return left_letters == right_letters and (not left_years or not right_years or left_years == right_years)
+    """Two authorships name the same authors.
+
+    Years must be equal when both give one. Authors are compared by surname (the last word of each name), so initials,
+    given names, punctuation, spacing and parentheses do not matter, and an abbreviated surname matches by prefix
+    ("L." and "Linnaeus", "O.P.-Cambridge" and "O. Pickard-Cambridge"). "Blackwall" and "Seo, 2017" disagree.
+    """
+    left_years, right_years = re.findall(r"\d{4}", str(left or "")), re.findall(r"\d{4}", str(right or ""))
+    if left_years and right_years and left_years != right_years:
+        return False
+    (left_keys, left_et_al), (right_keys, right_et_al) = _author_keys(left), _author_keys(right)
+    if not left_keys or not right_keys:
+        return not left_keys and not right_keys
+    if left_et_al or right_et_al:
+        return _same_author(left_keys[0], right_keys[0])
+    return len(left_keys) == len(right_keys) and all(map(_same_author, left_keys, right_keys))
 
 
 def _remaining(deadline):

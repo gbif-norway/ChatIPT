@@ -637,14 +637,23 @@ class NameDecisionAPITests(NamesCase):
         self.assertEqual(occurrence.loc['d', 'scientificName'], 'Eus sp.')
         self.assertEqual(self.conversion.report['name_review']['unreviewed'], 2)
 
-    def test_a_new_inspection_discards_name_results_and_decisions(self):
+    def test_a_new_inspection_rechecks_names_and_carries_the_users_own_decisions(self):
+        """A re-inspection of the same source (a new rule version) keeps the user's name decisions (568 had 989)."""
         self.reviewed()
-        self.post('names', name_decisions={'Aus bus L.': {'decision': 'keep'}})
+        self.post('names', name_decisions={'Cus dus (Smith) Jones 1900': {'decision': 'keep'}, 'Eus sp.': {'decision': 'empty'}})
+        self.post('names', bulk='exact_col')
+        self.assertEqual(sorted(self.conversion.name_review['decisions']), ['Aus bus L.', 'Cus dus (Smith) Jones 1900', 'Eus sp.'])
+        old_plan = self.conversion.plan['id']
         self.assertEqual(self.client.post(self.url, {'action': 'inspect'}, format='json').status_code, 202)
         process_next_conversion()
         state = self.conversion.name_review
-        self.assertEqual((state['status'], state['decisions'], [('match' in record) for record in state['labels']]),
-                         ('pending', {}, [False, False, False]))
+        self.assertEqual((state['status'], [('match' in record) for record in state['labels']]), ('pending', [False, False, False]))
+        # Bulk decisions are offered again under the current rules rather than carried.
+        self.assertEqual(sorted(state['decisions']), ['Cus dus (Smith) Jones 1900', 'Eus sp.'])
+        self.assertEqual(state['carried'], {'decisions': 2, 'bulk_not_carried': 1})
+        self.assertEqual(state['decisions']['Eus sp.']['carriedFrom'], old_plan)
+        self.run_names()
+        self.assertEqual(self.state()['name_review']['summary']['bulk_col'], 1)
 
     def test_names_fill_a_scientific_name_column_the_converter_left_empty(self):
         self.reviewed()
@@ -1196,6 +1205,36 @@ class HeldDecisionTests(NamesCase):
         self.assertEqual(self.conversion.report['name_review']['unconfirmed_kept'], 1)
 
 
+class CarryDecisionTests(SimpleTestCase):
+    def conversion(self, decisions, source='sha-1', labels=('Calanus', 'Aus bus')):
+        return SimpleNamespace(plan={'id': 'old', 'source_sha256': source},
+                               name_review={'plan_id': 'old', 'labels': [{'label': label} for label in labels], 'decisions': decisions})
+
+    def fresh(self, labels=('Calanus', 'Aus bus')):
+        return {'plan_id': 'new', 'labels': [{'label': label} for label in labels], 'decisions': {}}
+
+    def test_decisions_carry_only_for_the_same_source_or_the_same_labels(self):
+        keep = {'Aus bus': decision('keep', None, source='verbatim')}
+        self.assertEqual(list(names.carry_decisions(self.conversion(keep), self.fresh(), {'source_sha256': 'sha-1'})['decisions']), ['Aus bus'])
+        # Another source with the same labels still carries; another source with other labels does not.
+        self.assertEqual(list(names.carry_decisions(self.conversion(keep), self.fresh(), {'source_sha256': 'sha-2'})['decisions']), ['Aus bus'])
+        self.assertEqual(names.carry_decisions(self.conversion(keep), self.fresh(('Aus bus', 'Cus dus')), {'source_sha256': 'sha-2'})['decisions'], {})
+        # The same source keeps the labels that are still there.
+        carried = names.carry_decisions(self.conversion({**keep, 'Gone': decision('keep', None)}, labels=('Calanus', 'Aus bus', 'Gone')),
+                                        self.fresh(), {'source_sha256': 'sha-1'})
+        self.assertEqual(list(carried['decisions']), ['Aus bus'])
+
+    def test_carried_col_decisions_are_checked_again_under_the_current_rules(self):
+        unconfirmed = names.carry_decisions(self.conversion({'Calanus': OLD_CALANUS}), self.fresh(), {'source_sha256': 'sha-1'})
+        unconfirmed['labels'] = [real_record('Calanus'), {'label': 'Aus bus'}]
+        self.assertEqual(list(names.unconfirmed(unconfirmed)), ['Calanus'])
+        confirmed = names.build_decision(real_record('Calanus'), {'decision': 'col', 'confirm_coarser': True}, {'col_release': RELEASE})
+        carried = names.carry_decisions(self.conversion({'Calanus': confirmed}), self.fresh(), {'source_sha256': 'sha-1'})
+        self.assertNotIn('changeKind', carried['decisions']['Calanus'])
+        carried['labels'] = [real_record('Calanus'), {'label': 'Aus bus'}]
+        self.assertEqual(names.unconfirmed(carried), {})  # the user's explicit confirmation stands
+
+
 class NamePartTests(SimpleTestCase):
     """Infrageneric names, subgenera and formae speciales keep the parts that make them a different name."""
 
@@ -1254,7 +1293,7 @@ class SupplyAuthorshipTests(SimpleTestCase):
 
     def test_bulk_skips_an_exact_match_whose_authorship_differs_from_the_supplied_one(self):
         # 572: the source column said "Linnaeus 1758"; punctuation, spacing, parentheses and a missing year are not differences.
-        for supplied in ([], ['Linnaeus 1758'], ['(Linnaeus, 1758)'], ['Linnaeus']):
+        for supplied in ([], ['Linnaeus 1758'], ['(Linnaeus, 1758)'], ['Linnaeus'], ['L.'], ['L., 1758']):
             with self.subTest(supplied):
                 self.assertTrue(names.bulk_acceptable(self.record(supplied), {}))
         for supplied in (['Smith'], ['Linnaeus, 1766'], ['Linnaeus 1758', 'Smith']):
@@ -1328,6 +1367,30 @@ class SpellingCorrectionTests(SimpleTestCase):
         self.assertEqual(names.bulk_decide(conversion, 'spelling'), 1)
         self.assertEqual(list(conversion.name_review['decisions']), ['Circium heterophyllum'])
         self.assertEqual(conversion.name_review['decisions']['Circium heterophyllum']['by'], 'bulk:spelling')
+        # The accepted correction is applied, not held as an unconfirmed change (it was checked with its classification).
+        state = conversion.name_review
+        self.assertEqual(names.unconfirmed(state), {})
+        self.assertEqual(self.corrected(state), (['Cirsium heterophyllum'], 0))
+
+    def corrected(self, state):
+        frame = pd.DataFrame([{'occurrence_pk': 'o1', 'scientificName': '', 'verbatimIdentification': 'Circium heterophyllum'}])
+        result, section = apply({'occurrence': frame}, state)
+        return result['occurrence']['scientificName'].tolist(), section['unconfirmed_kept']
+
+    def test_a_single_spelling_accept_and_a_legacy_snapshot_are_applied(self):
+        record = self.record('Circium heterophyllum', 'Cirsium heterophyllum', hints={'kingdom': 'Plantae'}, classification={'kingdom': 'Plantae'})
+        single = names.build_decision(record, {'decision': 'col'}, {'col_release': RELEASE})
+        self.assertEqual(single['changeKind'], 'spelling')
+        state = {'plan_id': 'plan', 'labels': [record], 'decisions': {'Circium heterophyllum': single}}
+        self.assertEqual((names.unconfirmed(state), self.corrected(state)), ({}, (['Cirsium heterophyllum'], 0)))
+        # A snapshot saved without the stamp is checked against the stored usage, classification included.
+        legacy = {key: value for key, value in single.items() if key != 'changeKind'}
+        state['decisions'] = {'Circium heterophyllum': legacy}
+        self.assertEqual(names.unconfirmed(state), {})
+        # A confirming request for it is a plain decision too and is never held.
+        confirmed = names.build_decision(record, {'decision': 'col', 'confirm_coarser': True}, {'col_release': RELEASE})
+        state['decisions'] = {'Circium heterophyllum': confirmed}
+        self.assertEqual(names.unconfirmed(state), {})
 
 
 def coarse_match(queries, deadline=None):
