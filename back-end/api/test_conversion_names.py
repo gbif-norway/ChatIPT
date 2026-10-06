@@ -315,7 +315,7 @@ class DecisionTests(SimpleTestCase):
         col = names.build_decision(record, {'decision': 'col'}, self.state(), by='bulk:exact_col')
         self.assertEqual((col['usageId'], col['checklist'], col['by'], col['matchType']), ('COL-CUS', {'checklistKey': 'col-key', 'alias': 'COL26.6 XR'},
                                                                                          'bulk:exact_col', 'VARIANT'))
-        other = names.build_decision(record, {'decision': 'alternative', 'usage_id': 'COL-CUS2'}, self.state())
+        other = names.build_decision(record, {'decision': 'alternative', 'usage_id': 'COL-CUS2', 'confirm_coarser': True}, self.state())
         self.assertEqual((other['scientificName'], other['usageId']), ('Cus dux', 'COL-CUS2'))
 
     def test_impossible_decisions_are_rejected(self):
@@ -375,9 +375,9 @@ class NameJobTests(NamesCase):
         public = self.state()['name_review']
         self.assertEqual((public['summary']['checked'], public['checking']), (3, False))
         aus, cus, eus = public['labels']
-        self.assertEqual((aus['match']['status'], aus['parsed']['canonical'], aus['bulk']), ('exact', 'Aus bus', {'col': True, 'parsed': True}))
+        self.assertEqual((aus['match']['status'], aus['parsed']['canonical'], aus['bulk']), ('exact', 'Aus bus', {'col': True, 'parsed': True, 'spelling': False}))
         # A variant match and a parse that rewrites the supplied text are offered, but never in bulk.
-        self.assertEqual((cus['match']['status'], cus['bulk'], cus['offers']), ('variant', {'col': False, 'parsed': False}, {'parsed': True, 'col': True}))
+        self.assertEqual((cus['match']['status'], cus['bulk'], cus['offers']), ('variant', {'col': False, 'parsed': False, 'spelling': False}, {'parsed': True, 'col': True}))
         self.assertEqual((eus['qualifier'], eus['parsed']['usable'], eus['parsed']['reason'], eus['bulk']['col']), ('sp.', False, 'qualifier', False))
         self.assertEqual(public['summary']['bulk_col'], 1)
         self.assertEqual(public['summary']['bulk_parsed'], 1)
@@ -520,7 +520,7 @@ class NameDecisionAPITests(NamesCase):
     def test_decisions_are_saved_as_snapshots_and_can_be_withdrawn(self):
         self.reviewed()
         response = self.post('names', name_decisions={
-            'Aus bus L.': {'decision': 'col'}, 'Cus dus (Smith) Jones 1900': {'decision': 'alternative', 'usage_id': 'COL-CUS2'},
+            'Aus bus L.': {'decision': 'col'}, 'Cus dus (Smith) Jones 1900': {'decision': 'alternative', 'usage_id': 'COL-CUS2', 'confirm_coarser': True},
             'Eus sp.': {'decision': 'empty'}})
         self.assertEqual(response.status_code, 200, response.data)
         decisions = self.conversion.name_review['decisions']
@@ -762,7 +762,7 @@ class AlternativeIdTests(SimpleTestCase):
             {'id': 12345, 'scientificName': 'Aus bus', 'scientificNameAuthorship': 'L.', 'taxonRank': 'species', 'matchType': 'VARIANT'}]}
         record = {'label': 'Aus bsu', 'parsed': {}, 'match': match}
         for given in ('12345', 12345):
-            result = names.build_decision(record, {'decision': 'alternative', 'usage_id': given}, {'col_release': RELEASE})
+            result = names.build_decision(record, {'decision': 'alternative', 'usage_id': given, 'confirm_coarser': True}, {'col_release': RELEASE})
             self.assertEqual((result['scientificName'], result['usageId']), ('Aus bus', '12345'))
         with self.assertRaises(names.NameDecisionError):
             names.build_decision(record, {'decision': 'alternative', 'usage_id': '1234'}, {})
@@ -1147,21 +1147,187 @@ class RealOverlayConsistencyTests(SimpleTestCase):
         self.assertEqual(pairs['o5'], (('Calanus', 'Calanus'), ('genus', 'genus'), ('Leach, 1816', 'Leach, 1816')))
         self.assertIsNone(entries['Calanus']['replaces'])
 
-    def test_an_earlier_unconfirmed_coarser_decision_is_not_applied(self):
-        """A conversion reviewed before the check keeps the user's name; the report says why."""
-        frame = pd.DataFrame([{'occurrence_pk': 'o1', 'scientificName': 'Calanus', 'verbatimIdentification': 'Calanus',
+    def test_an_earlier_unconfirmed_coarser_decision_keeps_the_users_name(self):
+        """566 before this check: "Use COL name" on Calanus saved Arthropoda. The fallback had settled to an empty
+        scientificName, so skipping the decision would publish no name; it is applied as "keep" instead."""
+        frame = pd.DataFrame([{'occurrence_pk': 'o1', 'scientificName': '', 'verbatimIdentification': 'Calanus',
                                'taxonRank': '', 'scientificNameAuthorship': ''}])
-        old = decision('col', 'Arthropoda', None, 'phylum', source='col', usageId='RT', matchType='HIGHERRANK')  # as stored for 566
-        state = {'plan_id': 'plan', 'status': 'complete', 'labels': [real_record('Calanus')], 'decisions': {'Calanus': old}}
+        state = {'plan_id': 'plan', 'status': 'complete', 'labels': [real_record('Calanus')], 'decisions': {'Calanus': OLD_CALANUS}}
         result, section = apply({'occurrence': frame}, state)
         self.assertEqual(result['occurrence']['scientificName'].tolist(), ['Calanus'])
         entry = section['entries'][0]
-        self.assertEqual((section['not_applied'], entry['rows'], entry['replaces']), (1, {}, 'replaces your genus with a phylum'))
+        self.assertEqual((section['unconfirmed_kept'], entry['rows'], entry['appliedAs'], entry['replaces']),
+                         (1, {'occurrence': 1}, 'keep', 'replaces your genus with a phylum'))
         self.assertTrue(entry['notApplied'])
-        self.assertTrue(names._entry(state['labels'][0], state['decisions'])['decision_unconfirmed'])
+        self.assertTrue(names._entry(state['labels'][0], state['decisions'], names.unconfirmed(state))['decision_unconfirmed'])
         # The same decision, confirmed, is applied.
-        result, section = apply({'occurrence': frame}, {**state, 'decisions': {'Calanus': {**old, 'confirmedCoarser': True}}})
-        self.assertEqual((result['occurrence']['scientificName'].tolist(), section['not_applied']), (['Arthropoda'], 0))
+        result, section = apply({'occurrence': frame}, {**state, 'decisions': {'Calanus': {**OLD_CALANUS, 'confirmedCoarser': True}}})
+        self.assertEqual((result['occurrence']['scientificName'].tolist(), section['unconfirmed_kept']), (['Arthropoda'], 0))
+
+
+# The decision saved for "Calanus" in conversion 566, before a coarser COL name needed confirmation.
+OLD_CALANUS = decision('col', 'Arthropoda', None, 'phylum', source='col', usageId='RT', matchType='HIGHERRANK')
+
+
+class HeldDecisionTests(NamesCase):
+    """An unconfirmed coarser decision counts as undecided: it never settles the fallback and stays in the pending view."""
+
+    def test_a_held_decision_does_not_settle_the_fallback_and_is_listed_as_pending(self):
+        self.inspected()
+        self.run_names(match=coarse_match)
+        self.post('names', name_decisions={'Cus dus (Smith) Jones 1900': {'decision': 'keep'}, 'Eus sp.': {'decision': 'keep'}})
+        old = decision('col', 'Aus', 'L.', 'genus', source='col', usageId='COL-AUS-GENUS', matchType='HIGHERRANK')
+        state = self.conversion.name_review
+        state['decisions']['Aus bus L.'] = old
+        DwcConversion.objects.filter(pk=self.conversion.pk).update(name_review=state)
+        conversion = self.conversion
+        self.assertFalse(names.every_name_decided(conversion))
+        self.assertEqual(names.settle_name_questions(conversion), [])
+        self.assertNotIn('column:0:1', conversion.decisions)
+        review = self.state('?names_view=pending')['name_review']
+        self.assertEqual((review['summary']['decided'], review['summary']['unconfirmed']), (2, 1))
+        self.assertEqual([(item['label'], item['decision_unconfirmed']) for item in review['labels']], [('Aus bus L.', True)])
+        # Converting with the fallback set to an empty scientificName still publishes the user's own name for it.
+        self.assertEqual(self.post('convert', decisions={**decisions_for(conversion.plan), 'column:0:1': 'preserve'}).status_code, 202)
+        process_next_conversion()
+        self.assertEqual(self.conversion.status, 'complete', self.conversion.error)
+        occurrence = Table.objects.get(dataset_id=self.dataset_id, title='occurrence').df.set_index('occurrenceID')
+        self.assertEqual(occurrence.loc[['a', 'b'], 'scientificName'].tolist(), ['Aus bus L.', 'Aus bus L.'])
+        self.assertEqual(self.conversion.report['name_review']['unconfirmed_kept'], 1)
+
+
+class NamePartTests(SimpleTestCase):
+    """Infrageneric names, subgenera and formae speciales keep the parts that make them a different name."""
+
+    def test_infrageneric_epithets_and_terminal_subgenera_are_parts(self):
+        cases = {
+            'Taraxacum sect. Ruderalia': ['taraxacum', 'sect.ruderalia'],
+            'Hieracium subg. Pilosella': ['hieracium', 'subg.pilosella'],
+            'Calanus (Calanus)': ['calanus', 'subg.calanus'],
+            'Acartia (Acartiura) longiremis (Lilljeborg, 1853)': ['acartia', 'longiremis'],
+            'Puccinia graminis f. sp. tritici': ['puccinia', 'graminis', 'tritici'],
+            'Puccinia graminis f.sp. tritici Anon.ined.': ['puccinia', 'graminis', 'tritici'],
+        }
+        for name, parts in cases.items():
+            with self.subTest(name):
+                self.assertEqual(taxon_matching.name_parts(name), parts)
+
+    def test_a_genus_match_for_an_infrageneric_label_is_coarser_and_a_subgenus_is_not_the_genus(self):
+        genus = {'scientificName': 'Taraxacum', 'taxonRank': 'genus'}
+        # Live v2: "Taraxacum sect. Ruderalia" -> HIGHERRANK Taraxacum; "Hieracium subg. Pilosella" -> EXACT genus Pilosella.
+        for label, usage, match_type in (('Taraxacum sect. Ruderalia', genus, 'HIGHERRANK'),
+                                         ('Hieracium subg. Pilosella', {'scientificName': 'Pilosella', 'taxonRank': 'genus'}, 'EXACT'),
+                                         ('Calanus (Calanus)', {'scientificName': 'Calanus', 'taxonRank': 'genus'}, 'EXACT'),
+                                         ('Puccinia graminis f. sp. tritici', {'scientificName': 'Puccinia graminis', 'taxonRank': 'species'},
+                                          'HIGHERRANK')):
+            with self.subTest(label):
+                record = {'label': label, 'parsed': {}, 'match': {'matchType': match_type, 'usage': usage}}
+                self.assertEqual(names.replacement(record, usage, match_type)['kind'], 'coarser')
+                self.assertFalse(names.bulk_acceptable(record, {}))
+        calanus = {'label': 'Calanus', 'parsed': real_parse('Calanus'), 'match': {}}
+        self.assertFalse(names.same_name(calanus, {'scientificName': 'Calanus (Carinocalanus)', 'taxonRank': 'subgenus'}))
+
+
+class HomonymRankTests(SimpleTestCase):
+    def test_a_same_name_usage_at_another_rank_says_so(self):
+        # 568: "Anura indet." with taxonRank order; COL has the order Anura and genus homonyms.
+        usage = lambda key, rank, authorship='': {'id': key, 'scientificName': 'Anura', 'scientificNameAuthorship': authorship,  # noqa: E731
+                                                  'taxonRank': rank, 'matchType': 'EXACT'}
+        record = {'label': 'Anura indet.', 'qualifier': 'indet.', 'source_rank': 'order', 'parsed': real_parse(),
+                  'match': {'matchType': 'EXACT', 'usage': usage('ORD', 'order'),
+                            'alternatives': [usage('G1', 'genus', 'Agassiz, 1846'), usage('G2', 'genus', 'Nicolet, 1847')]}}
+        notes = {choice['usage']['id']: choice['rank_note'] for choice in names.col_choices(record)}
+        self.assertEqual(notes, {'ORD': None, 'G1': 'a genus; your name is an order', 'G2': 'a genus; your name is an order'})
+        # Without a supplied rank, each homonym says that COL has the name at more than one rank.
+        notes = {choice['usage']['id']: choice['rank_note'] for choice in names.col_choices({**record, 'source_rank': None})}
+        self.assertEqual(notes, {'ORD': 'an order; COL has this name at more than one rank',
+                                 'G1': 'a genus; COL has this name at more than one rank',
+                                 'G2': 'a genus; COL has this name at more than one rank'})
+
+
+class SupplyAuthorshipTests(SimpleTestCase):
+    def record(self, authorships, label='Larus canus'):
+        match = {'matchType': 'EXACT', 'usage': {'id': '3SBPZ', 'scientificName': 'Larus canus', 'scientificNameAuthorship': 'Linnaeus, 1758',
+                                                 'taxonRank': 'species'}}
+        return {'label': label, 'parsed': real_parse('Larus canus', 'species'), 'qualifier': None, 'match': match,
+                'source_authorships': authorships}
+
+    def test_bulk_skips_an_exact_match_whose_authorship_differs_from_the_supplied_one(self):
+        # 572: the source column said "Linnaeus 1758"; punctuation, spacing, parentheses and a missing year are not differences.
+        for supplied in ([], ['Linnaeus 1758'], ['(Linnaeus, 1758)'], ['Linnaeus']):
+            with self.subTest(supplied):
+                self.assertTrue(names.bulk_acceptable(self.record(supplied), {}))
+        for supplied in (['Smith'], ['Linnaeus, 1766'], ['Linnaeus 1758', 'Smith']):
+            with self.subTest(supplied):
+                self.assertFalse(names.bulk_acceptable(self.record(supplied), {}))
+        # The label's own authorship counts too.
+        labelled = {**self.record([]), 'label': 'Larus canus Smith', 'parsed': real_parse('Larus canus', 'species', 'Smith')}
+        self.assertFalse(names.bulk_acceptable(labelled, {}))
+
+    def test_collect_records_the_distinct_supplied_authorships(self):
+        state = names.collect_state(read_inputs([('occurrence.csv', b'occurrenceID,scientificName,scientificNameAuthorship\n'
+                                                                    b'a,Larus canus,Linnaeus 1758\nb,Larus canus,Smith\nc,Larus canus,\n')]),
+                                    {'id': 'plan'})
+        self.assertEqual(state['labels'][0]['source_authorships'], ['Linnaeus 1758', 'Smith'])
+
+
+class SpellingCorrectionTests(SimpleTestCase):
+    """A VARIANT match that only corrects spelling in the same place is offered in bulk; any other change needs confirming."""
+
+    def record(self, label, name, rank='species', hints=None, classification=None, match_type='VARIANT', authorship=''):
+        usage = {'id': 'U', 'scientificName': name, 'scientificNameAuthorship': authorship, 'taxonRank': rank,
+                 'classification': classification or {}}
+        parsed = real_parse(label, rank if len(label.split()) > 1 else None)
+        return {'label': label, 'parsed': parsed, 'qualifier': None, 'hints': hints or {}, 'match': {'matchType': match_type, 'usage': usage}}
+
+    def test_spelling_corrections_qualify(self):
+        plants = {'kingdom': 'Plantae'}
+        for label, name, hints, classification in (
+                ('Circium heterophyllum', 'Cirsium heterophyllum', plants, {'kingdom': 'Plantae', 'family': 'Asteraceae'}),  # 569
+                ('Albizzia ferruginea', 'Albizia ferruginea', plants, {'kingdom': 'Plantae'}),  # 558, with the right kingdom
+                ('Trema orientalis', 'Trema orientale', plants, {'kingdom': 'Plantae'}),  # 558: a gender ending
+                ('Bolephtyphantes index', 'Bolephthyphantes index', {'kingdom': 'Animalia', 'class': 'Arachnida'},
+                 {'kingdom': 'Animalia', 'class': 'Arachnida'})):
+            with self.subTest(label):
+                record = self.record(label, name, hints=hints, classification=classification)
+                found = names.change(record, record['match']['usage'], 'VARIANT')
+                self.assertEqual((found['kind'], found['confirm']), ('spelling', False))
+                self.assertTrue(names.spelling_acceptable(record, {}))
+                self.assertFalse(names.bulk_acceptable(record, {}))  # not an exact match
+                decided = names.build_decision(record, {'decision': 'col'}, {'col_release': RELEASE}, by='bulk:spelling')
+                self.assertEqual((decided['scientificName'], decided['corrects']), (name, f'corrects the spelling to {name}'))
+
+    def test_other_changes_need_confirmation(self):
+        animals = {'kingdom': 'Animalia'}
+        cases = (
+            # A plant genus one letter from a copepod genus, with no class or family to place it.
+            (self.record('Calanus', 'Cajanus', rank='genus', hints=animals, classification={'kingdom': 'Plantae'}), 'genus'),
+            (self.record('Calanus', 'Cajanus', rank='genus', hints=animals, classification={'kingdom': 'Animalia'}), 'genus'),
+            # Another epithet in the same genus is another species.
+            (self.record('Parus major', 'Parus minor', hints={'kingdom': 'Animalia'}, classification={'kingdom': 'Animalia'},
+                         match_type='FUZZY'), 'epithet'),
+            # A close spelling without the source's kingdom to agree with (558 tagged its plants Animalia).
+            (self.record('Albizzia ferruginea', 'Albizia ferruginea', hints=animals, classification={'kingdom': 'Plantae'}), 'genus'),
+            (self.record('Albizzia ferruginea', 'Albizia ferruginea', classification={'kingdom': 'Plantae'}), 'genus'),
+        )
+        for record, kind in cases:
+            with self.subTest(record['label'], kind=kind):
+                found = names.change(record, record['match']['usage'], record['match']['matchType'])
+                self.assertEqual((found['kind'], found['confirm']), (kind, True))
+                self.assertFalse(names.spelling_acceptable(record, {}))
+                with self.assertRaisesRegex(names.NameDecisionError, 'Confirm'):
+                    names.build_decision(record, {'decision': 'col'}, {'col_release': RELEASE})
+
+    def test_bulk_spelling_action_lists_from_and_to(self):
+        conversion = SimpleNamespace(plan={'id': 'plan'}, name_review={
+            'plan_id': 'plan', 'decisions': {},
+            'labels': [self.record('Circium heterophyllum', 'Cirsium heterophyllum', hints={'kingdom': 'Plantae'},
+                                   classification={'kingdom': 'Plantae'}),
+                       self.record('Parus major', 'Parus minor', hints={'kingdom': 'Animalia'}, classification={'kingdom': 'Animalia'})]},
+            save=lambda **kwargs: None)
+        self.assertEqual(names.bulk_decide(conversion, 'spelling'), 1)
+        self.assertEqual(list(conversion.name_review['decisions']), ['Circium heterophyllum'])
+        self.assertEqual(conversion.name_review['decisions']['Circium heterophyllum']['by'], 'bulk:spelling')
 
 
 def coarse_match(queries, deadline=None):

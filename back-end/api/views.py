@@ -1158,6 +1158,7 @@ class TaxonNameMatchViewSet(viewsets.ReadOnlyModelViewSet):
                     data['decision'],
                     user=request.user,
                     usage_id=data.get('usage_id'),
+                    confirm_coarser=data.get('confirm_coarser', False),
                     name={
                         key: data.get(key)
                         for key in ('scientificName', 'scientificNameAuthorship', 'taxonRank')

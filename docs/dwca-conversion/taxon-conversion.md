@@ -89,46 +89,94 @@ matched against Catalogue of Life XR through GBIF's v2 matcher
 published. COL usage IDs are kept as provenance in the report and never become
 `taxonID`. `verbatimIdentification` keeps the source text.
 
-**Names keep their rank marker.** COL names come from the v2 usage `name` with
-its trailing authorship removed. They do not come from `canonicalName`, which
-drops "subsp."/"var."/"f." and turns "Betula pubescens subsp. czerepanovii"
-into a different botanical combination. When the authorship is not a plain
-suffix, as in some autonyms, the canonical name is used. The publication
-workflow's matcher shares this behaviour.
+**How COL names are written.** COL names come from the v2 usage `name` with its
+trailing authorship removed, not from `canonicalName`:
 
-**A coarser or different COL name never replaces the user's name by
-default.** Matching compares the asserted name (the parsed name, or the label
-without its qualifier) with each COL usage. Markers, authorship and case are
-ignored. A usage *replaces* the asserted name when it differs from it and any
-of these is true:
+- **Rank markers are kept.** `canonicalName` drops "subsp."/"var."/"f." and turns
+  "Betula pubescens subsp. czerepanovii" into a different botanical combination.
+- **The authorship is not a plain suffix (some autonyms).** The canonical name is
+  used instead.
+- **There is no authorship.** Trailing words the canonical name lacks are dropped,
+  such as an author left in a hybrid formula.
+- **A parenthesised subgenus is kept only for a subgenus itself.** v2 writes
+  "Acartia (Acartiura) longiremis", but the name is published as
+  "Acartia longiremis", as the canonical name and most users write it.
 
-- it is a HIGHERRANK match;
-- it has fewer name parts or a higher rank;
-- it is in another genus.
+The publication workflow's matcher shares these rules.
 
-Real cases include "Calanus" → the phylum Arthropoda, "Trientalis europaea" →
-the genus Lysimachia, and "AmphibiaReptilia sp." → the class Amphibia (an
-"exact" match steered there by the class hint). Genus spelling corrections such
-as Pelecopis → Pelecopsis also count, because a near spelling can also be a
-plant genus ("Calanus" → "Cajanus"). The same name is never a replacement,
-whatever ranks the source supplies: "Larus sp." accepted as the genus Larus
-keeps the user's assertion.
+**Comparing names.** The asserted name is the parsed name, or the label without
+its qualifier. It is compared with each COL usage by its parts: the genus or
+uninomial, an infrageneric epithet with its marker, and the species and lower
+epithets. Rank markers, hybrid signs, authorship and case are ignored.
+
+- "Taraxacum sect. Ruderalia" and "Hieracium subg. Pilosella" keep their
+  infrageneric epithet.
+- A parenthesised subgenus counts only when no species epithet follows it:
+  "Calanus (Calanus)" is the subgenus.
+- "f. sp." is one marker.
+
+The same name is never a change, whatever ranks the source supplies: "Larus sp."
+accepted as the genus Larus keeps the user's assertion. Otherwise the change has
+one of these kinds (`taxon_matching.name_change`):
+
+| Kind | When | Example |
+| --- | --- | --- |
+| coarser | HIGHERRANK match, fewer parts, or a higher rank | "Calanus" → the phylum Arthropoda; "Taraxacum sect. Ruderalia" → Taraxacum |
+| finer | more parts than the user asserted | "Carex nigra" → Carex nigra var. juncea |
+| genus | another genus | "Trientalis europaea" → Lysimachia; "Calanus" → the plant genus Cajanus |
+| epithet | another epithet in the same genus | "Parus major" → "Parus minor" |
+| spelling | see below | Circium → Cirsium; Trema orientalis → Trema orientale |
+
+A change is a **spelling** correction only when all of these hold:
+
+- the match is VARIANT or FUZZY;
+- the name has the same number of parts and the same rank;
+- the epithets are identical, or differ only by a Latin gender ending
+  (-us/-a/-um, -is/-e, -er/-ra/-rum);
+- the genus is at most 2 edits away, or at most 1 edit for a genus of 5 letters
+  or fewer;
+- the usage's kingdom equals the source's kingdom hint, and its class and family
+  equal any class and family hints.
+
+A uninomial also needs a class or family hint to qualify.
 
 The server enforces these rules:
 
-- A replacing usage is never accepted in bulk.
-- A single choice of a replacing usage needs `confirm_coarser: true`.
-- For such names, the suggested action is **Keep my name**.
-- A COL decision saved before this check, which would replace the name and was
-  never confirmed, is not applied at conversion. The review marks it to be made
-  again, and the report lists it under `not_applied`.
+- Every kind except spelling needs the user's explicit confirmation: a single
+  choice needs `confirm_coarser: true`, and such a usage is never accepted in
+  bulk.
+- For those names the suggested action is **Keep my name**.
+- Spelling corrections need no confirmation. They have their own bulk action,
+  "Accept N spelling corrections", which lists each correction as from → to.
+- Exact COL matches are accepted in bulk only when every supplied authorship
+  agrees with COL's. The supplied authorship is the label's own or the
+  `scientificNameAuthorship` column. The comparison ignores punctuation,
+  spacing, parentheses and a missing year. A differing authorship (a homonym, or
+  an author error) is reviewed one name at a time. The spelling bulk action uses
+  the same rule.
+- A COL decision saved before confirmation was required, which would make such
+  a change, is held:
+  - it counts as undecided, so it never settles the scientificName fallback;
+  - it is listed under "Needs review", and a banner gives the count;
+  - at conversion it is applied as **keep**, so the user's own name is published
+    and never an empty one;
+  - the report counts it under `unconfirmed_kept`.
 
 The review lists same-name COL usages (homonyms) inline, with their
-kingdom › phylum › class. It names what a replacing option would do, for
-example "replaces your genus with a phylum", and asks for a second click.
+kingdom › phylum › class. A homonym at another rank says so (for example "Anura"
+the order and the genus). A changing option names what it would do, for example
+"replaces your genus with a phylum", and asks for a second click. Focus moves to
+that click and returns on Cancel. A failed request keeps the confirmation open
+and shows its error next to the row.
+
 **Don't publish a name** (decision `empty`) is a secondary option. It leaves
 `scientificName`, its authorship and its rank empty. The supplied text fills
 `verbatimIdentification` wherever that would otherwise be empty.
+
+The publication workflow's review (`TaxonReviewModal`) uses the same
+confirmation. The serializer exposes `replacements` for the suggestion and for
+each alternative. `decide` refuses such a usage without `confirm_coarser`. A name
+the reviewer searched for and picked is itself an explicit choice.
 
 **Name, rank and authorship are written together.** Whenever a decision writes
 `scientificName`, it also writes the `taxonRank` and authorship that belong to
