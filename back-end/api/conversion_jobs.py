@@ -42,12 +42,16 @@ def classify_failure(exc):
     return ConversionError(message, category=category).as_conflict()
 
 def apply_failure(conversion, record):
-    """Return to review only when a decision can remedy the failure, or a retry can."""
+    """Return to review only when a decision can remedy the failure, or a retry can.
+
+    Internal failures are retryable too: they are converter defects, so the same
+    choices can be converted again once a fix is released. The decisions are kept.
+    """
     conversion.error = record['reason'][:5000]
     conversion.conflicts = [record]
-    conversion.retryable = record['category'] == 'transient'
+    conversion.retryable = record['category'] in {'transient', 'internal'}
     remedy = record['category'] in {'conflict', 'decision'} and record['decision_ids']
-    if conversion.plan and (remedy or record['category'] in {'stale-plan', 'transient'}):
+    if conversion.plan and (remedy or record['category'] in {'stale-plan', 'transient', 'internal'}):
         conversion.status = 'review'
     elif record['category'] in {'source', 'conflict', 'decision'}:
         conversion.status = 'blocked'

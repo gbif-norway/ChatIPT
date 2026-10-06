@@ -131,7 +131,7 @@ occurrenceIDs found in more than one Occurrence extension.
 | `decision` | 716, 719, 932, 982, 1044, duplicate targets | Rejected by `validate_decisions` before queuing. |
 | `conflict` | 989 (scope decisions differ within a merge), event patch conflicts 834/838/841 with row evidence, emitter conflicts in germplasm/legacy | Returned to review only when `decision_ids` contain a real remedy. |
 | `source` | malformed inputs | Status `blocked`: the source must change; no retry offered. A `conflict` or `decision` failure without any remedying decision is also `blocked`. |
-| `internal` | 831 and other invariants | Status `failed`, logged, not retryable (a code defect). |
+| `internal` | 831 and other invariants, unexpected exceptions | Logged as a code defect. Retryable: with a plan it returns to `review` with the choices kept, so the same choices can be converted again once fixed; without a plan, `failed` with retry. |
 | `transient` | storage/network | Status `failed` with retry. |
 
 The job stores structured failures in `conversion.conflicts`:
@@ -168,9 +168,10 @@ The job stores structured failures in `conversion.conflicts`:
 - Every state response includes `unresolved`, `option_status` and `conflicts`.
 - Statuses: `queued`, `inspecting`, `review`, `reviewing`, `converting`,
   `complete`, `blocked` (source must change), `failed` (with `retryable` true for
-  transient and false for internal failures). A transient failure after a plan
-  exists (for example storage while saving output) returns to `review` with
-  `retryable` true, since converting again is the retry.
+  transient and internal failures). A transient or internal failure after a plan
+  exists (for example storage while saving output, or a converter defect at
+  export) returns to `review` with `retryable` true and the decisions kept, since
+  converting again is the retry.
 
 ## Contract for steps 4–5
 

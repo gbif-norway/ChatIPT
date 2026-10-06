@@ -283,13 +283,14 @@ export default function DwcConversion() {
       </> : <p className="small mb-0">Correct the source files and start a new conversion.</p>}
     </div>}
     {state?.status === 'failed' && <div className="alert alert-danger" role="alert">
-      {state.retryable ? 'A temporary problem interrupted this conversion.' : 'The converter hit an internal problem. It has been logged.'} {state.error}
+      {state.retryable && state.conflicts?.[0]?.category !== 'internal' ? 'A temporary problem interrupted this conversion.' : 'The converter hit an internal problem. It has been logged.'} {state.error}
       {state.retryable && <button className="btn btn-sm btn-primary ms-2" disabled={disabled} onClick={() => perform(state.plan?.id ? 'convert' : 'inspect')}>Try again</button>}
     </div>}
     {state?.status === 'review' && state.error && !state.conflicts?.length && <div className="alert alert-warning" role="alert">{state.error}</div>}
     {state?.status === 'review' && state.conflicts?.map(conflict => <div key={conflict.id} className="alert alert-warning" role="alert">
       {conflict.category === 'stale-plan' ? <>{conflict.reason} <button className="btn btn-sm btn-outline-secondary ms-2" disabled={disabled} onClick={() => perform('inspect')}>Inspect again</button></>
         : conflict.category === 'transient' ? <>{conflict.reason} You can convert again.</>
+        : conflict.category === 'internal' ? <>The converter hit an internal problem, which has been logged: {conflict.reason} Your choices are kept, so you can convert again, for example after a fix is released.</>
         : <>The conversion stopped: {conflict.reason} The highlighted choices below can fix this.</>}
     </div>)}
     {!state && <p>Loading conversion…</p>}
