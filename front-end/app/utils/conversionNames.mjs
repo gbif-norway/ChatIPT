@@ -79,7 +79,20 @@ export const bulkActions = (nameReview) => {
       detail: 'names found exactly in Catalogue of Life, written as in your data and without a qualifier such as “sp.” or “cf.”' },
     { bulk: 'parsed', count: summary.bulk_parsed || 0, label: 'parsed splits',
       detail: 'names whose parts (name and authorship) rebuild your text exactly, so nothing is changed or lost' },
+    { bulk: 'spelling', count: summary.bulk_spelling || 0, label: 'spelling corrections',
+      detail: 'Catalogue of Life spellings of your names: a genus a letter or two apart or an epithet with another gender ending, '
+        + 'at the same rank and in the kingdom (and class or family) your data gives',
+      items: (summary.spelling_corrections || []).map(item => `${item.label} → ${item.to}`) },
   ].filter((action) => action.count > 0)
+}
+
+// Earlier COL choices that replace a name with a coarser or different taxon and were never confirmed; null when none.
+export const unconfirmedMessage = (summary) => {
+  const count = summary?.unconfirmed || 0
+  if (!count) return null
+  const choices = count === 1 ? '1 earlier choice needs' : `${count.toLocaleString()} earlier choices need`
+  return `${choices} confirming: ${count === 1 ? 'it replaces a name' : 'they replace names'} with a coarser or different `
+    + 'Catalogue of Life taxon. Until confirmed, your own name is kept. They are listed under “Needs review”.'
 }
 
 // confirmCoarser is the user's second click on a COL name that replaces theirs with a coarser or different taxon;

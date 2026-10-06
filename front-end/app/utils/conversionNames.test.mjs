@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   DECISION_LABELS, bulkActions, bulkBody, checkMessage, choiceGroups, choiceLabel, classificationContext, decisionBody, decisionResult,
-  isChecking, isEditable, pageCount, pageQuery, parseNote, replacementWarning, skippedMessage,
+  isChecking, isEditable, pageCount, pageQuery, parseNote, replacementWarning, skippedMessage, unconfirmedMessage,
 } from './conversionNames.mjs'
 
 // "Calanus" (conversion 566, 1,092 rows) as the server lists it: COL's pick is the phylum, the genus is an alternative.
@@ -40,6 +40,17 @@ test('a coarser COL name is spelled out before it can replace the user name', ()
     { Calanus: { decision: 'col', confirm_coarser: true } })
   assert.deepEqual(decisionBody('p1', 'Calanus', 'alternative', '7NRJ6').name_decisions,
     { Calanus: { decision: 'alternative', usage_id: '7NRJ6' } })
+})
+
+test('earlier unconfirmed choices are announced and spelling corrections list what changes', () => {
+  assert.equal(unconfirmedMessage({ unconfirmed: 0 }), null)
+  assert.equal(unconfirmedMessage(undefined), null)
+  assert.match(unconfirmedMessage({ unconfirmed: 1 }), /^1 earlier choice needs confirming: it replaces a name .* your own name is kept/)
+  assert.match(unconfirmedMessage({ unconfirmed: 3 }), /^3 earlier choices need confirming: they replace names/)
+  const spelling = bulkActions({ summary: { bulk_spelling: 2, spelling_corrections: [
+    { label: 'Circium heterophyllum', to: 'Cirsium heterophyllum' }, { label: 'Trema orientalis', to: 'Trema orientale' }] } })
+  assert.deepEqual(spelling.map(action => [action.bulk, action.count]), [['spelling', 2]])
+  assert.deepEqual(spelling[0].items, ['Circium heterophyllum → Cirsium heterophyllum', 'Trema orientalis → Trema orientale'])
 })
 
 test('"Leave empty" is now "No name published"', () => {

@@ -1,11 +1,11 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import config from '../config'
 import { STATUS_LABELS, formatName } from '../utils/taxonReview.mjs'
 import {
   DECISION_LABELS, PAGE_SIZE, bulkActions, bulkBody, checkMessage, choiceGroups, choiceLabel, decisionBody, decisionResult,
-  isChecking, isEditable, pageCount, pageQuery, parseNote, replacementWarning, skippedMessage,
+  isChecking, isEditable, pageCount, pageQuery, parseNote, replacementWarning, skippedMessage, unconfirmedMessage,
 } from '../utils/conversionNames.mjs'
 
 function Parsed({ entry }) {
@@ -37,41 +37,65 @@ function DecisionCell({ entry, editable, busy, onDecide }) {
   const [more, setMore] = useState(false)
   // A COL choice that replaces the user's name waits here for its confirming second click.
   const [confirming, setConfirming] = useState(null)
+  const [rowError, setRowError] = useState('')
+  const confirmRef = useRef(null)
+  const openerRef = useRef(null)
+  const restoreFocus = useRef(false)
+  useEffect(() => {
+    if (confirming) confirmRef.current?.focus()
+    else if (restoreFocus.current) {
+      restoreFocus.current = false
+      openerRef.current?.focus?.()
+    }
+  }, [confirming])
+
+  // Sends one decision; an error stays next to this row and a pending confirmation stays open.
+  const submit = async (kind, usageId, options) => {
+    const failure = await onDecide(entry.label, kind, usageId, options)
+    setRowError(failure || '')
+    return !failure
+  }
+  const usageIdOf = (choice) => choice.decision === 'alternative' ? choice.usage.id : undefined
+  const choose = (choice) => {
+    if (!choice.replaces) return submit(choice.decision, usageIdOf(choice))
+    openerRef.current = typeof document !== 'undefined' ? document.activeElement : null
+    setConfirming(choice)
+  }
+  const cancel = () => { restoreFocus.current = true; setConfirming(null) }
+  const error = rowError && <div className="text-danger small mt-1" role="alert">{rowError}</div>
+
   if (decision) {
     const result = decisionResult(decision)
     return <div className="small">
       <span className="badge text-bg-primary">{DECISION_LABELS[decision.decision]}</span>
       {result && <div>{result}{decision.taxonRank ? ` (${decision.taxonRank})` : ''}</div>}
       {decision.replaces && <div className="text-warning-emphasis">Confirmed: {decision.replaces}</div>}
+      {decision.corrects && <div className="text-muted">COL {decision.corrects}</div>}
       {entry.decision_unconfirmed && <div className="text-danger-emphasis">
-        This COL name replaces your name with a coarser or different taxon and was never confirmed, so it is not applied. Undo and decide again.</div>}
+        This earlier choice replaces your name with a coarser or different taxon and was never confirmed, so your own name is kept.
+        Confirm it or choose again.</div>}
       {decision.by?.startsWith('bulk') && <div className="text-muted">Accepted in bulk</div>}
-      {editable && <button type="button" className="btn btn-link btn-sm p-0" disabled={busy} onClick={() => onDecide(entry.label, null)}>Undo</button>}
+      {editable && <div className="d-flex flex-wrap gap-1">
+        {entry.decision_unconfirmed && <button type="button" className="btn btn-sm btn-outline-warning" disabled={busy}
+          onClick={() => submit(decision.decision, decision.decision === 'alternative' ? decision.usageId : undefined, { confirmCoarser: true })}>
+          Confirm {decision.scientificName}</button>}
+        {entry.decision_unconfirmed && <button type="button" className="btn btn-sm btn-success" disabled={busy}
+          onClick={() => submit('keep')}>Keep my name</button>}
+        <button type="button" className="btn btn-link btn-sm p-0" disabled={busy} onClick={() => submit(null)}>Undo</button>
+      </div>}
+      {error}
     </div>
   }
   if (!editable) return <span className="badge text-bg-secondary">Not reviewed</span>
   const { main, sameName, others } = choiceGroups(entry)
-  const choose = (choice) => choice.replaces ? setConfirming(choice)
-    : onDecide(entry.label, choice.decision, choice.decision === 'alternative' ? choice.usage.id : undefined)
   const keepFirst = entry.suggested === 'keep'
   const keep = <button type="button" className={`btn btn-sm ${keepFirst ? 'btn-success' : 'btn-outline-secondary'}`} disabled={busy}
-    onClick={() => onDecide(entry.label, 'keep')} title="Copy the supplied text to scientificName where it is empty">Keep my name</button>
-  if (confirming) {
-    return <div className="alert alert-warning small py-2 mb-0" role="alert">
-      {replacementWarning(confirming, entry.rows)}
-      <div className="d-flex flex-wrap gap-1 mt-1">
-        <button type="button" className="btn btn-sm btn-warning" disabled={busy}
-          onClick={() => { onDecide(entry.label, confirming.decision, confirming.decision === 'alternative' ? confirming.usage.id : undefined, { confirmCoarser: true }); setConfirming(null) }}>
-          Replace with {confirming.usage.scientificName}</button>
-        <button type="button" className="btn btn-sm btn-link" onClick={() => setConfirming(null)}>Cancel</button>
-      </div>
-    </div>
-  }
+    onClick={() => submit('keep')} title="Copy the supplied text to scientificName where it is empty">Keep my name</button>
   return <div>
     <div className="d-flex flex-wrap gap-1" role="group" aria-label={`Decision for ${entry.label}`}>
       {keepFirst && keep}
       <button type="button" className="btn btn-sm btn-outline-success" disabled={busy || !entry.offers.parsed}
-        onClick={() => onDecide(entry.label, 'parsed')} title="Write the parsed name to scientificName and its authorship to scientificNameAuthorship">Use split</button>
+        onClick={() => submit('parsed')} title="Write the parsed name to scientificName and its authorship to scientificNameAuthorship">Use split</button>
       {main && (main.replaces
         ? <button type="button" className="btn btn-sm btn-outline-warning" disabled={busy} onClick={() => choose(main)}
           title={`Write ${formatName(main.usage)} instead of your name`}>Use {main.usage.scientificName}… <span className="fw-normal">({main.replaces.text})</span></button>
@@ -80,17 +104,29 @@ function DecisionCell({ entry, editable, busy, onDecide }) {
       {!keepFirst && keep}
       <button type="button" className="btn btn-sm btn-link" aria-expanded={more} onClick={() => setMore(!more)}>{more ? 'Fewer options' : 'More…'}</button>
     </div>
+    {main?.corrects && <div className="small text-muted mt-1">COL {main.corrects}.</div>}
+    {confirming && <div className="alert alert-warning small py-2 mt-1 mb-0" role="alert">
+      {replacementWarning(confirming, entry.rows)}
+      <div className="d-flex flex-wrap gap-1 mt-1">
+        <button ref={confirmRef} type="button" className="btn btn-sm btn-warning" disabled={busy}
+          onClick={async () => { if (await submit(confirming.decision, usageIdOf(confirming), { confirmCoarser: true })) setConfirming(null) }}>
+          Replace with {confirming.usage.scientificName}</button>
+        <button type="button" className="btn btn-sm btn-link" onClick={cancel}>Cancel</button>
+      </div>
+    </div>}
     {sameName.length > 0 && <div className="mt-1">
       <div className="text-muted small">Your name in Catalogue of Life:</div>
       <div className="d-flex flex-column align-items-start gap-1">
         {sameName.map(choice => <button key={choice.usage.id} type="button" className="btn btn-sm btn-outline-success text-start" disabled={busy}
           onClick={() => choose(choice)} title="Write this Catalogue of Life name and authorship">
-          Use {choiceLabel(choice)}{choice.usage.status && choice.usage.status !== 'accepted' ? ` (${choice.usage.status.replace(/_/g, ' ')})` : ''}</button>)}
+          Use {choiceLabel(choice)}{choice.usage.status && choice.usage.status !== 'accepted' ? ` (${choice.usage.status.replace(/_/g, ' ')})` : ''}
+          {choice.rank_note && <span className="text-warning-emphasis"> — {choice.rank_note}</span>}</button>)}
       </div>
     </div>}
+    {error}
     {more && <div className="d-flex flex-wrap align-items-center gap-1 mt-1">
       <button type="button" className="btn btn-sm btn-outline-secondary" disabled={busy}
-        onClick={() => onDecide(entry.label, 'empty')} title="Publish no scientificName; the supplied text fills verbatimIdentification wherever that would otherwise be empty">Don&apos;t publish a name</button>
+        onClick={() => submit('empty')} title="Publish no scientificName; the supplied text fills verbatimIdentification wherever that would otherwise be empty">Don&apos;t publish a name</button>
       {others.length > 0 && <select className="form-select form-select-sm w-auto" aria-label={`Other COL names for ${entry.label}`} value="" disabled={busy}
         onChange={event => {
           const choice = others.find(item => String(item.usage.id) === event.target.value)
@@ -154,6 +190,12 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
     try { await send(body) } catch (err) { setError(err.message) } finally { setBusy(false) }
   }, [send])
 
+  // One row's decision: its error is returned for that row to show instead of the section-wide alert.
+  const actRow = useCallback(async (body) => {
+    setBusy(true)
+    try { await send(body); return null } catch (err) { return err.message } finally { setBusy(false) }
+  }, [send])
+
   if (!nameReview?.summary?.labels && !skippedMessage(nameReview?.summary)) return null
   const { summary } = nameReview
   const message = checkMessage(nameReview)
@@ -162,7 +204,8 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
   const locked = disabled || busy
   const unfinished = summary.checked < summary.labels
   const skipped = skippedMessage(summary)
-  const needsReview = summary.decided < summary.labels || checking || unfinished || nameReview.status === 'error' || Boolean(skipped) || questions.some(question => state.unresolved?.includes(question.id))
+  const held = unconfirmedMessage(summary)
+  const needsReview = summary.decided < summary.labels || Boolean(held) || checking || unfinished || nameReview.status === 'error' || Boolean(skipped) || questions.some(question => state.unresolved?.includes(question.id))
   return <details className="review-disclosure name-review" open={needsReview}>
     <summary><i className={`bi ${needsReview ? 'bi-flower1' : 'bi-check-circle'} me-2`} aria-hidden="true" /><span id="scientific-names-heading">Scientific names</span><small>{checking ? 'Checking…' : skipped ? 'Some names weren’t checked' : nameReview.status === 'error' ? 'Check interrupted' : `${summary.decided.toLocaleString()} of ${summary.labels.toLocaleString()} reviewed`}</small></summary>
     <div className="mt-3">
@@ -176,6 +219,7 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
       verbatimIdentification wherever that would otherwise be empty, and your original files keep everything{questions.length ? ', and names you don\'t decide follow the choice at the end of this section' : ', and names you do not review are converted as they are'}.
       {' '}{summary.decided.toLocaleString()} of {summary.labels.toLocaleString()} names decided, covering {summary.rows.toLocaleString()} rows.
     </p>
+    {held && <div className="alert alert-warning small py-2" role="status">{held}</div>}
     {skippedMessage(summary) && <p className="small text-warning-emphasis">{skippedMessage(summary)}</p>}
     {summary.truncated > 0 && <p className="small text-muted">Only the {summary.labels.toLocaleString()} most frequent names are listed; {summary.truncated.toLocaleString()} others are converted as they are.</p>}
     {message && <div className={`alert alert-${message.variant} small py-2`} role="status">
@@ -185,6 +229,8 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
       {bulk.map(action => confirming === action.bulk
         ? <div key={action.bulk} className="alert alert-success small py-2 mb-0">
           Accept {action.count.toLocaleString()} {action.label}? These are {action.detail}.
+          {action.items?.length > 0 && <ul className="mb-1 mt-1">{action.items.map(item => <li key={item}>{item}</li>)}</ul>}
+          {action.items?.length > 0 && action.items.length < action.count && <div className="text-muted">…and {(action.count - action.items.length).toLocaleString()} more.</div>}
           <button type="button" className="btn btn-sm btn-success ms-2" disabled={locked}
             onClick={async () => { await act(bulkBody(planId, action.bulk)); setConfirming(null) }}>Accept {action.count.toLocaleString()}</button>
           <button type="button" className="btn btn-sm btn-link" onClick={() => setConfirming(null)}>Cancel</button>
@@ -205,7 +251,7 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
           <td><Parsed entry={entry} /></td>
           <td><Match entry={entry} /></td>
           <td><DecisionCell entry={entry} editable={editable} busy={locked}
-            onDecide={(label, kind, usageId, options) => act(decisionBody(planId, label, kind, usageId, options))} /></td>
+            onDecide={(label, kind, usageId, options) => actRow(decisionBody(planId, label, kind, usageId, options))} /></td>
         </tr>)}</tbody></table></div>}
     {pages > 1 && <nav className="d-flex align-items-center gap-2 small" aria-label="Name pages">
       <button type="button" className="btn btn-sm btn-outline-secondary" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button>
