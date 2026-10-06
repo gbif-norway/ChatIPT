@@ -133,13 +133,19 @@ class RealNameTests(SimpleTestCase):
             ("(O.P.Cambridge, 1875)", "(O.P.-Cambridge, 1875)"),
             ("(L.Koch, 1879)", "(L. Koch, 1879)"),
             ("(C.L. Koch, 1844)", "(C. L. Koch)"),
+            ("Koch, 1838", "C.L. Koch, 1838"),  # initials on one side: the same full surname and year
             ("L.", "Linnaeus, 1758"),
+            ("DC.", "de Candolle"),
+            ("Lam.", "Lamarck"),
             ("Fitzinger, 1838", "Fitzinger in Bonaparte, 1838"),
             ("(Müller, 1836)", "(Müller in Van Oort & Müller, 1836)"),
-            ("(Bibron & Bory de St.Vincent, 1833)", "(Bibron & Bory de Saint-Vincent, 1833)"),
             ("Welw. ex Ficalho", "Ficalho"),
             ("Smith et al., 2001", "Smith, Jones & Brown, 2001"),
             ("Hämet-Ahti", "Hamet-Ahti"),
+            ("L.f.", "L. f."),
+            ("F.O.P-Cambridge, 1894", "F. O. Pickard-Cambridge, 1894"),
+            ("(Duméril, Bibron & Duméril, 1854)", "(A. M. C. Duméril, Bibron & A. H. A. Duméril, 1854)"),
+            ("(Bocage, 1866)", "(Barboza du Bocage, 1866)"),
         ]
         disagree = [
             ("(Blackwall, 1841)", "Seo, 2017"),
@@ -148,6 +154,12 @@ class RealNameTests(SimpleTestCase):
             ("Lichtenstein & Martens, 1856", "Lichtenstein, 1856"),
             ("Smith", "Jones"),
             ("Smith", ""),
+            # Short abbreviations, other initials and filius name other authors (review of the first loosening).
+            ("L.", "Lam."), ("L.", "Lamarck"), ("L.", "Lindl."), ("L.", "Ledeb."), ("L.", "Lesson, 1830"),
+            ("S.", "Smith"), ("Fr.", "Franch."), ("Sm.", "Smirnov"), ("L.f.", "Fabricius"), ("L.f.", "L."),
+            ("A.Gray", "Gray"), ("J.E. Gray, 1831", "G.R. Gray, 1831"), ("N.E.Br.", "R.Br."), ("DC.", "A.DC."),
+            ("Rich.", "A.Rich."),
+            ("L. Koch, 1843", "C. L. Koch, 1843"),  # Ludwig Koch and Carl Ludwig Koch (559)
         ]
         for supplied, col in agree:
             with self.subTest(supplied=supplied, col=col):
@@ -156,6 +168,7 @@ class RealNameTests(SimpleTestCase):
         for supplied, col in disagree:
             with self.subTest(supplied=supplied, col=col):
                 self.assertFalse(taxon_matching.authorships_agree(supplied, col))
+                self.assertFalse(taxon_matching.authorships_agree(col, supplied))
 
     def test_names_whose_authorship_is_not_a_suffix_fall_back_to_the_canonical_name(self):
         self.assertEqual(taxon_matching._name_without_authorship(

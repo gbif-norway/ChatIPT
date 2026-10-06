@@ -90,6 +90,10 @@ def split_qualifier(label):
     return name, None
 
 
+# Bump when name comparison (name_parts, name_change, authorships_agree) changes what needs confirming: a saved
+# decision stamped with another version is checked again under the current rules.
+NAME_RULES_VERSION = 1
+
 # Highest first. Ranks outside this list are never compared.
 RANK_ORDER = (
     "domain", "superkingdom", "kingdom", "subkingdom", "infrakingdom", "superphylum", "phylum", "subphylum",
@@ -254,12 +258,36 @@ def coarser_replacement(asserted, usage, match_type=None, asserted_rank=None, hi
     return change if change and change["confirm"] else None
 
 
-def _author_keys(value):
-    """(surname keys, "et al." used) of an authorship: one key per author, the last word of its name.
+# Standard abbreviations too short for prefix matching that name one author unambiguously.
+_AUTHOR_ABBREVIATIONS = {"l.": "linnaeus", "dc.": "candolle"}
+_FILIUS = {"f.", "fil.", "filius", "jr.", "jun.", "fils"}
+_INITIAL = re.compile(r"[A-Z]\.")
 
-    Years, parentheses and given names or initials are dropped, so "(O.P.-Cambridge, 1871)" gives ["cambridge"] like
-    "(O. Pickard-Cambridge, 1871)". For "A ex B" only B, the publishing author, counts. An abbreviated key keeps its
-    full stop ("l.") so it can match a full surname by prefix.
+
+def _author(piece):
+    """(initials, surname, filius) of one author: "C. L. Koch" -> (("c", "l"), "koch", False); None when empty.
+
+    Initials may run into the surname ("L.Koch"). An initial joined to a hyphenated surname is the abbreviated first
+    part of a compound surname: "O.P.-Cambridge" is O. P[ickard]-Cambridge. "L.f." is Linnaeus filius.
+    """
+    tokens = re.findall(r"[^\s.]+\.?", piece)
+    filius = False
+    while tokens and tokens[-1].casefold() in _FILIUS:
+        tokens.pop()
+        filius = True
+    if not tokens:
+        return None
+    surname, rest = tokens[-1], tokens[:-1]
+    if surname.startswith("-") and rest and _INITIAL.fullmatch(rest[-1]):
+        surname = rest.pop() + surname
+    initials = tuple(token[0].casefold() for token in rest if _INITIAL.fullmatch(token))
+    return initials, surname.strip("-").casefold(), filius
+
+
+def _author_keys(value):
+    """(authors, "et al." used) of an authorship, each author as `_author` reads it.
+
+    Years and parentheses are dropped. For "A ex B" only B, the publishing author, counts; for "A in B" only A.
     """
     text = unicodedata.normalize("NFKD", str(value or ""))
     text = "".join(character for character in text if not unicodedata.combining(character))
@@ -269,38 +297,77 @@ def _author_keys(value):
     text = re.sub(r"\bin\b[^(),]*", " ", text)
     et_al = bool(re.search(r"\bet\s+al\b", text, re.IGNORECASE))
     text = re.sub(r"\bet\s+al\b\.?", " ", text, flags=re.IGNORECASE)
-    keys = []
-    for piece in re.split(r"[(),&;:]|\bet\b|\band\b", text):
-        # Initials may run into the surname: "O.P.Cambridge", "L.Koch", "St.Vincent".
-        words = [word for word in re.split(r"[\s\-]+|(?<=\.)", piece) if word]
-        if words:
-            keys.append(words[-1].casefold())
-    return keys, et_al
+    authors = [_author(piece) for piece in re.split(r"[(),&;:]|\bet\b|\band\b", text)]
+    return [author for author in authors if author], et_al
 
 
-def _same_author(left, right):
-    left_stem, right_stem = left.rstrip("."), right.rstrip(".")
-    return (left_stem == right_stem
-            or (left.endswith(".") and len(left_stem) > 0 and right_stem.startswith(left_stem))
-            or (right.endswith(".") and len(right_stem) > 0 and left_stem.startswith(right_stem)))
+def _surname_part(left, right, compound):
+    """One surname (part) against another; an abbreviation matches a full name it begins, if its stem has 3+ letters
+    ("Lam." and "Lamarck"); within a compound any abbreviated part may ("P." in "P.-Cambridge")."""
+    left, right = _AUTHOR_ABBREVIATIONS.get(left, left), _AUTHOR_ABBREVIATIONS.get(right, right)
+    if left == right:
+        return True
+    for short, full in ((left, right), (right, left)):
+        stem = short.rstrip(".")
+        # Within a compound a lone letter is an abbreviation even without its full stop ("F.O.P-Cambridge").
+        abbreviated = short.endswith(".") or (compound and len(stem) == 1)
+        if abbreviated and not full.endswith(".") and len(full) > len(stem) and full.startswith(stem) and (len(stem) >= 3 or (compound and stem)):
+            return True
+    return False
+
+
+def _same_surname(left, right):
+    left_parts, right_parts = left.split("-"), right.split("-")
+    if len(left_parts) == 1 and len(right_parts) == 1:
+        return _surname_part(left, right, compound=False)
+    return (len(left_parts) == len(right_parts) and any(a == b for a, b in zip(left_parts, right_parts))
+            and all(_surname_part(a, b, compound=True) for a, b in zip(left_parts, right_parts)))
+
+
+def _forms(author):
+    """An author as written, and for "O.P.-Cambridge" also as "O.P.Cambridge" (the abbreviated part as an initial)."""
+    initials, surname, filius = author
+    compound = re.fullmatch(r"([a-z])\.-(.+)", surname)
+    return [author] + ([(initials + (compound.group(1),), compound.group(2), filius)] if compound else [])
+
+
+def _same_author(left, right, both_dated):
+    return any(_same_form(a, b, both_dated) for a in _forms(left) for b in _forms(right))
+
+
+def _same_form(left, right, both_dated):
+    (left_initials, left_surname, left_filius), (right_initials, right_surname, right_filius) = left, right
+    if left_filius != right_filius or not _same_surname(left_surname, right_surname):
+        return False
+    if left_initials and right_initials:
+        return left_initials == right_initials  # "J.E. Gray" is not "G.R. Gray"
+    if left_initials or right_initials:
+        # Initials on one side only ("A.Gray" and "Gray" are different botanists): the same full surname and year only.
+        return both_dated and left_surname == right_surname and not left_surname.endswith(".")
+    return True
 
 
 def authorships_agree(left, right):
     """Two authorships name the same authors.
 
-    Years must be equal when both give one. Authors are compared by surname (the last word of each name), so initials,
-    given names, punctuation, spacing and parentheses do not matter, and an abbreviated surname matches by prefix
-    ("L." and "Linnaeus", "O.P.-Cambridge" and "O. Pickard-Cambridge"). "Blackwall" and "Seo, 2017" disagree.
+    Years must be equal when both give one. Each author's surname must match: exactly, by one of a few standard
+    abbreviations ("L." for Linnaeus), or as an abbreviation of 3+ letters ("Lam." and "Lamarck"). Initials given on
+    both sides must be equal; initials on one side only are accepted for the same full surname with the same year.
+    Punctuation, spacing and parentheses do not matter. So "O.P.-Cambridge" agrees with "O. Pickard-Cambridge" and
+    "L.Koch" with "L. Koch", while "L." and "Lam.", "J.E. Gray" and "G.R. Gray", "A.Gray" and "Gray", "Blackwall" and
+    "Seo, 2017" disagree.
     """
     left_years, right_years = re.findall(r"\d{4}", str(left or "")), re.findall(r"\d{4}", str(right or ""))
     if left_years and right_years and left_years != right_years:
         return False
-    (left_keys, left_et_al), (right_keys, right_et_al) = _author_keys(left), _author_keys(right)
-    if not left_keys or not right_keys:
-        return not left_keys and not right_keys
+    both_dated = bool(left_years and right_years)
+    (left_authors, left_et_al), (right_authors, right_et_al) = _author_keys(left), _author_keys(right)
+    if not left_authors or not right_authors:
+        return not left_authors and not right_authors
     if left_et_al or right_et_al:
-        return _same_author(left_keys[0], right_keys[0])
-    return len(left_keys) == len(right_keys) and all(map(_same_author, left_keys, right_keys))
+        return _same_author(left_authors[0], right_authors[0], both_dated)
+    return len(left_authors) == len(right_authors) and all(
+        _same_author(a, b, both_dated) for a, b in zip(left_authors, right_authors))
 
 
 def _remaining(deadline):

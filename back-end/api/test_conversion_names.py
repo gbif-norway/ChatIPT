@@ -653,7 +653,8 @@ class NameDecisionAPITests(NamesCase):
         self.assertEqual(state['carried'], {'decisions': 2, 'bulk_not_carried': 1})
         self.assertEqual(state['decisions']['Eus sp.']['carriedFrom'], old_plan)
         self.run_names()
-        self.assertEqual(self.state()['name_review']['summary']['bulk_col'], 1)
+        review = self.state()['name_review']
+        self.assertEqual((review['summary']['bulk_col'], review['carried']), (1, {'decisions': 2, 'bulk_not_carried': 1}))
 
     def test_names_fill_a_scientific_name_column_the_converter_left_empty(self):
         self.reviewed()
@@ -1233,6 +1234,30 @@ class CarryDecisionTests(SimpleTestCase):
         self.assertNotIn('changeKind', carried['decisions']['Calanus'])
         carried['labels'] = [real_record('Calanus'), {'label': 'Aus bus'}]
         self.assertEqual(names.unconfirmed(carried), {})  # the user's explicit confirmation stands
+        # A carried COL decision is checked against fresh matches, so the names are checked even with checks off.
+        self.assertTrue(carried['requested'])
+        self.assertEqual(carried['carried'], {'decisions': 1, 'bulk_not_carried': 0})
+
+    def test_with_another_source_a_decision_carries_only_where_the_names_context_is_unchanged(self):
+        keep = {'Aus bus': decision('keep', None, source='verbatim'), 'Calanus': decision('keep', None, source='verbatim')}
+        previous = self.conversion(keep)
+        previous.name_review['labels'] = [{'label': 'Calanus', 'hints': {'kingdom': 'Animalia'}}, {'label': 'Aus bus', 'source_rank': 'species'}]
+        fresh = self.fresh()
+        fresh['labels'] = [{'label': 'Calanus', 'hints': {'kingdom': 'Plantae'}}, {'label': 'Aus bus', 'source_rank': 'species'}]
+        self.assertEqual(list(names.carry_decisions(previous, fresh, {'source_sha256': 'sha-2'})['decisions']), ['Aus bus'])
+
+    def test_decisions_checked_under_other_name_rules_are_checked_again(self):
+        record = SpellingCorrectionTests().record('Circium heterophyllum', 'Cirsium heterophyllum', hints={'kingdom': 'Plantae'},
+                                                  classification={'kingdom': 'Plantae'})
+        coarse = names.build_decision(real_record('Calanus'), {'decision': 'col', 'confirm_coarser': True}, {'col_release': RELEASE})
+        self.assertEqual((coarse['changeKind'], coarse['nameRules']), ('coarser', taxon_matching.NAME_RULES_VERSION))
+        # A stamp from other rules that claims "no change" does not hide the replacement.
+        stale = {**coarse, 'changeKind': None, 'nameRules': taxon_matching.NAME_RULES_VERSION - 1}
+        stale.pop('confirmedCoarser')
+        state = {'labels': [real_record('Calanus'), record], 'decisions': {'Calanus': stale}}
+        self.assertEqual(list(names.unconfirmed(state)), ['Calanus'])
+        current = {**stale, 'nameRules': taxon_matching.NAME_RULES_VERSION}
+        self.assertEqual(names.unconfirmed({**state, 'decisions': {'Calanus': current}}), {})
 
 
 class NamePartTests(SimpleTestCase):

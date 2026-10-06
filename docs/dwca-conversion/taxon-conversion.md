@@ -154,21 +154,32 @@ The server enforces these rules:
   A differing authorship (a homonym, or an author error) is reviewed one name at
   a time. The comparison (`taxon_matching.authorships_agree`) works as follows:
   - years must be equal when both give one;
-  - authors are compared by surname, the last word of each name, so initials,
-    given names, punctuation, spacing and parentheses do not matter;
-  - an abbreviated surname matches by prefix: "L." matches "Linnaeus", and
-    "O.P.-Cambridge" matches "O. Pickard-Cambridge";
+  - each author's surname must match:
+    - exactly;
+    - by one of a few standard abbreviations ("L." for Linnaeus, "DC." for
+      de Candolle);
+    - or as an abbreviation of at least 3 letters ("Lam." for Lamarck).
+  - within a compound surname, an abbreviated part may be a single letter, so
+    "O.P.-Cambridge" and "F.O.P-Cambridge" match Pickard-Cambridge;
+  - initials given on both sides must be equal: "J.E. Gray" is not "G.R. Gray",
+    and "L. Koch" is not "C. L. Koch";
+  - initials on one side only are accepted for the same full surname with the
+    same year; "A.Gray" and "Gray" without a year disagree;
+  - "L.f." (filius) is a different author from "L.";
+  - punctuation, spacing and parentheses do not matter;
   - "A in B" counts A, and "A ex B" counts B;
   - "et al." compares the first author only;
   - when COL has no authorship, nothing is overwritten, so it agrees.
 
-  In the 559/572 dumps this keeps 25 of the 43 bulk decisions that an exact
-  comparison rejected; in 568 it keeps 26 of 36. The rest have different years
-  or different authors.
+  In the prod dumps, an exact comparison rejected 43 earlier bulk decisions in
+  559/572 and 36 in 568; this one rejects 19 and 11. The rest have different
+  years, different authors or initials, or differently spelt author names.
 - Every COL decision records the change kind it was checked against
-  (`changeKind`, null for the same name). It is trusted from then on, so an
-  accepted spelling correction is applied as is. Only a legacy snapshot without
-  `changeKind` is checked again, against the record's stored usage.
+  (`changeKind`, null for the same name) and the name rules it was checked
+  under (`nameRules`, `taxon_matching.NAME_RULES_VERSION`). It is trusted from
+  then on, so an accepted spelling correction is applied as is. A snapshot
+  without the stamp, or stamped with other name rules, is checked again against
+  the record's stored usage.
 - A COL decision saved before confirmation was required, which would make such
   a change, is held:
   - it counts as undecided, so it never settles the scientificName fallback;
@@ -188,7 +199,12 @@ and shows its error next to the row.
 A new rule version makes a plan stale, and the re-inspection used to drop every
 name decision.
 - **When decisions carry:** the user's own decisions carry over by label when
-  the source is unchanged (same fingerprint) or yields exactly the same labels.
+  the source is unchanged (same fingerprint). If the source changed but yields
+  exactly the same labels, a decision carries only where that name's hints,
+  supplied rank, supplied authorships and qualifier are unchanged.
+- **Checking again:** when a COL decision is carried, the names are checked
+  again even if name checks are switched off.
+- **Notice:** the name section says how many decisions were kept.
 - **What is not carried:**
   - bulk decisions, because the bulk actions are offered again under the
     current rules;
