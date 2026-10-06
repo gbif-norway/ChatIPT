@@ -89,6 +89,16 @@ test('notices that repeat automatic keep-in-originals choices are dropped, as ar
   assert.deepEqual(dedupeNotices(state, undefined, selected), [])
 })
 
+test('the agent-names notice shows while names are linked and goes once all are kept as text', () => {
+  const plan = { ...state.plan, automatic_choices: [...(state.plan.automatic_choices || []), { id: 'agent-names', default: 'shared', options: [] }] }
+  const agents = { ...state, plan }
+  const notices = [{ id: 'agent-names', title: 'People and organizations named without identifiers', reason: 'Linked 6 mentions of 2 names' }]
+  assert.equal(dedupeNotices(agents, notices, makeSelector(agents, {})).length, 1)
+  assert.deepEqual(dedupeNotices(agents, notices, makeSelector(agents, { 'agent-names': 'text' })), [])
+  // After conversion the notice is read from the report; the saved decision still decides.
+  assert.deepEqual(dedupeNotices({ ...agents, status: 'complete' }, notices, makeSelector(agents, { 'agent-names': 'text' })), [])
+})
+
 test('steps follow the conversion status', () => {
   assert.equal(conversionStep(null).index, 1)
   assert.equal(conversionStep({ status: 'queued' }).index, 1)

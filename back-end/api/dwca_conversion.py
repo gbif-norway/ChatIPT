@@ -591,7 +591,7 @@ def _streamline_plan(archive, core, plan, warnings):
             columns[issue['id']]['review'] = False
         # Unmapped columns are summarised from the column list, so they need no separate notice.
         if ((default == 'preserve' and not issue['id'].startswith('column:')) or (issue['id'] == 'event-grain' and default == 'per_row')
-                or issue.get('convention')):
+                or issue.get('convention') or issue['id'] == AGENT_NAMES_ID):
             notice = {**issue, 'reason': reason, **({'title': issue['convention']['title']} if issue.get('convention') else {})}
             warnings.append({key: value for key, value in notice.items() if key != 'options'})
     plan['issues'] = required
@@ -1024,27 +1024,28 @@ def build_plan(archive):
                     + (f' {zero_quantities} of those rows have a zero count. A zero alone doesn\'t prove absence, so please choose deliberately.' if zero_quantities else ''),
                     [{"value": "present", "label": "Present: the organism was recorded"}, {"value": "absent", "label": "Absent: it was looked for but not found"}],
                     **({'convention': convention} if convention else {})))
-    # Name-only values that are candidates for a mapped agent role link to one agent
+    # Name-only values in any column that can map to an agent role link to one agent
     # per exact name by default: one automatic choice for all names, and one per
-    # repeated name, each of which can keep names as text only.
+    # repeated name, each of which can keep names as text only. Every such column is
+    # counted, so a remapped column's names have a choice too.
     agent_names = Counter()
     for column in columns:
-        target = column['default']
-        if '.' not in target or tuple(target.split('.', 1)) not in ROLE_FIELDS:
+        targets = {column['default'], *(option['value'] for option in column['options'])}
+        if not any('.' in target and tuple(target.split('.', 1)) in ROLE_FIELDS for target in targets):
             continue
         table = archive.tables[column['table']]
-        role = target.split('.', 1)[1]
-        id_term = DWC + role + 'ID'
+        id_term = column['term'] + 'ID'
         id_column = table.terms.index(id_term) if id_term in table.terms else None
         for row in table.rows:
-            if id_column is not None and row[id_column]:
+            # A missing-value token such as "NA" in the ID column is an empty cell.
+            if id_column is not None and row[id_column] and not missing_reference(row[id_column]):
                 continue
             name = agent_name(row[column['column']])
             if name and composite_name_reason(name) is None:
                 agent_names[name] += 1
     if agent_names:
         issues.append(_issue(AGENT_NAMES_ID, 'People and organizations named without identifiers',
-            f'{sum(agent_names.values())} mapped mentions give a name without an identifier ({len(agent_names)} different names). '
+            f'{sum(agent_names.values())} mentions in name columns give a name without an identifier ({len(agent_names)} different names). '
             'Each exact name can become one Agent linked to all its mentions, or every name can stay as text only.',
             [{'value': 'shared', 'label': 'One Agent per exact name, linked to each mention'},
              {'value': 'text', 'label': 'Keep all names without identifiers as text only'}],
@@ -1922,7 +1923,7 @@ def convert(archive, plan, decisions):
         descriptors = TABLE_SPECS[resource_name].field_descriptors
         for number, record in enumerate(rows, start=1):
             for field, identifier in record.items():
-                if not field.endswith('ByID') or field[:-2] not in descriptors or not identifier:
+                if not field.endswith('ByID') or field[:-2] not in descriptors or not identifier or missing_reference(identifier):
                     continue
                 name = record.get(field[:-2], '')
                 if not _single_agent_iri(identifier):

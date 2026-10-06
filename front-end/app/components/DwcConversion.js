@@ -5,7 +5,7 @@ import config from '../config'
 import { getCsrfToken } from '../utils/csrf'
 import { useDataset } from '../contexts/DatasetContext'
 import { attentionItems, chatVisible, conflictsFor, optionState, shownRecommendation, unresolvedIssues } from '../utils/conversionReview.mjs'
-import { conversionTitle, dedupeNotices, makeSelector } from '../utils/conversionPlan.mjs'
+import { AGENT_NAMES_ID, conversionTitle, dedupeNotices, makeSelector } from '../utils/conversionPlan.mjs'
 import { focusDecision } from '../utils/focusDecision'
 import ConversionAiDecisions from './ConversionAiDecisions'
 import ConversionChat from './ConversionChat'
@@ -225,6 +225,8 @@ export default function DwcConversion() {
     ? Object.entries(state.report?.taxonomy?.event_hierarchies || {}).map(([index, hierarchy]) => [index, hierarchy.scientific_consistency])
     : Object.entries(state?.plan?.taxonomy?.scientific_hierarchies || {})
   const scientificAudits = [...(scientific ? [['core', scientific]] : []), ...nestedScientific].filter(([, audit]) => audit)
+  // Per-name agent choices have no effect while every name is kept as text only.
+  const agentNamesOverridden = choice => choice.id.startsWith('agent-share:') && selected(AGENT_NAMES_ID, 'shared') === 'text'
   const notices = dedupeNotices(state, state?.status === 'complete' ? state.report?.warnings || [] : state?.plan?.warnings || [], selected)
   const valueLedger = state?.report?.value_disposition?.source_terms || []
   const semanticFindings = state?.report?.semantic_value_audit?.findings || []
@@ -329,7 +331,7 @@ export default function DwcConversion() {
         <p className="small text-body-secondary mt-3">Review or change the choices already made for your data. Values kept in the original files remain in your download.</p>
         {(state.plan.issues || []).filter(issue => !needsInput.has(issue.id) && !guidedItems.some(item => item.id === issue.id) && !nameQuestionIds.has(issue.id) && (!retainedIssue(issue) || issue.id === `table:${issue.table}`) && !(state.review?.applied || []).includes(issue.id))
           .map(issue => <ChoiceCard key={issue.id} item={issue} {...cardProps} />)}
-        {automaticChoices.filter(choice => !state.plan.columns.some(column => column.id === choice.id) && !guidedItems.some(item => item.id === choice.id) && (!retainedIssue(choice) || choice.id === `table:${choice.table}`)).map(choice => <div className="my-3" key={choice.id} data-decision-id={choice.id}><label htmlFor={choice.id} className="small fw-semibold">{choice.title}</label><p className="small mb-1">{choice.reason}</p><select id={choice.id} className="form-select form-select-sm" disabled={disabled} value={selected(choice.id)} onChange={event => choose(choice.id, event.target.value)}>{choice.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>)}
+        {automaticChoices.filter(choice => !state.plan.columns.some(column => column.id === choice.id) && !guidedItems.some(item => item.id === choice.id) && (!retainedIssue(choice) || choice.id === `table:${choice.table}`)).map(choice => <div className="my-3" key={choice.id} data-decision-id={choice.id}><label htmlFor={choice.id} className="small fw-semibold">{choice.title}</label><p className="small mb-1">{choice.reason}</p>{agentNamesOverridden(choice) && <p className="small text-body-secondary mb-1">Overridden by the setting for all names without identifiers, which keeps them as text only.</p>}<select id={choice.id} className="form-select form-select-sm" disabled={disabled || agentNamesOverridden(choice)} value={selected(choice.id)} onChange={event => choose(choice.id, event.target.value)}>{choice.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>)}
         {state.plan.columns.filter(column => !column.review && !guidedItems.some(item => item.id === column.id) && selected(`table:${column.table}`) !== 'preserve').map(column => <div className="row align-items-center my-3" key={column.id} data-decision-id={column.id}><label htmlFor={column.id} className="col-md-6 small">{state.plan.tables[column.table].name} · {column.term.split('/').pop()}</label><div className="col-md-6"><select id={column.id} className="form-select form-select-sm" disabled={disabled} value={selected(column.id, column.default)} onChange={event => choose(column.id, event.target.value)}>{column.options.map(option => <option key={option.value} value={option.value}>{option.label}{optionState(state, column.id, option.value).available ? '' : ' (not available with your other choices)'}</option>)}</select></div></div>)}
       </details>
       <div className="conversion-action-bar">
@@ -407,7 +409,7 @@ export default function DwcConversion() {
     </div>})}
     {notices.length > 0 && <div className="alert alert-info">
       <p className="mb-1">{notices.length} {notices.length === 1 ? 'notice' : 'notices'} about this conversion. Your original files keep every source value; the report explains what could not be mapped and which values were left out of the mapped tables.</p>
-      <details className="small"><summary>View notices</summary><ul>{notices.map((notice, index) => <li key={`${notice.id}:${index}`}><strong>{notice.title}:</strong> {notice.reason}</li>)}</ul></details>
+      <details className="small"><summary>View notices</summary><ul>{notices.map((notice, index) => <li key={`${notice.id}:${index}`}><strong>{notice.title}:</strong> {notice.reason}{notice.id === AGENT_NAMES_ID && inReview && <> <button type="button" className="btn btn-link btn-sm p-0 align-baseline" onClick={() => focusDecision(AGENT_NAMES_ID)}>Change</button></>}</li>)}</ul></details>
     </div>}
       </div>
     </details>

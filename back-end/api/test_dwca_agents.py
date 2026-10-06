@@ -163,8 +163,14 @@ class AgentRoleTests(SimpleTestCase):
 
     def test_placeholder_names_never_become_agents(self):
         for value in ('unknown', 'Ukjent', 'NA', 'n/a', 'anon', 'Anon.', 'anonymous', '-', '?', 'none', 'NULL',
-                      'not recorded', 'Not  Recorded', 'unknown.', 'N.N.'):
+                      'not recorded', 'Not  Recorded', 'unknown.', 'N.N.',
+                      # Bracketed, role-noun and abbreviated forms (review of 8626525).
+                      '[unknown]', '(unknown)', '[Ukjent]', 'Unknown collector', 'Unknown observer',
+                      'Anonymous collector', 'Ukjent samler', 'Samler ukjent', 'Ikke angitt', 'Ikke kjent', 's. n.',
+                      's.n', 'N.N', 'unknown?', '?unknown', 'Indet.', '<NA>', '"Unknown"', 'Collector'):
             self.assertEqual(composite_name_reason(value), 'placeholder', value)
+        for value in ('Nordmann, Ola', 'N. Nordmann', 'Ole Ukjentsen', 'Indetta Hansen', 'NTNU University Museum'):
+            self.assertIsNone(composite_name_reason(value), value)
         archive = read_inputs([('occurrence.csv',
             b'occurrenceID,eventID,recordedBy,eventDate,occurrenceStatus\n'
             b'o1,e1,Ukjent,2025-01-01,present\no2,e2,Ukjent,2025-01-02,present\no3,e3,NA,2025-01-03,present\n')])
@@ -173,6 +179,54 @@ class AgentRoleTests(SimpleTestCase):
         frames, report = convert(archive, plan, {issue['id']: issue['options'][0]['value'] for issue in plan['issues']})
         self.assertNotIn('agent', frames)
         self.assertEqual(report['agent_roles']['skipped'], {'placeholder': 3})
+
+    def test_doubtful_names_stay_text(self):
+        for value in ('Rosaag?', 'Umlauf ?', 'Zernich?', 'Flage?, Gudmund', 'Ø.O.(Ørjan Olsen?)'):
+            self.assertEqual(composite_name_reason(value), 'uncertain', value)
+        archive = read_inputs([('occurrence.csv',
+            b'occurrenceID,eventID,recordedBy,eventDate,occurrenceStatus\n'
+            b'o1,e1,Rosaag?,2025-01-01,present\no2,e2,Rosaag?,2025-01-02,present\no3,e3,Rosaag,2025-01-03,present\n')])
+        plan = build_plan(archive)
+        names = next(item for item in plan['automatic_choices'] if item['id'] == 'agent-names')
+        self.assertEqual((names['count'], names['names']), (1, 1))
+        frames, report = convert(archive, plan, {issue['id']: issue['options'][0]['value'] for issue in plan['issues']})
+        self.assertEqual(frames['agent']['preferredAgentName'].tolist(), ['Rosaag'])
+        self.assertEqual(report['agent_roles']['skipped'], {'uncertain': 2})
+
+    def test_missing_value_ids_count_as_empty(self):
+        # recordedByID=NA used to skip the mention as id_not_single_iri and lose its name agent.
+        archive = read_inputs([('occurrence.csv',
+            b'occurrenceID,eventID,recordedBy,recordedByID,eventDate,occurrenceStatus\n'
+            b'o1,e1,Ola Nordmann,NA,2025-01-01,present\no2,e2,Ola Nordmann,,2025-01-02,present\n')])
+        plan = build_plan(archive)
+        names = next(item for item in plan['automatic_choices'] if item['id'] == 'agent-names')
+        self.assertEqual((names['count'], names['names']), (2, 1))
+        frames, report = convert(archive, plan, {issue['id']: issue['options'][0]['value'] for issue in plan['issues']})
+        self.assertEqual(frames['agent']['preferredAgentName'].tolist(), ['Ola Nordmann'])
+        self.assertEqual(len(frames['occurrence-agent-role']), 2)
+        self.assertEqual(report['agent_roles']['skipped'], {})
+        self.assertEqual(report['agent_mapping']['non_single_id_cells'], 0)
+
+    def test_name_choice_counts_match_the_linked_mentions_and_raise_a_notice(self):
+        archive = read_inputs([('occurrence.csv',
+            b'occurrenceID,eventID,recordedBy,identifiedBy,eventDate,occurrenceStatus\n'
+            b'o1,e1,Ola Nordmann,Kari Nordmann,2025-01-01,present\no2,e2,Ola Nordmann,,2025-01-02,present\n')])
+        plan = build_plan(archive)
+        names = next(item for item in plan['automatic_choices'] if item['id'] == 'agent-names')
+        notice = next(item for item in plan['warnings'] if item['id'] == 'agent-names')
+        self.assertIn('Linked 3 mentions of 2 names', notice['reason'])
+        self.assertEqual(notice['reason'], names['reason'])
+        choices = {issue['id']: issue['options'][0]['value'] for issue in plan['issues']}
+        frames, report = convert(archive, plan, choices)
+        linked = sum(stats['name'] for stats in report['agent_roles']['fields'].values())
+        self.assertEqual((linked, len(frames['agent'])), (names['count'], names['names']))
+        self.assertIn('agent-names', {item.get('id') for item in report['warnings']})
+        # A column remapped to another agent role was counted too, so its names keep their choice.
+        recorded = next(column for column in plan['columns'] if column['term'].endswith('/recordedBy'))
+        other = next(option['value'] for option in recorded['options']
+                     if option['value'] != recorded['default'] and option['value'].endswith(('By', 'eventConductedBy')))
+        remapped, remapped_report = convert(archive, plan, {**choices, recorded['id']: other})
+        self.assertEqual(sum(stats['name'] for stats in remapped_report['agent_roles']['fields'].values()), names['count'])
 
     def test_explicit_ids_decide_identity_not_names(self):
         other = 'https://orcid.org/0000-0001-5109-3700'
@@ -192,6 +246,9 @@ class AgentRoleTests(SimpleTestCase):
         self.assertEqual(len(roles), 3)
         self.assertEqual(len(set(roles['agent_fk'])), 3)
         self.assertEqual(report['agent_roles']['agents_created']['name'], 1)
+        # The name agent that shares its name with ID agents is reported.
+        self.assertEqual(report['agent_roles']['name_agents_matching_id_agents'], 1)
+        self.assertEqual(report['agent_roles']['name_agents_matching_id_agents_examples'], ['Ola Nordmann'])
         self.assert_package_valid(frames)
 
     def test_explicit_ids_reuse_converter_agents_and_pair_only_one_to_one(self):

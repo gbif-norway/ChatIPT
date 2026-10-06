@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Iterable, Mapping
 
 from api.dwc_dp_specs import TABLE_SPECS
-from api.dwca_hierarchy import EMPTY_REFERENCE_TOKENS
+from api.dwca_hierarchy import EMPTY_REFERENCE_TOKENS, missing_reference
 
 EXAMPLE_LIMIT = 20
 NAME_AGENT_REMARK = ('Name-only source value. One Agent stands for every name-only mention with this exact '
@@ -51,6 +51,34 @@ PLACEHOLDERS = frozenset({
     'not stated', 'no data', 'missing', 'ukjent', 'ukjend', 'okänd', 'ikke oppgitt', 'ikke registrert',
     'n.n.', 'n. n.', 'nn', '?', '??', '-', '--', '.', 's.n.', 'leg.', 'det.',
 }) | EMPTY_REFERENCE_TOKENS
+# A value made of one of these (after brackets, quotes and trailing ?/. are removed and dotted
+# initials such as "s. n." or "N.N" are joined) plus only generic role nouns is a placeholder:
+# "[Ukjent]", "Unknown collector", "Samler ukjent", "Indet.", "<NA>".
+PLACEHOLDER_CORES = frozenset({
+    'unknown', 'unk', 'unkn', 'ukjent', 'ukjend', 'okänd', 'okand', 'unbekannt', 'anonymous', 'anon', 'anonym',
+    'indet', 'nn', 'sn', 'na', 'nan', 'none', 'null', 'nil', 'missing', 'unspecified', 'not recorded',
+    'not available', 'not known', 'not specified', 'not stated', 'no data', 'ikke oppgitt', 'ikke registrert',
+    'ikke angitt', 'ikke kjent', 'ukjent person', 'nicht bekannt',
+})
+ROLE_NOUNS = frozenset({
+    'collector', 'collectors', 'observer', 'observers', 'recorder', 'recorders', 'identifier', 'determiner',
+    'samler', 'innsamler', 'observatør', 'finner', 'leg', 'legit', 'det', 'coll', 'obs', 'person',
+})
+_PLACEHOLDER_EDGES = ' \t[](){}<>"\'“”‘’«»?.!'
+
+
+def is_placeholder_name(text: str) -> bool:
+    """True for empty-cell tokens and "unknown"-style values, with or without role nouns or brackets."""
+    folded = ' '.join(text.casefold().split())
+    if folded in PLACEHOLDERS or folded.rstrip('.') in PLACEHOLDERS:
+        return True
+    words = re.findall(r'[^\W\d_]+', folded.strip(_PLACEHOLDER_EDGES))
+    if not words:
+        return False
+    if all(len(word) == 1 for word in words) and len(words) <= 3:
+        words = [''.join(words)]  # "s. n.", "N.N", "n/a"
+    core = ' '.join(word for word in words if word not in ROLE_NOUNS)
+    return not core or core in PLACEHOLDER_CORES
 # "and" in languages common in GBIF Norway and European archives. Compound
 # surnames such as "Ortega y Gasset" are skipped too: skipping is reported,
 # whereas splitting would invent agents.
@@ -115,11 +143,13 @@ def composite_name_reason(value: str) -> str | None:
     text = value.strip()
     if not text:
         return 'empty'
-    folded = ' '.join(text.casefold().split())
-    if folded in PLACEHOLDERS or folded.rstrip('.') in PLACEHOLDERS:
+    if is_placeholder_name(text):
         return 'placeholder'
     if not any(character.isalpha() for character in text):
         return 'not_a_name'
+    # "Rosaag?" or "Ø.O.(Ørjan Olsen?)" doubts the identity it names.
+    if '?' in text:
+        return 'uncertain'
     if any(separator in text for separator in ('|', ';', '/', '\\', '\n', '\t')):
         return 'delimited_list'
     if _ET_AL.search(text):
@@ -258,6 +288,8 @@ def build_agent_roles(
             'skipped': Counter()}
         for number, record in enumerate(rows, start=1):
             name, identifier = _text(record.get(spec.name_field)), _text(record.get(spec.id_field))
+            if missing_reference(identifier):
+                identifier = ''  # "NA" and similar tokens in a *ByID field are empty cells.
             if not name and not identifier:
                 continue
             stats['mentions'] += 1
@@ -336,6 +368,12 @@ def build_agent_roles(
     result.rows = [EmittedRow('agent', entry['row'], tuple(entry['mentions'])) for entry in new_agents.values()]
     result.rows.extend(role_rows)
 
+    # Name agents whose exact name also names an explicit-ID agent. They are kept apart: only an ID
+    # establishes identity. Counted so reviewers can see how often this happens.
+    id_agent_names = {name for names in id_names.values() for name in names}
+    id_agent_names |= {agent_name(row.get('preferredAgentName')) for row in _records(resources.get('agent'))
+                       if _text(row.get('agentID')) and _text(row.get('preferredAgentName'))}
+    overlap = sorted(name for name in name_mentions if name in id_agent_names)
     repeated = sorted(((name, mentions) for name, mentions in name_mentions.items() if len(mentions) > 1),
                       key=lambda item: (-len(item[1]), item[0]))
     variants = defaultdict(set)
@@ -349,6 +387,8 @@ def build_agent_roles(
         'policy': POLICY,
         'agents_created': {'name': bases['name'], 'explicit_id': bases['explicit_id']},
         'unlinked_name_only': unlinked_mentions,
+        'name_agents_matching_id_agents': len(overlap),
+        'name_agents_matching_id_agents_examples': overlap[:example_limit],
         'explicit_id_agents_reused': len(reused_ids),
         'roles_created': dict(sorted(Counter(row.table for row in role_rows).items())),
         'roles_already_present': already_linked,
