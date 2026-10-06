@@ -437,6 +437,29 @@ class ArchiveTests(SimpleTestCase):
         self.assertEqual((item['mapped_rows'], item['retained_only_rows'], item['retained_reasons']), (5, 1, {'qualifier_not_placeable': 1}))
         self.assertTrue(report['validation']['valid'])
 
+    def test_subgenera_are_name_words_and_unsafe_names_keep_the_qualifier_in_originals(self):
+        from api.dwca_conversion import _qualified_name
+        placed = {
+            # Marine copepods are often written with a subgenus (production datasets 566 and 567).
+            ('Calanus (Calanus) finmarchicus', 'cf.', ''): 'Calanus (Calanus) cf. finmarchicus',
+            ('Calanus (Calanus) finmarchicus', 'sp.', ''): 'Calanus (Calanus) finmarchicus sp.',
+            ('Calanus (Calanus) finmarchicus (Gunnerus, 1770)', 'cf.', ''): 'Calanus (Calanus) cf. finmarchicus (Gunnerus, 1770)',
+            ('Calanus (Calanus) finmarchicus Gunnerus, 1770', 'cf.', 'Gunnerus, 1770'): 'Calanus (Calanus) cf. finmarchicus Gunnerus, 1770',
+            ('Halcyon smyrnensis (Lesson, 1830)', 'aff.', ''): 'Halcyon aff. smyrnensis (Lesson, 1830)',
+            ('Aus bus subsp. bus', 'cf.', ''): 'Aus bus cf. subsp. bus',
+            ('Copepoda indet.', '?', ''): 'Copepoda indet. ?',
+        }
+        for (name, qualifier, authorship), expected in placed.items():
+            with self.subTest(name=name, qualifier=qualifier):
+                self.assertEqual(_qualified_name(name, qualifier, authorship), expected)
+        for name in ['Aus bus complex', 'Aus bus group', 'Aus bus agg.', 'Aus bus s.l.', 'Aus bus larva', 'Aus bus juv.',
+                     'Aus x bus', 'Aus × bus', 'Aus bus L. subsp. cus Smith', 'Aus sp. A', 'Aus sp. 1', 'Aus bus de Candolle',
+                     'Aus bus sensu lato', 'aus bus', 'Aus bus 1842']:
+            with self.subTest(unplaceable=name):
+                self.assertIsNone(_qualified_name(name, 'cf.'))
+        # A supplied authorship must leave only name words before it.
+        self.assertIsNone(_qualified_name('Aus bus complex L.', 'cf.', 'L.'))
+
     def test_qualifiers_that_name_a_part_go_before_it_on_identification_extensions(self):
         """Darwin Core's own identificationQualifier and verbatimIdentification examples, on an Identification extension."""
         archive = read_inputs([

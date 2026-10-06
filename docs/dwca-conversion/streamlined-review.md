@@ -80,9 +80,12 @@ claims without asking users to certify scientific validity.
   follow the name and precede any authorship (`Iguana sp. ?`,
   `Microcalanus spp.`). The authorship is the supplied
   `scientificNameAuthorship` when it ends the name, otherwise text after the
-  name words that starts with `(` or a capital; names with author particles
-  (`de Vries`) or hybrid signs are not split, and their qualifier stays in the
-  originals. A qualifier that names the part it qualifies goes before that part
+  name words that starts with `(` or a capital. A parenthesised subgenus right
+  after the genus is part of the name (`Calanus (Calanus) cf. finmarchicus`).
+  Names with author particles (`de Vries`), hybrid signs, groupings or
+  life-stage words (`complex`, `agg.`, `larva`), designations after `sp.`
+  (`Aus sp. A`) or a rank marker after an author are not split, and their
+  qualifier stays in the originals. A qualifier that names the part it qualifies goes before that part
   (`aff. agrifolia var. oxyadenia` gives `Quercus aff. agrifolia var. oxyadenia
   (Torr.) J.T. Howell`); if that part is not in the name, nothing is built and
   the qualifier stays in the originals. Name text that already contains the
