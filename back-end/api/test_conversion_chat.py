@@ -151,6 +151,26 @@ class ChatTests(ConversionTestCase):
         self.assertEqual([item.answers_through for item in replies], [second.id])
         self.assertFalse(DwcConversionJob.objects.filter(conversion=conversion).exists())
 
+    def test_evidence_tool_failure_is_reported_to_the_model_not_the_turn(self):
+        self.ready()
+        message = self.say('What does the scientific name choice mean?')
+        payloads = []
+        responses = [chat_response([call('get_issue_evidence', {'id': 'column:0:2'}, 'e1')], response_id='r1'),
+                     chat_response(final=final('It decides where the names go.', asked=['column:0:2']), response_id='r2')]
+
+        def respond(payload, max_retries=None):
+            payloads.append(json.loads(json.dumps(payload)))
+            return responses[len(payloads) - 1]
+
+        with patch.object(chat.evidence, 'evidence_packet', side_effect=TypeError("'int' object is not subscriptable")), \
+                patch(QUERY, side_effect=respond):
+            process_next_conversion()
+        outputs = {item['call_id']: json.loads(item['output']) for item in payloads[1]['input'] if item.get('type') == 'function_call_output'}
+        self.assertIn('could not be prepared', outputs['e1']['error'])
+        reply_message = DwcConversionMessage.objects.filter(role='assistant').latest('id')
+        self.assertEqual((reply_message.kind, reply_message.content, reply_message.answers_through),
+                         ('', 'It decides where the names go.', message.id))
+
     def test_invalid_reply_is_retried_once_then_answered_with_a_notice(self):
         self.ready()
         message = self.say('Hi')
@@ -216,16 +236,21 @@ class OpenerTests(ConversionTestCase):
     def test_opener_states_every_open_choice(self):
         # ds570: the opener said "1 choice" while 15 were open, because status:0 has no table.
         self.inspect_only()
+        open_ids = chat.review.open_items(self.conversion)
+        # Before the layout is confirmed, everything else waits on it and is described as such.
+        first = chat.post_questions_opener(self.conversion)
+        self.assertEqual(first.asked, ['loose-links'])
+        self.assertTrue(first.content.startswith(
+            f'I need your help with 1 choice before this archive can be converted. {len(open_ids) - 1} choices depend '
+            'on these answers and will follow.'), first.content)
         self.assertEqual(self.post('save', changes={'loose-links': 'confirm'}).status_code, 200)
-        conversion = self.conversion
-        open_ids = chat.review.open_items(conversion)
+        open_ids = chat.review.open_items(self.conversion)
         labels = [item_id for item_id in open_ids if item_id.startswith('country-label:')]
         self.assertEqual(len(labels), 5)
-        self.assertIn('status:0', open_ids)
-        opener = chat.post_questions_opener(conversion)
-        self.assertTrue(opener.content.startswith(f'{len(open_ids)} choices still need your answer'), opener.content)
-        self.assertIn(f'the other {len(open_ids) - 4} are in the list below', opener.content)
-        self.assertNotIn('I need your help with 1 choice', opener.content)
+        self.assertEqual(set(open_ids), {'status:0', *labels})
+        opener = chat.post_questions_opener(self.conversion)
+        self.assertTrue(opener.content.startswith('6 choices can be answered now. Here are the first 4; 2 more are in the '
+                                                  'list below'), opener.content)
         # The first question comes with related ones from the same table, questions of one kind together.
         self.assertEqual(opener.asked[0], 'status:0')
         self.assertEqual(len(opener.asked), 4)
@@ -234,3 +259,12 @@ class OpenerTests(ConversionTestCase):
         follow_up = chat.post_questions_opener(self.conversion)
         self.assertTrue(set(opener.asked).isdisjoint(follow_up.asked))
         self.assertTrue(set(follow_up.asked) <= set(labels), follow_up.asked)
+
+    def test_opener_with_one_more_choice(self):
+        self.inspect_only()
+        self.assertEqual(self.post('save', changes={'loose-links': 'confirm'}).status_code, 200)
+        label = next(item_id for item_id in chat.review.open_items(self.conversion) if item_id.startswith('country-label:'))
+        self.assertEqual(self.post('save', changes={label: 'preserve'}).status_code, 200)
+        opener = chat.post_questions_opener(self.conversion)
+        self.assertTrue(opener.content.startswith('5 choices can be answered now. Here are the first 4; 1 more is in the '
+                                                  'list below'), opener.content)

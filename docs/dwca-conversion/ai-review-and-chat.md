@@ -140,7 +140,8 @@ a stable `ref` that the model must cite:
   completeness columns (Humboldt kinds); the columns with values in the item's rows
   (row kinds). Questions about one exact source value (`country-label:`,
   `age-remark:`) get the source column plus related columns: country, countryCode,
-  locality, waterBody, stateProvince and other place columns for country labels;
+  locality, waterBody, stateProvince and other named-place columns (never
+  coordinates) for country labels;
   lifeStage, sex, individualCount, organismQuantity and remarks for age remarks.
   Fallback: the 12 most populated columns. `top_values`: up to 10 values
   by count, ties by first occurrence, values ≤ 120 chars.
@@ -608,8 +609,10 @@ conversion; all locking follows §5.9.
 ### 9.2 Openers (deterministic, no model call)
 
 - After a review run with escalated items: one assistant message
-  (`kind="questions"`) that states how many choices are open in total and presents
-  up to 4 related items not yet asked: the first by level, then items of the same
+  (`kind="questions"`) that states how many choices can be answered now (open, not
+  waiting on another answer and not in a conflict, including ones asked earlier),
+  how many more depend on these answers, and presents up to 4 related items not yet
+  asked: the first by level, then items of the same
   kind, then items of the same level or table (`status:<t>` and similar ids resolve
   their table from the id). Each has
   the plain question, the AI recommendation and reason, or "I could not

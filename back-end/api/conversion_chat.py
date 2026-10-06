@@ -192,13 +192,20 @@ def post_questions_opener(conversion):
         return 2
 
     related = sorted((item_id for item_id in candidates if closeness(item_id) < 2), key=closeness)[:OPENER_ITEMS]
-    total = len([item_id for item_id in open_ids if item_id in context.issues])
-    if total <= len(related):
+    # Counted: choices that can be answered now, including ones asked earlier. Choices waiting on
+    # another answer are mentioned separately; conflicting ones have their own opener.
+    askable = [item_id for item_id in open_ids if item_id in context.issues and not context.deferred(item_id)
+               and item_id not in context.conflicts]
+    waiting = len([item_id for item_id in open_ids if item_id in context.issues and context.deferred(item_id)])
+    others = len(askable) - len(related)
+    if others <= 0:
         parts = [f"I need your help with {_choices(len(related))} before this archive can be converted."]
     else:
-        parts = [f"{_choices(total).capitalize()} still need your answer before this archive can be converted. "
+        parts = [f"{_choices(len(askable))} can be answered now. "
                  f"Here {'is the first' if len(related) == 1 else f'are the first {len(related)}'}; "
-                 f"the other {total - len(related)} are in the list below, and I can go through them with you next."]
+                 f"{'1 more is' if others == 1 else f'{others} more are'} in the list below, and I can go through them with you next."]
+    if waiting:
+        parts[0] += f" {_choices(waiting).capitalize()} {'depends' if waiting == 1 else 'depend'} on these answers and will follow."
     proposals = []
     for number, item_id in enumerate(related, 1):
         lines = _question(context, item_id)

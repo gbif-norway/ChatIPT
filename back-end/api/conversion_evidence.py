@@ -49,7 +49,7 @@ KIND_TERMS = {
 # rows that hold that value with these neighbouring columns, so rare values are never unseen.
 VALUE_ROUTE_TERMS = {
     'country-label': ('country', 'countryCode', 'locality', 'waterBody', 'stateProvince', 'county', 'island',
-                      'islandGroup', 'higherGeography', 'continent', 'decimalLatitude', 'decimalLongitude'),
+                      'islandGroup', 'higherGeography', 'continent'),
     'age-remark': ('lifeStage', 'sex', 'individualCount', 'organismQuantity', 'organismQuantityType',
                    'occurrenceRemarks', 'eventRemarks', 'scientificName'),
 }

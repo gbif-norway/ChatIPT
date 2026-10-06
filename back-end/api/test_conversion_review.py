@@ -689,6 +689,8 @@ class EvidenceTests(SimpleTestCase):
         self.assertEqual(headers[0], 'countryCode')
         self.assertTrue({'locality', 'waterBody', 'stateProvince', 'occurrenceID'} <= set(headers))
         self.assertNotIn('extra0', headers)
+        # Precise coordinates are not sent to the model for a place label.
+        self.assertFalse({'decimalLatitude', 'decimalLongitude'} & set(evidence.VALUE_ROUTE_TERMS['country-label']))
         self.assertIn("'Great Britain' in 1 rows: rows 23", refs['value'])
         remark = next((item for item in entries if item['id'].startswith('age-remark:')), None)
         if remark is not None:  # Routing of event remarks belongs to the converter's own rules.
