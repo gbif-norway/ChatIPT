@@ -37,11 +37,11 @@ closed set. Every option gets `assertion: true|false` from
 | `taxonomy-package` | `taxonomy-package` | none (single structural confirmation) |
 | `event-grain` | `event-grain` | `per_row` when supplied eventIDs repeat (splits an identity); `by_id_depth` (splits an event by depth); `by_id` is not |
 | `event-category` | `event-category` | all |
-| `occurrence-status` | `status:t` | all |
+| `occurrence-status` | `status:t` | all (specimen records without any status get `present` as a changeable automatic `convention`, [review policy §6.1](review-policy.md#61-who-may-decide)) |
 | `extension-role` | `table:t` | `media-occurrence`, `media-event` (what media depicts), `humboldt-*` survey roles are not assertions because `hum-category` carries that |
 | `taxon-occurrences` | Taxon `table:t` | `convert` (asserts rows are actual occurrences) |
 | `material-identity` | `material:t` | `per_row`, `by_id` |
-| `column-mapping` | `column:t:c` | none |
+| `column-mapping` | `column:t:c`, `country-label:t:c:sha`, `age-remark:t:c:sha` | none (routing the supplier's own label or remark is an interpretation) |
 | `name-semantics` | `column:*` scientificName ambiguity | none (choice between copying and preserving supplied text) |
 | `external-identifier` | Taxon `taxonID` | the copy option (asserts external meaning) |
 | `row-handling` | `row:t:n`, `row-group:t:k` | none |

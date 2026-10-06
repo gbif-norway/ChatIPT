@@ -5,6 +5,9 @@ converter and supersedes blanket review requirements in the original design
 [review policy](review-policy.md).
 
 Conversion asks a question when it needs an interpretation or a new assertion.
+The AI reviewer may answer interpretations of the supplier's own text, such as
+a country name in `countryCode` or a life stage in `eventRemarks`; only the
+user may answer new assertions ([review policy §6.1](review-policy.md#61-who-may-decide)).
 Faithful copies, deterministic supported mappings and retention of unsupported
 data proceed automatically. Notices explain incomplete or questionable source
 claims without asking users to certify scientific validity.
@@ -51,10 +54,28 @@ claims without asking users to certify scientific validity.
   unresolved or cyclic links remain unavailable.
 - A strictly valid `ecoiri:samplingPerformedBy` goes to the agent identifier
   field, without requiring a second confirmation or creating an agent record.
+- A nonnegative integer `individualCount` becomes `organismQuantity` with
+  `organismQuantityType=individuals` on every converted occurrence, from an
+  Occurrence core or an Occurrence extension, unless the row supplies its own
+  quantity or quantity type.
+- eMoF `measurementTypeID`, `measurementValueID` and `measurementUnitID` go to
+  `assertionTypeIRI`, `assertionValueIRI` and `assertionUnitIRI`. Values that
+  are not absolute IRIs, such as `NA`, are withheld and listed by source row.
+- The pinned DwC-DP has no `identificationQualifier` field. Wherever
+  `verbatimIdentification` is filled from the supplied name, the supplied
+  qualifier follows the name text (`Iguana sp. ?`, `Microcalanus spp.`) unless
+  the name already contains it. `scientificName` never receives the qualifier,
+  and a supplied `verbatimIdentification` is never rewritten.
+- When occurrence rows keep separate events, an eventID that several rows share
+  goes to one parent event holding only that eventID and an eventCategory. The
+  row events link to it, so no eventID repeats; no row details are combined.
+- Specimen records without any occurrence status are `present` by convention
+  (see [review policy §6.1](review-policy.md#61-who-may-decide)). This is a
+  visible automatic choice with a notice and can be changed to `absent`.
 
 ## Decisions that remain
 
-Missing occurrence status, missing event category, loose-file roles/joins,
+Missing occurrence status (except the specimen convention above), missing event category, loose-file roles/joins,
 merging repeated event identities, physical material identity, media subjects,
 molecular/legacy interpretations and subject-changing mappings still require
 input. Zero quantities are highlighted in the missing-status question and do not

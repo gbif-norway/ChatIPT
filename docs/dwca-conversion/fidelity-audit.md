@@ -22,8 +22,15 @@ from their semantic target fields and logged individually in `withheld_values`.
 All source bytes stay in `source-originals.zip`. A zero elevation or depth can be genuine, so it is
 reported without automatic suppression. Source `individualCount` becomes the
 paired occurrence `organismQuantity`/`organismQuantityType=individuals` only
-when it is a nonnegative integer and neither quantity field was supplied.
+when it is a nonnegative integer and neither quantity field was supplied. This
+holds for Occurrence extensions of Event cores as well as Occurrence cores; an
+extension row kept in originals is counted as retained.
 Zero counts never determine occurrence status.
+eMoF vocabulary identifiers (`measurementTypeID`, `measurementValueID`,
+`measurementUnitID`) reach the assertion `*IRI` fields; non-IRI tokens such as
+`NA` are withheld and logged in `withheld_values`. A supplied
+`identificationQualifier` follows the name text in a generated
+`verbatimIdentification` and is reported as a derived verbatim copy.
 The count transformation reports total mapped rows, its deterministic rule,
 and up to 20 exact source/target examples; the existing row crosswalk and
 original archive carry the full row provenance without duplicating every cell
