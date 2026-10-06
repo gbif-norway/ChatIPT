@@ -221,29 +221,44 @@ RANK_MARKERS = {'subsp.', 'ssp.', 'var.', 'subvar.', 'f.', 'fo.', 'forma', 'subf
 NAME_QUALIFIER_WORDS = {'sp.', 'spp.', 'sp', 'spp', 'indet.', 'indet', '?', 'cf.', 'aff.', 'cf', 'aff'}
 # Lowercase words that begin an author string ('de Vries'); a name containing one is not split.
 AUTHOR_PARTICLES = {'de', 'del', 'della', 'der', 'den', 'des', 'di', 'du', 'la', 'le', 'van', 'von', 'zu', 'ex', 'in', 'et', 'non', 'sensu'}
+# Lowercase words that are not epithets: groupings, concept and life-stage notes. A name containing one is not split.
+NOT_EPITHETS = {'complex', 'group', 'grp', 'grp.', 'agg', 'agg.', 's.l.', 's.str.', 's.s.', 'lato', 'stricto', 'auct', 'auct.',
+                'larva', 'larvae', 'juv', 'juv.', 'juvenile', 'juveniles', 'adult', 'nymph', 'pupa', 'egg', 'eggs',
+                'nauplius', 'nauplii', 'copepodite', 'copepodites', 'nov.'}
+HYBRID_MARKERS = {'x', '×'}
 
 
 def _split_authorship(name, authorship=''):
     """(name words, authorship) of supplied name text, or None when it cannot be split safely.
 
-    A supplied scientificNameAuthorship that ends the text is the authorship. Otherwise the
-    name words are a capitalised genus followed by lowercase epithets, rank markers and
-    open-nomenclature words, and what follows must start like an author string: '(' or an
-    uppercase letter ('Gray, 1842', '(Kuhl, 1820)'). Hybrids and author particles are not split.
+    A supplied scientificNameAuthorship that ends the text is the authorship, and the rest
+    must be name words. Otherwise the name words are a capitalised genus, an optional
+    subgenus in parentheses ('Calanus (Calanus) finmarchicus'), then lowercase epithets,
+    rank markers and open-nomenclature words, and what follows must start like an author
+    string: '(' or an uppercase letter ('Gray, 1842', '(Kuhl, 1820)'). Hybrids, author
+    particles, groupings and life-stage words ('complex', 'agg.', 'larva'), designations
+    after 'sp.', and rank markers after an author are not split.
     """
-    if authorship and name.endswith(' ' + authorship):
-        words = name[:-len(authorship) - 1].rstrip().split(' ')
-        return (words, authorship) if words and words[0] else None
+    supplied = bool(authorship) and name.endswith(' ' + authorship)
+    tokens = (name[:-len(authorship) - 1].rstrip() if supplied else name).split(' ')
     word = r"[^\W\d_]+(?:[-'][^\W\d_]+)*"
-    tokens = name.split(' ')
-    if '×' in name or not re.fullmatch(word, tokens[0]) or not tokens[0][0].isupper():
+    if not re.fullmatch(word, tokens[0]) or not tokens[0][0].isupper():
         return None
     end = 1
+    # A single capitalised word in parentheses straight after the genus is a subgenus, not an author.
+    if len(tokens) > 1 and re.fullmatch(r'\(' + word + r'\)', tokens[1]) and tokens[1][1].isupper():
+        end = 2
     while end < len(tokens) and (tokens[end] in RANK_MARKERS or tokens[end] in NAME_QUALIFIER_WORDS
                                  or (re.fullmatch(word, tokens[end]) and tokens[end].islower())):
         end += 1
-    words, author = tokens[:end], ' '.join(tokens[end:])
-    if any(token in AUTHOR_PARTICLES for token in words[1:]) or (author and not (author[0] in '([' or author[0].isupper())):
+    words, author = tokens[:end], authorship if supplied else ' '.join(tokens[end:])
+    if supplied and end != len(tokens):
+        return None
+    if (any(token in AUTHOR_PARTICLES | NOT_EPITHETS for token in words[1:])
+            or any(token.casefold() in HYBRID_MARKERS for token in tokens) or '×' in name
+            # 'Aus sp. A' is an informal designation; 'Aus bus L. subsp. cus' has an infraspecific name after an author.
+            or (author and (words[-1] in {'sp.', 'spp.', 'sp', 'spp'} or not (author[0] in '([' or author[0].isupper())
+                            or any(token in RANK_MARKERS for token in author.split(' '))))):
         return None
     return words, author
 
@@ -271,7 +286,8 @@ def _qualified_name(name, qualifier, authorship=''):
     if split is None:
         return None
     words, author = split
-    if qualifier.rstrip('.') in {'cf', 'aff'} and len(words) > 1 and words[-1] not in NAME_QUALIFIER_WORDS | RANK_MARKERS:
+    if (qualifier.rstrip('.').casefold() in {'cf', 'aff'} and len(words) > 1 and words[-1].islower()
+            and words[-1] not in NAME_QUALIFIER_WORDS | RANK_MARKERS):
         at = len(words) - 2 if len(words) > 2 and words[-2] in RANK_MARKERS else len(words) - 1
         words = [*words[:at], qualifier, *words[at:]]
     else:
