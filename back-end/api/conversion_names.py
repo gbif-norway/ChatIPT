@@ -6,7 +6,8 @@ through the publication workflow's matcher (api.taxon_matching). Results and the
 `DwcConversion.name_review`. Nothing here is required for conversion: network failures only record a status,
 and `convert()` itself never calls a service.
 
-Policy: a suggestion is never written without a user decision. `verbatimIdentification` keeps the source
+Policy: a suggestion is never written without a user decision, and a COL name coarser than or in another genus
+from the user's name only with an explicit confirmation (never in bulk). `verbatimIdentification` keeps the source
 text and is never changed. Only names are published; COL usage ids are provenance in the report, never taxonID.
 Reviewed decisions are applied to the converted frames by `apply_name_decisions`, a pure function.
 """
@@ -18,7 +19,8 @@ from django.conf import settings
 from django.utils import timezone
 
 from api import taxon_matching
-from api.taxon_matching import HINT_RANKS, TaxonServiceError, col_release, match_col, split_qualifier
+from api.taxon_matching import (HINT_RANKS, MAX_ALTERNATIVES, RANK_ORDER, TaxonServiceError, authorships_agree, col_release,
+                                implied_rank, match_col, name_change, name_parts, split_qualifier)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,9 @@ REVIEW_STATUSES = {'review', 'reviewing'}
 # GBIF's parser reports a rank marker rather than a rank; only these are mapped to a DwC taxonRank.
 RANK_MARKERS = {'sp.': 'species', 'subsp.': 'subspecies', 'var.': 'variety', 'f.': 'form',
                 'subvar.': 'subvariety', 'subf.': 'subform', 'agg.': 'species aggregate'}
+CONTEXT_RANKS = ('kingdom', 'phylum', 'class', 'family')
+MAX_AUTHORSHIPS = 5  # distinct supplied authorships kept per label; more is "too many to agree"
+SPELLING_LIST = 200  # spelling corrections listed in the bulk confirmation
 
 
 class NameDecisionError(ValueError):
@@ -75,7 +80,8 @@ def collect_state(archive, plan):
         if target is None or NAME not in table.terms:
             continue
         name_at = table.terms.index(NAME)
-        context_at = {rank: table.terms.index(DWC + rank) for rank in (*HINT_RANKS, 'taxonRank') if DWC + rank in table.terms}
+        context_at = {rank: table.terms.index(DWC + rank) for rank in (*HINT_RANKS, 'taxonRank', 'scientificNameAuthorship')
+                      if DWC + rank in table.terms}
         for row in table.rows:
             label = normal(row[name_at], MAX_LABEL_CHARS)
             if label is None or len(label) > MAX_LABEL_CHARS:
@@ -97,9 +103,12 @@ def collect_state(archive, plan):
         # Context is a matching hint only when the label's rows agree on it.
         context = {rank: next(iter(values)) for rank, values in record['context'].items() if len(values) == 1}
         qualifier = split_qualifier(record['label'])[1]
+        # The supplied authorships, so that accepting COL's in bulk never silently rewrites a different one.
+        authorships = sorted(record['context'].get('scientificNameAuthorship', ()))
         labels.append({'label': record['label'], 'rows': record['rows'], 'tables': record['tables'],
                        'hints': {rank: value for rank, value in context.items() if rank in HINT_RANKS},
-                       'source_rank': context.get('taxonRank', '').lower() or None, 'qualifier': qualifier})
+                       'source_rank': context.get('taxonRank', '').lower() or None, 'qualifier': qualifier,
+                       'source_authorships': authorships[:MAX_AUTHORSHIPS], 'authorships_truncated': len(authorships) > MAX_AUTHORSHIPS})
     return {'plan_id': plan['id'], 'status': 'pending' if labels else 'none', 'error': '', 'runs': 0,
             'truncated': max(len(ordered) - MAX_LABELS, 0),
             'skipped_long': {'labels': len(too_long['hashes']), 'rows': too_long['rows']}, 'col_release': {}, 'labels': labels, 'decisions': {}}
@@ -124,8 +133,9 @@ def name_question_ids(conversion):
 def every_name_decided(conversion):
     state = current(conversion)
     decisions = state.get('decisions') or {}
+    held = unconfirmed(state)
     return (bool(state.get('labels')) and not state.get('truncated') and not (state.get('skipped_long') or {}).get('labels')
-            and all(record['label'] in decisions for record in state['labels']))
+            and all(record['label'] in decisions and record['label'] not in held for record in state['labels']))
 
 
 def settle_name_questions(conversion):
@@ -192,15 +202,83 @@ def parse_names(labels, deadline=None):
 def compact_usage(usage):
     if not usage:
         return None
-    return {key: usage.get(key) for key in ('id', 'scientificName', 'scientificNameAuthorship', 'taxonRank', 'status')}
+    compact = {key: usage.get(key) for key in ('id', 'scientificName', 'scientificNameAuthorship', 'taxonRank', 'status')}
+    # Enough classification to tell same-name homonyms apart ("Calanus" the copepod or the grasshopper).
+    context = {rank: (usage.get('classification') or {}).get(rank) for rank in CONTEXT_RANKS}
+    if any(context.values()):
+        compact['classification'] = {rank: value for rank, value in context.items() if value}
+    return compact
 
 
 def compact_match(summary):
     return {'matchType': summary.get('matchType'), 'status': summary.get('status'), 'confidence': summary.get('confidence'),
             'usage': compact_usage(summary.get('usage')), 'acceptedUsage': compact_usage(summary.get('acceptedUsage')),
             'alternatives': [{**compact_usage(alternative), 'matchType': alternative.get('matchType')}
-                             for alternative in (summary.get('alternatives') or [])[:3]],
+                             for alternative in (summary.get('alternatives') or [])[:MAX_ALTERNATIVES]],
             'hintOnly': bool(summary.get('hintOnly'))}
+
+
+def asserted_name(record):
+    """The name the user asserted: the parsed name when the parser could read the label, else the label without its qualifier."""
+    parsed = record.get('parsed') or {}
+    return parsed['canonical'] if parsed.get('usable') and parsed.get('canonical') else split_qualifier(record['label'])[0]
+
+
+def asserted_rank(record):
+    """The rank of the asserted name, when the name, the parser or same-name COL usages say what it is."""
+    parsed = record.get('parsed') or {}
+    if parsed.get('usable') and parsed.get('rank'):
+        return parsed['rank']
+    parts = name_parts(asserted_name(record))
+    if len(parts) != 1:
+        return implied_rank(parts)
+    match = record.get('match') or {}
+    same = {usage.get('taxonRank') for usage in [match.get('usage') or {}, *(match.get('alternatives') or [])]
+            if usage.get('scientificName') and name_parts(usage['scientificName']) == parts}
+    if len(same) == 1 and None not in same:
+        return same.pop()
+    # A uninomial is at genus rank or above, so a supplied "species" (as for "Larus sp.") says nothing about it.
+    source = record.get('source_rank')
+    return source if source in RANK_ORDER and RANK_ORDER.index(source) <= RANK_ORDER.index('genus') else None
+
+
+def change(record, usage, match_type):
+    """How accepting a COL usage would change the asserted name (see taxon_matching.name_change); None for the same name."""
+    return name_change(asserted_name(record), usage, match_type, asserted_rank(record), record.get('hints'))
+
+
+def replacement(record, usage, match_type):
+    """The change accepting a COL usage would make when it needs explicit confirmation (coarser or different); else None."""
+    found = change(record, usage, match_type)
+    return found if found and found['confirm'] else None
+
+
+def same_name(record, usage):
+    parts = name_parts(asserted_name(record))
+    return bool(parts) and name_parts((usage or {}).get('scientificName')) == parts
+
+
+def authorship_agrees(record, usage):
+    """Every supplied authorship of the label (its column, or the label's own) names COL's authors, or none is supplied."""
+    parsed = record.get('parsed') or {}
+    supplied = [*record.get('source_authorships', ()), *([parsed['authorship']] if parsed.get('usable') and parsed.get('authorship') else [])]
+    if record.get('authorships_truncated'):
+        return False
+    return all(authorships_agree(value, (usage or {}).get('scientificNameAuthorship')) for value in supplied)
+
+
+def unconfirmed(state):
+    """Labels whose saved COL decision would replace the name but was never confirmed (saved before that was required).
+
+    Such a decision is applied as "keep" and the label counts as undecided until it is made again.
+    """
+    records = {record['label']: record for record in state.get('labels', [])}
+    held = {}
+    for label, decision in (state.get('decisions') or {}).items():
+        found = _unconfirmed_replacement(records.get(label) or {'label': label}, decision)
+        if found:
+            held[label] = found
+    return held
 
 
 def _query(record):
@@ -219,7 +297,11 @@ def _checklist(state):
 
 
 def build_decision(record, spec, state, by='user'):
-    """A self-contained snapshot of one decision: later re-checks cannot change what was approved."""
+    """A self-contained snapshot of one decision: later re-checks cannot change what was approved.
+
+    A COL usage that is coarser than, or in another genus from, the asserted name (see `replacement`) is never
+    accepted in bulk, and one user's choice of it needs `confirm_coarser: true`.
+    """
     if not isinstance(spec, dict) or spec.get('decision') not in DECISIONS:
         raise NameDecisionError(f'Choose one of: {", ".join(DECISIONS)}.')
     kind = spec['decision']
@@ -241,9 +323,21 @@ def build_decision(record, spec, state, by='user'):
             usage = next((item for item in match.get('alternatives') or [] if wanted and str(item['id']) == wanted), None)
         if not usage or not usage.get('scientificName'):
             raise NameDecisionError(f'There is no such Catalogue of Life name to accept for "{record["label"]}".')
+        match_type = match.get('matchType') if kind == 'col' else usage.get('matchType')
+        found = change(record, usage, match_type)
+        replaces = found if found and found['confirm'] else None
+        if replaces and by != 'user':
+            raise NameDecisionError(f'"{usage["scientificName"]}" {replaces["text"]} for "{record["label"]}"; it is never accepted in bulk.')
+        if replaces and spec.get('confirm_coarser') is not True:
+            raise NameDecisionError(f'"{usage["scientificName"]}" {replaces["text"]} for "{record["label"]}". '
+                                    'Confirm that replacement explicitly, or keep your name.')
         snapshot.update(source='col', scientificName=usage['scientificName'], scientificNameAuthorship=usage.get('scientificNameAuthorship'),
                         taxonRank=usage.get('taxonRank'), usageId=str(usage['id']) if usage.get('id') is not None else None, taxonomicStatus=usage.get('status'),
-                        matchType=match.get('matchType') if kind == 'col' else usage.get('matchType'), checklist=_checklist(state))
+                        matchType=match_type, checklist=_checklist(state))
+        if replaces:
+            snapshot.update(replaces=replaces['text'], confirmedCoarser=True)
+        elif found:
+            snapshot['corrects'] = found['text']
     return snapshot
 
 
@@ -267,10 +361,24 @@ def set_decisions(conversion, changes):
 
 
 def bulk_acceptable(record, decisions):
-    """Exact COL matches of names written as in the label, with no qualifier such as "sp." or "cf."."""
+    """Exact COL matches of names written as in the label, with no qualifier such as "sp." or "cf.".
+
+    An "exact" match on a coarser or different name (hints can steer the matcher there) is not one, and neither is
+    one whose authorship differs from an authorship the user supplied (a homonym, or an author error to look at).
+    """
     match = record.get('match') or {}
     return (record['label'] not in decisions and match.get('matchType') == 'EXACT' and bool(match.get('usage'))
-            and not match.get('hintOnly') and not record.get('qualifier'))
+            and not match.get('hintOnly') and not record.get('qualifier')
+            and not replacement(record, match['usage'], match.get('matchType')) and authorship_agrees(record, match['usage']))
+
+
+def spelling_acceptable(record, decisions):
+    """COL's suggestion only corrects the spelling of the user's name in the same place (see taxon_matching.name_change)."""
+    match = record.get('match') or {}
+    usage = match.get('usage')
+    found = change(record, usage, match.get('matchType')) if usage else None
+    return (record['label'] not in decisions and bool(found) and found['kind'] == 'spelling' and not match.get('hintOnly')
+            and not record.get('qualifier') and authorship_agrees(record, usage))
 
 
 def parse_acceptable(record, decisions):
@@ -283,7 +391,7 @@ def bulk_decide(conversion, kind):
     state = current(conversion)
     if not state.get('labels'):
         raise NameDecisionError('There are no names to review for this plan.')
-    rules = {'exact_col': ('col', bulk_acceptable), 'parsed': ('parsed', parse_acceptable)}
+    rules = {'exact_col': ('col', bulk_acceptable), 'parsed': ('parsed', parse_acceptable), 'spelling': ('col', spelling_acceptable)}
     if kind not in rules:
         raise NameDecisionError('Unknown bulk action.')
     decision, acceptable = rules[kind]
@@ -316,8 +424,11 @@ def request_check(conversion, refresh=False):
 # Applying decisions ------------------------------------------------------------------------------
 
 def row_source_names(archive, row_crosswalk, frames):
-    """Per output table, the source scientificName text behind each frame row ('' when it has none or the sources disagree).
+    """Per output table, the source name behind each frame row ('' when it has none or the sources disagree).
 
+    Each found name is {'name': source scientificName text, 'authorship': ..., 'rank': ...}, the last two read from the
+    same source row (None when the source table has no such column). An occurrence row and the identification row made from
+    it therefore see the same supplied authorship and rank, whichever output table the converter copied them to.
     A crosswalk entry's `target_row` is the 1-based position in the converted frame (offset-corrected for nested Taxon plans),
     and `source_table_index` indexes the archive's tables.
     """
@@ -331,12 +442,14 @@ def row_source_names(archive, row_crosswalk, frames):
         table = archive.tables[entry['source_table_index']]
         if SOURCE_TABLES.get(table.row_type) is None or NAME not in table.terms:
             continue
-        text = table.rows[entry['source_row'] - 1][table.terms.index(NAME)]
+        row = table.rows[entry['source_row'] - 1]
+        text = row[table.terms.index(NAME)]
         if not normal(text, MAX_LABEL_CHARS):
             continue
         if not names[position]:
-            names[position] = text
-        elif normal(names[position]) != normal(text):
+            names[position] = {'name': text, **{key: row[table.terms.index(DWC + term)] if DWC + term in table.terms else None
+                                                for key, term in (('authorship', 'scientificNameAuthorship'), ('rank', 'taxonRank'))}}
+        elif names[position] is not CONFLICT and normal(names[position]['name']) != normal(text):
             names[position] = CONFLICT
     return {table: ['' if value is CONFLICT else value for value in values] for table, values in found.items()}
 
@@ -344,13 +457,30 @@ def row_source_names(archive, row_crosswalk, frames):
 CONFLICT = object()
 
 
+def _source(value):
+    """(name text, supplied authorship, supplied rank) of one `row_source_names` value; a plain text has no supplied parts."""
+    if isinstance(value, dict):
+        return value.get('name') or '', value.get('authorship'), value.get('rank')
+    return value or '', None, None
+
+
+def _same_text(left, right):
+    return normal(left).casefold() == normal(right).casefold()
+
+
 def apply_name_decisions(frames, name_review, source_names):
     """Overlay reviewed names on converted frames; returns (new frames, report section or None).
 
-    Rows are found by their own source scientificName text (`source_names`: per output table, one text per frame row,
-    from `row_source_names`; never borrowed from a linked row). verbatimIdentification is never read or changed. A decided name replaces
-    scientificName; authorship and rank only fill blank cells (a differing supplied authorship is kept and
-    counted), so supplied values are never overwritten. Unreviewed labels leave the converter's output as it is.
+    Rows are found by their own source scientificName text (`source_names`: per output table, one value per frame row,
+    from `row_source_names`; never borrowed from a linked row). verbatimIdentification is never read or changed.
+    Whenever a decision writes scientificName it also writes a taxonRank and authorship that belong to that name, from the
+    source row, so an occurrence and the identification made from it agree:
+    - a parsed split writes its rank; the supplied authorship is kept (a differing one is counted), the parsed one fills a blank;
+    - a COL name writes COL's rank and authorship; the supplied ones survive only where COL has none for the same name;
+    - "don't publish a name" clears all three; "keep" only fills a blank scientificName with the supplied text.
+    Replaced ranks are counted per entry. A COL decision that replaces the asserted name with a coarser or different taxon
+    and was never explicitly confirmed (decided before that check existed) is applied as "keep": the user's own name is
+    published, never an empty one. Unreviewed labels leave the converter's output as it is.
     """
     from api.dwc_dp_specs import get_table_spec
     state = name_review or {}
@@ -360,24 +490,31 @@ def apply_name_decisions(frames, name_review, source_names):
         return frames, ({'status': state.get('status'), 'labels': 0, 'checked': 0, 'reviewed': 0, 'unreviewed': 0,
                          'skipped_long': skipped, 'decision_counts': {}, 'names': []} if skipped.get('labels') else None)
     decisions = state.get('decisions') or {}
+    records = {record['label']: record for record in state['labels']}
+    held = unconfirmed(state)
     entries = {label: {'label': label, 'decision': decision['decision'], 'source': decision.get('source'),
                        'scientificName': decision.get('scientificName'), 'scientificNameAuthorship': decision.get('scientificNameAuthorship'),
                        'taxonRank': decision.get('taxonRank'), 'colUsageId': decision.get('usageId'), 'checklist': decision.get('checklist'),
                        'matchType': decision.get('matchType'), 'decidedBy': decision.get('by'), 'decidedAt': decision.get('at'),
-                       'rows': {}, 'authorshipKept': 0}
+                       'replaces': decision.get('replaces') or (held.get(label) or {}).get('text'), 'corrects': decision.get('corrects'),
+                       'appliedAs': 'keep' if label in held else decision['decision'],
+                       'notApplied': ('the COL name replaces the supplied name and was never confirmed, so the supplied name was kept'
+                                      if label in held else None),
+                       'rows': {}, 'authorshipKept': 0, 'authorshipReplaced': 0, 'ranksReplaced': {}}
                for label, decision in decisions.items()}
+    applied = {label: {'decision': 'keep'} if label in held else decision for label, decision in decisions.items()}
     result = dict(frames)
     for table in OUTPUT_TABLES:
         frame = frames.get(table)
         # A row without a source name of its own is left untouched.
         verbatim = (source_names or {}).get(table) or []
-        if frame is None or not decisions or not len(frame) or len(verbatim) != len(frame):
+        if frame is None or not applied or not len(frame) or len(verbatim) != len(frame):
             continue
         fields = set(get_table_spec(table).fields)
         positions = defaultdict(list)
         for position, value in enumerate(verbatim):
-            if normal(value) in decisions:
-                positions[normal(value)].append(position)
+            if normal(_source(value)[0]) in applied:
+                positions[normal(_source(value)[0])].append(position)
         if not positions:
             continue
         columns = {}
@@ -390,25 +527,46 @@ def apply_name_decisions(frames, name_review, source_names):
             return columns[field]
 
         for label, rows in positions.items():
-            decision, entry = decisions[label], entries[label]
+            decision, entry = applied[label], entries[label]
             kind = decision['decision']
             entry['rows'][table] = len(rows)
             names, authorship, rank = column('scientificName'), column('scientificNameAuthorship'), column('taxonRank')
+            decided_name, decided_authorship = decision.get('scientificName') or '', decision.get('scientificNameAuthorship') or ''
+            # A COL name that is the asserted name may keep supplied parts COL lacks; a different name may not.
+            keeps_name = kind in {'col', 'alternative'} and same_name(records.get(label) or {'label': label}, {'scientificName': decided_name})
             for position in rows:
-                if names is not None:
-                    if kind == 'keep':
-                        # The supplied text fills a blank scientificName; a name the converter already wrote stands.
-                        names[position] = names[position] if normal(names[position]) else str(verbatim[position])
-                    else:
-                        names[position] = decision['scientificName'] or ''
-                supplied = decision.get('scientificNameAuthorship')
-                if supplied and authorship is not None:
-                    if not normal(authorship[position]):
-                        authorship[position] = supplied
-                    elif normal(authorship[position]) != normal(supplied):
+                text, supplied_authorship, supplied_rank = _source(verbatim[position])
+                if supplied_authorship is None and authorship is not None:
+                    supplied_authorship = authorship[position]
+                if supplied_rank is None and rank is not None:
+                    supplied_rank = rank[position]
+                supplied_authorship, supplied_rank = normal(supplied_authorship), normal(supplied_rank)
+                if kind == 'keep':
+                    # The supplied text fills a blank scientificName; a name the converter already wrote stands.
+                    if names is not None and not normal(names[position]):
+                        names[position] = str(text)
+                    continue
+                if kind == 'empty':
+                    new_authorship, new_rank = '', ''
+                elif kind == 'parsed':
+                    new_authorship = supplied_authorship or decided_authorship
+                    if supplied_authorship and decided_authorship and supplied_authorship != normal(decided_authorship):
                         entry['authorshipKept'] += 1
-                if decision.get('taxonRank') and rank is not None and not normal(rank[position]):
-                    rank[position] = decision['taxonRank']
+                    new_rank = decision.get('taxonRank') or supplied_rank
+                else:
+                    new_authorship = decided_authorship or (supplied_authorship if keeps_name else '')
+                    if supplied_authorship and supplied_authorship != normal(new_authorship):
+                        entry['authorshipReplaced'] += 1
+                    new_rank = decision.get('taxonRank') or (supplied_rank if keeps_name else '')
+                if names is not None:
+                    names[position] = decided_name
+                if authorship is not None:
+                    authorship[position] = new_authorship
+                if rank is not None:
+                    previous = normal(rank[position])
+                    if previous and not _same_text(previous, new_rank):
+                        entry['ranksReplaced'][previous] = entry['ranksReplaced'].get(previous, 0) + 1
+                    rank[position] = new_rank
         changed = frame.copy()
         for field, values in columns.items():
             changed[field] = values
@@ -418,11 +576,23 @@ def apply_name_decisions(frames, name_review, source_names):
         'labels': len(state['labels']), 'checked': sum(1 for record in state['labels'] if checked(record)),
         'not_reviewed_limit': state.get('truncated', 0), 'skipped_long': state.get('skipped_long'), 'reviewed': len(decisions), 'unreviewed': len(state['labels']) - len(decisions),
         'decision_counts': dict(Counter(decision['decision'] for decision in decisions.values())),
+        'ranks_replaced': sum(sum(entry['ranksReplaced'].values()) for entry in entries.values()),
+        'unconfirmed_kept': len(held),
         'policy': 'Decisions apply to rows by their own source scientificName text; verbatimIdentification is never changed. Names only are published; COL usage ids are provenance, not taxonID. '
+                  'A decided name is written with its own taxonRank and authorship on occurrence and identification rows alike; replaced ranks are counted. '
+                  'A COL name coarser than or different from the supplied name is applied only when the user confirmed it; '
+                  'an unconfirmed one keeps the supplied name. '
                   'Unreviewed labels are exactly as the converter produced them.',
         'entries': [entries[label] for label in sorted(entries)],
     }
     return result, section
+
+
+def _unconfirmed_replacement(record, decision):
+    """The replacement an older COL decision would make without the explicit confirmation it now needs; None otherwise."""
+    if decision.get('decision') not in {'col', 'alternative'} or decision.get('confirmedCoarser'):
+        return None
+    return replacement(record, {'scientificName': decision.get('scientificName'), 'taxonRank': decision.get('taxonRank')}, decision.get('matchType'))
 
 
 def public_report(report):
@@ -435,27 +605,73 @@ def public_report(report):
 
 # State -------------------------------------------------------------------------------------------
 
-def _entry(record, decisions):
+def col_choices(record):
+    """Every COL usage the user may pick, with whether it is the asserted name and what it would replace."""
+    match = record.get('match') or {}
+    usages = [('col', match.get('usage'), match.get('matchType'))]
+    usages += [('alternative', alternative, alternative.get('matchType')) for alternative in match.get('alternatives') or []]
+    choices = []
+    for kind, usage, match_type in usages:
+        if not usage or not usage.get('scientificName'):
+            continue
+        found = change(record, usage, match_type)
+        choices.append({'decision': kind, 'usage': usage, 'matchType': match_type, 'same_name': same_name(record, usage),
+                        'replaces': found if found and found['confirm'] else None,
+                        'corrects': found['text'] if found and found['kind'] == 'spelling' else None, 'rank_note': None})
+    # Homonyms of the user's name at another rank ("Anura" the order and the genus) say so.
+    mine = asserted_rank(record)
+    ranks = {choice['usage'].get('taxonRank') for choice in choices if choice['same_name']}
+    for choice in choices:
+        rank = choice['usage'].get('taxonRank')
+        if choice['same_name'] and rank and mine and rank != mine:
+            choice['rank_note'] = f'{_article(rank)} {rank}; your name is {_article(mine)} {mine}'
+        elif choice['same_name'] and rank and not mine and len(ranks) > 1:
+            choice['rank_note'] = f'{_article(rank)} {rank}; COL has this name at more than one rank'
+    return choices
+
+
+def _article(word):
+    return 'an' if str(word)[:1] in 'aeiou' else 'a'
+
+
+def _entry(record, decisions, held=()):
     parsed, match = record.get('parsed'), record.get('match')
     usage = (match or {}).get('usage') or {}
-    return {**record, 'checked': checked(record), 'decision': decisions.get(record['label']),
+    choices = col_choices(record)
+    main = next((choice for choice in choices if choice['decision'] == 'col'), None)
+    decision = decisions.get(record['label'])
+    return {**record, 'checked': checked(record), 'decision': decision,
+            # An older decision for a coarser or different COL name: the user's name is kept until it is made again.
+            'decision_unconfirmed': record['label'] in held,
             'rank_mismatch': bool(record.get('source_rank') and usage.get('taxonRank') and record['source_rank'] != usage['taxonRank']),
             'offers': {'parsed': bool(parsed and parsed.get('usable')), 'col': bool(usage.get('scientificName'))},
-            'bulk': {'col': bulk_acceptable(record, decisions), 'parsed': parse_acceptable(record, decisions)}}
+            'col_choices': choices,
+            # COL's own pick replaces the user's name with a coarser or different taxon: keeping the name is the safe default.
+            'suggested': 'keep' if main and main['replaces'] else None,
+            'bulk': {'col': bulk_acceptable(record, decisions), 'parsed': parse_acceptable(record, decisions),
+                     'spelling': spelling_acceptable(record, decisions)}}
 
 
 def state_section(conversion, offset=0, limit=PAGE_SIZE, view='all'):
-    """Bounded name-review state: summary counts and one page of labels."""
+    """Bounded name-review state: summary counts and one page of labels.
+
+    A label whose saved decision is unconfirmed (see `unconfirmed`) counts as undecided and is listed as pending.
+    """
     state = current(conversion)
     labels = state.get('labels', [])
     decisions = state.get('decisions', {})
+    held = unconfirmed(state)
     statuses = Counter((record.get('match') or {}).get('status') for record in labels if checked(record))
+    spelling = [record for record in labels if spelling_acceptable(record, decisions)]
     summary = {'labels': len(labels), 'rows': sum(record['rows'] for record in labels), 'checked': sum(1 for record in labels if checked(record)),
-               'decided': len(decisions), 'truncated': state.get('truncated', 0),
+               'decided': len(decisions) - len(held), 'unconfirmed': len(held), 'truncated': state.get('truncated', 0),
                'skipped_long': state.get('skipped_long') or {'labels': 0, 'rows': 0}, 'max_label_chars': MAX_LABEL_CHARS, 'match_status': dict(statuses),
                'bulk_col': sum(1 for record in labels if bulk_acceptable(record, decisions)),
-               'bulk_parsed': sum(1 for record in labels if parse_acceptable(record, decisions))}
-    shown = [record for record in labels if view != 'pending' or record['label'] not in decisions]
+               'bulk_parsed': sum(1 for record in labels if parse_acceptable(record, decisions)),
+               'bulk_spelling': len(spelling),
+               'spelling_corrections': [{'label': record['label'], 'to': record['match']['usage']['scientificName']}
+                                        for record in spelling[:SPELLING_LIST]]}
+    shown = [record for record in labels if view != 'pending' or record['label'] not in decisions or record['label'] in held]
     offset = max(int(offset), 0)
     limit = min(max(int(limit), 1), MAX_PAGE_SIZE)
     from api.models import DwcConversionJob
@@ -465,7 +681,7 @@ def state_section(conversion, offset=0, limit=PAGE_SIZE, view='all'):
             # scientificName questions shown inside the name check instead of as separate choices.
             'question_ids': name_question_ids(conversion),
             'page': {'offset': offset, 'limit': limit, 'total': len(shown), 'view': view},
-            'labels': [_entry(record, decisions) for record in shown[offset:offset + limit]]}
+            'labels': [_entry(record, decisions, held) for record in shown[offset:offset + limit]]}
 
 
 # Job ---------------------------------------------------------------------------------------------

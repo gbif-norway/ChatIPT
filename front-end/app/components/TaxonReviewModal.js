@@ -176,8 +176,15 @@ function Suggestion({ row }) {
 
 function DecisionCell({ row, busy, onDecide, editable }) {
   const [mode, setMode] = useState(null)
+  // A COL name that is coarser than or different from the label waits for a confirming second click.
+  const [confirming, setConfirming] = useState(null)
+  const confirmRef = useRef(null)
+  useEffect(() => { if (confirming) confirmRef.current?.focus() }, [confirming])
   const alternatives = row.match?.alternatives || []
   const disabled = busy
+  const accept = (usage, replaces, payload) => replaces
+    ? setConfirming({ usage, replaces, payload })
+    : onDecide(row, payload)
 
   if (!editable) {
     const decided = row.decided_usage
@@ -206,10 +213,11 @@ function DecisionCell({ row, busy, onDecide, editable }) {
   return (
     <div>
       <div className="d-flex flex-wrap gap-1" role="group" aria-label={`Decision for ${row.verbatim_label}`}>
-        <button type="button" className="btn btn-sm btn-outline-success" disabled={disabled || !row.match?.usage}
-          onClick={() => onDecide(row, { decision: 'accepted' })}
+        <button type="button" className={`btn btn-sm ${row.replacements?.suggestion ? 'btn-outline-warning' : 'btn-outline-success'}`}
+          disabled={disabled || !row.match?.usage}
+          onClick={() => accept(row.match.usage, row.replacements?.suggestion, { decision: 'accepted' })}
           title="Use the suggested Catalogue of Life name">
-          Accept
+          Accept{row.replacements?.suggestion ? '…' : ''}
         </button>
         <button type="button" className={`btn btn-sm btn-outline-secondary${mode === 'other' ? ' active' : ''}`}
           disabled={disabled} onClick={() => setMode(mode === 'other' ? null : 'other')}
@@ -227,21 +235,37 @@ function DecisionCell({ row, busy, onDecide, editable }) {
           Keep original
         </button>
       </div>
+      {confirming && (
+        <div className="alert alert-warning small py-2 mt-2 mb-0" role="alert">
+          “{confirming.usage.scientificName}” {confirming.replaces.text} for “{row.verbatim_label}”.
+          <div className="d-flex flex-wrap gap-1 mt-1">
+            <button ref={confirmRef} type="button" className="btn btn-sm btn-warning" disabled={disabled}
+              onClick={async () => { if (await onDecide(row, { ...confirming.payload, confirm_coarser: true })) setConfirming(null) }}>
+              Replace with {confirming.usage.scientificName}
+            </button>
+            <button type="button" className="btn btn-sm btn-link" onClick={() => setConfirming(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
       {mode === 'other' && (
         <div className="mt-2">
           {alternatives.length > 0 && (
             <div className="d-flex flex-wrap gap-1 mb-2">
-              {alternatives.map((alternative) => (
-                <button key={alternative.id} type="button" className="btn btn-sm btn-outline-primary"
-                  disabled={disabled}
-                  onClick={() => onDecide(row, { decision: 'accepted', usage_id: alternative.id })}>
-                  {formatName(alternative)} <span className="opacity-75">({alternative.taxonRank})</span>
-                </button>
-              ))}
+              {alternatives.map((alternative) => {
+                const replaces = row.replacements?.alternatives?.[String(alternative.id)]
+                return (
+                  <button key={alternative.id} type="button" className={`btn btn-sm ${replaces ? 'btn-outline-warning' : 'btn-outline-primary'}`}
+                    disabled={disabled} title={replaces ? replaces.text : undefined}
+                    onClick={() => accept(alternative, replaces, { decision: 'accepted', usage_id: alternative.id })}>
+                    {formatName(alternative)} <span className="opacity-75">({alternative.taxonRank})</span>{replaces ? '…' : ''}
+                  </button>
+                )
+              })}
             </div>
           )}
+          {/* A name the reviewer searched for and picked is itself the explicit choice, so it is sent confirmed. */}
           <TaxonSearch disabled={disabled}
-            onPick={(usageId) => onDecide(row, { decision: 'accepted', usage_id: usageId })} />
+            onPick={(usageId) => onDecide(row, { decision: 'accepted', usage_id: usageId, confirm_coarser: true })} />
         </div>
       )}
       {mode === 'not_in_col' && (
@@ -342,8 +366,10 @@ export default function TaxonReviewModal({ datasetId, scope, show, onClose, onDo
     setError(null)
     try {
       replaceRows([await postJson(`/api/taxon-matches/${row.id}/decide/`, payload)])
+      return true
     } catch (err) {
       setError(`${row.verbatim_label}: ${err.message}`)
+      return false
     } finally {
       setBusyIds((current) => {
         const next = new Set(current)

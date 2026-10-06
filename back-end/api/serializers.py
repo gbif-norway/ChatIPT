@@ -42,12 +42,13 @@ class TaxonNameMatchSerializer(serializers.ModelSerializer):
     suggestion_status = serializers.CharField(read_only=True)
     preprocessed = serializers.SerializerMethodField()
     bulk_acceptable = serializers.SerializerMethodField()
+    replacements = serializers.SerializerMethodField()
 
     class Meta:
         model = TaxonNameMatch
         fields = [
             'id', 'dataset', 'verbatim_label', 'context_key', 'context_note', 'record_count',
-            'source_table', 'context_column', 'query', 'preprocessing_note', 'preprocessed', 'bulk_acceptable',
+            'source_table', 'context_column', 'query', 'preprocessing_note', 'preprocessed', 'bulk_acceptable', 'replacements',
             'identification_qualifier',
             'match', 'suggestion_status', 'review_aids', 'col_release', 'matched_at',
             'decision', 'decided_usage', 'decided_by', 'decided_at', 'applied_at',
@@ -62,6 +63,11 @@ class TaxonNameMatchSerializer(serializers.ModelSerializer):
         from api.taxon_matching import bulk_acceptable
         return bulk_acceptable(obj)
 
+    def get_replacements(self, obj):
+        # What accepting the suggestion or an alternative would replace; such a choice needs confirm_coarser.
+        from api.taxon_matching import choice_replacements
+        return choice_replacements(obj)
+
 
 class TaxonDecisionSerializer(serializers.Serializer):
     decision = serializers.ChoiceField(choices=TaxonNameMatch.Decision.choices)
@@ -69,6 +75,7 @@ class TaxonDecisionSerializer(serializers.Serializer):
     scientificName = serializers.CharField(required=False, allow_blank=True)
     scientificNameAuthorship = serializers.CharField(required=False, allow_blank=True)
     taxonRank = serializers.CharField(required=False, allow_blank=True)
+    confirm_coarser = serializers.BooleanField(required=False, default=False)
 
 
 class TablePageQuerySerializer(serializers.Serializer):

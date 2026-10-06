@@ -1,6 +1,61 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { bulkActions, bulkBody, checkMessage, decisionBody, decisionResult, isChecking, isEditable, pageCount, pageQuery, parseNote, skippedMessage } from './conversionNames.mjs'
+import {
+  DECISION_LABELS, bulkActions, bulkBody, checkMessage, choiceGroups, choiceLabel, classificationContext, decisionBody, decisionResult,
+  isChecking, isEditable, pageCount, pageQuery, parseNote, replacementWarning, skippedMessage, unconfirmedMessage,
+} from './conversionNames.mjs'
+
+// "Calanus" (conversion 566, 1,092 rows) as the server lists it: COL's pick is the phylum, the genus is an alternative.
+const coarser = { decision: 'col', same_name: false, matchType: 'HIGHERRANK',
+  usage: { id: 'RT', scientificName: 'Arthropoda', taxonRank: 'phylum', classification: { kingdom: 'Animalia', phylum: 'Arthropoda' } },
+  replaces: { kind: 'coarser', text: 'replaces your genus with a phylum' } }
+const leach = { decision: 'alternative', same_name: true, replaces: null, matchType: 'EXACT',
+  usage: { id: '7NRJ6', scientificName: 'Calanus', scientificNameAuthorship: 'Leach, 1816', taxonRank: 'genus', status: 'accepted',
+    classification: { kingdom: 'Animalia', phylum: 'Arthropoda', class: 'Copepoda', family: 'Calanidae' } } }
+const saussure = { ...leach, usage: { ...leach.usage, id: '8NMRP', scientificNameAuthorship: 'Saussure, 1862', status: 'synonym',
+  classification: { kingdom: 'Animalia', phylum: 'Arthropoda', class: 'Insecta' } } }
+const cajanus = { decision: 'alternative', same_name: false, matchType: 'VARIANT',
+  usage: { id: '9CK8F', scientificName: 'Cajanus', scientificNameAuthorship: 'Adans.', taxonRank: 'genus', classification: { kingdom: 'Plantae' } },
+  replaces: { kind: 'genus', text: 'replaces your name with Cajanus' } }
+const calanus = { label: 'Calanus', rows: 1092, suggested: 'keep', col_choices: [coarser, leach, saussure, cajanus] }
+
+test('exact same-name COL names are listed inline with their classification; coarser and other names are not', () => {
+  const groups = choiceGroups(calanus)
+  assert.equal(groups.main, coarser)
+  assert.deepEqual(groups.sameName.map(choice => choice.usage.id), ['7NRJ6', '8NMRP'])
+  assert.deepEqual(groups.others.map(choice => choice.usage.id), ['9CK8F'])
+  assert.equal(choiceLabel(leach), 'Calanus Leach, 1816 · genus · Animalia › Arthropoda › Copepoda')
+  assert.equal(classificationContext(saussure.usage), 'Animalia › Arthropoda › Insecta')
+  assert.equal(classificationContext({}), '')
+  assert.deepEqual(choiceGroups({}), { main: null, sameName: [], others: [] })
+  // An alternative that repeats COL's own pick is not offered twice.
+  assert.deepEqual(choiceGroups({ col_choices: [{ ...leach, decision: 'col' }, leach] }).sameName, [])
+})
+
+test('a coarser COL name is spelled out before it can replace the user name', () => {
+  assert.equal(replacementWarning(coarser, 1092),
+    '“Arthropoda” replaces your genus with a phylum on 1,092 rows. Your text stays in verbatimIdentification.')
+  assert.equal(replacementWarning(leach, 1092), '')
+  assert.deepEqual(decisionBody('p1', 'Calanus', 'col', undefined, { confirmCoarser: true }).name_decisions,
+    { Calanus: { decision: 'col', confirm_coarser: true } })
+  assert.deepEqual(decisionBody('p1', 'Calanus', 'alternative', '7NRJ6').name_decisions,
+    { Calanus: { decision: 'alternative', usage_id: '7NRJ6' } })
+})
+
+test('earlier unconfirmed choices are announced and spelling corrections list what changes', () => {
+  assert.equal(unconfirmedMessage({ unconfirmed: 0 }), null)
+  assert.equal(unconfirmedMessage(undefined), null)
+  assert.match(unconfirmedMessage({ unconfirmed: 1 }), /^1 earlier choice needs confirming: it replaces a name .* your own name is kept/)
+  assert.match(unconfirmedMessage({ unconfirmed: 3 }), /^3 earlier choices need confirming: they replace names/)
+  const spelling = bulkActions({ summary: { bulk_spelling: 2, spelling_corrections: [
+    { label: 'Circium heterophyllum', to: 'Cirsium heterophyllum' }, { label: 'Trema orientalis', to: 'Trema orientale' }] } })
+  assert.deepEqual(spelling.map(action => [action.bulk, action.count]), [['spelling', 2]])
+  assert.deepEqual(spelling[0].items, ['Circium heterophyllum → Cirsium heterophyllum', 'Trema orientalis → Trema orientale'])
+})
+
+test('"Leave empty" is now "No name published"', () => {
+  assert.equal(DECISION_LABELS.empty, 'No name published')
+})
 
 const review = (patch = {}) => ({ status: 'complete', error: '', summary: { labels: 10, checked: 10, bulk_col: 3, bulk_parsed: 0 }, ...patch })
 

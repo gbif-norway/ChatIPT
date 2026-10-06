@@ -1,0 +1,1551 @@
+{
+ "Calanus": {
+  "dataset": "566",
+  "query": {
+   "scientificName": "Calanus"
+  },
+  "captured_from": "tier_cache",
+  "response": {
+   "usage": {
+    "key": "RT",
+    "name": "Arthropoda",
+    "canonicalName": "Arthropoda",
+    "rank": "PHYLUM",
+    "status": "ACCEPTED"
+   },
+   "classification": [
+    {
+     "name": "Animalia",
+     "rank": "KINGDOM"
+    },
+    {
+     "name": "Arthropoda",
+     "rank": "PHYLUM"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "HIGHERRANK",
+    "confidence": 92,
+    "alternatives": [
+     {
+      "usage": {
+       "key": "7NRJ6",
+       "name": "Calanus Leach, 1816",
+       "canonicalName": "Calanus",
+       "authorship": "Leach, 1816",
+       "rank": "GENUS",
+       "status": "ACCEPTED"
+      },
+      "classification": [
+       {
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Copepoda",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Calanidae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Calanus",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 92
+      }
+     },
+     {
+      "usage": {
+       "key": "8NMRP",
+       "name": "Calanus Saussure, 1862",
+       "canonicalName": "Calanus",
+       "authorship": "Saussure, 1862",
+       "rank": "GENUS",
+       "status": "SYNONYM"
+      },
+      "classification": [
+       {
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Insecta",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Orthoptera",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Acrididae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Cannula",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 92
+      }
+     },
+     {
+      "usage": {
+       "key": "9CK8F",
+       "name": "Cajanus Adans.",
+       "canonicalName": "Cajanus",
+       "authorship": "Adans.",
+       "rank": "GENUS",
+       "status": "ACCEPTED"
+      },
+      "classification": [
+       {
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Fabales",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Fabaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Cajanus",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 74
+      }
+     },
+     {
+      "usage": {
+       "key": "8VVV2",
+       "name": "Calamus L.",
+       "canonicalName": "Calamus",
+       "authorship": "L.",
+       "rank": "GENUS",
+       "status": "ACCEPTED"
+      },
+      "classification": [
+       {
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Liliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Arecales",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Arecaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Calamus",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 74
+      }
+     }
+    ]
+   }
+  }
+ },
+ "Chaetognatha": {
+  "dataset": "566",
+  "query": {
+   "scientificName": "Chaetognatha"
+  },
+  "captured_from": "tier_cache",
+  "response": {
+   "usage": {
+    "key": "N",
+    "name": "Animalia",
+    "canonicalName": "Animalia",
+    "rank": "KINGDOM",
+    "status": "ACCEPTED"
+   },
+   "classification": [
+    {
+     "name": "Animalia",
+     "rank": "KINGDOM"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "HIGHERRANK",
+    "confidence": 92,
+    "alternatives": [
+     {
+      "usage": {
+       "key": "36",
+       "name": "Chaetognatha",
+       "canonicalName": "Chaetognatha",
+       "rank": "PHYLUM",
+       "status": "ACCEPTED"
+      },
+      "classification": [
+       {
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Chaetognatha",
+        "rank": "PHYLUM"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 92
+      }
+     },
+     {
+      "usage": {
+       "key": "8ZXFR",
+       "name": "Chaetognatha Felder, 1874",
+       "canonicalName": "Chaetognatha",
+       "authorship": "Felder, 1874",
+       "rank": "GENUS",
+       "status": "SYNONYM"
+      },
+      "classification": [
+       {
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Insecta",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Lepidoptera",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Notodontidae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Lusura",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 92
+      }
+     },
+     {
+      "usage": {
+       "key": "MKJTN",
+       "name": "Chaetognatha altrix (Stoll in Cramer, 1780)",
+       "canonicalName": "Chaetognatha altrix",
+       "authorship": "(Stoll in Cramer, 1780)",
+       "rank": "SPECIES",
+       "status": "SYNONYM"
+      },
+      "classification": [
+       {
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Insecta",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Lepidoptera",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Notodontidae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Lusura",
+        "rank": "GENUS"
+       },
+       {
+        "name": "Lusura chera",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 0
+      }
+     },
+     {
+      "usage": {
+       "key": "BJ8SZ",
+       "name": "Catognatha Blanchard in Gay, 1851",
+       "canonicalName": "Catognatha",
+       "authorship": "Blanchard in Gay, 1851",
+       "rank": "GENUS",
+       "status": "ACCEPTED"
+      },
+      "classification": [
+       {
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Insecta",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Coleoptera",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Cerambycidae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Catognatha",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 0
+      }
+     }
+    ]
+   }
+  }
+ },
+ "Oncaea": {
+  "dataset": "567",
+  "query": {
+   "scientificName": "Oncaea"
+  },
+  "captured_from": "tier_cache",
+  "response": {
+   "usage": {
+    "key": "N",
+    "name": "Animalia",
+    "canonicalName": "Animalia",
+    "rank": "KINGDOM",
+    "status": "ACCEPTED"
+   },
+   "classification": [
+    {
+     "name": "Animalia",
+     "rank": "KINGDOM"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "HIGHERRANK",
+    "confidence": 92,
+    "alternatives": [
+     {
+      "usage": {
+       "key": "7PB88",
+       "name": "Oncaea Philippi, 1843",
+       "canonicalName": "Oncaea",
+       "authorship": "Philippi, 1843",
+       "rank": "GENUS",
+       "status": "ACCEPTED"
+      },
+      "classification": [
+       {
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Copepoda",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Oncaeidae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Oncaea",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 92
+      }
+     },
+     {
+      "usage": {
+       "key": "BDVSZ",
+       "name": "Oncaea Gistel, 1848",
+       "canonicalName": "Oncaea",
+       "authorship": "Gistel, 1848",
+       "rank": "GENUS",
+       "status": "SYNONYM"
+      },
+      "classification": [
+       {
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Mollusca",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Gastropoda",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Achatinidae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Achatina",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 92
+      }
+     },
+     {
+      "usage": {
+       "key": "VJC3H",
+       "name": "Oncaea Philippi, 1843",
+       "canonicalName": "Oncaea",
+       "authorship": "Philippi, 1843",
+       "rank": "GENUS",
+       "status": "PROVISIONALLY_ACCEPTED"
+      },
+      "classification": [
+       {
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Copepoda",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Oncaeidae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Oncaea",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 90
+      }
+     },
+     {
+      "usage": {
+       "key": "BYKJ6",
+       "name": "Ocnaea Erichson, 1840",
+       "canonicalName": "Ocnaea",
+       "authorship": "Erichson, 1840",
+       "rank": "GENUS",
+       "status": "ACCEPTED"
+      },
+      "classification": [
+       {
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Insecta",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Diptera",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Acroceridae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Ocnaea",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 74
+      }
+     }
+    ]
+   }
+  }
+ },
+ "Polychaeta": {
+  "dataset": "567",
+  "query": {
+   "scientificName": "Polychaeta"
+  },
+  "captured_from": "tier_cache",
+  "response": {
+   "usage": {
+    "key": "N",
+    "name": "Animalia",
+    "canonicalName": "Animalia",
+    "rank": "KINGDOM",
+    "status": "ACCEPTED"
+   },
+   "classification": [
+    {
+     "name": "Animalia",
+     "rank": "KINGDOM"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "HIGHERRANK",
+    "confidence": 92,
+    "alternatives": [
+     {
+      "usage": {
+       "key": "B8TXG",
+       "name": "Polychaeta Grube, 1850",
+       "canonicalName": "Polychaeta",
+       "authorship": "Grube, 1850",
+       "rank": "CLASS",
+       "status": "ACCEPTED"
+      },
+      "classification": [
+       {
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Annelida",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Polychaeta",
+        "rank": "CLASS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 92
+      }
+     },
+     {
+      "usage": {
+       "key": "BXVXW",
+       "name": "Polychaeta Macquart, 1851",
+       "canonicalName": "Polychaeta",
+       "authorship": "Macquart, 1851",
+       "rank": "GENUS",
+       "status": "ACCEPTED"
+      },
+      "classification": [
+       {
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Insecta",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Diptera",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Tachinidae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Polychaeta",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 92
+      }
+     },
+     {
+      "usage": {
+       "key": "BXVXV",
+       "name": "Polychaeta Schiner, 1868",
+       "canonicalName": "Polychaeta",
+       "authorship": "Schiner, 1868",
+       "rank": "GENUS",
+       "status": "SYNONYM"
+      },
+      "classification": [
+       {
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Insecta",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Diptera",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Tachinidae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Policheta",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 92
+      }
+     },
+     {
+      "usage": {
+       "key": "CQNXG",
+       "name": "Polychaetia Tausch ex Less.",
+       "canonicalName": "Polychaetia",
+       "authorship": "Tausch ex Less.",
+       "rank": "GENUS",
+       "status": "SYNONYM"
+      },
+      "classification": [
+       {
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Asterales",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Asteraceae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Oedera",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 73
+      }
+     }
+    ]
+   }
+  }
+ },
+ "Trientalis europaea": {
+  "dataset": "569",
+  "query": {
+   "scientificName": "Trientalis europaea"
+  },
+  "captured_from": "tier_cache",
+  "response": {
+   "usage": {
+    "key": "62XTM",
+    "name": "Lysimachia Tourn. ex L.",
+    "canonicalName": "Lysimachia",
+    "authorship": "Tourn. ex L.",
+    "rank": "GENUS",
+    "status": "ACCEPTED"
+   },
+   "classification": [
+    {
+     "name": "Plantae",
+     "rank": "KINGDOM"
+    },
+    {
+     "name": "Tracheophyta",
+     "rank": "PHYLUM"
+    },
+    {
+     "name": "Magnoliopsida",
+     "rank": "CLASS"
+    },
+    {
+     "name": "Ericales",
+     "rank": "ORDER"
+    },
+    {
+     "name": "Primulaceae",
+     "rank": "FAMILY"
+    },
+    {
+     "name": "Lysimachia",
+     "rank": "GENUS"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "HIGHERRANK",
+    "confidence": 97,
+    "alternatives": [
+     {
+      "usage": {
+       "key": "7CSCQ",
+       "name": "Trientalis europaea L.",
+       "canonicalName": "Trientalis europaea",
+       "authorship": "L.",
+       "rank": "SPECIES",
+       "status": "AMBIGUOUS_SYNONYM"
+      },
+      "classification": [
+       {
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Ericales",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Primulaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Lysimachia",
+        "rank": "GENUS"
+       },
+       {
+        "name": "Lysimachia europaea",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 97
+      }
+     },
+     {
+      "usage": {
+       "key": "58PD9",
+       "name": "Trientalis europaea Michx.",
+       "canonicalName": "Trientalis europaea",
+       "authorship": "Michx.",
+       "rank": "SPECIES",
+       "status": "AMBIGUOUS_SYNONYM"
+      },
+      "classification": [
+       {
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Ericales",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Primulaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Lysimachia",
+        "rank": "GENUS"
+       },
+       {
+        "name": "Lysimachia borealis",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 97
+      }
+     }
+    ]
+   }
+  }
+ },
+ "Mnium cuspidatum": {
+  "dataset": "565",
+  "query": {
+   "scientificName": "Mnium cuspidatum"
+  },
+  "captured_from": "tier_cache",
+  "response": {
+   "usage": {
+    "key": "9JM9Z",
+    "name": "Plagiomnium T.J. Kop.",
+    "canonicalName": "Plagiomnium",
+    "authorship": "T.J. Kop.",
+    "rank": "GENUS",
+    "status": "ACCEPTED"
+   },
+   "classification": [
+    {
+     "name": "Plantae",
+     "rank": "KINGDOM"
+    },
+    {
+     "name": "Bryophyta",
+     "rank": "PHYLUM"
+    },
+    {
+     "name": "Bryopsida",
+     "rank": "CLASS"
+    },
+    {
+     "name": "Bryales",
+     "rank": "ORDER"
+    },
+    {
+     "name": "Mniaceae",
+     "rank": "FAMILY"
+    },
+    {
+     "name": "Plagiomnium",
+     "rank": "GENUS"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "HIGHERRANK",
+    "confidence": 97,
+    "alternatives": [
+     {
+      "usage": {
+       "key": "9LWSN",
+       "name": "Mnium cuspidatum Neck. ex Lindb.",
+       "canonicalName": "Mnium cuspidatum",
+       "authorship": "Neck. ex Lindb.",
+       "rank": "SPECIES",
+       "status": "AMBIGUOUS_SYNONYM"
+      },
+      "classification": [
+       {
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Bryophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Bryopsida",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Bryales",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Mniaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Plagiomnium",
+        "rank": "GENUS"
+       },
+       {
+        "name": "Plagiomnium affine",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 97
+      }
+     },
+     {
+      "usage": {
+       "key": "9LWSM",
+       "name": "Mnium cuspidatum Hedw.",
+       "canonicalName": "Mnium cuspidatum",
+       "authorship": "Hedw.",
+       "rank": "SPECIES",
+       "status": "AMBIGUOUS_SYNONYM"
+      },
+      "classification": [
+       {
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Bryophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Bryopsida",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Bryales",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Mniaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Plagiomnium",
+        "rank": "GENUS"
+       },
+       {
+        "name": "Plagiomnium cuspidatum",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 97
+      }
+     },
+     {
+      "usage": {
+       "key": "9SLJL",
+       "name": "Mnium cuspidatulum Dixon",
+       "canonicalName": "Mnium cuspidatulum",
+       "authorship": "Dixon",
+       "rank": "SPECIES",
+       "status": "SYNONYM"
+      },
+      "classification": [
+       {
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Bryophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Bryopsida",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Bryales",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Mniaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Plagiomnium",
+        "rank": "GENUS"
+       },
+       {
+        "name": "Plagiomnium acutum",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 90
+      }
+     },
+     {
+      "usage": {
+       "key": "43CS3",
+       "name": "Milium cuspidatum (Nutt.) Spreng.",
+       "canonicalName": "Milium cuspidatum",
+       "authorship": "(Nutt.) Spreng.",
+       "rank": "SPECIES",
+       "status": "SYNONYM"
+      },
+      "classification": [
+       {
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Liliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Poales",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Poaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Eriocoma",
+        "rank": "GENUS"
+       },
+       {
+        "name": "Eriocoma hymenoides",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 0
+      }
+     }
+    ]
+   }
+  }
+ },
+ "Galium boreale": {
+  "dataset": "565",
+  "query": {
+   "scientificName": "Galium boreale"
+  },
+  "captured_from": "tier_cache",
+  "response": {
+   "usage": {
+    "key": "8WLMD",
+    "name": "Trichogalium Fourr.",
+    "canonicalName": "Trichogalium",
+    "authorship": "Fourr.",
+    "rank": "GENUS",
+    "status": "ACCEPTED"
+   },
+   "classification": [
+    {
+     "name": "Plantae",
+     "rank": "KINGDOM"
+    },
+    {
+     "name": "Tracheophyta",
+     "rank": "PHYLUM"
+    },
+    {
+     "name": "Magnoliopsida",
+     "rank": "CLASS"
+    },
+    {
+     "name": "Gentianales",
+     "rank": "ORDER"
+    },
+    {
+     "name": "Rubiaceae",
+     "rank": "FAMILY"
+    },
+    {
+     "name": "Trichogalium",
+     "rank": "GENUS"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "HIGHERRANK",
+    "confidence": 97,
+    "alternatives": [
+     {
+      "usage": {
+       "key": "6K7KQ",
+       "name": "Galium boreale L.",
+       "canonicalName": "Galium boreale",
+       "authorship": "L.",
+       "rank": "SPECIES",
+       "status": "AMBIGUOUS_SYNONYM"
+      },
+      "classification": [
+       {
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Gentianales",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Rubiaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Trichogalium",
+        "rank": "GENUS"
+       },
+       {
+        "name": "Trichogalium boreale",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 97
+      }
+     },
+     {
+      "usage": {
+       "key": "V5RRH",
+       "name": "Galium boreale Walter",
+       "canonicalName": "Galium boreale",
+       "authorship": "Walter",
+       "rank": "SPECIES",
+       "status": "AMBIGUOUS_SYNONYM"
+      },
+      "classification": [
+       {
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Gentianales",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Rubiaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Trichogalium",
+        "rank": "GENUS"
+       },
+       {
+        "name": "Trichogalium circaezans",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 97
+      }
+     },
+     {
+      "usage": {
+       "key": "6JVL9",
+       "name": "Galium boryanum Walp.",
+       "canonicalName": "Galium boryanum",
+       "authorship": "Walp.",
+       "rank": "SPECIES",
+       "status": "SYNONYM"
+      },
+      "classification": [
+       {
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Gentianales",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Rubiaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Thliphthisa",
+        "rank": "GENUS"
+       },
+       {
+        "name": "Thliphthisa pusilla",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 90
+      }
+     },
+     {
+      "usage": {
+       "key": "3F5KN",
+       "name": "Galium correllii Dempster",
+       "canonicalName": "Galium correllii",
+       "authorship": "Dempster",
+       "rank": "SPECIES",
+       "status": "SYNONYM"
+      },
+      "classification": [
+       {
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "name": "Gentianales",
+        "rank": "ORDER"
+       },
+       {
+        "name": "Rubiaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "name": "Trichogalium",
+        "rank": "GENUS"
+       },
+       {
+        "name": "Trichogalium correllii",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 9
+      }
+     }
+    ]
+   }
+  }
+ },
+ "AmphibiaReptilia sp.": {
+  "dataset": "568",
+  "query": {
+   "class": "Amphibia",
+   "genus": "AmphibiaReptilia",
+   "kingdom": "Animalia",
+   "phylum": "Chordata",
+   "scientificName": "AmphibiaReptilia"
+  },
+  "captured_from": "tier_cache",
+  "response": {
+   "usage": {
+    "key": "PH",
+    "name": "Amphibia",
+    "canonicalName": "Amphibia",
+    "rank": "CLASS",
+    "status": "ACCEPTED"
+   },
+   "classification": [
+    {
+     "name": "Animalia",
+     "rank": "KINGDOM"
+    },
+    {
+     "name": "Chordata",
+     "rank": "PHYLUM"
+    },
+    {
+     "name": "Amphibia",
+     "rank": "CLASS"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "EXACT",
+    "confidence": 94
+   }
+  }
+ },
+ "Hieracium sp": {
+  "dataset": "569",
+  "query": {
+   "scientificName": "Hieracium"
+  },
+  "captured_from": "tier_cache",
+  "response": {
+   "usage": {
+    "key": "4X5R",
+    "name": "Hieracium L.",
+    "canonicalName": "Hieracium",
+    "authorship": "L.",
+    "rank": "GENUS",
+    "status": "ACCEPTED"
+   },
+   "classification": [
+    {
+     "name": "Plantae",
+     "rank": "KINGDOM"
+    },
+    {
+     "name": "Tracheophyta",
+     "rank": "PHYLUM"
+    },
+    {
+     "name": "Magnoliopsida",
+     "rank": "CLASS"
+    },
+    {
+     "name": "Asterales",
+     "rank": "ORDER"
+    },
+    {
+     "name": "Asteraceae",
+     "rank": "FAMILY"
+    },
+    {
+     "name": "Hieracium",
+     "rank": "GENUS"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "EXACT",
+    "confidence": 94
+   }
+  }
+ },
+ "Larus sp.": {
+  "dataset": "570",
+  "query": {
+   "class": "Aves",
+   "kingdom": "Animalia",
+   "scientificName": "Larus"
+  },
+  "captured_from": "tier_cache",
+  "response": {
+   "usage": {
+    "key": "62XFH",
+    "name": "Larus Linnaeus, 1758",
+    "canonicalName": "Larus",
+    "authorship": "Linnaeus, 1758",
+    "rank": "GENUS",
+    "status": "ACCEPTED"
+   },
+   "classification": [
+    {
+     "name": "Animalia",
+     "rank": "KINGDOM"
+    },
+    {
+     "name": "Chordata",
+     "rank": "PHYLUM"
+    },
+    {
+     "name": "Aves",
+     "rank": "CLASS"
+    },
+    {
+     "name": "Charadriiformes",
+     "rank": "ORDER"
+    },
+    {
+     "name": "Laridae",
+     "rank": "FAMILY"
+    },
+    {
+     "name": "Larus",
+     "rank": "GENUS"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "EXACT",
+    "confidence": 94
+   }
+  }
+ },
+ "Columba livia var. domestica": {
+  "dataset": "570",
+  "query": {
+   "class": "Aves",
+   "kingdom": "Animalia",
+   "scientificName": "Columba livia var. domestica"
+  },
+  "captured_from": "tier_cache",
+  "response": {
+   "usage": {
+    "key": "MRW8S",
+    "name": "Columba livia var. domestica J.F.Gmelin, 1789",
+    "canonicalName": "Columba livia domestica",
+    "authorship": "J.F.Gmelin, 1789",
+    "rank": "VARIETY",
+    "status": "ACCEPTED"
+   },
+   "classification": [
+    {
+     "name": "Animalia",
+     "rank": "KINGDOM"
+    },
+    {
+     "name": "Chordata",
+     "rank": "PHYLUM"
+    },
+    {
+     "name": "Aves",
+     "rank": "CLASS"
+    },
+    {
+     "name": "Columbiformes",
+     "rank": "ORDER"
+    },
+    {
+     "name": "Columbidae",
+     "rank": "FAMILY"
+    },
+    {
+     "name": "Columba",
+     "rank": "GENUS"
+    },
+    {
+     "name": "Columba livia",
+     "rank": "SPECIES"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "EXACT",
+    "confidence": 98
+   }
+  }
+ },
+ "Betula pubescens subsp. czerepanovii (N.I.Orlova) Hämet-Ahti": {
+  "dataset": "560",
+  "query": {
+   "kingdom": "Plantae",
+   "scientificName": "Betula pubescens subsp. czerepanovii (N.I.Orlova) Hämet-Ahti"
+  },
+  "captured_from": "tier_cache",
+  "response": {
+   "usage": {
+    "key": "5FXVV",
+    "name": "Betula pubescens subsp. czerepanovii (N.I.Orlova) Hämet-Ahti",
+    "canonicalName": "Betula pubescens czerepanovii",
+    "authorship": "(N.I.Orlova) Hämet-Ahti",
+    "rank": "SUBSPECIES",
+    "status": "SYNONYM"
+   },
+   "classification": [
+    {
+     "name": "Plantae",
+     "rank": "KINGDOM"
+    },
+    {
+     "name": "Tracheophyta",
+     "rank": "PHYLUM"
+    },
+    {
+     "name": "Magnoliopsida",
+     "rank": "CLASS"
+    },
+    {
+     "name": "Fagales",
+     "rank": "ORDER"
+    },
+    {
+     "name": "Betulaceae",
+     "rank": "FAMILY"
+    },
+    {
+     "name": "Betula",
+     "rank": "GENUS"
+    },
+    {
+     "name": "Betula pubescens",
+     "rank": "SPECIES"
+    }
+   ],
+   "synonym": true,
+   "acceptedUsage": {
+    "key": "5MKK2",
+    "name": "Betula pubescens var. pumila (Zanoni ex Murray) Govaerts",
+    "canonicalName": "Betula pubescens pumila",
+    "authorship": "(Zanoni ex Murray) Govaerts",
+    "rank": "VARIETY"
+   },
+   "diagnostics": {
+    "matchType": "EXACT",
+    "confidence": 100
+   }
+  }
+ }
+}

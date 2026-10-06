@@ -89,6 +89,179 @@ def split_qualifier(label):
     return name, None
 
 
+# Highest first. Ranks outside this list are never compared.
+RANK_ORDER = (
+    "domain", "superkingdom", "kingdom", "subkingdom", "infrakingdom", "superphylum", "phylum", "subphylum",
+    "infraphylum", "parvphylum", "superclass", "megaclass", "gigaclass", "class", "subclass", "infraclass",
+    "subterclass", "superorder", "order", "suborder", "infraorder", "parvorder", "superfamily", "family",
+    "subfamily", "tribe", "subtribe", "genus", "subgenus", "section", "subsection", "series", "species aggregate",
+    "species", "subspecies", "variety", "subvariety", "form", "subform",
+)
+# Markers between the parts of a name; skipped when comparing names. "f. sp." (forma specialis) is one marker.
+_NAME_MARKERS = {
+    "subsp.", "ssp.", "var.", "subvar.", "f.", "fo.", "forma", "subf.", "f.sp.", "agg.", "nothosubsp.", "nothovar.",
+    "×", "x", "cv.",
+}
+# Infrageneric markers: the epithet after them is part of the name ("Taraxacum sect. Ruderalia").
+_INFRAGENERIC = {"subg.": "subg", "subgen.": "subg", "sect.": "sect", "subsect.": "subsect", "ser.": "ser", "subser.": "subser"}
+_SUBGENUS = re.compile(r"\([A-Z][a-z-]+\)")
+# Latin adjective endings that differ only by grammatical gender; an epithet may change ending with its genus.
+_GENDER_ENDINGS = (("us", "a", "um"), ("is", "e"), ("er", "ra", "rum"))
+
+
+def name_parts(name):
+    """Lower-cased parts of a name for comparison: genus (or uninomial), infrageneric epithet, species and lower epithets.
+
+    Rank markers, hybrid signs and authorship are left out. An infrageneric epithet is kept with its marker
+    ("subg.pilosella", "sect.ruderalia"); a parenthesised subgenus counts only when no species epithet follows it
+    ("Calanus (Calanus)" is the subgenus, "Acartia (Acartiura) longiremis" the species Acartia longiremis).
+    """
+    parts, subgenus, infrageneric, previous = [], None, None, None
+    for token in str(name or "").replace("×", " × ").split():
+        lowered, before, previous = token.casefold(), previous, token.casefold()
+        if lowered == "sp." and before == "f.":
+            continue  # "f. sp." is one marker
+        if lowered in _INFRAGENERIC and len(parts) == 1:
+            infrageneric = _INFRAGENERIC[lowered]
+            continue
+        if lowered in _NAME_MARKERS:
+            continue
+        if not parts:
+            parts.append(lowered)
+        elif infrageneric:
+            if not (token[:1].isupper() and token.replace("-", "").isalpha()):
+                break
+            parts.append(f"{infrageneric}.{lowered}")
+            infrageneric = None
+        elif len(parts) == 1 and subgenus is None and _SUBGENUS.fullmatch(token):
+            subgenus = lowered.strip("()")
+        elif token[:1].islower() and token.replace("-", "").isalpha():
+            parts.append(lowered)
+        else:
+            break  # the authorship starts
+    if subgenus and len(parts) == 1:
+        parts.append(f"subg.{subgenus}")
+    return parts
+
+
+INFRAGENERIC_RANKS = {"subg": "subgenus", "sect": "section", "subsect": "subsection", "ser": "series", "subser": "subseries"}
+
+
+def implied_rank(parts):
+    """The rank a name's own parts imply: a binomial is a species, "Genus sect. Epithet" a section; else unknown."""
+    if len(parts) == 2 and "." in parts[1]:
+        return INFRAGENERIC_RANKS.get(parts[1].split(".")[0])
+    return "species" if len(parts) == 2 else None
+
+
+def rank_above(rank, other):
+    """True when both ranks are known and `rank` is strictly higher than `other`."""
+    return rank in RANK_ORDER and other in RANK_ORDER and RANK_ORDER.index(rank) < RANK_ORDER.index(other)
+
+
+def _edit_distance(left, right):
+    previous = list(range(len(right) + 1))
+    for i, a in enumerate(left, 1):
+        current = [i]
+        for j, b in enumerate(right, 1):
+            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a != b)))
+        previous = current
+    return previous[-1]
+
+
+def _gender_variant(left, right):
+    if left == right:
+        return True
+    for endings in _GENDER_ENDINGS:
+        for ending in endings:
+            if left.endswith(ending) and any(right == left[:-len(ending)] + other for other in endings if other != ending):
+                return True
+    return False
+
+
+def _classification_agrees(usage, hints, uninomial):
+    """The usage sits where the source's own classification says: kingdom always, class and family where hinted."""
+    hints, classification = hints or {}, (usage or {}).get("classification") or {}
+    if not hints.get("kingdom") or str(classification.get("kingdom") or "").casefold() != str(hints["kingdom"]).casefold():
+        return False
+    hinted = [rank for rank in ("class", "family") if hints.get(rank)]
+    if uninomial and not hinted:
+        return False  # "Calanus" -> "Cajanus": a plant genus one letter away
+    return all(str(classification.get(rank) or "").casefold() == str(hints[rank]).casefold() for rank in hinted)
+
+
+def _is_spelling(mine, theirs, match_type, asserted_rank, rank, usage, hints):
+    """COL's spelling of the same name in the same place: a close genus spelling and/or a gender ending, same rank."""
+    if match_type not in {"VARIANT", "FUZZY"} or len(mine) != len(theirs):
+        return False
+    expected = asserted_rank or ("species" if len(mine) == 2 else "genus" if len(mine) == 1 and (hints or {}).get("family") else None)
+    if not expected or rank != expected:
+        return False
+    if not all(_gender_variant(left, right) for left, right in zip(mine[1:], theirs[1:])):
+        return False
+    if _edit_distance(mine[0], theirs[0]) > (1 if len(mine[0]) <= 5 else 2):
+        return False
+    return _classification_agrees(usage, hints, uninomial=len(mine) == 1)
+
+
+def name_change(asserted, usage, match_type=None, asserted_rank=None, hints=None):
+    """How accepting `usage` would change the asserted name; None when it is the same name.
+
+    The same name (ignoring markers, authorship and case) is never a change, whatever the ranks say: "Larus sp."
+    accepted as the genus Larus keeps the user's assertion. Every kind but "spelling" needs the user's explicit
+    confirmation and is never accepted in bulk:
+    - coarser: a higher-rank match, fewer name parts or a higher rank ("Calanus" -> the phylum Arthropoda);
+    - finer: more name parts than the user asserted;
+    - spelling: COL's spelling of the same name in the same place (`_is_spelling`), e.g. Circium -> Cirsium;
+    - genus: another genus ("Trientalis europaea" -> Lysimachia, "Calanus" -> the plant genus Cajanus);
+    - epithet: another epithet in the same genus ("Parus major" -> "Parus minor").
+    """
+    usage = usage or {}
+    mine, theirs = name_parts(asserted), name_parts(usage.get("scientificName"))
+    rank = _rank(usage.get("taxonRank"))
+    if not mine or not theirs:
+        return None
+    asserted_rank = asserted_rank or implied_rank(mine)
+    change = {"from": asserted_rank, "to": rank, "confirm": True}
+    if mine == theirs:
+        # Only an infrageneric name carries its rank in its parts; any other same name is the user's assertion.
+        if any("." in part for part in mine) and asserted_rank and rank and asserted_rank != rank:
+            return {**change, "kind": "coarser" if rank_above(rank, asserted_rank) else "finer",
+                    "text": f"replaces your {asserted_rank} with the {rank} of the same name"}
+        return None
+    match_type = str(match_type or "").upper()
+    if (match_type == "HIGHERRANK" or len(theirs) < len(mine)
+            or rank_above(rank, asserted_rank) or (len(mine) > 1 and rank_above(rank, "species"))):
+        label = rank or "higher taxon"
+        article = "an" if label[:1] in "aeiou" else "a"
+        return {**change, "kind": "coarser", "text": f"replaces your {asserted_rank or 'name'} with {article} {label}"}
+    if len(theirs) > len(mine):
+        label = rank or "lower taxon"
+        article = "an" if label[:1] in "aeiou" else "a"
+        return {**change, "kind": "finer", "text": f"narrows your {asserted_rank or 'name'} to {article} {label}"}
+    if _is_spelling(mine, theirs, match_type, asserted_rank, rank, usage, hints):
+        return {**change, "kind": "spelling", "confirm": False, "text": f"corrects the spelling to {usage['scientificName']}"}
+    if mine[0] != theirs[0]:
+        genus = usage["scientificName"].split()[0]
+        return {**change, "kind": "genus", "text": f"replaces your {'genus' if len(mine) > 1 else 'name'} with {genus}"}
+    return {**change, "kind": "epithet", "text": f"replaces your name with {usage['scientificName']}"}
+
+
+def coarser_replacement(asserted, usage, match_type=None, asserted_rank=None, hints=None):
+    """The change accepting `usage` would make when it needs the user's explicit confirmation; None otherwise."""
+    change = name_change(asserted, usage, match_type, asserted_rank, hints)
+    return change if change and change["confirm"] else None
+
+
+def authorships_agree(left, right):
+    """Two authorships name the same authors: punctuation, spacing, parentheses and a missing year are ignored."""
+    def key(value):
+        text = str(value or "").casefold()
+        return "".join(character for character in text if character.isalpha()), re.findall(r"\d{4}", text)
+    (left_letters, left_years), (right_letters, right_years) = key(left), key(right)
+    return left_letters == right_letters and (not left_years or not right_years or left_years == right_years)
+
+
 def _remaining(deadline):
     if deadline is None:
         return None
@@ -128,6 +301,34 @@ def _rank(value):
     return str(value or "").lower() or None
 
 
+def _name_without_authorship(usage):
+    """The usage's name as COL writes it, rank marker ("subsp.", "var.", "f.") and hybrid sign included.
+
+    GBIF's canonicalName drops the marker ("Betula pubescens czerepanovii"), which names a different
+    combination in botany, so the full name minus its trailing authorship is used. When the authorship is
+    not a plain suffix (an autonym, a nomenclatural note) the canonical name is the safe fallback. Without an
+    authorship, trailing words the canonical name does not have (an author left in a hybrid formula) are dropped.
+    A parenthesised subgenus is kept only for a subgenus itself: "Acartia (Acartiura) longiremis" is published as
+    "Acartia longiremis", as GBIF's canonical name has it and as users write it.
+    """
+    name = " ".join(str(usage.get("name") or "").split())
+    authorship = " ".join(str(usage.get("authorship") or "").split())
+    canonical = usage.get("canonicalName")
+    if name and authorship and name.endswith(" " + authorship):
+        name = name[:-len(authorship)].strip()
+    elif name and not authorship:
+        if canonical:
+            words, known = name.split(), {word.casefold() for word in canonical.split()}
+            while len(words) > 1 and words[-1].casefold() not in known | _NAME_MARKERS:
+                words.pop()
+            name = " ".join(words)
+    else:
+        name = canonical or name
+    if name and _rank(usage.get("rank")) != "subgenus":
+        name = re.sub(r"^(\S+) \([A-Z][a-z-]+\)(?= )", r"\1", name)
+    return name or None
+
+
 def _usage(usage, classification=None):
     if not usage:
         return None
@@ -138,7 +339,7 @@ def _usage(usage, classification=None):
             ranks[rank] = item["name"]
     return {
         "id": usage.get("key") or usage.get("id"),
-        "scientificName": usage.get("canonicalName") or usage.get("name"),
+        "scientificName": _name_without_authorship(usage),
         "scientificNameAuthorship": usage.get("authorship") or None,
         "label": usage.get("name") or usage.get("label"),
         "taxonRank": _rank(usage.get("rank")),
@@ -554,9 +755,26 @@ def usage_for_decision(row, usage_id=None):
             return {
                 key: alternative.get(key)
                 for key in ("id", "scientificName", "scientificNameAuthorship", "label",
-                            "taxonRank", "status", "classification")
+                            "taxonRank", "status", "classification", "matchType")
             } | {"source": "gbif_col"}
     return {**resolve_col_usage(usage_id), "source": "checklistbank_xr"}
+
+
+def row_replacement(row, usage, match_type):
+    """The confirmation-needing change accepting `usage` would make to the row's matched name; None otherwise."""
+    query = row.query or {}
+    return coarser_replacement(query.get("scientificName"), usage, match_type,
+                               hints={rank: query[rank] for rank in HINT_RANKS if query.get(rank)})
+
+
+def choice_replacements(row):
+    """For the review: what accepting the suggestion or each alternative would replace (None when nothing)."""
+    match = row.match or {}
+    return {
+        "suggestion": row_replacement(row, match["usage"], match.get("matchType")) if match.get("usage") else None,
+        "alternatives": {str(alternative.get("id")): row_replacement(row, alternative, alternative.get("matchType"))
+                         for alternative in match.get("alternatives") or []},
+    }
 
 
 def _reset_decision(row):
@@ -569,8 +787,12 @@ def _reset_decision(row):
     row.decided_at = None
 
 
-def decide(row, decision, user=None, usage_id=None, name=None):
-    """Record one reviewer decision. ``name`` carries the reviewer's name for NOT_IN_COL."""
+def decide(row, decision, user=None, usage_id=None, name=None, confirm_coarser=False):
+    """Record one reviewer decision. ``name`` carries the reviewer's name for NOT_IN_COL.
+
+    Accepting a COL name that is coarser than or different from the matched name (see `name_change`) needs
+    ``confirm_coarser``.
+    """
     from django.utils import timezone
     from api.models import TaxonNameMatch
 
@@ -583,6 +805,15 @@ def decide(row, decision, user=None, usage_id=None, name=None):
         raise ValueError("This label has not been matched yet.")
     if decision == Decision.ACCEPTED:
         usage = usage_for_decision(row, usage_id)
+        suggestion = (row.match or {}).get("usage") or {}
+        match_type = (row.match or {}).get("matchType") if usage.get("id") == suggestion.get("id") else usage.get("matchType")
+        replaces = row_replacement(row, usage, match_type)
+        if replaces and confirm_coarser is not True:
+            raise ValueError(f'"{usage.get("scientificName")}" {replaces["text"]} for "{row.verbatim_label}". '
+                             "Confirm that replacement explicitly, or keep the original.")
+        usage.pop("matchType", None)
+        if replaces:
+            usage["replaces"] = replaces["text"]
     elif decision == Decision.NOT_IN_COL:
         name = name or {}
         scientific_name = " ".join(str(name.get("scientificName") or "").split())
@@ -620,7 +851,9 @@ def bulk_acceptable(row):
     """Exact matches of names written in the label, without any identification qualifier.
 
     A variant or higher-rank match is a different name; an interpreted name (translation, expanded
-    abbreviation, typo fix) and a qualified label ("sp.", "cf.") each need a reviewer's own look.
+    abbreviation, typo fix) and a qualified label ("sp.", "cf.") each need a reviewer's own look. An
+    "exact" match whose name is coarser than or differs from the queried name (hints can steer the
+    matcher there) is never accepted in bulk either.
     """
     from api.models import TaxonNameMatch
 
@@ -633,6 +866,7 @@ def bulk_acceptable(row):
         and bool(match.get("usage"))
         and not row.identification_qualifier
         and not is_preprocessed(row)
+        and not row_replacement(row, match["usage"], match.get("matchType"))
     )
 
 

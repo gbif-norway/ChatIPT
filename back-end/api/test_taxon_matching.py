@@ -1,4 +1,6 @@
 import json
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -76,6 +78,77 @@ class SummarizeMatchTests(SimpleTestCase):
         self.assertIsNone(result["usage"])
         self.assertEqual(result["alternatives"][0]["id"], "C3DM4")
         self.assertEqual(result["alternatives"][0]["matchType"], "VARIANT")
+
+
+REAL = json.loads((Path(__file__).parent / "testdata" / "col_v2_real_matches.json").read_text())
+
+
+class RealNameTests(SimpleTestCase):
+    """Real GBIF v2 responses (trimmed) for names published wrongly from conversions 560 and 570."""
+
+    def test_rank_markers_survive_from_the_v2_name(self):
+        betula = taxon_matching.summarize_match(
+            REAL["Betula pubescens subsp. czerepanovii (N.I.Orlova) Hämet-Ahti"]["response"])["usage"]
+        # canonicalName is "Betula pubescens czerepanovii", a different combination in botany.
+        self.assertEqual((betula["scientificName"], betula["scientificNameAuthorship"], betula["taxonRank"]),
+                         ("Betula pubescens subsp. czerepanovii", "(N.I.Orlova) Hämet-Ahti", "subspecies"))
+        columba = taxon_matching.summarize_match(REAL["Columba livia var. domestica"]["response"])["usage"]
+        self.assertEqual((columba["scientificName"], columba["scientificNameAuthorship"]),
+                         ("Columba livia var. domestica", "J.F.Gmelin, 1789"))
+        larus = taxon_matching.summarize_match(REAL["Larus sp."]["response"])["usage"]
+        self.assertEqual(larus["scientificName"], "Larus")
+        # A higher taxon without authorship, and an alternative, keep their plain names.
+        calanus = taxon_matching.summarize_match(REAL["Calanus"]["response"])
+        self.assertEqual(calanus["usage"]["scientificName"], "Arthropoda")
+        self.assertEqual(calanus["alternatives"][0]["scientificName"], "Calanus")
+
+    def test_a_subgenus_is_not_inserted_into_a_species_name(self):
+        # Live v2 for "Acartia longiremis" (EXACT): name "Acartia (Acartiura) longiremis (Lilljeborg, 1853)".
+        acartia = {"usage": {"key": "93B9", "name": "Acartia (Acartiura) longiremis (Lilljeborg, 1853)", "canonicalName": "Acartia longiremis",
+                             "authorship": "(Lilljeborg, 1853)", "rank": "SPECIES", "status": "ACCEPTED"},
+                   "diagnostics": {"matchType": "EXACT"}}
+        usage = taxon_matching.summarize_match(acartia)["usage"]
+        self.assertEqual((usage["scientificName"], usage["scientificNameAuthorship"]), ("Acartia longiremis", "(Lilljeborg, 1853)"))
+        subgenus = taxon_matching._name_without_authorship(
+            {"name": "Acartia (Acartiura) Steuer, 1915", "authorship": "Steuer, 1915", "rank": "SUBGENUS"})
+        self.assertEqual(subgenus, "Acartia (Acartiura)")
+        row = SimpleNamespace(decision=TaxonNameMatch.Decision.PENDING, record_count=1, matched_at=timezone.now(),
+                              match=taxon_matching.summarize_match(acartia), identification_qualifier="",
+                              query={"scientificName": "Acartia longiremis"}, verbatim_label="Acartia longiremis")
+        self.assertTrue(taxon_matching.bulk_acceptable(row))
+        self.assertEqual(taxon_matching.usage_for_decision(row)["scientificName"], "Acartia longiremis")
+
+    def test_a_hybrid_formula_without_authorship_drops_a_stray_author(self):
+        self.assertEqual(taxon_matching._name_without_authorship(
+            {"name": "Viola adunca × Viola labradorica Linnaeus", "canonicalName": "Viola adunca × Viola labradorica"}),
+            "Viola adunca × Viola labradorica")
+        self.assertEqual(taxon_matching._name_without_authorship(
+            {"name": "Betula pubescens subsp. pubescens", "canonicalName": "Betula pubescens pubescens"}),
+            "Betula pubescens subsp. pubescens")
+
+    def test_names_whose_authorship_is_not_a_suffix_fall_back_to_the_canonical_name(self):
+        self.assertEqual(taxon_matching._name_without_authorship(
+            {"name": "Aus bus L. subsp. bus", "canonicalName": "Aus bus bus", "authorship": "L."}), "Aus bus bus")
+        self.assertEqual(taxon_matching._name_without_authorship(
+            {"name": "Mentha × piperita L.", "canonicalName": "Mentha piperita", "authorship": "L."}), "Mentha × piperita")
+        self.assertEqual(taxon_matching._name_without_authorship({"canonicalName": "Aus"}), "Aus")
+
+    def test_name_parts_ignore_markers_subgenus_and_authorship(self):
+        self.assertEqual(taxon_matching.name_parts("Betula pubescens subsp. czerepanovii (N.I.Orlova) Hämet-Ahti"),
+                         ["betula", "pubescens", "czerepanovii"])
+        self.assertEqual(taxon_matching.name_parts("Carabus (Morphocarabus) kruberi Fischer, 1823"), ["carabus", "kruberi"])
+        self.assertEqual(taxon_matching.name_parts("Mentha x piperita"), taxon_matching.name_parts("Mentha × piperita L."))
+        self.assertEqual(taxon_matching.name_parts("Trachytes aegrota (C. L. Koch, 1841)"), ["trachytes", "aegrota"])
+
+    def test_publication_bulk_accept_skips_an_exact_match_on_another_name(self):
+        def row(label):
+            summary = taxon_matching.summarize_match(REAL[label]["response"])
+            query = REAL[label]["query"]
+            return SimpleNamespace(decision=TaxonNameMatch.Decision.PENDING, record_count=1, matched_at=timezone.now(), match=summary,
+                                   identification_qualifier="", query=query, verbatim_label=query["scientificName"])
+        # 568: the class hint steered "AmphibiaReptilia" to an EXACT match on the class Amphibia.
+        self.assertFalse(taxon_matching.bulk_acceptable(row("AmphibiaReptilia sp.")))
+        self.assertTrue(taxon_matching.bulk_acceptable(row("Columba livia var. domestica")))
 
 
 class MatchColTests(SimpleTestCase):
@@ -260,7 +333,7 @@ class RecordAndApplyTests(TestCase):
             "id": "5W", "scientificName": "Araneae", "scientificNameAuthorship": None,
             "taxonRank": "order", "status": "accepted", "classification": {"order": "Araneae"},
         }) as resolve:
-            spiders = taxon_matching.decide(rows["Pająki"], TaxonNameMatch.Decision.ACCEPTED, usage_id="5W")
+            spiders = taxon_matching.decide(rows["Pająki"], TaxonNameMatch.Decision.ACCEPTED, usage_id="5W", confirm_coarser=True)
         resolve.assert_called_once_with("5W")
         self.assertEqual(spiders.decided_usage["source"], "checklistbank_xr")
 
@@ -536,6 +609,26 @@ class TaxonMatchApiTests(TestCase):
         self.assertEqual(response.json()["accepted"], 1)
         self.exact.refresh_from_db()
         self.assertEqual(self.exact.decision, "accepted")
+
+    def test_accepting_a_coarser_suggestion_needs_a_confirming_second_request(self):
+        self.client.force_authenticate(self.owner)
+        listed = self.client.get("/api/taxon-matches/", {"dataset": self.dataset.id}).json()
+        listed = listed["results"] if isinstance(listed, dict) else listed
+        higher = next(row for row in listed if row["id"] == self.higher.id)
+        self.assertEqual(higher["replacements"]["suggestion"]["text"], "replaces your species with a genus")
+        self.assertIsNone(next(row for row in listed if row["id"] == self.exact.id)["replacements"]["suggestion"])
+        url = f"/api/taxon-matches/{self.higher.id}/decide/"
+        refused = self.client.post(url, {"decision": "accepted"}, format="json")
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn("replaces your species with a genus", str(refused.json()))
+        self.higher.refresh_from_db()
+        self.assertEqual(self.higher.decision, "pending")
+        confirmed = self.client.post(url, {"decision": "accepted", "confirm_coarser": True}, format="json")
+        self.assertEqual(confirmed.status_code, 200, confirmed.content)
+        self.assertEqual((confirmed.json()["decided_usage"]["scientificName"], confirmed.json()["decided_usage"]["replaces"]),
+                         ("Neodiscopoma", "replaces your species with a genus"))
+        # The exact same-name suggestion needs no confirmation.
+        self.assertEqual(self.client.post(f"/api/taxon-matches/{self.exact.id}/decide/", {"decision": "accepted"}).status_code, 200)
 
     def test_decisions_are_refused_once_the_review_is_closed(self):
         self.client.force_authenticate(self.owner)
