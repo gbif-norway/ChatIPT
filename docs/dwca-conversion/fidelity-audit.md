@@ -44,13 +44,18 @@ Names without identifiers stay in their mapped text fields and originals.
 Repeated exact names offer an advanced review choice to confirm one shared
 identity for that name across all its mapped mentions; the default creates no
 Agent or role rows for those name-only mentions.
-Names are compared after collapsing whitespace runs. A `|`-delimited name list
-is split only when its `*ByID` field is a `|`-delimited list of the same number
-of single agent IRIs; the pairs are linked in order with consecutive
-`agentRoleOrder` values. Other composite names, placeholders, and ID/name lists
-that cannot be paired safely remain in the mapped text fields and originals,
-with skip reasons and examples in `agent_roles`. The role order is explicit. The
-converter does not infer whether a name denotes a person or organization.
+Names are compared after collapsing whitespace runs, in the converter's
+explicit-ID agents and in role rows alike. A `|`-delimited `*ByID` list of
+distinct single agent IRIs links one Agent and one role row per IRI when its
+name field is empty or lists the same number of single names. `agentRoleOrder`
+is the source ID order. Darwin Core states that list order conveys no meaning,
+so names are never paired with IDs by position: an ID's `preferredAgentName`
+comes only from mentions where that ID stands alone, and is empty otherwise.
+Lists with empty segments, repeated IDs, values that are not absolute IRIs (such
+as bare ORCID numbers) or a different number of names, and other composite
+names and placeholders, remain in the mapped text fields and originals, with
+skip reasons and examples in `agent_roles`. The converter does not infer whether
+a name denotes a person or organization.
 
 A foreign key is declared in `datapackage.json` only when both its source
 fields and its target fields are present. An empty `recordedByID` column beside

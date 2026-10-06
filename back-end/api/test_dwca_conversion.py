@@ -589,13 +589,14 @@ class ArchiveTests(SimpleTestCase):
         frames, report = convert(archive, plan, decisions_for(plan))
         self.assertTrue(report['validation']['valid'])
         agents = frames['agent'].set_index('agentID')
-        # Only the equal-length | lists of o3 are paired (by the agent role builder); other lists are not.
+        # Only o3's | list of IDs is split (by the agent role builder); other lists are not.
         self.assertEqual(set(agents.index), {'https://example.org/alice', 'https://example.org/id', 'https://example.org/bob',
                                              'https://example.org/carol'})
         self.assertEqual(agents.loc['https://example.org/alice', 'preferredAgentName'], '')
         self.assertEqual(agents.loc['https://example.org/bob', 'preferredAgentName'], '')
-        self.assertEqual(agents.loc['https://example.org/carol', 'preferredAgentName'], 'Carol')
-        self.assertEqual(report['agent_mapping']['non_single_id_cells'], 5)
+        # Carol appears only in a list, and list positions do not pair names with IDs.
+        self.assertEqual(agents.loc['https://example.org/carol', 'preferredAgentName'], '')
+        self.assertEqual(report['agent_mapping']['non_single_id_cells'], 4)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'agents.tar.gz'
             create_dwc_dp_archive(output, frames, 'Agents', 'Explicit source agents')

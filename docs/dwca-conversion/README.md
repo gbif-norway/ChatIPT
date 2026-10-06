@@ -128,7 +128,7 @@ links are emitted even when other source links are missing, ambiguous or cyclic;
 the report identifies each withheld link. Single absolute agent IRIs in mapped
 `*ByID` fields produce deduplicated `agent` rows. A preferred name is included
 only when paired single names agree for that ID. Conflicting preferred names
-are never guessed. Name-only agents and paired `|` lists follow the policy in
+are never guessed. Name-only agents and `|` ID lists follow the policy in
 [fidelity-audit.md](fidelity-audit.md).
 
 Rule version 11 fixes two silent losses found on a production archive. Event details (dates,

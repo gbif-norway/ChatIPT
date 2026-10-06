@@ -8,8 +8,11 @@ This module only adds role rows that link those records to Agent rows:
 - A name-only value remains in its mapped text field unless review confirms
   that every mention of that exact (whitespace-normalised) name denotes one
   agent. A confirmed name creates one Agent row, with a role row per mention.
-- A ``|``-delimited name list whose paired *ByID field is a ``|``-delimited
-  list of single agent IRIs of the same length is split pairwise, in order.
+- A ``|``-delimited *ByID list of distinct single agent IRIs, beside a name
+  field that is empty or lists the same number of names, links to one Agent per
+  IRI. List order conveys no pairing (Darwin Core), so no name is taken from a
+  list position: an ID's preferred name comes only from mentions where it
+  stands alone. agentRoleOrder follows the source ID order.
 - Other lists, conjunctions, ``et al.``, placeholders and ID/name pairs that
   cannot be matched one-to-one are never split or guessed. They are skipped
   and reported, and the source value stays in the mapped field and originals.
@@ -30,8 +33,9 @@ SHARED_NAME_REMARK = ('Name-only source value. Review asserted that every name-o
 POLICY = ('Role rows link mapped records to agents without changing the mapped name fields. A single '
           'absolute IRI in the paired *ByID field links to the agent with that agentID. A name-only '
           'value stays in its mapped text field unless review confirms that every mention of its exact '
-          '(whitespace-normalised) name denotes one agent. A |-delimited name list is split only '
-          'when its *ByID field lists the same number of single IRIs, paired in order. Other lists, '
+          '(whitespace-normalised) name denotes one agent. A |-delimited *ByID list of distinct single IRIs '
+          'links one agent per IRI when the name field is empty or lists as many names; agentRoleOrder is the '
+          'source ID order and no name is paired by position. Other lists, '
           'conjunctions, et al., placeholders and ID/name pairs that cannot be matched one-to-one are '
           'skipped and reported, never split. agentRole is the DwC-DP field name; agentRoleIRI and '
           'agentRoleSource are left empty.')
@@ -147,17 +151,22 @@ def agent_name(value) -> str:
     return ' '.join(_text(value).split())
 
 
-def paired_list(name: str, identifier: str, is_agent_identifier: Callable[[str], bool]) -> list[tuple[str, str]] | None:
-    """(name, IRI) pairs when |-delimited names and IDs match one-to-one and each part is safe, else None."""
-    if '|' not in name or '|' not in identifier:
+def split_agent_ids(name: str, identifier: str, is_agent_identifier: Callable[[str], bool]) -> list[str] | None:
+    """The IRIs of a |-delimited *ByID list that identifies several agents, else None.
+
+    Every segment must be a distinct single agent IRI, and the name field must be empty
+    or list the same number of single names. Darwin Core gives list order no meaning, so
+    the lists are never zipped into name/ID pairs.
+    """
+    if '|' not in identifier:
         return None
-    names = [agent_name(part) for part in name.split('|')]
     identifiers = [part.strip() for part in identifier.split('|')]
-    if len(names) != len(identifiers) or len(set(identifiers)) != len(identifiers):
+    if not all(identifiers) or len(set(identifiers)) != len(identifiers) or not all(map(is_agent_identifier, identifiers)):
         return None
-    if any(composite_name_reason(part) for part in names) or not all(map(is_agent_identifier, identifiers)):
+    names = [agent_name(part) for part in name.split('|')] if _text(name) else []
+    if names and (len(names) != len(identifiers) or any(composite_name_reason(part) for part in names)):
         return None
-    return list(zip(names, identifiers))
+    return identifiers
 
 
 def build_agent_roles(
@@ -244,12 +253,12 @@ def build_agent_roles(
             mention = (spec.resource, number, spec.name_field)
             subject = _text(record.get(spec.subject_pk))
             reason = None
-            pairs = None
+            listed = None
             if not subject:
                 reason = 'missing_subject_key'
             elif identifier:
-                pairs = paired_list(name, identifier, is_agent_identifier)
-                if pairs:
+                listed = split_agent_ids(name, identifier, is_agent_identifier)
+                if listed:
                     stats['linked_by_id_list'] += 1
                 elif not is_agent_identifier(identifier):
                     reason = 'id_not_single_iri'
@@ -266,7 +275,8 @@ def build_agent_roles(
                 example['rows'] += 1
                 continue
             agent_pks = []
-            for part_name, part_id in pairs or [(name, identifier)]:
+            # A listed ID gets no name: list positions do not pair names with IDs.
+            for part_name, part_id in [('', listed_id) for listed_id in listed] if listed else [(name, identifier)]:
                 if part_id:
                     agent_pk = agent_by_id.get(part_id)
                     if agent_pk:
@@ -277,7 +287,7 @@ def build_agent_roles(
                                   mention, 'explicit_id')
                     if part_name and not composite_name_reason(part_name):
                         id_names[part_id].add(agent_name(part_name))
-                    if not pairs:
+                    if not listed:
                         stats['linked_by_id'] += 1
                 else:
                     exact = agent_name(part_name)

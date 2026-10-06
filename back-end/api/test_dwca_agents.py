@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 from django.test import SimpleTestCase
 
-from api.dwca_agents import ROLE_FIELDS, RoleField, build_agent_roles, composite_name_reason
+from api.dwca_agents import ROLE_FIELDS, RoleField, build_agent_roles, composite_name_reason, split_agent_ids
 from api.dwca_conversion import _key, build_plan, convert
 from api.dwca_import import read_inputs
 from api.dwc_dp_specs import create_dwc_dp_archive, validate_dwc_dp_archive, validate_dwc_dp_resources
@@ -196,33 +196,59 @@ class AgentRoleTests(SimpleTestCase):
         self.assertEqual(len(frames['agent']), 1)
         self.assertEqual(len(frames['occurrence-agent-role']), 2)
 
-    def test_pipe_lists_paired_with_id_lists_are_split_in_order(self):
+    def test_id_lists_link_one_agent_per_iri_without_positional_names(self):
         # ds560: 25 recordedBy/recordedByID list pairs were skipped as id_not_single_iri.
         horvath, bryn, liahjell = ('https://orcid.org/0000-0002-6017-5385', 'https://orcid.org/0000-0003-4712-8266',
                                    'https://orcid.org/0009-0000-2845-7836')
         archive = read_inputs([('occurrence.csv', (
             'occurrenceID,eventID,recordedBy,recordedByID,eventDate,occurrenceStatus\n'
-            f'o1,e1,Peter Horvath,{horvath},2025-01-01,present\n'
+            f'o1,e1,Peter  Horvath,{horvath},2025-01-01,present\n'
             f'o2,e2,Peter Horvath | Gunnar Thorsen Liahjell,{horvath} | {liahjell},2025-01-02,present\n'
-            f'o3,e3,Anders Bryn|Gunnar Thorsen Liahjell,{bryn}|{liahjell},2025-01-03,present\n'
-            f'o4,e4,Anders Bryn | Gunnar Thorsen Liahjell,{bryn},2025-01-04,present\n').encode())])
+            # Names listed in a different order from the IDs: no name is taken from a position.
+            f'o3,e3,Gunnar Thorsen Liahjell|Anders Bryn,{bryn}|{liahjell},2025-01-03,present\n'
+            f'o4,e4,Anders Bryn | Gunnar Thorsen Liahjell,{bryn},2025-01-04,present\n'
+            f'o5,e5,,{horvath} | {bryn},2025-01-05,present\n'
+            f'o6,e6,Peter Horvath | | Anders Bryn,{horvath} | | {bryn},2025-01-06,present\n'
+            f'o7,e7,Peter Horvath | Peter Horvath,{horvath} | {horvath},2025-01-07,present\n'
+            f'o8,e8,Peter Horvath | Anders Bryn,0000-0002-6017-5385 | 0000-0003-4712-8266,2025-01-08,present\n'
+            f'o9,e9,Peter Horvath,{horvath},2025-01-09,present\n'
+            ).encode())])
         plan = build_plan(archive)
         frames, report = convert(archive, plan, {issue['id']: issue['options'][0]['value'] for issue in plan['issues']})
         agents = frames['agent'].set_index('agentID')
         self.assertEqual(sorted(agents.index), sorted([horvath, bryn, liahjell]))
-        self.assertEqual(agents.loc[liahjell, 'preferredAgentName'], 'Gunnar Thorsen Liahjell')
+        # Horvath stands alone in o1 and o9 (whitespace collapsed, so one name); Bryn and Liahjell never
+        # stand alone, so they get no name.
+        self.assertEqual(agents['preferredAgentName'].to_dict(), {horvath: 'Peter Horvath', bryn: '', liahjell: ''})
         roles = frames['occurrence-agent-role']
         occurrence = dict(zip(frames['occurrence']['occurrenceID'], frames['occurrence']['occurrence_pk']))
-        for source, expected in (('o2', [horvath, liahjell]), ('o3', [bryn, liahjell])):
+        # agentRoleOrder is the source ID order.
+        for source, expected in (('o2', [horvath, liahjell]), ('o3', [bryn, liahjell]), ('o5', [horvath, bryn])):
             listed = roles[roles['occurrence_fk'] == occurrence[source]].sort_values('agentRoleOrder')
             self.assertEqual(listed['agent_fk'].tolist(), [agents.loc[identifier, 'agent_pk'] for identifier in expected])
             self.assertEqual(listed['agentRoleOrder'].astype(int).tolist(), [1, 2])
         agent_roles = report['agent_roles']
-        self.assertEqual(agent_roles['fields']['occurrence.recordedBy']['linked_by_id_list'], 2)
-        # A list paired with a single ID is still a count mismatch and gets no role.
-        self.assertEqual(agent_roles['skipped'], {'id_name_count_mismatch': 1})
-        self.assertNotIn(occurrence['o4'], set(roles['occurrence_fk']))
+        self.assertEqual(agent_roles['fields']['occurrence.recordedBy']['linked_by_id_list'], 3)
+        # A name list beside one ID, an empty segment, a repeated ID and bare ORCIDs are not split.
+        self.assertEqual(agent_roles['skipped'], {'id_name_count_mismatch': 1, 'id_not_single_iri': 3})
+        for source in ('o4', 'o6', 'o7', 'o8'):
+            self.assertNotIn(occurrence[source], set(roles['occurrence_fk']))
+        # Only the unsplit list cells count as non-single ID cells.
+        self.assertEqual(report['agent_mapping']['non_single_id_cells'], 3)
         self.assert_package_valid(frames)
+
+    def test_split_agent_ids_edge_cases(self):
+        from api.dwca_conversion import _single_agent_iri as single
+        a, b = 'https://orcid.org/0000-0002-6017-5385', 'https://orcid.org/0000-0003-4712-8266'
+        self.assertEqual(split_agent_ids('A | B', f'{a} | {b}', single), [a, b])
+        self.assertEqual(split_agent_ids('B | A', f'{a}|{b}', single), [a, b])
+        self.assertEqual(split_agent_ids('', f'{a}|{b}', single), [a, b])
+        self.assertIsNone(split_agent_ids('A', a, single))                    # not a list
+        self.assertIsNone(split_agent_ids('A | B', f'{a} | ', single))          # empty segment
+        self.assertIsNone(split_agent_ids('A | A', f'{a} | {a}', single))       # duplicate ID
+        self.assertIsNone(split_agent_ids('A | B', '0000-0002-6017-5385 | 0000-0003-4712-8266', single))  # bare ORCIDs
+        self.assertIsNone(split_agent_ids('A | B | C', f'{a} | {b}', single))   # count mismatch
+        self.assertIsNone(split_agent_ids('A & B | C', f'{a} | {b}', single))   # composite name
 
     def test_empty_by_id_columns_with_name_only_agents_export(self):
         # ds568 failed at export: empty recordedByID/identifiedByID columns beside an agent table

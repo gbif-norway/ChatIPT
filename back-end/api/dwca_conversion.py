@@ -26,7 +26,7 @@ from api.dwca_preflight import preflight
 from api.dwca_review import (apply_policy, effective_decisions, failed_requirements, group_rows,  # noqa: F401
                              option_status, remove_unavailable, violations)
 from api.dwca_semantic_audit import is_age_like_remark, semantic_target_rejection
-from api.dwca_agents import ROLE_FIELDS, agent_name, build_agent_roles, composite_name_reason
+from api.dwca_agents import ROLE_FIELDS, agent_name, build_agent_roles, composite_name_reason, split_agent_ids
 
 RULE_VERSION = "23"
 DERIVED_VALUE_EXAMPLE_LIMIT = 20
@@ -1685,13 +1685,15 @@ def convert(archive, plan, decisions):
             for field, identifier in record.items():
                 if not field.endswith('ByID') or field[:-2] not in descriptors or not identifier:
                     continue
+                name = record.get(field[:-2], '')
                 if not _single_agent_iri(identifier):
-                    skipped_agent_values += 1
+                    # Role fields' ID lists are split by build_agent_roles below; others stay unlinked.
+                    if (resource_name, field[:-2]) not in ROLE_FIELDS or not split_agent_ids(name, identifier, _single_agent_iri):
+                        skipped_agent_values += 1
                     continue
                 evidence = agent_evidence[identifier]
-                name = record.get(field[:-2], '')
                 if name and composite_name_reason(name) is None:
-                    evidence['names'].add(name)
+                    evidence['names'].add(agent_name(name))
                 evidence['origins'].update(origins[(resource_name, number)])
     created_agents = 0
     for identifier, evidence in sorted(agent_evidence.items()):
