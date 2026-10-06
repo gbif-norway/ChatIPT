@@ -136,12 +136,16 @@ export function columnDetails(state, selected) {
   })
 }
 
+export const AGENT_NAMES_ID = 'agent-names'
+
 // Warnings the backend raises for automatic keep-in-originals choices repeat what the summary already says.
+// The agent-names notice describes linking names to agents, so it goes once every name is kept as text only.
 export function dedupeNotices(state, notices, selected) {
   const automatic = new Set((state?.plan?.automatic_choices || []).filter(choice => selected(choice.id, choice.default) === 'preserve').map(choice => choice.id))
   const seen = new Set()
   return (notices || []).filter(notice => {
     if (notice.id && automatic.has(notice.id)) return false
+    if (notice.id === AGENT_NAMES_ID && selected(AGENT_NAMES_ID, 'shared') === 'text') return false
     const key = notice.id ? `id:${notice.id}` : `text:${notice.title}:${notice.reason}`
     if (seen.has(key)) return false
     seen.add(key)

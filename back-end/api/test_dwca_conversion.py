@@ -754,7 +754,8 @@ class ArchiveTests(SimpleTestCase):
         self.assertEqual(agents.loc['https://example.org/bob', 'preferredAgentName'], '')
         # Carol appears only in a list, and list positions do not pair names with IDs.
         self.assertEqual(agents.loc['https://example.org/carol', 'preferredAgentName'], '')
-        self.assertEqual(report['agent_mapping']['non_single_id_cells'], 4)
+        # o3's ID list is split by the role builder and o2's "NA" is an empty cell.
+        self.assertEqual(report['agent_mapping']['non_single_id_cells'], 3)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'agents.tar.gz'
             create_dwc_dp_archive(output, frames, 'Agents', 'Explicit source agents')

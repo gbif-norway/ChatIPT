@@ -57,11 +57,21 @@ Agent per exact name within the dataset, with one role row per mention
 572 and 1,229 for one company in 563). Name agents carry no `agentID` and a
 remark saying they stand for an exact name only. A name-only mention is never
 merged into an explicit-ID Agent, even when the names are equal: it gets the
-separate name Agent. This is a visible automatic choice: `agent-names` keeps
-every name without an identifier as text only, and each repeated name has its
-own `agent-share:` choice to keep that name as text only. Placeholder names
-(`unknown`, `ukjent`, `NA`, `n/a`, `anon.`, `-`, `?`, `not recorded`, the
-converter's empty-cell tokens and similar) never become Agents.
+separate name Agent; `agent_roles.name_agents_matching_id_agents` counts such
+names. This is an automatic choice shown as a notice ("Linked N mentions of M
+names…", with a link to the setting): `agent-names` keeps every name without an
+identifier as text only, and each repeated name has its own `agent-share:`
+choice to keep that name as text only. Per-name choices are inactive while
+`agent-names` keeps all names as text. Names are counted from every column that
+can map to an agent role, so a remapped column's names have the same choice and
+the notice's counts match the linked mentions. Placeholder names never become
+Agents: the converter's empty-cell tokens and values such as `unknown`,
+`[Ukjent]`, `Unknown collector`, `Samler ukjent`, `Ikke angitt`, `s. n.`,
+`N.N`, `Indet.` or `<NA>` (a placeholder word with only role nouns, brackets,
+quotes or dotted initials around it). Names containing `?` (`Rosaag?`,
+`Ø.O.(Ørjan Olsen?)`) doubt the identity they give and stay text, reported as
+`uncertain`. A missing-value token such as `NA` in a `*ByID` field counts as an
+empty cell, so the name is still linked by name.
 Names are compared after collapsing whitespace runs, in the converter's
 explicit-ID agents and in role rows alike. A `|`-delimited `*ByID` list of
 distinct single agent IRIs links one Agent and one role row per IRI when its
