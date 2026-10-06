@@ -4,8 +4,8 @@ import { useCallback, useEffect, useState } from 'react'
 import config from '../config'
 import { STATUS_LABELS, formatName } from '../utils/taxonReview.mjs'
 import {
-  DECISION_LABELS, PAGE_SIZE, bulkActions, bulkBody, checkMessage, decisionBody, decisionResult,
-  isChecking, isEditable, pageCount, pageQuery, parseNote, skippedMessage,
+  DECISION_LABELS, PAGE_SIZE, bulkActions, bulkBody, checkMessage, choiceGroups, choiceLabel, decisionBody, decisionResult,
+  isChecking, isEditable, pageCount, pageQuery, parseNote, replacementWarning, skippedMessage,
 } from '../utils/conversionNames.mjs'
 
 function Parsed({ entry }) {
@@ -34,33 +34,73 @@ function Match({ entry }) {
 
 function DecisionCell({ entry, editable, busy, onDecide }) {
   const decision = entry.decision
-  const alternatives = entry.match?.alternatives || []
+  const [more, setMore] = useState(false)
+  // A COL choice that replaces the user's name waits here for its confirming second click.
+  const [confirming, setConfirming] = useState(null)
   if (decision) {
     const result = decisionResult(decision)
     return <div className="small">
       <span className="badge text-bg-primary">{DECISION_LABELS[decision.decision]}</span>
       {result && <div>{result}{decision.taxonRank ? ` (${decision.taxonRank})` : ''}</div>}
+      {decision.replaces && <div className="text-warning-emphasis">Confirmed: {decision.replaces}</div>}
+      {entry.decision_unconfirmed && <div className="text-danger-emphasis">
+        This COL name replaces your name with a coarser or different taxon and was never confirmed, so it is not applied. Undo and decide again.</div>}
       {decision.by?.startsWith('bulk') && <div className="text-muted">Accepted in bulk</div>}
       {editable && <button type="button" className="btn btn-link btn-sm p-0" disabled={busy} onClick={() => onDecide(entry.label, null)}>Undo</button>}
     </div>
   }
   if (!editable) return <span className="badge text-bg-secondary">Not reviewed</span>
+  const { main, sameName, others } = choiceGroups(entry)
+  const choose = (choice) => choice.replaces ? setConfirming(choice)
+    : onDecide(entry.label, choice.decision, choice.decision === 'alternative' ? choice.usage.id : undefined)
+  const keepFirst = entry.suggested === 'keep'
+  const keep = <button type="button" className={`btn btn-sm ${keepFirst ? 'btn-success' : 'btn-outline-secondary'}`} disabled={busy}
+    onClick={() => onDecide(entry.label, 'keep')} title="Copy the supplied text to scientificName where it is empty">Keep my name</button>
+  if (confirming) {
+    return <div className="alert alert-warning small py-2 mb-0" role="alert">
+      {replacementWarning(confirming, entry.rows)}
+      <div className="d-flex flex-wrap gap-1 mt-1">
+        <button type="button" className="btn btn-sm btn-warning" disabled={busy}
+          onClick={() => { onDecide(entry.label, confirming.decision, confirming.decision === 'alternative' ? confirming.usage.id : undefined, { confirmCoarser: true }); setConfirming(null) }}>
+          Replace with {confirming.usage.scientificName}</button>
+        <button type="button" className="btn btn-sm btn-link" onClick={() => setConfirming(null)}>Cancel</button>
+      </div>
+    </div>
+  }
   return <div>
     <div className="d-flex flex-wrap gap-1" role="group" aria-label={`Decision for ${entry.label}`}>
+      {keepFirst && keep}
       <button type="button" className="btn btn-sm btn-outline-success" disabled={busy || !entry.offers.parsed}
         onClick={() => onDecide(entry.label, 'parsed')} title="Write the parsed name to scientificName and its authorship to scientificNameAuthorship">Use split</button>
-      <button type="button" className="btn btn-sm btn-outline-success" disabled={busy || !entry.offers.col}
-        onClick={() => onDecide(entry.label, 'col')} title="Write the Catalogue of Life name and authorship">Use COL name</button>
-      <button type="button" className="btn btn-sm btn-outline-secondary" disabled={busy}
-        onClick={() => onDecide(entry.label, 'keep')} title="Copy the supplied text to scientificName where it is empty">Keep as supplied</button>
-      <button type="button" className="btn btn-sm btn-outline-secondary" disabled={busy}
-        onClick={() => onDecide(entry.label, 'empty')} title="Leave scientificName empty; the supplied text fills verbatimIdentification wherever that would otherwise be empty">Leave empty</button>
+      {main && (main.replaces
+        ? <button type="button" className="btn btn-sm btn-outline-warning" disabled={busy} onClick={() => choose(main)}
+          title={`Write ${formatName(main.usage)} instead of your name`}>Use {main.usage.scientificName}… <span className="fw-normal">({main.replaces.text})</span></button>
+        : <button type="button" className="btn btn-sm btn-outline-success" disabled={busy} onClick={() => choose(main)}
+          title="Write the Catalogue of Life name and authorship">Use COL name</button>)}
+      {!keepFirst && keep}
+      <button type="button" className="btn btn-sm btn-link" aria-expanded={more} onClick={() => setMore(!more)}>{more ? 'Fewer options' : 'More…'}</button>
     </div>
-    {alternatives.length > 0 && <select className="form-select form-select-sm mt-1" aria-label={`Other COL names for ${entry.label}`} value="" disabled={busy}
-      onChange={event => event.target.value && onDecide(entry.label, 'alternative', event.target.value)}>
-      <option value="">Other COL name…</option>
-      {alternatives.map(alternative => <option key={alternative.id} value={alternative.id}>{formatName(alternative)}{alternative.taxonRank ? ` (${alternative.taxonRank})` : ''}</option>)}
-    </select>}
+    {sameName.length > 0 && <div className="mt-1">
+      <div className="text-muted small">Your name in Catalogue of Life:</div>
+      <div className="d-flex flex-column align-items-start gap-1">
+        {sameName.map(choice => <button key={choice.usage.id} type="button" className="btn btn-sm btn-outline-success text-start" disabled={busy}
+          onClick={() => choose(choice)} title="Write this Catalogue of Life name and authorship">
+          Use {choiceLabel(choice)}{choice.usage.status && choice.usage.status !== 'accepted' ? ` (${choice.usage.status.replace(/_/g, ' ')})` : ''}</button>)}
+      </div>
+    </div>}
+    {more && <div className="d-flex flex-wrap align-items-center gap-1 mt-1">
+      <button type="button" className="btn btn-sm btn-outline-secondary" disabled={busy}
+        onClick={() => onDecide(entry.label, 'empty')} title="Publish no scientificName; the supplied text fills verbatimIdentification wherever that would otherwise be empty">Don&apos;t publish a name</button>
+      {others.length > 0 && <select className="form-select form-select-sm w-auto" aria-label={`Other COL names for ${entry.label}`} value="" disabled={busy}
+        onChange={event => {
+          const choice = others.find(item => String(item.usage.id) === event.target.value)
+          if (choice) choose(choice)
+        }}>
+        <option value="">Other COL name…</option>
+        {others.map(choice => <option key={choice.usage.id} value={choice.usage.id}>
+          {choiceLabel(choice)}{choice.replaces ? ` — ${choice.replaces.text}` : ''}</option>)}
+      </select>}
+    </div>}
   </div>
 }
 
@@ -164,7 +204,8 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
             <div className="text-muted">{entry.rows.toLocaleString()} {entry.rows === 1 ? 'row' : 'rows'}{entry.hints?.kingdom ? ` · ${entry.hints.kingdom}` : ''}</div></td>
           <td><Parsed entry={entry} /></td>
           <td><Match entry={entry} /></td>
-          <td><DecisionCell entry={entry} editable={editable} busy={locked} onDecide={(label, kind, usageId) => act(decisionBody(planId, label, kind, usageId))} /></td>
+          <td><DecisionCell entry={entry} editable={editable} busy={locked}
+            onDecide={(label, kind, usageId, options) => act(decisionBody(planId, label, kind, usageId, options))} /></td>
         </tr>)}</tbody></table></div>}
     {pages > 1 && <nav className="d-flex align-items-center gap-2 small" aria-label="Name pages">
       <button type="button" className="btn btn-sm btn-outline-secondary" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button>

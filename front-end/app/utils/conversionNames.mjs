@@ -6,7 +6,43 @@ export const DECISION_LABELS = {
   col: 'Catalogue of Life name',
   alternative: 'Other Catalogue of Life name',
   keep: 'Kept as supplied',
-  empty: 'scientificName left empty',
+  empty: 'No name published',
+}
+
+// The ranks shown to tell same-name COL usages (homonyms) apart.
+const CONTEXT_RANKS = ['kingdom', 'phylum', 'class']
+
+// "Animalia › Arthropoda › Copepoda" for a COL usage, or '' when the match carried no classification.
+export const classificationContext = (usage) =>
+  CONTEXT_RANKS.map(rank => usage?.classification?.[rank]).filter(Boolean).join(' › ')
+
+// The server's COL choices for one name, grouped for display: COL's own pick, alternatives that are the user's own
+// name (shown inline), and the rest (behind "More"). Each choice says what it would replace, if anything.
+export const choiceGroups = (entry) => {
+  const choices = entry?.col_choices || []
+  const main = choices.find(choice => choice.decision === 'col') || null
+  const alternatives = choices.filter(choice => choice.decision === 'alternative')
+  // COL's own pick is shown on its own button, so an alternative with the same id is not repeated.
+  const fresh = alternatives.filter(choice => !main || String(choice.usage.id) !== String(main.usage.id))
+  return {
+    main,
+    sameName: fresh.filter(choice => choice.same_name && !choice.replaces),
+    others: fresh.filter(choice => !(choice.same_name && !choice.replaces)),
+  }
+}
+
+// One line naming a COL usage: name, authorship, rank and, when known, where it sits in the classification.
+export const choiceLabel = (choice) => {
+  const usage = choice?.usage
+  if (!usage) return ''
+  return [formatName(usage), usage.taxonRank, classificationContext(usage)].filter(Boolean).join(' · ')
+}
+
+// The confirmation shown before a COL name that is coarser than, or in another genus from, the user's name.
+export const replacementWarning = (choice, rows) => {
+  if (!choice?.replaces) return ''
+  const count = rows ? ` on ${rows.toLocaleString()} ${rows === 1 ? 'row' : 'rows'}` : ''
+  return `“${choice.usage.scientificName}” ${choice.replaces.text}${count}. Your text stays in verbatimIdentification.`
 }
 
 export const PAGE_SIZE = 100
@@ -46,10 +82,14 @@ export const bulkActions = (nameReview) => {
   ].filter((action) => action.count > 0)
 }
 
-export const decisionBody = (planId, label, kind, usageId) => ({
+// confirmCoarser is the user's second click on a COL name that replaces theirs with a coarser or different taxon;
+// the server refuses such a decision without it.
+export const decisionBody = (planId, label, kind, usageId, { confirmCoarser = false } = {}) => ({
   action: 'names',
   plan_id: planId,
-  name_decisions: { [label]: kind ? { decision: kind, ...(usageId ? { usage_id: usageId } : {}) } : null },
+  name_decisions: {
+    [label]: kind ? { decision: kind, ...(usageId ? { usage_id: usageId } : {}), ...(confirmCoarser ? { confirm_coarser: true } : {}) } : null,
+  },
 })
 
 export const bulkBody = (planId, bulk) => ({ action: 'names', plan_id: planId, bulk })
