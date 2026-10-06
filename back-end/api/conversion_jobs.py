@@ -150,7 +150,8 @@ def process_next_conversion():
                     sources[field] = 'eml'
                 else:
                     sources[field] = 'none'
-            name_review = _collect_names(archive, plan)
+            from api.conversion_names import carry_decisions
+            name_review = carry_decisions(conversion, _collect_names(archive, plan), plan)
             for field, value in filled.items():
                 setattr(conversion.dataset, field, value)
             conversion.plan = plan

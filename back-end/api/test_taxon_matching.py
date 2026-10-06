@@ -126,6 +126,37 @@ class RealNameTests(SimpleTestCase):
             {"name": "Betula pubescens subsp. pubescens", "canonicalName": "Betula pubescens pubescens"}),
             "Betula pubescens subsp. pubescens")
 
+    def test_authorships_agree_across_initials_and_abbreviations_but_not_other_authors_or_years(self):
+        # Pairs from conversions 559/572 (spiders) and 568 (reptiles and amphibians): supplied, COL.
+        agree = [
+            ("(O.P.-Cambridge, 1871)", "(O. Pickard-Cambridge, 1871)"),
+            ("(O.P.Cambridge, 1875)", "(O.P.-Cambridge, 1875)"),
+            ("(L.Koch, 1879)", "(L. Koch, 1879)"),
+            ("(C.L. Koch, 1844)", "(C. L. Koch)"),
+            ("L.", "Linnaeus, 1758"),
+            ("Fitzinger, 1838", "Fitzinger in Bonaparte, 1838"),
+            ("(Müller, 1836)", "(Müller in Van Oort & Müller, 1836)"),
+            ("(Bibron & Bory de St.Vincent, 1833)", "(Bibron & Bory de Saint-Vincent, 1833)"),
+            ("Welw. ex Ficalho", "Ficalho"),
+            ("Smith et al., 2001", "Smith, Jones & Brown, 2001"),
+            ("Hämet-Ahti", "Hamet-Ahti"),
+        ]
+        disagree = [
+            ("(Blackwall, 1841)", "Seo, 2017"),
+            ("(Hahn, 1832)", "(Hahn, 1831)"),
+            ("(O.P.-Cambridge, 1875)", "(Westring, 1861)"),
+            ("Lichtenstein & Martens, 1856", "Lichtenstein, 1856"),
+            ("Smith", "Jones"),
+            ("Smith", ""),
+        ]
+        for supplied, col in agree:
+            with self.subTest(supplied=supplied, col=col):
+                self.assertTrue(taxon_matching.authorships_agree(supplied, col))
+                self.assertTrue(taxon_matching.authorships_agree(col, supplied))
+        for supplied, col in disagree:
+            with self.subTest(supplied=supplied, col=col):
+                self.assertFalse(taxon_matching.authorships_agree(supplied, col))
+
     def test_names_whose_authorship_is_not_a_suffix_fall_back_to_the_canonical_name(self):
         self.assertEqual(taxon_matching._name_without_authorship(
             {"name": "Aus bus L. subsp. bus", "canonicalName": "Aus bus bus", "authorship": "L."}), "Aus bus bus")

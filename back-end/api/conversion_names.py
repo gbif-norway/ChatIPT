@@ -114,6 +114,36 @@ def collect_state(archive, plan):
             'skipped_long': {'labels': len(too_long['hashes']), 'rows': too_long['rows']}, 'col_release': {}, 'labels': labels, 'decisions': {}}
 
 
+def carry_decisions(conversion, fresh, plan):
+    """A new inspection's name state with the user's own name decisions carried over from the previous plan.
+
+    A re-inspection (a new rule version, or the user asking) would otherwise drop every name decision. They are
+    carried by label when the source is unchanged (same fingerprint) or yields exactly the same labels, and are checked
+    again under the current rules: the stamp of the check they passed is dropped, so a COL name that now counts as a
+    coarser or different taxon is held until confirmed (an explicit earlier confirmation stands). Bulk decisions are
+    not carried; the bulk actions are offered again under the current rules. Name results are not carried either:
+    the names are checked again.
+    """
+    previous = conversion.name_review or {}
+    old_plan = conversion.plan or {}
+    decisions = previous.get('decisions') or {}
+    if not fresh or not fresh.get('labels') or not decisions or previous.get('plan_id') != old_plan.get('id'):
+        return fresh
+    labels = {record['label'] for record in fresh['labels']}
+    same_source = bool(old_plan.get('source_sha256')) and old_plan.get('source_sha256') == plan.get('source_sha256')
+    if not same_source and labels != {record['label'] for record in previous.get('labels', [])}:
+        return fresh
+    carried, bulk = {}, 0
+    for label, decision in decisions.items():
+        if label not in labels:
+            continue
+        if str(decision.get('by') or '').startswith('bulk:'):
+            bulk += 1
+            continue
+        carried[label] = {**{key: value for key, value in decision.items() if key != 'changeKind'}, 'carriedFrom': previous['plan_id']}
+    return {**fresh, 'decisions': carried, 'carried': {'decisions': len(carried), 'bulk_not_carried': bulk}}
+
+
 def current(conversion):
     """The stored name review when it belongs to the conversion's current plan."""
     state = conversion.name_review or {}
@@ -259,12 +289,16 @@ def same_name(record, usage):
 
 
 def authorship_agrees(record, usage):
-    """Every supplied authorship of the label (its column, or the label's own) names COL's authors, or none is supplied."""
+    """Every supplied authorship of the label (its column, or the label's own) names COL's authors, or none is supplied.
+
+    When COL has no authorship nothing is overwritten (a same-name decision keeps the supplied one), so it agrees.
+    """
     parsed = record.get('parsed') or {}
     supplied = [*record.get('source_authorships', ()), *([parsed['authorship']] if parsed.get('usable') and parsed.get('authorship') else [])]
     if record.get('authorships_truncated'):
         return False
-    return all(authorships_agree(value, (usage or {}).get('scientificNameAuthorship')) for value in supplied)
+    theirs = (usage or {}).get('scientificNameAuthorship')
+    return not normal(theirs) or all(authorships_agree(value, theirs) for value in supplied)
 
 
 def unconfirmed(state):
@@ -334,6 +368,9 @@ def build_decision(record, spec, state, by='user'):
         snapshot.update(source='col', scientificName=usage['scientificName'], scientificNameAuthorship=usage.get('scientificNameAuthorship'),
                         taxonRank=usage.get('taxonRank'), usageId=str(usage['id']) if usage.get('id') is not None else None, taxonomicStatus=usage.get('status'),
                         matchType=match_type, checklist=_checklist(state))
+        # The change this decision was checked against; a later look at the snapshot trusts it rather than re-deriving
+        # it from the snapshot alone (which lacks the classification a spelling correction was checked with).
+        snapshot['changeKind'] = found['kind'] if found else None
         if replaces:
             snapshot.update(replaces=replaces['text'], confirmedCoarser=True)
         elif found:
@@ -589,10 +626,19 @@ def apply_name_decisions(frames, name_review, source_names):
 
 
 def _unconfirmed_replacement(record, decision):
-    """The replacement an older COL decision would make without the explicit confirmation it now needs; None otherwise."""
-    if decision.get('decision') not in {'col', 'alternative'} or decision.get('confirmedCoarser'):
+    """The replacement an older COL decision would make without the explicit confirmation it now needs; None otherwise.
+
+    A decision saved by `build_decision` carries the change kind it was checked against (`changeKind`, None for the
+    same name) and is trusted: it was confirmed when it needed to be. Only a legacy snapshot without that stamp is
+    checked again, against the record's stored usage (with its classification) when the usage is still there.
+    """
+    if decision.get('decision') not in {'col', 'alternative'} or decision.get('confirmedCoarser') or 'changeKind' in decision:
         return None
-    return replacement(record, {'scientificName': decision.get('scientificName'), 'taxonRank': decision.get('taxonRank')}, decision.get('matchType'))
+    match = record.get('match') or {}
+    stored = next((usage for usage in [match.get('usage') or {}, *(match.get('alternatives') or [])]
+                   if decision.get('usageId') is not None and str(usage.get('id')) == str(decision['usageId'])), None)
+    usage = {**(stored or {}), 'scientificName': decision.get('scientificName'), 'taxonRank': decision.get('taxonRank')}
+    return replacement(record, usage, decision.get('matchType'))
 
 
 def public_report(report):
