@@ -38,6 +38,17 @@ SCHEMA_TERMS = {field['dcterms:isVersionOf'] for spec in TABLE_SPECS.values() fo
 NAME = DWC + 'scientificName'
 AUTHORSHIP = DWC + 'scientificNameAuthorship'
 VERBATIM_NAME = DWC + 'verbatimIdentification'
+QUALIFIER = DWC + 'identificationQualifier'
+SPECIMEN_BASES = {'PreservedSpecimen', 'FossilSpecimen', 'MaterialSample', 'LivingSpecimen', 'MaterialCitation'}
+# Wording that may report an absence. Any match keeps occurrence status a question.
+ABSENCE_WORDING = re.compile(r'\b(?:absent|absence|not (?:found|seen|observed|detected|present|recorded)|'
+                             r'none (?:found|seen|observed)|no (?:individuals|specimens|organisms|catch)|'
+                             r'ikke (?:funnet|observert|registrert|sett|påvist)|inte (?:hittad|observerad))\b', re.I)
+OBIS = 'http://rs.iobis.org/obis/terms/'
+# OBIS vocabulary identifiers are the IRI versions of the eMoF type, value and unit
+# (the DwC-DP fields are versions of dwciri:measurementType etc.). Only absolute IRIs are copied.
+OBIS_IRI_ALIASES = {'measurementTypeID': 'assertionTypeIRI', 'measurementValueID': 'assertionValueIRI',
+                    'measurementUnitID': 'assertionUnitIRI'}
 ROLE_DESCRIPTIONS = {
     'occurrence': 'Each row of {table} becomes an occurrence, linked to its event in {core}.',
     'identification': 'Each row of {table} becomes an identification of its linked occurrence in {core}.',
@@ -171,6 +182,11 @@ def _without_authorship(name, authorship):
     if name and authorship and name.endswith(' ' + authorship):
         return name[:-len(authorship) - 1].rstrip()
     return name
+
+
+def _contains_qualifier(name, qualifier):
+    """The name text already carries this exact qualifier as separate words, e.g. 'Rana cf. arvalis' and 'cf.'."""
+    return re.search(r'(?<!\S)' + re.escape(qualifier) + r'(?!\S)', name) is not None
 
 
 def _name_needs_review(value, authorship=''):
@@ -335,6 +351,26 @@ def _scientific_summary(audit):
         'checks': len(audit['checks']), 'finding_sample': actionable[:10]}
 
 
+def _specimen_presence(table):
+    """A conventional 'present' status for specimen records, as {'default', 'title', 'reason'}, or None.
+
+    Only when no row supplies occurrenceStatus, every row declares a specimen or
+    sample basisOfRecord, and no cell uses absence wording. Callers also exclude
+    zero counts. GBIF interprets such records as present.
+    """
+    status = table.terms.index(DWC + 'occurrenceStatus') if DWC + 'occurrenceStatus' in table.terms else None
+    basis = table.terms.index(DWC + 'basisOfRecord') if DWC + 'basisOfRecord' in table.terms else None
+    if (not table.rows or basis is None or any(row[status] for row in table.rows if status is not None)
+            or any(row[basis].strip() not in SPECIMEN_BASES for row in table.rows)
+            or any(ABSENCE_WORDING.search(value) for row in table.rows for value in row if value)):
+        return None
+    bases = ', '.join(sorted({row[basis].strip() for row in table.rows}))
+    return {'default': 'present', 'title': f'{table.name}: specimen records are recorded as present', 'reason': (
+        f'Every row of {table.name} is a specimen or sample record ({bases}) and none says whether the organism was present. '
+        'No count is zero and no row uses absence wording, so occurrenceStatus is filled with present, as GBIF '
+        'would interpret these records. Change this to absent if the records report organisms that were not found.')}
+
+
 def _issue(id, title, reason, options, **extra):
     """A review question. kind and per-option assertion flags are set by apply_policy."""
     return {"id": id, "title": title, "reason": reason, "options": options, **extra}
@@ -394,11 +430,14 @@ def _streamline_plan(archive, core, plan, warnings):
             if len(set(supplied)) != len(supplied):
                 # Splitting a repeated persistent identity is an interpretation,
                 # even when missing IDs make complete grouping unavailable.
-                required.append({**issue, 'reason': reason + ' Some supplied IDs repeat. Confirm separate row contexts with repeated IDs, or retain eventID in originals using the automatic mappings below.'})
+                required.append({**issue, 'reason': reason + ' Some supplied IDs repeat. Confirm separate row contexts, each inside one event for its repeated ID, or retain eventID in originals using the automatic mappings below.'})
                 continue
         elif issue['id'] == 'event-grain' and len({row[event_ids] for row in core.rows}) == len(core.rows):
             default = 'by_id'
             reason = 'Every occurrence supplies a distinct eventID. Each row creates its own context event; no records are merged.'
+        elif issue.get('convention'):
+            # A default GBIF infers anyway: applied visibly and changeable, never asked.
+            default, reason = issue['convention']['default'], issue['convention']['reason']
         elif issue['id'].startswith('material:') and issue.get('strong_specimen_signal'):
             default = 'per_row'
             reason = ('Every source row explicitly declares PreservedSpecimen and has a distinct, complete '
@@ -454,8 +493,10 @@ def _streamline_plan(archive, core, plan, warnings):
         if issue['id'] in columns:
             columns[issue['id']]['review'] = False
         # Unmapped columns are summarised from the column list, so they need no separate notice.
-        if (default == 'preserve' and not issue['id'].startswith('column:')) or (issue['id'] == 'event-grain' and default == 'per_row'):
-            warnings.append({key: value for key, value in {**issue, 'reason': reason}.items() if key != 'options'})
+        if ((default == 'preserve' and not issue['id'].startswith('column:')) or (issue['id'] == 'event-grain' and default == 'per_row')
+                or issue.get('convention')):
+            notice = {**issue, 'reason': reason, **({'title': issue['convention']['title']} if issue.get('convention') else {})}
+            warnings.append({key: value for key, value in notice.items() if key != 'options'})
     plan['issues'] = required
     plan['automatic_choices'] = automatic
     plan['warnings'] = warnings
@@ -481,18 +522,21 @@ def build_plan(archive):
                            if row[core.terms.index(DWC + 'eventID')] and
                            not missing_reference(row[core.terms.index(DWC + 'eventID')], ())] if DWC + 'eventID' in core.terms else []
         depth_split = _depth_varies(core)
+        repeated_events = len(set(supplied_events)) != len(supplied_events)
         issues.append(_issue("event-grain", "Should occurrences that share an eventID share one event?",
             "In a Data Package every occurrence belongs to an event, which holds where and when it was recorded. Occurrences with the same eventID can share one event, "
-            "but only when their event details such as date and place agree. Otherwise each occurrence row keeps its own event."
+            "but only when their event details such as date and place agree. Otherwise each occurrence row keeps its own event"
+            + (", and rows that share an eventID sit inside one event that keeps that eventID." if repeated_events else ".")
             + (" Some occurrences that share an eventID were sampled at different depths, for example by one cast that sampled several depths. "
                "Those can share one event for the eventID, with a child event inside it for each depth." if depth_split else ""),
-            [{"value": "per_row", "label": "Give each occurrence row its own event"},
+            [{"value": "per_row", "label": "Give each occurrence row its own event"
+              + (", inside one event for each shared eventID" if repeated_events else "")},
              {"value": "by_id", "label": "Combine occurrences with the same eventID into one event"},
              *([{"value": DEPTH_SPLIT, "label": "Combine occurrences with the same eventID into one event, with a child event for each depth"}]
                if depth_split else [])],
             # Splitting a repeated persistent identity asserts that the rows are different events,
             # and so does splitting one event into a sub-event per depth.
-            assertion_values=[*(['per_row'] if len(set(supplied_events)) != len(supplied_events) else []),
+            assertion_values=[*(['per_row'] if repeated_events else []),
                               *([DEPTH_SPLIT] if depth_split else [])]))
     for t, table in enumerate(archive.tables):
         family = SUPPORTED_EXTENSIONS.get(table.row_type)
@@ -634,7 +678,8 @@ def build_plan(archive):
                 "measurementAccuracy": "assertionError", "measurementDeterminedDate": "assertionMadeDate",
                 "measurementDeterminedBy": "assertionBy", "measurementMethod": "assertionProtocols",
                 "measurementRemarks": "assertionRemarks",
-            }.items()} if family == "assertion" else {}
+            }.items()} | {OBIS + source: "occurrence-assertion." + target for source, target in OBIS_IRI_ALIASES.items()
+                          } if family == "assertion" else {}
             if term in aliases or term in assertions:
                 options = [aliases.get(term) or assertions[term]]
             if family == "molecular" and term == "http://rs.gbif.org/terms/dna_sequence":
@@ -714,6 +759,15 @@ def build_plan(archive):
                 label = ('Leave scientificName empty; the name text fills verbatimIdentification wherever that would otherwise be empty' if partial
                          else 'Leave scientificName empty; the name text is kept in verbatimIdentification')
                 item['options'] = [{**option, 'label': label} if option['value'] == 'preserve' else option for option in item['options']]
+            qualifier_copy = (term == QUALIFIER and NAME in table.terms and not options and
+                              ((own == 'occurrence' and (table.is_core or family == 'occurrence')) or family == 'identification'))
+            if qualifier_copy:
+                # The qualifier follows the name text wherever verbatimIdentification is filled from scientificName.
+                item.pop('unmapped', None)
+                item.update(verbatim_copy=('identification' if family == 'identification' else 'occurrence') + '.verbatimIdentification',
+                            verbatim_role='qualifier')
+                if VERBATIM_NAME in table.terms:
+                    item['verbatim_source'] = _column_id(t, table.terms.index(VERBATIM_NAME))
             columns.append(item); profile["columns"].append({key: item[key] for key in ("term", "nonempty", "distinct", "samples")})
             if typed_reason or date_reason:
                 warnings.append({'id': item['id'], 'title': term.rsplit('/', 1)[-1],
@@ -726,7 +780,10 @@ def build_plan(archive):
                         + ("The full text fills verbatimIdentification wherever that would otherwise be empty, and your original files keep everything. "
                            if VERBATIM_NAME in table.terms else "The full text is always kept in verbatimIdentification. ")
                         + "Copy the names into scientificName as they are, or leave scientificName empty."
-                        if name_ambiguity else "This column could describe more than one thing, for example the occurrence or its identification. Choose where it belongs, or keep it only in your original files." if options
+                        if name_ambiguity else ("Darwin Core Data Packages have no identificationQualifier field, and scientificName excludes qualifiers. "
+                        "Each qualifier is added after the name text in verbatimIdentification wherever that is filled from scientificName, "
+                        "so the uncertainty stays visible; your original files keep the column too.") if qualifier_copy
+                        else "This column could describe more than one thing, for example the occurrence or its identification. Choose where it belongs, or keep it only in your original files." if options
                         else "Darwin Core Data Packages have no field for this term, so the values stay in your original files." if term not in SCHEMA_TERMS
                         else "This converter does not map this term yet, so the values stay in your original files."),
                     options=item["options"], table=t, nonempty=len(values), samples=[value[:250] for value in item["samples"]]))
@@ -741,8 +798,8 @@ def build_plan(archive):
                         'The selected target receives the source text unchanged; no ISO code is inferred.',
                         [PRESERVE, {'value': 'event.country', 'label': 'Country or territory name'},
                          {'value': 'event.waterBody', 'label': 'Water body name'}],
-                        kind='column-mapping', assertion_values=['event.country', 'event.waterBody'],
-                        table=t, source_column=c, source_value=source_value, count=count))
+                        # Reading the supplier's own label into the field it names is an interpretation, not a new fact.
+                        kind='column-mapping', table=t, source_column=c, source_value=source_value, count=count))
             if table.is_core and own == 'occurrence' and term == DWC + 'eventRemarks' and chosen == 'event.eventRemarks':
                 event_ids = [row[table.terms.index(DWC + 'eventID')] for row in table.rows
                              if row[table.terms.index(DWC + 'eventID')]] if DWC + 'eventID' in table.terms else []
@@ -759,8 +816,8 @@ def build_plan(archive):
                              {'value': 'occurrence.lifeStage', 'label': 'Organism life stage (verbatim)'},
                              {'value': 'occurrence.occurrenceRemarks', 'label': 'Occurrence remark (verbatim)'},
                              PRESERVE],
-                            kind='column-mapping', assertion_values=['occurrence.lifeStage', 'occurrence.occurrenceRemarks'],
-                            table=t, source_column=c, source_value=source_value, count=count))
+                            # Choosing the subject of the supplier's own words interprets them; nothing new is asserted.
+                            kind='column-mapping', table=t, source_column=c, source_value=source_value, count=count))
         profiles.append(profile)
         if family == 'occurrence' and not table.is_core and core.row_type == DWC + 'Event':
             event_columns = [column for column in columns if column['table'] == t and column['nonempty'] and column['default'] != 'join'
@@ -863,10 +920,12 @@ def build_plan(archive):
                     re.fullmatch(r'[+-]?0+(?:\.0*)?(?:[eE][+-]?[0-9]+)?', source.get(term, '').strip())
                     for term in (quantity, DWC + 'individualCount'))
                     for row in table.rows for source in [_source(table.terms, row)])
+                convention = None if zero_quantities else _specimen_presence(table)
                 issues.append(_issue(f"status:{t}", f"{table.name}: were these organisms present or absent?",
                     "A Data Package needs every occurrence to say whether the organism was present or absent, and some rows don't say. Supplied values are kept; this choice only fills the empty ones."
                     + (f' {zero_quantities} of those rows have a zero count. A zero alone doesn\'t prove absence, so please choose deliberately.' if zero_quantities else ''),
-                    [{"value": "present", "label": "Present: the organism was recorded"}, {"value": "absent", "label": "Absent: it was looked for but not found"}]))
+                    [{"value": "present", "label": "Present: the organism was recorded"}, {"value": "absent", "label": "Absent: it was looked for but not found"}],
+                    **({'convention': convention} if convention else {})))
     # Reviewable exact-name sharing is offered only for source names that are
     # candidates for a mapped agent role. The default keeps mentions separate.
     agent_names = Counter()
@@ -1009,6 +1068,28 @@ def validate_decisions(plan, decisions, require_complete=True):
                 raise ConversionError(str(error), category=error.category, decision_ids=[prefix + key for key in error.decision_ids],
                                       evidence=error.evidence) from error
     return list(dict.fromkeys([*unresolved, *(item['id'] for item in found)]))
+
+
+def _shared_event_ids(core, core_columns, decisions):
+    """{eventID: parent eventCategory} for supplied eventIDs that several per-row events would repeat.
+
+    Common missing-value tokens are not identities and are never grouped. The parent's
+    category is the one its rows agree on, otherwise the generic occurrence context.
+    """
+    if core.row_type != DWC + 'Occurrence' or decisions.get('event-grain') in COMBINED_GRAINS:
+        return {}
+
+    def column(target):
+        return next((item['column'] for item in core_columns if decisions.get(item['id'], item['default']) == target), None)
+    id_column, category_column = column('event.eventID'), column('event.eventCategory')
+    if id_column is None:
+        return {}
+    categories = defaultdict(list)
+    for row in core.rows:
+        if row[id_column] and not missing_reference(row[id_column], ()):
+            categories[row[id_column]].append(row[category_column] if category_column is not None else '')
+    return {event_id: (supplied[0] if supplied[0] and len(set(supplied)) == 1 else 'occurrence')
+            for event_id, supplied in categories.items() if len(supplied) > 1}
 
 
 def _link_parents(archive, core, core_index, plan, decisions, core_columns, event_keys, events_by_key, column_consumption):
@@ -1211,6 +1292,15 @@ def convert(archive, plan, decisions):
         table = archive.tables[t]
         name = table.rows[n][table.terms.index(NAME)] if NAME in table.terms else ''
         if name and not record.get('verbatimIdentification'):
+            # The pinned DwC-DP has no identificationQualifier field, and scientificName
+            # excludes qualifiers. The supplied qualifier follows the supplied name text
+            # in verbatimIdentification, so "cf.", "?" or "sp." survive without changing
+            # scientificName. Text that already contains the qualifier is kept as is.
+            qualifier = table.rows[n][table.terms.index(QUALIFIER)].strip() if QUALIFIER in table.terms else ''
+            if qualifier:
+                if not _contains_qualifier(name, qualifier):
+                    name = f'{name.rstrip()} {qualifier}'
+                column_consumption[(t, QUALIFIER)].add(n)
             record['verbatimIdentification'] = name
             column_consumption[(t, NAME)].add(n)
         if record.get('scientificName'):
@@ -1221,9 +1311,10 @@ def convert(archive, plan, decisions):
         # DwC individualCount is a count of organisms, which DwC-DP represents
         # as a quantity paired with its unit. Only derive it when neither half
         # of an explicit quantity pair was supplied. Zero remains a quantity;
-        # it never changes occurrenceStatus.
+        # it never changes occurrenceStatus. This applies to Occurrence cores and
+        # to Occurrence extensions converted as occurrences alike.
         table = archive.tables[t]
-        if table.is_core and table.row_type == DWC + 'Occurrence' and DWC + 'individualCount' in table.terms:
+        if table.row_type == DWC + 'Occurrence' and DWC + 'individualCount' in table.terms:
             source_row = table.rows[n]
             count = source_row[table.terms.index(DWC + 'individualCount')].strip()
             source = _source(table.terms, source_row)
@@ -1274,10 +1365,23 @@ def convert(archive, plan, decisions):
 
     event_groups = {}; group_keys = {}; depth_children = defaultdict(set); depth_parents = {}
     depth_split = core.row_type == DWC + "Occurrence" and decisions.get("event-grain") == DEPTH_SPLIT
+    # Separate per-row events never repeat a supplied eventID. A repeated eventID
+    # identifies one event that contains the row events, as for depth children.
+    shared_ids, shared_children = _shared_event_ids(core, columns_by_table[core_index], decisions), defaultdict(int)
     for n, (row, source_id) in enumerate(zip(core.rows, core.ids)):
         mapped = values(core_index, row, n); event = mapped.get("event", {})
         # Depth stays with each depth's child event; the combined event carries no depth range.
         depth = {field: event.pop(field) for field in DEPTH_FIELDS if field in event} if depth_split else {}
+        if event.get('eventID') in shared_ids:
+            shared = event.pop('eventID')
+            parent_key = _key(archive, 'event-shared-id', shared)
+            if parent_key in events_by_key:
+                trace('event', {'event_pk': parent_key}, core_index, n)
+            else:
+                # Only the supplied identity and a category; no row's details are combined or inherited.
+                add('event', {'event_pk': parent_key, 'eventID': shared, 'eventCategory': shared_ids[shared]}, core_index, n)
+            event['parentEvent_fk'] = parent_key
+            shared_children[parent_key] += 1
         group_id = source_id
         if core.row_type == DWC + "Occurrence" and decisions["event-grain"] in COMBINED_GRAINS:
             group_id = event.get("eventID", "")
@@ -1558,10 +1662,12 @@ def convert(archive, plan, decisions):
                 raise ConversionError(f'{table.name}, row {n + 1}: {error}', category='conflict',
                                       decision_ids=[f'table:{t}', *([f'row:{t}:{n}'] if f'row:{t}:{n}' in issues_by_id else [])],
                                       evidence={'source_table': table.name, 'source_row': n + 1}) from error
+    # Tables whose rows became occurrences, so individualCount was considered for every converted row.
+    count_tables = [t for t, table in enumerate(archive.tables) if table.row_type == DWC + 'Occurrence'
+                    and DWC + 'individualCount' in table.terms and (table.is_core or decisions.get(f'table:{t}') == 'occurrence')]
     for column in plan["columns"]:
         source_table = archive.tables[column["table"]]
-        if (column['term'] == DWC + 'individualCount' and source_table.is_core
-                and source_table.row_type == DWC + 'Occurrence'):
+        if column['term'] == DWC + 'individualCount' and column['table'] in count_tables:
             continue  # Replaced below with the row-level derived disposition.
         target = decisions.get(column["id"], column["default"])
         if not archive.tables[column["table"]].is_core and decisions.get(f"table:{column['table']}") == "preserve":
@@ -1595,7 +1701,7 @@ def convert(archive, plan, decisions):
         # Event details on Occurrence extension rows are written only as the occurrence-events choice allows.
         extension_events = family == 'occurrence' and not archive.tables[column['table']].is_core and target.startswith('event.')
         special = family == 'humboldt' or family in GERMPLASM_FAMILIES.values() or family in LEGACY_FAMILIES.values() or extension_events
-        if column['term'] == NAME and target == 'preserve' and column_consumption[(column['table'], NAME)]:
+        if column['term'] in {NAME, QUALIFIER} and target == 'preserve' and column_consumption[(column['table'], column['term'])]:
             target = 'derived verbatim copy → ' + column.get('verbatim_copy', 'occurrence.verbatimIdentification')
             special = True
         if family == 'germplasm-score' and column['term'] == G + 'measurementTraitID' and column_consumption[(column['table'], column['term'])]:
@@ -1614,24 +1720,26 @@ def convert(archive, plan, decisions):
             if not copied: target = 'preserve'
         dispositions.append({"source_table": archive.tables[column["table"]].name, "term": column["term"], "target": target,
                              "disposition": "retained-unmapped" if target == "preserve" else 'derived' if target == 'join' or target.startswith('derived ') else "mapped+retained", "nonempty": column["nonempty"], **extra})
-    # Account for each occurrence-core individualCount as a value-level
-    # derived disposition, including rows withheld because explicit quantity
-    # fields take precedence or the count is not a nonnegative integer.
-    for t, table in enumerate(archive.tables):
+    # Account for each converted occurrence's individualCount (core or extension)
+    # as a value-level derived disposition, including rows withheld because explicit
+    # quantity fields take precedence, the count is not a nonnegative integer, or
+    # the extension row itself stays in the originals.
+    output_rows = {(entry['source_row'], entry['source_table_index']): entry['target_row']
+                   for entry in crosswalk if entry['target_table'] == 'occurrence'}
+    for t in count_tables:
+        table = archive.tables[t]
         count_term = DWC + 'individualCount'
-        if not table.is_core or table.row_type != DWC + 'Occurrence' or count_term not in table.terms:
-            continue
         quantity, quantity_type = DWC + 'organismQuantity', DWC + 'organismQuantityType'
         derived_values = []
         derived_count = 0
-        retained_conflict = invalid = empty = 0
-        output_rows = {(entry['source_row'], entry['source_table_index']): entry['target_row']
-                       for entry in crosswalk if entry['target_table'] == 'occurrence'}
+        retained_conflict = invalid = empty = row_retained = 0
         for row_number, row in enumerate(table.rows, start=1):
             source = _source(table.terms, row)
             count = source.get(count_term, '').strip()
             if not count:
                 empty += 1
+            elif (row_number, t) not in output_rows:
+                row_retained += 1  # The whole extension row stays in the originals.
             elif source.get(quantity) or source.get(quantity_type):
                 retained_conflict += 1
             elif re.fullmatch(r'\+?\d+', count):
@@ -1648,15 +1756,17 @@ def convert(archive, plan, decisions):
             'source_table': table.name, 'term': count_term,
             'target': 'occurrence.organismQuantity + occurrence.organismQuantityType (individuals)',
             'disposition': 'derived' if derived_count else 'retained-unmapped',
-            'nonempty': derived_count + retained_conflict + invalid,
+            'nonempty': derived_count + retained_conflict + invalid + row_retained,
             'mapped_rows': derived_count,
-            'retained_only_rows': retained_conflict + invalid,
+            'retained_only_rows': retained_conflict + invalid + row_retained,
             'empty_rows': empty,
             'derived_value_examples': derived_values,
             'derived_value_examples_omitted': derived_count - len(derived_values),
             'mapping_rule': 'Copy a nonnegative integer individualCount as organismQuantity with organismQuantityType=individuals only when both source quantity fields are empty. Zero does not determine occurrenceStatus; source individualCount remains in the originals.',
             'retained_reasons': ({'explicit_quantity_present': retained_conflict,
-                                  'invalid_nonnegative_integer': invalid} if retained_conflict or invalid else {}),
+                                  'invalid_nonnegative_integer': invalid,
+                                  **({'row_retained_in_originals': row_retained} if row_retained else {})}
+                                 if retained_conflict or invalid or row_retained else {}),
         })
     survey_ids = defaultdict(set)
     for survey in resources.get('survey', []):
@@ -1748,6 +1858,11 @@ def convert(archive, plan, decisions):
                                              'inside it that holds only the depth values, its eventCategory and its parent link; its occurrences '
                                              'link to it. Combined events carry no depth range, and no child eventID is created.'}}
                  if depth_split else {}),
+              **({'shared_event_ids': {'parent_events': len(shared_children), 'row_events': sum(shared_children.values()),
+                                       'policy': 'Each occurrence row has its own event. Rows that share a supplied eventID link to one '
+                                                 'parent event that holds only that eventID and an eventCategory, so no eventID repeats. '
+                                                 'Row events keep their own details; nothing is combined or inherited.'}}
+                 if shared_children else {}),
               "resources": {name: len(df) for name, df in frames.items()}, "validation": validation,
               "limitations": ["Structural validation does not prove semantic equivalence.", "Original files retain unsupported columns and extensions.",
                               "Internal keys identify converted rows; source identifiers are retained separately.",

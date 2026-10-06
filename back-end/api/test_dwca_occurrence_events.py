@@ -224,6 +224,46 @@ class CrossExtensionDateTests(SimpleTestCase):
         self.assertTrue(option_status(plan, {**both, 'occurrence-events:2': 'per-row'})['occurrence-events:1']['patch']['available'])
 
 
+class ExtensionIndividualCountTests(SimpleTestCase):
+    """individualCount on Occurrence extensions of Event cores (production datasets 566 and 567)."""
+
+    def test_counts_become_individual_quantities_unless_the_row_supplies_its_own_quantity(self):
+        events = (b'eventID,eventCategory,eventDate\n'
+                  b'Nord-1985-02-11-3-0.1,survey,1985-02-11\n1f0290ea-9b2e-11e8-91c9-005056a2b019,survey,2018-08-06\n')
+        source = archive(
+            b'eventID,basisOfRecord,occurrenceID,individualCount,organismQuantity,organismQuantityType,occurrenceStatus,scientificName\n'
+            b'Nord-1985-02-11-3-0.1,MaterialSample,Nord-1985-02-11-3-0.1-3,14,,,present,Themisto abyssorum\n'
+            b'Nord-1985-02-11-3-0.1,MaterialSample,Nord-1985-02-11-3-0.1-4,0,,,absent,Themisto libellula\n'
+            b'1f0290ea-9b2e-11e8-91c9-005056a2b019,Occurrence,f4702da8-6b3b-4d4c-b282-cb2de823bbf3,1,,,present,Aglantha digitale\n'
+            b'1f0290ea-9b2e-11e8-91c9-005056a2b019,Occurrence,8665290b-0a6b-482c-b711-457750f159f6,2,0.899256315,ind/m3,present,Calanus finmarchicus\n',
+            events)
+        plan = build_plan(source)
+        frames, report = convert(source, plan, answers(plan))
+        rows = frames['occurrence'].set_index('occurrenceID')
+        self.assertEqual((rows.loc['Nord-1985-02-11-3-0.1-3', 'organismQuantity'], rows.loc['Nord-1985-02-11-3-0.1-3', 'organismQuantityType']),
+                         ('14', 'individuals'))
+        # Zero stays a quantity and never decides status; the supplied absence is kept.
+        self.assertEqual(rows.loc['Nord-1985-02-11-3-0.1-4', 'organismQuantity'], '0')
+        self.assertEqual(rows.loc['Nord-1985-02-11-3-0.1-4', 'occurrenceStatus'], 'absent')
+        self.assertEqual(rows.loc['f4702da8-6b3b-4d4c-b282-cb2de823bbf3', 'organismQuantity'], '1')
+        # An explicit density takes precedence; the count stays in the originals.
+        self.assertEqual((rows.loc['8665290b-0a6b-482c-b711-457750f159f6', 'organismQuantity'],
+                          rows.loc['8665290b-0a6b-482c-b711-457750f159f6', 'organismQuantityType']), ('0.899256315', 'ind/m3'))
+        count = disposition(report, 'individualCount')
+        self.assertEqual((count['disposition'], count['mapped_rows'], count['retained_only_rows']), ('derived', 3, 1))
+        self.assertEqual(count['retained_reasons'], {'explicit_quantity_present': 1, 'invalid_nonnegative_integer': 0})
+        self.assertEqual(count['derived_value_examples'][0]['target_row'], 1)
+        self.assertTrue(report['validation']['valid'])
+
+    def test_a_retained_extension_is_not_counted_as_derived(self):
+        source = archive(b'eventID,occurrenceID,individualCount,occurrenceStatus\ne1,o1,3,present\ne2,o2,5,present\n')
+        plan = build_plan(source)
+        frames, report = convert(source, plan, {**answers(plan), 'table:1': 'preserve'})
+        self.assertNotIn('occurrence', frames)
+        count = disposition(report, 'individualCount')
+        self.assertEqual((count['disposition'], count['target']), ('retained-unmapped', 'preserve'))
+
+
 class LargeEmlTests(SimpleTestCase):
     def test_metadata_is_read_from_eml_larger_than_the_evidence_limit(self):
         from api.conversion_evidence import EML_MAX_BYTES, publication_metadata

@@ -310,7 +310,99 @@ class ArchiveTests(SimpleTestCase):
         self.assertEqual(len(frames['event']), 1); self.assertTrue(report['validation']['valid'])
         decisions['event-grain'] = 'per_row'
         frames, report = convert(archive, plan, decisions)
-        self.assertEqual(len(frames['event']), 2); self.assertTrue(report['validation']['valid'])
+        # Two row events inside one event that keeps the shared eventID.
+        self.assertEqual(len(frames['event']), 3); self.assertTrue(report['validation']['valid'])
+        self.assertEqual(frames['event']['eventID'].tolist(), ['e', '', ''])
+
+    def test_separate_row_events_keep_a_shared_event_id_on_one_parent_event(self):
+        """Camera streams whose detections share an eventID but not a timestamp (production dataset 564)."""
+        stream = b'Camera13Stream1_2024-01-02T13-45-44_2024-01-02T13-50-45'
+        archive = occurrence(b'occurrenceID,eventID,eventDate,basisOfRecord,organismQuantity,organismQuantityType,scientificName,occurrenceStatus\n'
+                             b'c312ab1d,' + stream + b',2024-01-02 12:47:11.290311+00:00,MachineObservation,1,individuals,Larus marinus,present\n'
+                             b'd41f8e02,' + stream + b',2024-01-02 12:48:03.104220+00:00,MachineObservation,2,individuals,Larus sp.,present\n'
+                             b'e7a0c311,Camera13Stream1_2024-01-03T09-46-02_2024-01-03T09-51-02,2024-01-03 08:47:40.000000+00:00,MachineObservation,1,individuals,Larus fuscus,present\n')
+        plan = build_plan(archive)
+        grain = next(issue for issue in plan['issues'] if issue['id'] == 'event-grain')
+        self.assertIn('inside one event for each shared eventID', grain['options'][0]['label'])
+        self.assertFalse(option_status(plan, {**decisions_for(plan), 'event-grain': 'by_id'})['event-grain']['by_id']['available'])
+        frames, report = convert(archive, plan, {**decisions_for(plan), 'event-grain': 'per_row'})
+        events = frames['event']
+        supplied = events[events['eventID'] != '']['eventID']
+        self.assertEqual(sorted(supplied), sorted([stream.decode(), 'Camera13Stream1_2024-01-03T09-46-02_2024-01-03T09-51-02']))
+        parent = events[events['eventID'] == stream.decode()].iloc[0]
+        self.assertEqual((parent['eventDate'], parent['parentEvent_fk'], parent['eventCategory']), ('', '', 'occurrence'))
+        children = events[events['parentEvent_fk'] == parent['event_pk']]
+        self.assertEqual(sorted(children['eventDate']), ['2024-01-02 12:47:11.290311+00:00', '2024-01-02 12:48:03.104220+00:00'])
+        self.assertEqual(set(frames['occurrence'].set_index('occurrenceID').loc[['c312ab1d', 'd41f8e02'], 'event_fk']), set(children['event_pk']))
+        # An eventID used once stays on its own row event.
+        single = events[events['eventID'] == 'Camera13Stream1_2024-01-03T09-46-02_2024-01-03T09-51-02'].iloc[0]
+        self.assertEqual((single['eventDate'], single['parentEvent_fk']), ('2024-01-03 08:47:40.000000+00:00', ''))
+        self.assertEqual(report['shared_event_ids']['parent_events'], 1)
+        self.assertEqual(report['shared_event_ids']['row_events'], 2)
+        self.assertTrue(report['validation']['valid'])
+
+    def test_emof_vocabulary_identifiers_reach_the_assertion_iri_fields(self):
+        """NERC P01/S10/P06 identifiers on eMoF rows (production dataset 566)."""
+        event = b'Nord-1983-02-07-5-SC'
+        archive = read_inputs([
+            ('event.csv', b'eventID,eventCategory,eventDate\n' + event + b',survey,1983-02-07\n'),
+            ('occurrence.csv', b'eventID,occurrenceID,basisOfRecord,occurrenceStatus,scientificName\n'
+                               + event + b',Nord-1983-02-07-5-SC-6,MaterialSample,present,Calanus finmarchicus\n'),
+            ('extendedmeasurementorfact.csv',
+             b'eventID,occurrenceID,measurementType,measurementTypeID,measurementValue,measurementValueID,measurementUnit,measurementUnitID\n'
+             + event + b',NA,Mesh size,http://vocab.nerc.ac.uk/collection/P01/current/MSHSIZE1/,180,NA,micrometers,http://vocab.nerc.ac.uk/collection/P06/current/UMIC/\n'
+             + event + b',Nord-1983-02-07-5-SC-6,sex,http://vocab.nerc.ac.uk/collection/P01/current/ENTSEX01/,F,'
+                       b'http://vocab.nerc.ac.uk/collection/S10/current/S102/,not applicable,https://vocab.nerc.ac.uk/collection/P06/current/XXXX/\n')])
+        plan = build_plan(archive)
+        emof = next(index for index, table in enumerate(archive.tables) if table.name == 'extendedmeasurementorfact.csv')
+        targets = {column['term'].rsplit('/', 1)[1]: column['default'] for column in plan['columns'] if column['table'] == emof}
+        self.assertEqual((targets['measurementTypeID'], targets['measurementValueID'], targets['measurementUnitID']),
+                         ('occurrence-assertion.assertionTypeIRI', 'occurrence-assertion.assertionValueIRI', 'occurrence-assertion.assertionUnitIRI'))
+        self.assertFalse(any(column.get('unmapped') for column in plan['columns'] if column['table'] == emof))
+        frames, report = convert(archive, plan, decisions_for(plan))
+        mesh = frames['event-assertion'].iloc[0]
+        self.assertEqual((mesh['assertionTypeIRI'], mesh.get('assertionValueIRI', ''), mesh['assertionUnitIRI']),
+                         ('http://vocab.nerc.ac.uk/collection/P01/current/MSHSIZE1/', '', 'http://vocab.nerc.ac.uk/collection/P06/current/UMIC/'))
+        sex = frames['occurrence-assertion'].iloc[0]
+        self.assertEqual((sex['assertionValue'], sex['assertionValueIRI']), ('F', 'http://vocab.nerc.ac.uk/collection/S10/current/S102/'))
+        # "NA" is not an IRI: it is withheld with its source row, never copied as one.
+        self.assertEqual([(cell['term'].rsplit('/', 1)[1], cell['value'], cell['source_row']) for cell in report['withheld_values']],
+                         [('measurementValueID', 'NA', 1)])
+        value_ids = next(column for column in report['columns'] if column['term'].endswith('/measurementValueID'))
+        self.assertEqual((value_ids['mapped_rows'], value_ids['retained_only_rows']), (1, 1))
+        self.assertTrue(report['validation']['valid'])
+
+    def test_identification_qualifiers_follow_the_name_in_verbatim_identification(self):
+        """Qualifiers supplied beside the name (production datasets 567 and 568)."""
+        archive = occurrence(b'occurrenceID,basisOfRecord,scientificName,identificationQualifier,occurrenceStatus\n'
+                             b'urn:uuid:719cbdc1,PreservedSpecimen,Iguana sp.,?,present\n'
+                             b'urn:uuid:83a496fb,PreservedSpecimen,"Tropidolaemus subannulatus Gray, 1842",cf.,present\n'
+                             b'urn:uuid:4f2a1c90,PreservedSpecimen,Rana cf. arvalis,cf.,present\n'
+                             b'd51a5613,PreservedSpecimen,Microcalanus,spp.,present\n'
+                             b'f4702da8,PreservedSpecimen,Aglantha digitale,,present\n')
+        plan = build_plan(archive)
+        qualifier = next(column for column in plan['columns'] if column['term'] == DWC + 'identificationQualifier')
+        self.assertEqual((qualifier['verbatim_copy'], qualifier['verbatim_role']), ('occurrence.verbatimIdentification', 'qualifier'))
+        self.assertNotIn('unmapped', qualifier)
+        frames, report = convert(archive, plan, decisions_for(plan))
+        rows = frames['occurrence'].set_index('occurrenceID')
+        self.assertEqual(rows['verbatimIdentification'].tolist(), [
+            'Iguana sp. ?', 'Tropidolaemus subannulatus Gray, 1842 cf.', 'Rana cf. arvalis', 'Microcalanus spp.', 'Aglantha digitale'])
+        # scientificName never receives a qualifier.
+        self.assertEqual((rows.loc['urn:uuid:719cbdc1', 'scientificName'], rows.loc['d51a5613', 'scientificName']), ('Iguana sp.', 'Microcalanus'))
+        item = next(column for column in report['columns'] if column['term'] == DWC + 'identificationQualifier')
+        self.assertEqual((item['target'], item['disposition'], item['mapped_rows'], item['retained_only_rows']),
+                         ('derived verbatim copy → occurrence.verbatimIdentification', 'derived', 4, 0))
+        self.assertTrue(report['validation']['valid'])
+
+    def test_a_supplied_verbatim_identification_is_not_rewritten_with_the_qualifier(self):
+        archive = occurrence(b'occurrenceID,scientificName,verbatimIdentification,identificationQualifier,occurrenceStatus\n'
+                             b'a,Themisto abyssorum,T. aby.,cf.,present\nb,Calanus,,spp.,present\n')
+        plan = build_plan(archive)
+        frames, report = convert(archive, plan, decisions_for(plan))
+        self.assertEqual(frames['occurrence']['verbatimIdentification'].tolist(), ['T. aby.', 'Calanus spp.'])
+        item = next(column for column in report['columns'] if column['term'] == DWC + 'identificationQualifier')
+        self.assertEqual((item['mapped_rows'], item['retained_only_rows']), (1, 1))
 
     def test_depths_within_one_event_become_child_events(self):
         """One cast sampling several depths (production dataset 546)."""
@@ -410,7 +502,10 @@ class ArchiveTests(SimpleTestCase):
         self.assertTrue(option_status(plan, {**decisions, date: 'preserve'})['table:1']['nbn-context']['available'])
         self.assertTrue(option_status(plan, {**decisions, 'row-group:1:0': 'preserve'})['table:1']['nbn-context']['available'])
         frames, report = convert(archive, plan, {**decisions, date: 'preserve'})
-        self.assertEqual(set(frames['event']['eventDate']), {'2015-06-03'})
+        # Per-row events hold the patched dates; the event for their shared eventID holds only that identity.
+        events = frames['event']
+        self.assertEqual(set(events[events['parentEvent_fk'] != '']['eventDate']), {'2015-06-03'})
+        self.assertEqual(events[events['parentEvent_fk'] == '']['eventID'].tolist(), ['e1'])
 
     def test_depth_children_are_offered_only_when_an_event_spans_depths(self):
         archive = occurrence(b'occurrenceID,eventID,minimumDepthInMeters,occurrenceStatus\na,e1,5,present\nb,e1,5,present\nc,e2,7,present\n')

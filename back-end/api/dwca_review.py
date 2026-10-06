@@ -9,6 +9,14 @@ import json
 from collections import defaultdict
 
 ALL = '*'
+# Choices fall into three classes (docs/dwca-conversion/review-policy.md, "Who may decide"):
+# - interpretation: routing the supplier's own text to the field it names, such as "Norway" in
+#   countryCode to country or "juv" in eventRemarks to lifeStage. Not an assertion; the AI
+#   reviewer may apply it.
+# - convention: a default GBIF would infer anyway, such as "present" for specimen records.
+#   Applied as a visible automatic choice marked 'convention' that the user can change; never asked.
+# - new fact: absence, completeness, survey category, identity splits, what media depicts.
+#   These options are assertions and only the user may choose them.
 # Options that assert a new fact. These are never applied by an AI reviewer alone.
 ISSUE_POLICY = {
     'layout': ALL,
