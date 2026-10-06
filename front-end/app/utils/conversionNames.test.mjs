@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  DECISION_LABELS, bulkActions, bulkBody, checkMessage, choiceGroups, choiceLabel, classificationContext, decisionBody, decisionResult,
+  DECISION_LABELS, bulkActions, bulkBody, carriedMessage, checkMessage, choiceGroups, choiceLabel, classificationContext, decisionBody, decisionResult,
   isChecking, isEditable, pageCount, pageQuery, parseNote, replacementWarning, skippedMessage, unconfirmedMessage,
 } from './conversionNames.mjs'
 
@@ -51,6 +51,14 @@ test('earlier unconfirmed choices are announced and spelling corrections list wh
     { label: 'Circium heterophyllum', to: 'Cirsium heterophyllum' }, { label: 'Trema orientalis', to: 'Trema orientale' }] } })
   assert.deepEqual(spelling.map(action => [action.bulk, action.count]), [['spelling', 2]])
   assert.deepEqual(spelling[0].items, ['Circium heterophyllum → Cirsium heterophyllum', 'Trema orientalis → Trema orientale'])
+})
+
+test('decisions kept from an earlier check are mentioned', () => {
+  assert.equal(carriedMessage(undefined), null)
+  assert.equal(carriedMessage({ decisions: 0, bulk_not_carried: 0 }), null)
+  assert.equal(carriedMessage({ decisions: 1, bulk_not_carried: 0 }), '1 earlier name decision was kept from your previous check.')
+  assert.equal(carriedMessage({ decisions: 989, bulk_not_carried: 12 }),
+    '989 earlier name decisions were kept from your previous check. 12 accepted in bulk are offered again in bulk under the current checks.')
 })
 
 test('"Leave empty" is now "No name published"', () => {

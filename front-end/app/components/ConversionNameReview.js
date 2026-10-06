@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import config from '../config'
 import { STATUS_LABELS, formatName } from '../utils/taxonReview.mjs'
 import {
-  DECISION_LABELS, PAGE_SIZE, bulkActions, bulkBody, checkMessage, choiceGroups, choiceLabel, decisionBody, decisionResult,
+  DECISION_LABELS, PAGE_SIZE, bulkActions, bulkBody, carriedMessage, checkMessage, choiceGroups, choiceLabel, decisionBody, decisionResult,
   isChecking, isEditable, pageCount, pageQuery, parseNote, replacementWarning, skippedMessage, unconfirmedMessage,
 } from '../utils/conversionNames.mjs'
 
@@ -220,6 +220,7 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
       {' '}{summary.decided.toLocaleString()} of {summary.labels.toLocaleString()} names decided, covering {summary.rows.toLocaleString()} rows.
     </p>
     {held && <div className="alert alert-warning small py-2" role="status">{held}</div>}
+    {carriedMessage(nameReview.carried) && <p className="small text-muted">{carriedMessage(nameReview.carried)}</p>}
     {skippedMessage(summary) && <p className="small text-warning-emphasis">{skippedMessage(summary)}</p>}
     {summary.truncated > 0 && <p className="small text-muted">Only the {summary.labels.toLocaleString()} most frequent names are listed; {summary.truncated.toLocaleString()} others are converted as they are.</p>}
     {message && <div className={`alert alert-${message.variant} small py-2`} role="status">

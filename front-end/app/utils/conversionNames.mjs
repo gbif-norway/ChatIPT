@@ -86,6 +86,16 @@ export const bulkActions = (nameReview) => {
   ].filter((action) => action.count > 0)
 }
 
+// Name decisions kept from the previous check when the archive was inspected again; null when none.
+export const carriedMessage = (carried) => {
+  const kept = carried?.decisions || 0
+  const bulk = carried?.bulk_not_carried || 0
+  if (!kept && !bulk) return null
+  const decisions = kept === 1 ? '1 earlier name decision was' : `${kept.toLocaleString()} earlier name decisions were`
+  const again = bulk ? ` ${bulk.toLocaleString()} accepted in bulk ${bulk === 1 ? 'is' : 'are'} offered again in bulk under the current checks.` : ''
+  return `${kept ? `${decisions} kept from your previous check.` : 'No earlier name decision could be kept.'}${again}`
+}
+
 // Earlier COL choices that replace a name with a coarser or different taxon and were never confirmed; null when none.
 export const unconfirmedMessage = (summary) => {
   const count = summary?.unconfirmed || 0

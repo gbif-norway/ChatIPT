@@ -19,7 +19,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from api import taxon_matching
-from api.taxon_matching import (HINT_RANKS, MAX_ALTERNATIVES, RANK_ORDER, TaxonServiceError, authorships_agree, col_release,
+from api.taxon_matching import (HINT_RANKS, MAX_ALTERNATIVES, NAME_RULES_VERSION, RANK_ORDER, TaxonServiceError, authorships_agree, col_release,
                                 implied_rank, match_col, name_change, name_parts, split_qualifier)
 
 logger = logging.getLogger(__name__)
@@ -129,19 +129,31 @@ def carry_decisions(conversion, fresh, plan):
     decisions = previous.get('decisions') or {}
     if not fresh or not fresh.get('labels') or not decisions or previous.get('plan_id') != old_plan.get('id'):
         return fresh
-    labels = {record['label'] for record in fresh['labels']}
+    records = {record['label']: record for record in fresh['labels']}
+    before = {record['label']: record for record in previous.get('labels', [])}
     same_source = bool(old_plan.get('source_sha256')) and old_plan.get('source_sha256') == plan.get('source_sha256')
-    if not same_source and labels != {record['label'] for record in previous.get('labels', [])}:
+    if not same_source and set(records) != set(before):
         return fresh
+
+    def same_context(label):
+        # Another source with the same labels: a decision carries only where the name's supplied context is unchanged.
+        return same_source or all(records[label].get(key) == before[label].get(key)
+                                  for key in ('hints', 'source_rank', 'source_authorships', 'qualifier'))
     carried, bulk = {}, 0
     for label, decision in decisions.items():
-        if label not in labels:
+        if label not in records or not same_context(label):
             continue
         if str(decision.get('by') or '').startswith('bulk:'):
             bulk += 1
             continue
-        carried[label] = {**{key: value for key, value in decision.items() if key != 'changeKind'}, 'carriedFrom': previous['plan_id']}
-    return {**fresh, 'decisions': carried, 'carried': {'decisions': len(carried), 'bulk_not_carried': bulk}}
+        carried[label] = {**{key: value for key, value in decision.items() if key not in {'changeKind', 'nameRules'}},
+                          'carriedFrom': previous['plan_id']}
+    if not carried and not bulk:
+        return fresh
+    # Carried COL decisions are checked against fresh matches, so the names are checked even when checks are off.
+    requested = bool(previous.get('requested') or any(decision['decision'] in {'col', 'alternative'} for decision in carried.values()))
+    return {**fresh, 'decisions': carried, 'requested': requested or fresh.get('requested', False),
+            'carried': {'decisions': len(carried), 'bulk_not_carried': bulk}}
 
 
 def current(conversion):
@@ -370,7 +382,7 @@ def build_decision(record, spec, state, by='user'):
                         matchType=match_type, checklist=_checklist(state))
         # The change this decision was checked against; a later look at the snapshot trusts it rather than re-deriving
         # it from the snapshot alone (which lacks the classification a spelling correction was checked with).
-        snapshot['changeKind'] = found['kind'] if found else None
+        snapshot.update(changeKind=found['kind'] if found else None, nameRules=NAME_RULES_VERSION)
         if replaces:
             snapshot.update(replaces=replaces['text'], confirmedCoarser=True)
         elif found:
@@ -629,10 +641,13 @@ def _unconfirmed_replacement(record, decision):
     """The replacement an older COL decision would make without the explicit confirmation it now needs; None otherwise.
 
     A decision saved by `build_decision` carries the change kind it was checked against (`changeKind`, None for the
-    same name) and is trusted: it was confirmed when it needed to be. Only a legacy snapshot without that stamp is
-    checked again, against the record's stored usage (with its classification) when the usage is still there.
+    same name) and the name rules it was checked under (`nameRules`), and is trusted: it was confirmed when it needed
+    to be. A snapshot without that stamp, or from other name rules, is checked again, against the record's stored usage
+    (with its classification) when the usage is still there.
     """
-    if decision.get('decision') not in {'col', 'alternative'} or decision.get('confirmedCoarser') or 'changeKind' in decision:
+    if decision.get('decision') not in {'col', 'alternative'} or decision.get('confirmedCoarser'):
+        return None
+    if 'changeKind' in decision and decision.get('nameRules') == NAME_RULES_VERSION:
         return None
     match = record.get('match') or {}
     stored = next((usage for usage in [match.get('usage') or {}, *(match.get('alternatives') or [])]
@@ -724,6 +739,8 @@ def state_section(conversion, offset=0, limit=PAGE_SIZE, view='all'):
     checking = DwcConversionJob.objects.filter(conversion=conversion, action='names').exists()
     return {'status': state.get('status', 'none'), 'checking': checking, 'error': state.get('error', ''), 'runs': state.get('runs', 0),
             'plan_id': state.get('plan_id'), 'checklist': (state.get('col_release') or {}).get('alias'), 'summary': summary,
+            # Name decisions kept from the previous check when the archive was inspected again.
+            'carried': state.get('carried'),
             # scientificName questions shown inside the name check instead of as separate choices.
             'question_ids': name_question_ids(conversion),
             'page': {'offset': offset, 'limit': limit, 'total': len(shown), 'view': view},
