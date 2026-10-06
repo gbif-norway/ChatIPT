@@ -786,14 +786,20 @@ def validate_dwc_dp_resources(resources: Mapping[str, pd.DataFrame]) -> Dict[str
     }
 
 
+def _declared_columns(table_name: str, df: pd.DataFrame) -> list[str]:
+    descriptors = get_table_spec(table_name).field_descriptors
+    return [column for column in df.columns if isinstance(column, str) and column in descriptors]
+
+
 def _resource_schema_for_dataframe(
     table_name: str,
     df: pd.DataFrame,
-    included_resources: Iterable[str],
+    included_resources: Mapping[str, Iterable[str]],
 ) -> Dict[str, Any]:
+    """``included_resources`` maps each packaged resource to the fields it declares."""
     spec = get_table_spec(table_name)
     descriptors = spec.field_descriptors
-    columns = [column for column in df.columns if isinstance(column, str) and column in descriptors]
+    columns = _declared_columns(table_name, df)
     schema: Dict[str, Any] = {
         "fields": [deepcopy(descriptors[column]) for column in columns],
     }
@@ -805,7 +811,8 @@ def _resource_schema_for_dataframe(
         if key_fields and all(field in columns for field in key_fields):
             schema[property_name] = key_fields[0] if len(key_fields) == 1 else key_fields
 
-    included = set(included_resources)
+    included = {name: set(fields) for name, fields in included_resources.items()}
+    included[table_name] = set(columns)
     for property_name, foreign_keys in (
         ("foreignKeys", spec.foreign_keys),
         ("weakForeignKeys", spec.weak_foreign_keys),
@@ -813,8 +820,13 @@ def _resource_schema_for_dataframe(
         included_keys = []
         for foreign_key in foreign_keys:
             source_fields = _as_field_list(foreign_key.get("fields"))
-            target_name = str((foreign_key.get("reference") or {}).get("resource") or table_name)
-            if all(field in columns for field in source_fields) and target_name in included:
+            reference = foreign_key.get("reference") or {}
+            target_name = str(reference.get("resource") or table_name)
+            # A key is declared only when both ends exist: an empty *ByID column
+            # can sit beside an agent table whose name-only rows have no agentID.
+            target_fields = _as_field_list(reference.get("fields"))
+            if (all(field in columns for field in source_fields) and target_name in included
+                    and all(field in included[target_name] for field in target_fields)):
                 included_keys.append(deepcopy(foreign_key))
         if included_keys:
             schema[property_name] = included_keys
@@ -995,7 +1007,8 @@ def build_datapackage_descriptor(
     if not validation["valid"]:
         raise ValueError("DwC-DP validation failed: " + "; ".join(validation["errors"]))
 
-    names = [normalize_resource_name(name) for name in resources]
+    names = {normalize_resource_name(name): _declared_columns(normalize_resource_name(name), df)
+             for name, df in resources.items()}
     descriptor: Dict[str, Any] = {
         "profile": DWC_DP_PROFILE_URL if resources else 'data-package',
         "created": datetime.now(timezone.utc).isoformat(),

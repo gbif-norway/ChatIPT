@@ -26,7 +26,7 @@ from api.dwca_preflight import preflight
 from api.dwca_review import (apply_policy, effective_decisions, failed_requirements, group_rows,  # noqa: F401
                              option_status, remove_unavailable, violations)
 from api.dwca_semantic_audit import is_age_like_remark, semantic_target_rejection
-from api.dwca_agents import ROLE_FIELDS, build_agent_roles, composite_name_reason
+from api.dwca_agents import ROLE_FIELDS, agent_name, build_agent_roles, composite_name_reason
 
 RULE_VERSION = "23"
 DERIVED_VALUE_EXAMPLE_LIMIT = 20
@@ -868,7 +868,7 @@ def build_plan(archive):
                     + (f' {zero_quantities} of those rows have a zero count. A zero alone doesn\'t prove absence, so please choose deliberately.' if zero_quantities else ''),
                     [{"value": "present", "label": "Present: the organism was recorded"}, {"value": "absent", "label": "Absent: it was looked for but not found"}]))
     # Reviewable exact-name sharing is offered only for source names that are
-    # candidates for a mapped agent role. The default keeps mentions separate.
+    # candidates for a mapped agent role. The default keeps them as text only.
     agent_names = Counter()
     for column in columns:
         target = column['default']
@@ -881,7 +881,7 @@ def build_plan(archive):
         for row in table.rows:
             if id_column is not None and row[id_column]:
                 continue
-            name = row[column['column']].strip()
+            name = agent_name(row[column['column']])
             if name and composite_name_reason(name) is None:
                 agent_names[name] += 1
     for name, count in sorted(agent_names.items()):
@@ -890,7 +890,7 @@ def build_plan(archive):
         issues.append(_issue(_agent_name_id(name), f'Does {name[:100]!r} name one agent throughout?',
             f'{count} source mentions use this exact name. Confirm sharing only if every mention refers to the same person or organization. '
             'The source text alone does not establish this identity.',
-            [{'value': 'separate', 'label': 'Keep each mention as a separate Agent'},
+            [{'value': 'separate', 'label': 'Keep this name as text only, without an Agent'},
              {'value': 'shared', 'label': 'Use one Agent for this exact name'}],
             kind='agent-identity', source_value=name, count=count))
     plan = {"version": RULE_VERSION, "source_sha256": archive.fingerprint, "schema": dwc_dp_schema_snapshot(),

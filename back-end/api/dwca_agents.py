@@ -6,11 +6,13 @@ This module only adds role rows that link those records to Agent rows:
 - A single explicit agent IRI in the paired *ByID field links to the Agent row
   with that agentID, reusing the converter's row when there is one.
 - A name-only value remains in its mapped text field unless review confirms
-  that every mention of that exact name denotes one agent. Confirmed names
-  create one Agent row with role links to their mapped records.
-- Lists, conjunctions, ``et al.``, placeholders and ID/name pairs that cannot
-  be matched one-to-one are never split or guessed. They are skipped and
-  reported, and the source value stays in the mapped field and originals.
+  that every mention of that exact (whitespace-normalised) name denotes one
+  agent. A confirmed name creates one Agent row, with a role row per mention.
+- A ``|``-delimited name list whose paired *ByID field is a ``|``-delimited
+  list of single agent IRIs of the same length is split pairwise, in order.
+- Other lists, conjunctions, ``et al.``, placeholders and ID/name pairs that
+  cannot be matched one-to-one are never split or guessed. They are skipped
+  and reported, and the source value stays in the mapped field and originals.
 """
 from __future__ import annotations
 
@@ -28,9 +30,11 @@ SHARED_NAME_REMARK = ('Name-only source value. Review asserted that every name-o
 POLICY = ('Role rows link mapped records to agents without changing the mapped name fields. A single '
           'absolute IRI in the paired *ByID field links to the agent with that agentID. A name-only '
           'value stays in its mapped text field unless review confirms that every mention of its exact '
-          'name denotes one agent. Lists, conjunctions, et al., placeholders and ID/name pairs that '
-          'cannot be matched one-to-one are skipped and reported, never split. agentRole is the DwC-DP field name; '
-          'agentRoleIRI and agentRoleSource are left empty.')
+          '(whitespace-normalised) name denotes one agent. A |-delimited name list is split only '
+          'when its *ByID field lists the same number of single IRIs, paired in order. Other lists, '
+          'conjunctions, et al., placeholders and ID/name pairs that cannot be matched one-to-one are '
+          'skipped and reported, never split. agentRole is the DwC-DP field name; agentRoleIRI and '
+          'agentRoleSource are left empty.')
 PLACEHOLDERS = frozenset({
     'na', 'n/a', 'n.a.', 'nan', 'none', 'null', 'nil', 'unknown', 'unk', 'unkn', 'anonymous', 'anon',
     'anon.', 'not recorded', 'not available', 'not known', 'missing', 'ukjent', 'ikke oppgitt',
@@ -138,6 +142,24 @@ def _text(value) -> str:
     return '' if value is None else str(value).strip()
 
 
+def agent_name(value) -> str:
+    """The exact name that identifies a name-only agent: the text with whitespace runs collapsed."""
+    return ' '.join(_text(value).split())
+
+
+def paired_list(name: str, identifier: str, is_agent_identifier: Callable[[str], bool]) -> list[tuple[str, str]] | None:
+    """(name, IRI) pairs when |-delimited names and IDs match one-to-one and each part is safe, else None."""
+    if '|' not in name or '|' not in identifier:
+        return None
+    names = [agent_name(part) for part in name.split('|')]
+    identifiers = [part.strip() for part in identifier.split('|')]
+    if len(names) != len(identifiers) or len(set(identifiers)) != len(identifiers):
+        return None
+    if any(composite_name_reason(part) for part in names) or not all(map(is_agent_identifier, identifiers)):
+        return None
+    return list(zip(names, identifiers))
+
+
 def build_agent_roles(
     resources: Mapping[str, object],
     key: Callable[..., str],
@@ -156,14 +178,15 @@ def build_agent_roles(
     agent_pk as the converter's own ``key('agent', identifier)``. Nothing in
     ``resources`` is modified.
 
-    ``shared_names`` lists exact (whitespace-trimmed) name strings that review
-    confirmed each denote a single agent. ``fields`` limits the (resource, name
+    ``shared_names`` lists exact name strings that review confirmed each denote
+    a single agent, compared after ``agent_name`` normalisation. Other name-only
+    mentions get no Agent or role rows. ``fields`` limits the (resource, name
     field) pairs processed; by default all pairs in ROLE_FIELDS present in
     ``resources`` are processed.
     """
     if is_agent_identifier is None:
         from api.dwca_conversion import _single_agent_iri as is_agent_identifier
-    shared = {_text(name) for name in shared_names if _text(name)}
+    shared = {agent_name(name) for name in shared_names if agent_name(name)}
     selected = sorted(ROLE_FIELDS if fields is None else fields)
     unknown = [pair for pair in selected if pair not in ROLE_FIELDS]
     if unknown:
@@ -211,7 +234,8 @@ def build_agent_roles(
         if not rows:
             continue
         stats = field_stats[f'{spec.resource}.{spec.name_field}'] = {
-            'mentions': 0, 'linked_by_id': 0, 'unlinked_name_only': 0, 'shared_name': 0, 'skipped': Counter()}
+            'mentions': 0, 'linked_by_id': 0, 'linked_by_id_list': 0, 'unlinked_name_only': 0, 'shared_name': 0,
+            'skipped': Counter()}
         for number, record in enumerate(rows, start=1):
             name, identifier = _text(record.get(spec.name_field)), _text(record.get(spec.id_field))
             if not name and not identifier:
@@ -220,10 +244,14 @@ def build_agent_roles(
             mention = (spec.resource, number, spec.name_field)
             subject = _text(record.get(spec.subject_pk))
             reason = None
+            pairs = None
             if not subject:
                 reason = 'missing_subject_key'
             elif identifier:
-                if not is_agent_identifier(identifier):
+                pairs = paired_list(name, identifier, is_agent_identifier)
+                if pairs:
+                    stats['linked_by_id_list'] += 1
+                elif not is_agent_identifier(identifier):
                     reason = 'id_not_single_iri'
                 elif composite_name_reason(name) in MULTI_AGENT_REASONS:
                     reason = 'id_name_count_mismatch'
@@ -237,40 +265,43 @@ def build_agent_roles(
                                                      'id': identifier, 'reason': reason, 'rows': 0, 'first_row': number})
                 example['rows'] += 1
                 continue
-            if identifier:
-                basis = 'explicit_id'
-                agent_pk = agent_by_id.get(identifier)
-                if agent_pk:
-                    reused_ids.add(identifier)
+            agent_pks = []
+            for part_name, part_id in pairs or [(name, identifier)]:
+                if part_id:
+                    agent_pk = agent_by_id.get(part_id)
+                    if agent_pk:
+                        reused_ids.add(part_id)
+                    else:
+                        agent_pk = key('agent', part_id)
+                        new_agent(agent_pk, {'agent_pk': agent_pk, 'agentID': part_id, 'preferredAgentName': ''},
+                                  mention, 'explicit_id')
+                    if part_name and not composite_name_reason(part_name):
+                        id_names[part_id].add(agent_name(part_name))
+                    if not pairs:
+                        stats['linked_by_id'] += 1
                 else:
-                    agent_pk = key('agent', identifier)
-                    new_agent(agent_pk, {'agent_pk': agent_pk, 'agentID': identifier, 'preferredAgentName': ''},
-                              mention, basis)
-                if name and not composite_name_reason(name):
-                    id_names[identifier].add(name)
-                stats['linked_by_id'] += 1
-            elif name in shared:
-                basis = 'shared_name'
-                agent_pk = key('agent-name', name)
-                new_agent(agent_pk, {'agent_pk': agent_pk, 'preferredAgentName': name,
-                                     'agentRemarks': SHARED_NAME_REMARK}, mention, basis)
-                used_shared.add(name)
-                safe_names.add(name)
-                stats['shared_name'] += 1
-            else:
-                name_mentions[name].append(mention)
-                safe_names.add(name)
-                stats['unlinked_name_only'] += 1
-                continue
+                    exact = agent_name(part_name)
+                    safe_names.add(exact)
+                    if exact not in shared:
+                        name_mentions[exact].append(mention)
+                        stats['unlinked_name_only'] += 1
+                        continue
+                    agent_pk = key('agent-name', exact)
+                    new_agent(agent_pk, {'agent_pk': agent_pk, 'preferredAgentName': exact,
+                                         'agentRemarks': SHARED_NAME_REMARK}, mention, 'shared_name')
+                    used_shared.add(exact)
+                    stats['shared_name'] += 1
+                agent_pks.append(agent_pk)
             group = (spec.role_table, subject, spec.role, '', '')
-            if agent_pk in linked[group]:
-                already_linked += 1
-                continue
-            linked[group].add(agent_pk)
-            role_rows.append(EmittedRow(spec.role_table, {
-                spec.subject_fk: subject, 'agent_fk': agent_pk, 'agentRole': spec.role,
-                'agentRoleOrder': next_order[group]}, (mention,)))
-            next_order[group] += 1
+            for agent_pk in agent_pks:
+                if agent_pk in linked[group]:
+                    already_linked += 1
+                    continue
+                linked[group].add(agent_pk)
+                role_rows.append(EmittedRow(spec.role_table, {
+                    spec.subject_fk: subject, 'agent_fk': agent_pk, 'agentRole': spec.role,
+                    'agentRoleOrder': next_order[group]}, (mention,)))
+                next_order[group] += 1
 
     # As in the converter, a paired name is evidence for an explicit ID only when it is unique.
     for entry in new_agents.values():

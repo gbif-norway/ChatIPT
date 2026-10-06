@@ -133,7 +133,7 @@ taxonomy resources; they are not promoted to occurrences.
 - Upgrading an event to Survey or MaterialGathering.
 - Licences that vary per record or differ from the EML.
 - `associatedMedia`, `associatedOccurrences` and `previousIdentifications`.
-- Pairing lists of agent names with lists of agent IDs.
+- Pairing lists of agent names with lists of agent IDs, except `|` lists of equal length whose IDs are all single agent IRIs.
 
 Model output may explain options, but it never discharges a review.
 

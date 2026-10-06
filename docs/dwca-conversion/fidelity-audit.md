@@ -44,10 +44,18 @@ Names without identifiers stay in their mapped text fields and originals.
 Repeated exact names offer an advanced review choice to confirm one shared
 identity for that name across all its mapped mentions; the default creates no
 Agent or role rows for those name-only mentions.
-Composite names, placeholders, and ID/name lists that cannot be paired safely
-remain in the mapped text fields and originals, with skip reasons and examples
-in `agent_roles`. The role order is explicit. The converter does not infer
-whether a name denotes a person or organization.
+Names are compared after collapsing whitespace runs. A `|`-delimited name list
+is split only when its `*ByID` field is a `|`-delimited list of the same number
+of single agent IRIs; the pairs are linked in order with consecutive
+`agentRoleOrder` values. Other composite names, placeholders, and ID/name lists
+that cannot be paired safely remain in the mapped text fields and originals,
+with skip reasons and examples in `agent_roles`. The role order is explicit. The
+converter does not infer whether a name denotes a person or organization.
+
+A foreign key is declared in `datapackage.json` only when both its source
+fields and its target fields are present. An empty `recordedByID` column beside
+an Agent table that holds only confirmed name-only agents (no `agentID` field)
+therefore declares no key to `agent.agentID`.
 
 Source EML metadata is selected through `meta.xml`'s declared metadata path,
 with a single `eml.xml` as fallback. The Data Package descriptor can promote

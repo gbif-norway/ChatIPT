@@ -589,9 +589,12 @@ class ArchiveTests(SimpleTestCase):
         frames, report = convert(archive, plan, decisions_for(plan))
         self.assertTrue(report['validation']['valid'])
         agents = frames['agent'].set_index('agentID')
-        self.assertEqual(set(agents.index), {'https://example.org/alice', 'https://example.org/id', 'https://example.org/bob'})
+        # Only the equal-length | lists of o3 are paired (by the agent role builder); other lists are not.
+        self.assertEqual(set(agents.index), {'https://example.org/alice', 'https://example.org/id', 'https://example.org/bob',
+                                             'https://example.org/carol'})
         self.assertEqual(agents.loc['https://example.org/alice', 'preferredAgentName'], '')
         self.assertEqual(agents.loc['https://example.org/bob', 'preferredAgentName'], '')
+        self.assertEqual(agents.loc['https://example.org/carol', 'preferredAgentName'], 'Carol')
         self.assertEqual(report['agent_mapping']['non_single_id_cells'], 5)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'agents.tar.gz'
