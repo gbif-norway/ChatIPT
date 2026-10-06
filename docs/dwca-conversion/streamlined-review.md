@@ -85,7 +85,8 @@ claims without asking users to certify scientific validity.
   Names with author particles (`de Vries`), hybrid signs, groupings or
   life-stage words (`complex`, `agg.`, `larva`), designations after `sp.`
   (`Aus sp. A`) or a rank marker after an author are not split, and their
-  qualifier stays in the originals. A qualifier that names the part it qualifies goes before that part
+  qualifier stays in the originals. So does `sp.`, `spp.` or `indet.` beside
+  a species epithet, which it would contradict (`Quercus robur L.` + `sp.`). A qualifier that names the part it qualifies goes before that part
   (`aff. agrifolia var. oxyadenia` gives `Quercus aff. agrifolia var. oxyadenia
   (Torr.) J.T. Howell`); if that part is not in the name, nothing is built and
   the qualifier stays in the originals. Name text that already contains the

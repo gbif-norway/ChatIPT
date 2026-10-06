@@ -305,6 +305,10 @@ def _qualified_name(name, qualifier, authorship=''):
     if split is None:
         return None
     words, author = split
+    # 'sp.', 'spp.' and 'indet.' say the name stops above species; beside a species epithet they contradict it.
+    if qualifier.rstrip('.').casefold() in {'sp', 'spp', 'indet'} and any(
+            word.islower() and word not in NAME_QUALIFIER_WORDS | RANK_MARKERS for word in words[1:]):
+        return None
     if (qualifier.rstrip('.').casefold() in {'cf', 'aff'} and len(words) > 1 and words[-1].islower()
             and words[-1] not in NAME_QUALIFIER_WORDS | RANK_MARKERS):
         at = len(words) - 2 if len(words) > 2 and words[-2] in RANK_MARKERS else len(words) - 1

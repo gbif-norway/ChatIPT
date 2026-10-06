@@ -425,16 +425,19 @@ class ArchiveTests(SimpleTestCase):
                              b'urn:uuid:bd99fab8,PreservedSpecimen,"Naja sumatrana M\xc3\xbcller, 1887","M\xc3\xbcller, 1887",cf.,present\n'
                              b'urn:uuid:41583a43,PreservedSpecimen,Draco sp.,,?,present\n'
                              b'urn:uuid:00000001,PreservedSpecimen,Quercus agrifolia var. oxyadenia,,cf.,present\n'
-                             b'urn:uuid:00000002,PreservedSpecimen,Aus bus de Vries,,cf.,present\n')
+                             b'urn:uuid:00000002,PreservedSpecimen,Aus bus de Vries,,cf.,present\n'
+                             b'urn:uuid:00000003,PreservedSpecimen,Quercus robur L.,,sp.,present\n')
         plan = build_plan(archive)
         frames, report = convert(archive, plan, decisions_for(plan))
         self.assertEqual(frames['occurrence']['verbatimIdentification'].tolist(), [
             'Tropidolaemus cf. subannulatus Gray, 1842', 'Brookesia cf. superciliaris (Kuhl, 1820)', 'Naja cf. sumatrana M\u00fcller, 1887',
             'Draco sp. ?', 'Quercus agrifolia cf. var. oxyadenia',
             # An author particle makes the name unsafe to split, so the qualifier stays in the originals.
-            'Aus bus de Vries'])
+            'Aus bus de Vries',
+            # sp. would contradict the species epithet, so it stays in the originals too.
+            'Quercus robur L.'])
         item = next(column for column in report['columns'] if column['term'] == DWC + 'identificationQualifier')
-        self.assertEqual((item['mapped_rows'], item['retained_only_rows'], item['retained_reasons']), (5, 1, {'qualifier_not_placeable': 1}))
+        self.assertEqual((item['mapped_rows'], item['retained_only_rows'], item['retained_reasons']), (5, 2, {'qualifier_not_placeable': 2}))
         self.assertTrue(report['validation']['valid'])
 
     def test_subgenera_are_name_words_and_unsafe_names_keep_the_qualifier_in_originals(self):
@@ -442,7 +445,9 @@ class ArchiveTests(SimpleTestCase):
         placed = {
             # Marine copepods are often written with a subgenus (production datasets 566 and 567).
             ('Calanus (Calanus) finmarchicus', 'cf.', ''): 'Calanus (Calanus) cf. finmarchicus',
-            ('Calanus (Calanus) finmarchicus', 'sp.', ''): 'Calanus (Calanus) finmarchicus sp.',
+            ('Calanus (Calanus)', 'sp.', ''): 'Calanus (Calanus) sp.',
+            ('Microcalanus', 'spp.', ''): 'Microcalanus spp.',
+            ('Gonocephalus Kaup, 1825', 'sp.', ''): 'Gonocephalus sp. Kaup, 1825',
             ('Calanus (Calanus) finmarchicus (Gunnerus, 1770)', 'cf.', ''): 'Calanus (Calanus) cf. finmarchicus (Gunnerus, 1770)',
             ('Calanus (Calanus) finmarchicus Gunnerus, 1770', 'cf.', 'Gunnerus, 1770'): 'Calanus (Calanus) cf. finmarchicus Gunnerus, 1770',
             ('Halcyon smyrnensis (Lesson, 1830)', 'aff.', ''): 'Halcyon aff. smyrnensis (Lesson, 1830)',
@@ -457,6 +462,11 @@ class ArchiveTests(SimpleTestCase):
                      'Aus bus sensu lato', 'aus bus', 'Aus bus 1842']:
             with self.subTest(unplaceable=name):
                 self.assertIsNone(_qualified_name(name, 'cf.'))
+        # sp., spp. and indet. stop above species, so they contradict a species epithet already in the name.
+        for name in ['Quercus robur L.', 'Calanus (Calanus) finmarchicus', 'Aus bus var. cus']:
+            for qualifier in ('sp.', 'spp.', 'indet.'):
+                with self.subTest(name=name, qualifier=qualifier):
+                    self.assertIsNone(_qualified_name(name, qualifier))
         # A supplied authorship must leave only name words before it.
         self.assertIsNone(_qualified_name('Aus bus complex L.', 'cf.', 'L.'))
 
