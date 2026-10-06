@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 REVIEW_TASK = 'DwC-A conversion review'
 CHAT_TASK = 'DwC-A conversion chat'
 # Reasons that only a manual review request retries, so failures cannot loop.
-RETRY_ONLY_MANUALLY = {'ai-unavailable', 'cost-limit', 'review-limit', 'no-answer'}
+RETRY_ONLY_MANUALLY = {'ai-unavailable', 'cost-limit', 'review-limit', 'no-answer', 'evidence-unavailable'}
 REVIEW_STATUSES = {'review', 'reviewing'}
 FRAMING_TOKENS = 2000
 MAX_OUTPUT_TOKENS = 16000
@@ -657,13 +657,31 @@ def run_review(conversion_id, job_id, claim):
                 return
             attempted.update(batch)
             packets, refs, packet_basis, packet_availability = {}, {}, {}, {}
+            failed = []
             for item_id in batch:
-                packets[item_id], item_refs = evidence.evidence_packet(
-                    snapshot.plan, archive, snapshot.decisions, item_id, status=context.status,
-                    sources=context.sources, effective=context.effective)
+                try:
+                    packets[item_id], item_refs = evidence.evidence_packet(
+                        snapshot.plan, archive, snapshot.decisions, item_id, status=context.status,
+                        sources=context.sources, effective=context.effective)
+                except Exception:
+                    # One item's evidence defect escalates that item only; the rest are still reviewed.
+                    logger.exception('Conversion %s evidence for %s failed', conversion_id, item_id)
+                    failed.append(item_id)
+                    continue
                 refs[item_id] = {**item_refs, **eml_refs}
                 packet_basis[item_id] = context.basis(item_id)
                 packet_availability[item_id] = context.availability(item_id)
+            if failed:
+                with fence(conversion_id, job_id, claim, 'review', {'reviewing'}) as (conversion, _):
+                    if conversion.plan['id'] != plan_id:
+                        raise Fenced()
+                    _mark(conversion, failed, 'evidence-unavailable')
+                    conversion.save(update_fields=['review', 'updated_at'])
+                batch = [item_id for item_id in batch if item_id not in failed]
+                pending = [item_id for item_id in pending if item_id not in failed]
+                processed += len(failed)
+                if not batch:
+                    continue
             args = request_args(snapshot, eml, [packets[item_id] for item_id in batch])
             try:
                 with fence(conversion_id, job_id, claim, 'review', {'reviewing'}) as (conversion, _):

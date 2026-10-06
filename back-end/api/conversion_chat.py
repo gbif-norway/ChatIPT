@@ -40,6 +40,7 @@ REASON_TEXT = {
     'unavailable-option': 'the option it preferred is not possible with your other choices',
     'drops-field': 'keeping this column only in the original files would leave it out of the converted tables',
     'ai-unavailable': 'automatic review was unavailable',
+    'evidence-unavailable': 'the evidence for it could not be prepared',
     'cost-limit': 'automatic review reached its processing limit',
     'review-limit': 'automatic review reached its limit for one run',
     'stale-basis': 'an earlier answer changed',
@@ -157,22 +158,47 @@ def _question(context, item_id):
     return lines
 
 
+def _choices(count):
+    return f"{count} {'choice' if count == 1 else 'choices'}"
+
+
 def post_questions_opener(conversion):
-    """A deterministic message presenting up to four related escalated items not yet asked on this plan."""
+    """A deterministic message presenting up to four related escalated items not yet asked on this plan.
+
+    It states how many choices are open in total, since the items shown are only the first related ones.
+    """
     if not conversion.plan or conversion.status not in {'review', 'reviewing'}:
         return None
     context = review.Context(conversion)
     asked = _asked_on_plan(conversion)
-    candidates = [item_id for item_id in review.open_items(conversion, context)
+    open_ids = review.open_items(conversion, context)
+    candidates = [item_id for item_id in open_ids
                   if item_id in context.issues and item_id not in asked and not context.deferred(item_id)
                   and item_id not in context.conflicts]
     if not candidates:
         return None
     candidates.sort(key=lambda item_id: evidence.level(context.issues[item_id]))
     first = context.issues[candidates[0]]
-    related = [item_id for item_id in candidates if evidence.level(context.issues[item_id]) == evidence.level(first)
-               or context.issues[item_id].get('table') == first.get('table')][:OPENER_ITEMS]
-    parts = [f"I need your help with {len(related)} {'choice' if len(related) == 1 else 'choices'} before this archive can be converted."]
+
+    def closeness(item_id):
+        # Same kind of question first, then the same level or table; table-less ids such as
+        # status:<t> resolve their table from the id.
+        issue = context.issues[item_id]
+        if issue.get('kind') == first.get('kind'):
+            return 0
+        if (evidence.level(issue) == evidence.level(first)
+                or evidence.item_table(context.plan, issue) == evidence.item_table(context.plan, first)):
+            return 1
+        return 2
+
+    related = sorted((item_id for item_id in candidates if closeness(item_id) < 2), key=closeness)[:OPENER_ITEMS]
+    total = len([item_id for item_id in open_ids if item_id in context.issues])
+    if total <= len(related):
+        parts = [f"I need your help with {_choices(len(related))} before this archive can be converted."]
+    else:
+        parts = [f"{_choices(total).capitalize()} still need your answer before this archive can be converted. "
+                 f"Here {'is the first' if len(related) == 1 else f'are the first {len(related)}'}; "
+                 f"the other {total - len(related)} are in the list below, and I can go through them with you next."]
     proposals = []
     for number, item_id in enumerate(related, 1):
         lines = _question(context, item_id)
@@ -335,8 +361,12 @@ class Session:
             if id not in evidence.issue_index(conversion.plan):
                 return {'error': 'Unknown choice id.'}
             context = review.Context(conversion)
-            packet, _ = evidence.evidence_packet(conversion.plan, self.archive(conversion), conversion.decisions, id,
-                                                 status=context.status, sources=context.sources, effective=context.effective)
+            try:
+                packet, _ = evidence.evidence_packet(conversion.plan, self.archive(conversion), conversion.decisions, id,
+                                                     status=context.status, sources=context.sources, effective=context.effective)
+            except Exception:
+                logger.exception('Conversion %s chat evidence for %s failed', self.conversion_id, id)
+                return {'error': 'Evidence for this choice could not be prepared. Explain it from its title and options.'}
             return packet
 
     def get_dataset_metadata(self):

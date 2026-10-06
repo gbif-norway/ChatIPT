@@ -138,12 +138,22 @@ a stable `ref` that the model must cite:
   quantity, count, basis-of-record and protocol columns (`occurrence-status`);
   material, catalogue, basis and preparation columns (`material-identity`); scope and
   completeness columns (Humboldt kinds); the columns with values in the item's rows
-  (row kinds). Fallback: the 12 most populated columns. `top_values`: up to 10 values
+  (row kinds). Questions about one exact source value (`country-label:`,
+  `age-remark:`) get the source column plus related columns: country, countryCode,
+  locality, waterBody, stateProvince and other place columns for country labels;
+  lifeStage, sex, individualCount, organismQuantity and remarks for age remarks.
+  Fallback: the 12 most populated columns. `top_values`: up to 10 values
   by count, ties by first occurrence, values ≤ 120 chars.
-- **Rows**: the item's own row; for a group, its first five member rows; for
-  requirement-driven items, the requirement's example rows; otherwise a fixed spread
-  (first, ¼, ½, ¾, last). At most 5 rows × 20 nonempty columns × 200 chars.
-  Row numbers are 1-based source rows.
+- **Rows**: the item's own row; for a group, its first five member rows; for a
+  value question, up to five rows that hold that exact value, spread across them,
+  so a value found in 1 of 70,000 rows is still shown; for requirement-driven items,
+  the requirement's example rows; otherwise a fixed spread (first, ¼, ½, ¾, last).
+  At most 5 rows × 20 nonempty columns × 200 chars. Row numbers are 1-based source
+  rows. Only a list in an item's `rows` names rows: extension-role items store their
+  row count there.
+- **Value**: for a value question, `{"ref": "value", "column", "value",
+  "rows_total", "rows"}` with the number of rows holding the value and up to 20 of
+  their row numbers.
 - **Table**: the item's table, the index in its id (`status:<t>`, `material:<t>`, …) or,
   for global items, the core table. Layout and taxonomy-package items also list every
   table with its row type, rows and join basis.
@@ -179,7 +189,7 @@ excerpts (§6), so provenance does not depend on recomputation.
   abstentions or escalations.
 - **After a chat turn.** The chat finisher chains a `review` job when the turn's
   decisions made recommendations stale or undeferred wave 2 items (§8, §9.5).
-  Items escalated as `ai-unavailable`, `cost-limit` or `review-limit` never trigger
+  Items escalated as `ai-unavailable`, `evidence-unavailable`, `cost-limit` or `review-limit` never trigger
   an automatic run; only the manual action retries them, so a failing API or an
   exhausted budget cannot cause a retry loop.
 - `save` never queues a job (contract). After a save that invalidates
@@ -305,6 +315,9 @@ Batches commit independently, so a lease expiry or crash loses at most one call.
   `escalated/ai-unavailable` (not current; a later run retries them), records
   `review.error` in plain language, and **stops the run**. Remaining items are marked
   the same way. Status returns to `review`.
+- An item whose evidence packet cannot be built is marked
+  `escalated/evidence-unavailable` and logged; the other items of its batch and run
+  are still reviewed. Like `ai-unavailable`, only a manual request retries it.
 - A review job never moves the conversion to `failed` or `blocked`; those belong to
   inspect and convert.
 - Usage is recorded per response in `OpenAIUsage` (`dataset`, `agent=None`,
@@ -595,13 +608,18 @@ conversion; all locking follows §5.9.
 ### 9.2 Openers (deterministic, no model call)
 
 - After a review run with escalated items: one assistant message
-  (`kind="questions"`) with up to 4 related items (same table, or same level), each
-  with the plain question, the AI recommendation and reason, or "I could not
+  (`kind="questions"`) that states how many choices are open in total and presents
+  up to 4 related items not yet asked: the first by level, then items of the same
+  kind, then items of the same level or table (`status:<t>` and similar ids resolve
+  their table from the id). Each has
+  the plain question, the AI recommendation and reason, or "I could not
   recommend an option because …", and for assertion options: "This needs your
   answer because it adds information that is not in your files." The message's
   `asked` field lists those ids, and `proposals` (§9.4) holds the recommended
   assertion values so the user can confirm them with one click. Later batches are
-  presented by the chat model.
+  presented by the chat model, which sees the open count and can list every open
+  choice. A deterministic follow-up opener is posted only after a later review run;
+  answering the shown items in the list does not by itself post the next batch.
 - After conflicts: `kind="conflict"` opener with the conflict reason in plain words,
   the involved choices and their current values, `asked` = the conflict's
   `decision_ids`.

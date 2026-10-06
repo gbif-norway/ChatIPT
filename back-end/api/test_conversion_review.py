@@ -217,13 +217,41 @@ class ReviewerFlowTests(ConversionTestCase):
             self.assertEqual(review.reviewable_items(conversion, manual=True), ['loose-links'])
 
     def test_server_error_needs_a_manual_retry(self):
-        with patch.object(evidence, 'evidence_packet', side_effect=ValueError('too large')), patch(QUERY) as query:
+        with patch.object(review, 'request_args', side_effect=ValueError('too large')), patch(QUERY) as query:
             process_next_conversion(); process_next_conversion()
         query.assert_not_called()
         conversion = self.conversion
         self.assertEqual(conversion.review['recommendations']['loose-links']['reason'], 'ai-unavailable')
         self.assertIn('server error', conversion.review['error'])
         self.assertFalse(DwcConversionJob.objects.filter(conversion=conversion).exists())
+
+    def test_one_items_evidence_failure_escalates_only_that_item(self):
+        # ds568: one extension-role packet raised and all 15 items fell to "automatic review was unavailable".
+        packet = evidence.evidence_packet
+        payloads = []
+
+        def build(plan, archive, decisions, item_id, **kwargs):
+            if item_id == 'status:0':
+                raise TypeError("'int' object is not subscriptable")
+            return packet(plan, archive, decisions, item_id, **kwargs)
+
+        def respond(payload, max_retries=None):
+            payloads.append(payload)
+            return reply([answer(item_id, 'abstain') for item_id in requested(payload)])
+
+        self.inspect_only()
+        self.assertEqual(self.post('save', changes={'loose-links': 'confirm'}).status_code, 200)
+        with patch.object(evidence, 'evidence_packet', side_effect=build), patch(QUERY, side_effect=respond):
+            self.assertEqual(self.post('review').status_code, 202)
+            process_next_conversion()
+        self.assertEqual(sorted(item for payload in payloads for item in requested(payload)), ['column:0:2', 'event-grain'])
+        records = self.conversion.review['recommendations']
+        self.assertEqual(records['status:0']['reason'], 'evidence-unavailable')
+        self.assertEqual(records['event-grain']['reason'], 'abstained')
+        self.assertEqual(self.conversion.review.get('error', ''), '')
+        # The failed item is retried only by a manual request, so it cannot loop.
+        self.assertNotIn('status:0', review.reviewable_items(self.conversion))
+        self.assertIn('status:0', review.reviewable_items(self.conversion, manual=True))
 
     def test_superseded_worker_records_usage_but_writes_no_state(self):
         def respond(payload, max_retries=None):
@@ -470,6 +498,31 @@ class InvalidationTests(ConversionTestCase):
         self.assertNotIn('private words', json.dumps(conversion.report))
         self.assertIn('ai_review', conversion.report)
 
+    def test_internal_export_failure_keeps_choices_and_can_be_converted_again(self):
+        # ds568 stranded 19 answers as a non-retryable internal failure at export.
+        self.inspect_only()
+        conversion = self.conversion
+        review.apply_decision_changes(conversion, {'loose-links': 'confirm', 'table:1': 'nbn-context',
+                                                   'row-group:1:0': 'preserve'}, 'user')
+        decisions = dict(self.conversion.decisions)
+        self.assertEqual(self.post('convert').status_code, 202)
+        with patch('api.conversion_jobs.create_dwc_dp_archive', side_effect=ValueError('Invalid DwC-DP descriptor: bug')):
+            self.inspect_only()
+        conversion = self.conversion
+        self.assertEqual((conversion.status, conversion.retryable), ('review', True))
+        self.assertEqual(conversion.conflicts[0]['category'], 'internal')
+        self.assertEqual(conversion.decisions, decisions)
+        state = self.client.get(self.url).data
+        self.assertTrue(state['retryable'])
+        self.assertEqual(state['decisions'], decisions)
+        # The same choices convert once the defect is gone.
+        self.assertEqual(self.post('convert').status_code, 202)
+        self.inspect_only()
+        conversion = self.conversion
+        self.assertEqual(conversion.status, 'complete', conversion.error)
+        self.assertEqual((conversion.conflicts, conversion.retryable), ([], False))
+        self.assertEqual(conversion.decisions, decisions)
+
 
 class EscalationRuleTests(SimpleTestCase):
     issue = {'id': 'x', 'kind': 'column-mapping', 'authority': 'ai-reviewable'}
@@ -562,6 +615,46 @@ class EvidenceTests(SimpleTestCase):
         self.assertIn('group', refs); self.assertIn('row:1:1', refs)
         self.assertEqual(packet['authority'], 'ai-reviewable')
         self.assertEqual(evidence.digest(packet), evidence.digest(evidence.evidence_packet(plan, archive, {}, 'row-group:1:0')[0]))
+
+    def test_extension_role_items_store_a_row_count_and_still_get_packets(self):
+        # ds568: table:1 stored rows=1235 and slicing it raised TypeError.
+        from api.dwca_conversion import build_plan
+        archive = read_inputs([('occurrence.csv', b'occurrenceID,occurrenceStatus\no1,present\n'), ('nbn.csv', NBN)])
+        plan = build_plan(archive)
+        item = evidence.issue_index(plan)['table:1']
+        self.assertEqual(item['rows'], 30)
+        packet, refs = evidence.evidence_packet(plan, archive, {}, 'table:1')
+        self.assertEqual([row['row'] for row in packet['evidence']['rows']], [1, 8, 15, 22, 30])
+        self.assertIn('table:1', refs)
+        self.assertNotIn('group', packet['evidence'])
+
+    def test_value_questions_show_the_rows_holding_that_value(self):
+        # ds570: 'Great Britain' was in 1 of many rows and never reached the reviewer's sample.
+        header = 'occurrenceID,eventID,countryCode,locality,waterBody,stateProvince,eventRemarks,lifeStage,' + ','.join(
+            f'extra{n}' for n in range(14))
+        rows = [f'o{n},e{n},Norway,Bergen,,Vestland,{"1 juv." if n == 37 else ""},,' + ','.join(['x'] * 14)
+                for n in range(1, 41)]
+        rows[22] = 'o23,e23,Great Britain,Plymouth Sound,English Channel,,,,' + ','.join(['x'] * 14)
+        archive = read_inputs([('occurrence.csv', '\n'.join([header, *rows, '']).encode())])
+        from api.dwca_conversion import build_plan
+        plan = build_plan(archive)
+        entries = [*plan['issues'], *plan.get('automatic_choices', [])]
+        country = next(item for item in entries if item['id'].startswith('country-label:') and item['source_value'] == 'Great Britain')
+        packet, refs = evidence.evidence_packet(plan, archive, {}, country['id'])
+        self.assertEqual(packet['evidence']['value'], {'ref': 'value', 'column': 'countryCode', 'value': 'Great Britain',
+                                                       'rows_total': 1, 'rows': [23]})
+        self.assertEqual([row['row'] for row in packet['evidence']['rows']], [23])
+        self.assertEqual(packet['evidence']['rows'][0]['values']['waterBody'], 'English Channel')
+        headers = [column['header'] for column in packet['evidence']['columns']]
+        self.assertEqual(headers[0], 'countryCode')
+        self.assertTrue({'locality', 'waterBody', 'stateProvince', 'occurrenceID'} <= set(headers))
+        self.assertNotIn('extra0', headers)
+        self.assertIn("'Great Britain' in 1 rows: rows 23", refs['value'])
+        remark = next((item for item in entries if item['id'].startswith('age-remark:')), None)
+        if remark is not None:  # Routing of event remarks belongs to the converter's own rules.
+            packet, _ = evidence.evidence_packet(plan, archive, {}, remark['id'])
+            self.assertEqual(packet['evidence']['value']['rows'], [37])
+            self.assertIn('lifeStage', [column['header'] for column in packet['evidence']['columns']])
 
     def test_nested_items_depend_on_their_outer_role(self):
         plan = {'issues': [{'id': 'table:1', 'kind': 'taxon-occurrences', 'table': 1, 'options': []},

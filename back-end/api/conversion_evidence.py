@@ -45,6 +45,14 @@ KIND_TERMS = {
     'event-grain': ('eventID',),
     'occurrence-events': ('eventID', 'eventDate', 'year', 'decimalLatitude', 'decimalLongitude', 'locality'),
 }
+# Questions about one exact source value (ids '<prefix>:<table>:<column>:<digest>') show the
+# rows that hold that value with these neighbouring columns, so rare values are never unseen.
+VALUE_ROUTE_TERMS = {
+    'country-label': ('country', 'countryCode', 'locality', 'waterBody', 'stateProvince', 'county', 'island',
+                      'islandGroup', 'higherGeography', 'continent', 'decimalLatitude', 'decimalLongitude'),
+    'age-remark': ('lifeStage', 'sex', 'individualCount', 'organismQuantity', 'organismQuantityType',
+                   'occurrenceRemarks', 'eventRemarks', 'scientificName'),
+}
 
 
 def canonical(value):
@@ -318,6 +326,30 @@ def _profile(table, c, column):
             else [[clip(value, 120), None] for value in column.get('samples', [])[:3]]}
 
 
+def _row_list(item):
+    """An item's 1-based source rows. Extension-role items store a row count in 'rows' instead."""
+    rows = item.get('rows')
+    return [n for n in rows if isinstance(n, int)] if isinstance(rows, list) else []
+
+
+def value_route(item):
+    """(prefix, column index, value) for a question about one exact source value, else None."""
+    prefix = split_nested(item['id'])[1].split(':', 1)[0]
+    column, value = item.get('source_column'), item.get('source_value')
+    if prefix in VALUE_ROUTE_TERMS and isinstance(column, int) and isinstance(value, str):
+        return prefix, column, value
+    return None
+
+
+def _value_rows(item, table):
+    """1-based rows holding a value-route item's exact source value."""
+    route = value_route(item)
+    if route is None or table is None:
+        return []
+    _, c, value = route
+    return [n for n, row in enumerate(table.rows, start=1) if c < len(row) and row[c] == value]
+
+
 def _columns_for(plan, item, table):
     t = item_table(plan, item)
     if t is None:
@@ -327,7 +359,13 @@ def _columns_for(plan, item, table):
     kind = item.get('kind')
     by_id = {column['id']: column for column in columns}
     chosen = []
-    if item['id'] in by_id:
+    route = value_route(item)
+    if route:
+        prefix, c, _ = route
+        chosen.extend(column for column in columns if column['column'] == c)
+        chosen.extend(column for column in columns if _short(column['term']) in VALUE_ROUTE_TERMS[prefix])
+        chosen.extend(column for column in columns if _short(column['term']) in {'occurrenceID', 'eventID'})
+    elif item['id'] in by_id:
         chosen.append(by_id[item['id']])
         chosen.extend(column for column in columns if _short(column['term']) in {'occurrenceID', 'eventID', 'taxonID', 'id'}
                       and column['id'] != item['id'])
@@ -339,7 +377,7 @@ def _columns_for(plan, item, table):
     elif kind == 'layout':
         chosen.extend(column for column in plan.get('columns', []) if _short(column['term']) in {'id', 'coreid', 'occurrenceID', 'eventID', 'taxonID'})
     elif kind == 'row-handling' and table is not None:
-        rows = item.get('rows') or ([item['row']] if 'row' in item else [])
+        rows = _row_list(item) or ([item['row']] if isinstance(item.get('row'), int) else [])
         populated = {column['column'] for column in columns for n in rows[:ROW_LIMIT]
                      if 0 < n <= len(table.rows) and column['column'] < len(table.rows[n - 1]) and table.rows[n - 1][column['column']]}
         chosen.extend(column for column in columns if column['column'] in populated)
@@ -359,11 +397,15 @@ def _columns_for(plan, item, table):
     return list({column['id']: column for column in chosen}.values())[:15]
 
 
-def _rows_for(item, table, requirement_rows):
+def _rows_for(item, table, requirement_rows, value_rows=()):
     if table is None or not table.rows:
         return []
-    if item.get('rows'):
-        numbers = item.get('sample_rows') or item['rows'][:ROW_LIMIT]
+    if value_rows:
+        # Spread across the matching rows so a sample is not just the first block.
+        size = len(value_rows)
+        numbers = [value_rows[k * (size - 1) // (ROW_LIMIT - 1)] for k in range(ROW_LIMIT)] if size > ROW_LIMIT else list(value_rows)
+    elif _row_list(item):
+        numbers = item.get('sample_rows') or _row_list(item)[:ROW_LIMIT]
     elif 'row' in item:
         numbers = [item['row']]
     elif requirement_rows:
@@ -468,8 +510,15 @@ def evidence_packet(plan, archive, decisions, item_id, *, status=None, sources=N
     if table is not None and item.get('kind') in {'row-handling', 'survey-completeness'}:
         row_columns = [column for column in plan.get('columns', []) if column['table'] == t
                        and split_nested(column['id'])[0] == split_nested(item_id)[0]]
+    value_rows = _value_rows(item, table)
+    route = value_route(item)
+    if route:
+        source = next((column for column in plan.get('columns', []) if column['table'] == t
+                       and column['column'] == route[1]), None)
+        evidence['value'] = {'ref': 'value', 'column': _short(source['term']) if source else str(route[1]),
+                             'value': clip(route[2], 200), 'rows_total': len(value_rows), 'rows': value_rows[:20]}
     rows = []
-    for n in _rows_for(item, table, requirement_rows):
+    for n in _rows_for(item, table, requirement_rows, value_rows):
         values = {}
         for column in row_columns:
             c = column['column']
@@ -480,8 +529,8 @@ def evidence_packet(plan, archive, decisions, item_id, *, status=None, sources=N
     evidence['requirements'] = requirements
     if item.get('members'):
         exceptions = {member: decisions[member] for member in item['members'] if member in decisions}
-        evidence['group'] = {'ref': 'group', 'count': item.get('count', len(item['members'])), 'rows': item.get('rows', [])[:20],
-                             'rows_total': len(item.get('rows', [])),
+        evidence['group'] = {'ref': 'group', 'count': item.get('count', len(item['members'])), 'rows': _row_list(item)[:20],
+                             'rows_total': len(_row_list(item)),
                              'shared': _bounded(item.get('scope_values') or {}, 1000),
                              'exceptions': dict(list(exceptions.items())[:20])}
     evidence['targets'] = _targets(item)
@@ -549,6 +598,10 @@ def excerpts(packet):
     for requirement in evidence['requirements']:
         found[requirement['ref']] = clip(f"{requirement['option']} {'satisfied' if requirement['satisfied'] else 'not satisfied'}: "
                                          f"{requirement['reason']}", 300)
+    if 'value' in evidence:
+        value = evidence['value']
+        found['value'] = clip(f"{value['column']} = {value['value']!r} in {value['rows_total']} rows: rows "
+                              f"{', '.join(map(str, value['rows'][:10]))}", 300)
     if 'group' in evidence:
         group = evidence['group']
         found['group'] = clip(f"{group['count']} rows with the same question: rows {', '.join(map(str, group['rows'][:10]))}", 300)

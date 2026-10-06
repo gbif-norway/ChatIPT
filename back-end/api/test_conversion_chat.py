@@ -198,3 +198,39 @@ class ChatTests(ConversionTestCase):
         self.assertEqual(DwcConversionJob.objects.get(conversion=conversion).action, 'convert')
         notice = DwcConversionMessage.objects.filter(role='assistant').latest('id')
         self.assertEqual((notice.content, notice.answers_through), (chat.SUPERSEDED_NOTICE, message.id))
+
+
+COUNTRY_LABELS = (b'occurrenceID,eventID,countryCode,locality,scientificName\n'
+                  b'o1,e1,Norway,Bergen,Calanus finmarchicus\n'
+                  b'o2,e2,Norway,Tromso,Calanus finmarchicus\n'
+                  b'o3,e3,Sweden,Lysekil,Calanus finmarchicus\n'
+                  b'o4,e4,Great Britain,Plymouth,Calanus finmarchicus\n'
+                  b'o5,e5,Svalbard and Jan Mayen,Longyearbyen,Calanus finmarchicus\n'
+                  b'o6,e6,Mediterranean Sea,,Calanus finmarchicus\n')
+
+
+@override_settings(**AI)
+class OpenerTests(ConversionTestCase):
+    files = [('occurrence.csv', COUNTRY_LABELS)]
+
+    def test_opener_states_every_open_choice(self):
+        # ds570: the opener said "1 choice" while 15 were open, because status:0 has no table.
+        self.inspect_only()
+        self.assertEqual(self.post('save', changes={'loose-links': 'confirm'}).status_code, 200)
+        conversion = self.conversion
+        open_ids = chat.review.open_items(conversion)
+        labels = [item_id for item_id in open_ids if item_id.startswith('country-label:')]
+        self.assertEqual(len(labels), 5)
+        self.assertIn('status:0', open_ids)
+        opener = chat.post_questions_opener(conversion)
+        self.assertTrue(opener.content.startswith(f'{len(open_ids)} choices still need your answer'), opener.content)
+        self.assertIn(f'the other {len(open_ids) - 4} are in the list below', opener.content)
+        self.assertNotIn('I need your help with 1 choice', opener.content)
+        # The first question comes with related ones from the same table, questions of one kind together.
+        self.assertEqual(opener.asked[0], 'status:0')
+        self.assertEqual(len(opener.asked), 4)
+        self.assertTrue(set(opener.asked[1:]) <= set(labels), opener.asked)
+        # A later opener presents the choices not yet asked.
+        follow_up = chat.post_questions_opener(self.conversion)
+        self.assertTrue(set(opener.asked).isdisjoint(follow_up.asked))
+        self.assertTrue(set(follow_up.asked) <= set(labels), follow_up.asked)
