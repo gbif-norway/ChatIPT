@@ -246,13 +246,19 @@ class ExtensionIndividualCountTests(SimpleTestCase):
         self.assertEqual(rows.loc['Nord-1985-02-11-3-0.1-4', 'organismQuantity'], '0')
         self.assertEqual(rows.loc['Nord-1985-02-11-3-0.1-4', 'occurrenceStatus'], 'absent')
         self.assertEqual(rows.loc['f4702da8-6b3b-4d4c-b282-cb2de823bbf3', 'organismQuantity'], '1')
-        # An explicit density takes precedence; the count stays in the originals.
+        # An explicit density keeps the quantity pair; the raw count of 2 becomes an individualCount assertion.
         self.assertEqual((rows.loc['8665290b-0a6b-482c-b711-457750f159f6', 'organismQuantity'],
                           rows.loc['8665290b-0a6b-482c-b711-457750f159f6', 'organismQuantityType']), ('0.899256315', 'ind/m3'))
+        assertion = frames['occurrence-assertion'].iloc[0]
+        self.assertEqual(len(frames['occurrence-assertion']), 1)
+        self.assertEqual((assertion['occurrence_fk'], assertion['assertionType'], assertion['assertionValue'], assertion['assertionUnit']),
+                         (rows.loc['8665290b-0a6b-482c-b711-457750f159f6', 'occurrence_pk'], 'individualCount', '2', 'individuals'))
         count = disposition(report, 'individualCount')
-        self.assertEqual((count['disposition'], count['mapped_rows'], count['retained_only_rows']), ('derived', 3, 1))
-        self.assertEqual(count['retained_reasons'], {'explicit_quantity_present': 1, 'invalid_nonnegative_integer': 0})
+        self.assertEqual((count['disposition'], count['mapped_rows'], count['retained_only_rows']), ('derived', 4, 0))
+        self.assertEqual(count['derived_routes'], {'quantity_pair': 3, 'assertion': 1})
+        self.assertEqual(count['retained_reasons'], {})
         self.assertEqual(count['derived_value_examples'][0]['target_row'], 1)
+        self.assertEqual(count['derived_value_examples'][-1]['target_table'], 'occurrence-assertion')
         self.assertTrue(report['validation']['valid'])
 
     def test_a_retained_extension_is_not_counted_as_derived(self):

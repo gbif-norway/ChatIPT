@@ -12,7 +12,7 @@ _ZERO_PROFILE_TERMS = (
     'minimumElevationInMeters', 'maximumElevationInMeters',
     'minimumDepthInMeters', 'maximumDepthInMeters',
 )
-_ASSERTION_IRI_FIELDS = ('.assertionTypeIRI', '.assertionValueIRI', '.assertionUnitIRI')
+ASSERTION_IRI_FIELDS = ('.assertionTypeIRI', '.assertionValueIRI', '.assertionUnitIRI')
 # A scheme followed by a nonempty, space-free remainder: http(s)://…, urn:…, and similar.
 _ABSOLUTE_IRI = re.compile(r'[A-Za-z][A-Za-z0-9+.-]*:[^\s]+')
 
@@ -25,7 +25,7 @@ def semantic_target_rejection(target: str, value: str) -> str | None:
         return 'countryCode is not an exact ISO 3166-1 alpha-2, XZ, or ZZ code; original retained.'
     if target.endswith('.dateIdentified') and value.strip() == '0-0-0':
         return 'dateIdentified is the 0-0-0 placeholder, not a calendar date; original retained.'
-    if target.endswith(_ASSERTION_IRI_FIELDS) and not _ABSOLUTE_IRI.fullmatch(value.strip()):
+    if target.endswith(ASSERTION_IRI_FIELDS) and not _ABSOLUTE_IRI.fullmatch(value.strip()):
         return f"{target.rsplit('.', 1)[1]} needs an absolute IRI; this value is not one, so the original is retained."
     return None
 

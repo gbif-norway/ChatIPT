@@ -118,7 +118,7 @@ class ArchiveTests(SimpleTestCase):
     def test_individual_count_becomes_individual_quantity_with_row_level_accounting(self):
         archive = occurrence(b'occurrenceID,individualCount,organismQuantity,organismQuantityType,occurrenceStatus\n'
                              b'one,7,,,present\nzero,0,,,present\nexplicit,4,2,pairs,present\n'
-                             b'unit-only,3,,nests,present\nbad,1.5,,,present\n')
+                             b'unit-only,3,,nests,present\nbad,1.5,,,present\nsame,5,5,individuals,present\n')
         plan = build_plan(archive)
         frames, report = convert(archive, plan, decisions_for(plan))
         rows = frames['occurrence'].set_index('occurrenceID')
@@ -129,16 +129,27 @@ class ArchiveTests(SimpleTestCase):
         self.assertEqual(rows.loc['unit-only', 'organismQuantityType'], 'nests')
         self.assertEqual(rows.loc['unit-only', 'organismQuantity'], '')
         self.assertEqual(rows.loc['bad', 'organismQuantity'], '')
+        # Beside a different supplied quantity the raw count becomes an assertion; an equal individuals quantity already carries it.
+        assertions = frames['occurrence-assertion']
+        self.assertEqual(assertions['occurrence_fk'].tolist(), [rows.loc['explicit', 'occurrence_pk'], rows.loc['unit-only', 'occurrence_pk']])
+        self.assertEqual(assertions[['assertionType', 'assertionTypeIRI', 'assertionValue', 'assertionUnit']].values.tolist(), [
+            ['individualCount', DWC + 'individualCount', '4', 'individuals'], ['individualCount', DWC + 'individualCount', '3', 'individuals']])
         disposition = next(item for item in report['columns'] if item['term'] == DWC + 'individualCount')
         self.assertEqual(disposition['disposition'], 'derived')
-        self.assertEqual((disposition['mapped_rows'], disposition['retained_only_rows']), (2, 3))
-        self.assertEqual(disposition['retained_reasons'], {'explicit_quantity_present': 2, 'invalid_nonnegative_integer': 1})
+        self.assertEqual((disposition['mapped_rows'], disposition['retained_only_rows']), (5, 1))
+        self.assertEqual(disposition['derived_routes'], {'quantity_pair': 2, 'assertion': 2, 'same_as_supplied_quantity': 1})
+        self.assertEqual(disposition['target_counts'], {'occurrence.organismQuantity': 2, 'occurrence-assertion.assertionValue': 2})
+        self.assertEqual(disposition['retained_reasons'], {'invalid_nonnegative_integer': 1})
         self.assertIn('source individualCount remains in the originals', disposition['mapping_rule'])
         self.assertEqual(disposition['derived_value_examples'], [
             {'source_row': 1, 'source_value': '7', 'target_table': 'occurrence', 'target_row': 1,
              'target_fields': {'organismQuantity': '7', 'organismQuantityType': 'individuals'}},
             {'source_row': 2, 'source_value': '0', 'target_table': 'occurrence', 'target_row': 2,
              'target_fields': {'organismQuantity': '0', 'organismQuantityType': 'individuals'}},
+            {'source_row': 3, 'source_value': '4', 'target_table': 'occurrence-assertion', 'target_row': 1,
+             'target_fields': {'assertionType': 'individualCount', 'assertionValue': '4', 'assertionUnit': 'individuals'}},
+            {'source_row': 4, 'source_value': '3', 'target_table': 'occurrence-assertion', 'target_row': 2,
+             'target_fields': {'assertionType': 'individualCount', 'assertionValue': '3', 'assertionUnit': 'individuals'}},
         ])
         self.assertEqual(disposition['derived_value_examples_omitted'], 0)
         self.assertTrue(report['validation']['valid'])
@@ -352,7 +363,9 @@ class ArchiveTests(SimpleTestCase):
              b'eventID,occurrenceID,measurementType,measurementTypeID,measurementValue,measurementValueID,measurementUnit,measurementUnitID\n'
              + event + b',NA,Mesh size,http://vocab.nerc.ac.uk/collection/P01/current/MSHSIZE1/,180,NA,micrometers,http://vocab.nerc.ac.uk/collection/P06/current/UMIC/\n'
              + event + b',Nord-1983-02-07-5-SC-6,sex,http://vocab.nerc.ac.uk/collection/P01/current/ENTSEX01/,F,'
-                       b'http://vocab.nerc.ac.uk/collection/S10/current/S102/,not applicable,https://vocab.nerc.ac.uk/collection/P06/current/XXXX/\n')])
+                       b'http://vocab.nerc.ac.uk/collection/S10/current/S102/,not applicable,https://vocab.nerc.ac.uk/collection/P06/current/XXXX/\n'
+             + event + b',Nord-1983-02-07-5-SC-6,sex,http://vocab.nerc.ac.uk/collection/P01/current/ENTSEX01/,M,'
+                       b'S103,not applicable,https://vocab.nerc.ac.uk/collection/P06/current/XXXX/\n')])
         plan = build_plan(archive)
         emof = next(index for index, table in enumerate(archive.tables) if table.name == 'extendedmeasurementorfact.csv')
         targets = {column['term'].rsplit('/', 1)[1]: column['default'] for column in plan['columns'] if column['table'] == emof}
@@ -365,11 +378,20 @@ class ArchiveTests(SimpleTestCase):
                          ('http://vocab.nerc.ac.uk/collection/P01/current/MSHSIZE1/', '', 'http://vocab.nerc.ac.uk/collection/P06/current/UMIC/'))
         sex = frames['occurrence-assertion'].iloc[0]
         self.assertEqual((sex['assertionValue'], sex['assertionValueIRI']), ('F', 'http://vocab.nerc.ac.uk/collection/S10/current/S102/'))
-        # "NA" is not an IRI: it is withheld with its source row, never copied as one.
+        # "NA" is an empty cell, counted once for the column; other non-IRI text is withheld with its source row.
         self.assertEqual([(cell['term'].rsplit('/', 1)[1], cell['value'], cell['source_row']) for cell in report['withheld_values']],
-                         [('measurementValueID', 'NA', 1)])
+                         [('measurementValueID', 'S103', 3)])
+        self.assertEqual(frames['occurrence-assertion'].iloc[1].get('assertionValueIRI', ''), '')
         value_ids = next(column for column in report['columns'] if column['term'].endswith('/measurementValueID'))
-        self.assertEqual((value_ids['mapped_rows'], value_ids['retained_only_rows']), (1, 1))
+        self.assertEqual((value_ids['mapped_rows'], value_ids['retained_only_rows'], value_ids['empty_placeholder']), (1, 2, 1))
+        # The plan notice counts only the real non-IRI text, not the placeholder.
+        self.assertEqual(next(column for column in plan['columns'] if column['term'].endswith('/measurementValueID'))['incompatible_values'],
+                         {'occurrence-assertion.assertionValueIRI': 1})
+        from api.dwca_value_ledger import build_value_disposition_ledger
+        ledger = {row['source_term'].rsplit('/', 1)[1]: row for row in build_value_disposition_ledger(plan, report)['source_terms']
+                  if row['source_table_index'] == emof}
+        self.assertEqual((ledger['measurementValueID']['withheld_invalid_values'], ledger['measurementValueID']['empty_placeholder_values'],
+                          ledger['measurementValueID']['originals_only_values']), (1, 1, 1))
         self.assertTrue(report['validation']['valid'])
 
     def test_identification_qualifiers_follow_the_name_in_verbatim_identification(self):
@@ -395,6 +417,30 @@ class ArchiveTests(SimpleTestCase):
                          ('derived verbatim copy → occurrence.verbatimIdentification', 'derived', 4, 0))
         self.assertTrue(report['validation']['valid'])
 
+    def test_qualifiers_that_name_a_part_go_before_it_on_identification_extensions(self):
+        """Darwin Core's own identificationQualifier and verbatimIdentification examples, on an Identification extension."""
+        archive = read_inputs([
+            ('occurrence.csv', b'occurrenceID,occurrenceStatus\no1,present\no2,present\no3,present\no4,present\no5,present\n'),
+            ('identification.csv', b'occurrenceID,scientificName,identificationQualifier\n'
+                                   b'o1,Quercus agrifolia var. oxyadenia (Torr.) J.T. Howell,aff. agrifolia var. oxyadenia\n'
+                                   b'o2,Quercus agrifolia var. oxyadenia,cf. var. oxyadenia\n'
+                                   b'o3,Pachyporidae?,?\n'
+                                   b'o4,Quercus robur,aff. agrifolia\n'
+                                   b'o5,Peromyscus,sp.\n')])
+        plan = build_plan(archive)
+        qualifier = next(column for column in plan['columns'] if column['term'] == DWC + 'identificationQualifier')
+        self.assertEqual(qualifier['verbatim_copy'], 'identification.verbatimIdentification')
+        frames, report = convert(archive, plan, decisions_for(plan))
+        self.assertEqual(frames['identification']['verbatimIdentification'].tolist(), [
+            'Quercus aff. agrifolia var. oxyadenia (Torr.) J.T. Howell', 'Quercus agrifolia cf. var. oxyadenia',
+            'Pachyporidae?', 'Quercus robur', 'Peromyscus sp.'])
+        item = next(column for column in report['columns'] if column['term'] == DWC + 'identificationQualifier')
+        # The qualifier whose part is not in the name builds no text and stays in the originals.
+        self.assertEqual((item['target'], item['mapped_rows'], item['retained_only_rows']),
+                         ('derived verbatim copy → identification.verbatimIdentification', 4, 1))
+        self.assertEqual(item['retained_reasons'], {'qualifier_not_placeable': 1})
+        self.assertTrue(report['validation']['valid'])
+
     def test_a_supplied_verbatim_identification_is_not_rewritten_with_the_qualifier(self):
         archive = occurrence(b'occurrenceID,scientificName,verbatimIdentification,identificationQualifier,occurrenceStatus\n'
                              b'a,Themisto abyssorum,T. aby.,cf.,present\nb,Calanus,,spp.,present\n')
@@ -403,6 +449,23 @@ class ArchiveTests(SimpleTestCase):
         self.assertEqual(frames['occurrence']['verbatimIdentification'].tolist(), ['T. aby.', 'Calanus spp.'])
         item = next(column for column in report['columns'] if column['term'] == DWC + 'identificationQualifier')
         self.assertEqual((item['mapped_rows'], item['retained_only_rows']), (1, 1))
+        self.assertEqual(item['retained_reasons'], {'verbatim_identification_supplied': 1})
+
+    def test_placeholder_event_ids_are_not_repeated_on_separate_row_events(self):
+        archive = occurrence(b'occurrenceID,eventID,eventDate,occurrenceStatus\n'
+                             b'a,NA,2024-01-02,present\nb,NA,2024-01-03,present\nc,cast-1,2024-01-04,present\nd,cast-1,2024-01-05,present\n')
+        plan = build_plan(archive)
+        frames, report = convert(archive, plan, {**decisions_for(plan), 'event-grain': 'per_row'})
+        events = frames['event']
+        self.assertEqual(sorted(events['eventID']), ['', '', '', '', 'cast-1'])
+        # The NA rows keep separate events without an eventID or a parent; the originals keep "NA".
+        unidentified = events[events['eventDate'].isin(['2024-01-02', '2024-01-03'])]
+        self.assertEqual((unidentified['eventID'].tolist(), unidentified['parentEvent_fk'].tolist()), (['', ''], ['', '']))
+        self.assertEqual(report['shared_event_ids']['parent_events'], 1)
+        column = next(item for item in report['columns'] if item['term'] == DWC + 'eventID')
+        self.assertEqual((column['mapped_rows'], column['retained_only_rows'], column['empty_placeholder']), (2, 2, 2))
+        self.assertEqual(report['withheld_values'], [])
+        self.assertTrue(report['validation']['valid'])
 
     def test_depths_within_one_event_become_child_events(self):
         """One cast sampling several depths (production dataset 546)."""

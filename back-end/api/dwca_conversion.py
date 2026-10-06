@@ -25,7 +25,7 @@ from api.dwc_dp_specs import TABLE_SPECS, dwc_dp_schema_snapshot, validate_dwc_d
 from api.dwca_preflight import preflight
 from api.dwca_review import (apply_policy, effective_decisions, failed_requirements, group_rows,  # noqa: F401
                              option_status, remove_unavailable, violations)
-from api.dwca_semantic_audit import is_age_like_remark, semantic_target_rejection
+from api.dwca_semantic_audit import ASSERTION_IRI_FIELDS, is_age_like_remark, semantic_target_rejection
 from api.dwca_agents import ROLE_FIELDS, build_agent_roles, composite_name_reason
 
 RULE_VERSION = "23"
@@ -184,9 +184,52 @@ def _without_authorship(name, authorship):
     return name
 
 
-def _contains_qualifier(name, qualifier):
-    """The name text already carries this exact qualifier as separate words, e.g. 'Rana cf. arvalis' and 'cf.'."""
-    return re.search(r'(?<!\S)' + re.escape(qualifier) + r'(?!\S)', name) is not None
+def _individual_count(source):
+    """How a row's individualCount reaches the package: (route, count), route None when it cannot.
+
+    'quantity': no supplied quantity, so the count becomes the occurrence's individuals quantity.
+    'supplied': the supplied quantity already says the same number of individuals.
+    'assertion': a different supplied quantity (a density, say) keeps the quantity pair, so the
+    raw count becomes an individualCount assertion of the occurrence.
+    """
+    count = source.get(DWC + 'individualCount', '').strip()
+    if not count:
+        return None, 'empty'
+    if not re.fullmatch(r'\+?\d+', count):
+        return None, 'invalid'
+    count = str(int(count))
+    quantity = source.get(DWC + 'organismQuantity', '').strip()
+    quantity_type = source.get(DWC + 'organismQuantityType', '').strip()
+    if not quantity and not quantity_type:
+        return 'quantity', count
+    if quantity_type.casefold() == 'individuals' and re.fullmatch(r'\+?\d+', quantity) and int(quantity) == int(count):
+        return 'supplied', count
+    return 'assertion', count
+
+
+def _words_at(text, words):
+    """Start of `words` in `text` as whole whitespace-separated words, or None."""
+    found = re.search(r'(?<!\S)' + re.escape(words) + r'(?!\S)', text)
+    return found.start() if found else None
+
+
+def _qualified_name(name, qualifier):
+    """Supplied name text carrying the supplied qualifier, or None when it cannot be placed.
+
+    Text that already contains the qualifier, as words or attached at the end
+    ('Rana cf. arvalis' + 'cf.', 'Pachyporidae?' + '?'), is kept as is. A single
+    word follows the name ('Iguana sp. ?'). A multi-word qualifier names the part
+    it qualifies ('aff. agrifolia var. oxyadenia'), so its first word goes where
+    that part starts; if the part is not in the name, no text is constructed.
+    """
+    name = name.rstrip()
+    if _words_at(name, qualifier) is not None or name.endswith(qualifier):
+        return name
+    first, _, rest = qualifier.partition(' ')
+    if not rest:
+        return f'{name} {qualifier}'
+    position = _words_at(name, rest.strip())
+    return None if position is None else f'{name[:position]}{first} {name[position:]}'
 
 
 def _name_needs_review(value, authorship=''):
@@ -715,7 +758,8 @@ def build_plan(archive):
             if join_only:
                 chosen = 'join'
             incompatible = {} if family == 'humboldt' else {
-                target: sum(bool(_copy_rejection(table.row_type, target, value)) for value in values)
+                target: sum(bool(_copy_rejection(table.row_type, target, value)) for value in values
+                            if not (target.endswith(ASSERTION_IRI_FIELDS) and missing_reference(value)))
                 for target in options if '.' in target}
             incompatible = {target: count for target, count in incompatible.items() if count}
             typed_reason = (f"Some source values fail the target's type, bounds, or semantic constraints: "
@@ -1161,7 +1205,10 @@ def convert(archive, plan, decisions):
     events_by_key = {}; supplied_categories = set(); humboldt_groups = {}; column_consumption = defaultdict(set); withheld_values = []; preserved_rows = []
     materials_by_source = {}; material_identifiers = defaultdict(set); trait_protocols = defaultdict(list); skipped_by_table = defaultdict(set); extension_subjects = []; typed_withheld = defaultdict(set)
     reviewed_target_rows = defaultdict(set)
+    # Missing-value tokens (NA, null, ...) in identifier fields are empty cells, counted once per column, not withheld values.
+    placeholder_rows = defaultdict(set); qualifier_retained = defaultdict(Counter)
     core = archive.tables[core_index]; event_keys = {}; occurrence_keys = {}
+    per_row_events = core.row_type == DWC + 'Occurrence' and decisions.get('event-grain') not in COMBINED_GRAINS
     namespace = archive.fingerprint
     columns_by_table = defaultdict(list)
     issues_by_id = {issue['id']: issue for issue in [*plan['issues'], *plan.get('automatic_choices', [])]}
@@ -1188,6 +1235,10 @@ def convert(archive, plan, decisions):
             if target.startswith('material.') and decisions.get(f'material:{t}', 'preserve') == 'preserve':
                 continue
             table, field = target.split(".", 1)
+            if missing_reference(value) and (target.endswith(ASSERTION_IRI_FIELDS) or (target == 'event.eventID' and per_row_events and t == core_index)):
+                # A placeholder is not an IRI or an identity; separate row events never share it as an eventID.
+                placeholder_rows[(t, column['column'])].add(n)
+                continue
             rejection = _copy_rejection(archive.tables[t].row_type, target, value)
             if rejection:
                 withheld_values.append({'source_table': archive.tables[t].name, 'source_table_index': t, 'source_row': n + 1,
@@ -1293,36 +1344,36 @@ def convert(archive, plan, decisions):
         name = table.rows[n][table.terms.index(NAME)] if NAME in table.terms else ''
         if name and not record.get('verbatimIdentification'):
             # The pinned DwC-DP has no identificationQualifier field, and scientificName
-            # excludes qualifiers. The supplied qualifier follows the supplied name text
-            # in verbatimIdentification, so "cf.", "?" or "sp." survive without changing
-            # scientificName. Text that already contains the qualifier is kept as is.
+            # excludes qualifiers. The supplied qualifier joins the supplied name text in
+            # verbatimIdentification, so "cf.", "?" or "sp." survive without changing
+            # scientificName. One that cannot be placed stays in the originals.
             qualifier = table.rows[n][table.terms.index(QUALIFIER)].strip() if QUALIFIER in table.terms else ''
-            if qualifier:
-                if not _contains_qualifier(name, qualifier):
-                    name = f'{name.rstrip()} {qualifier}'
+            qualified = _qualified_name(name, qualifier) if qualifier else None
+            if qualified is not None:
+                name = qualified
                 column_consumption[(t, QUALIFIER)].add(n)
+            elif qualifier:
+                qualifier_retained[t]['qualifier_not_placeable'] += 1
             record['verbatimIdentification'] = name
             column_consumption[(t, NAME)].add(n)
+        elif QUALIFIER in table.terms and table.rows[n][table.terms.index(QUALIFIER)].strip():
+            qualifier_retained[t]['verbatim_identification_supplied' if name else 'no_name_text'] += 1
         if record.get('scientificName'):
             record['scientificName'] = _without_authorship(record['scientificName'], record.get('scientificNameAuthorship', ''))
         return record
 
     def occurrence_row(t, n, source_id, mapped, event_key):
         # DwC individualCount is a count of organisms, which DwC-DP represents
-        # as a quantity paired with its unit. Only derive it when neither half
-        # of an explicit quantity pair was supplied. Zero remains a quantity;
+        # as a quantity paired with its unit. It fills that pair only when neither
+        # half was supplied; next to a different supplied quantity (a density, say)
+        # it becomes an individualCount assertion instead. Zero remains a quantity;
         # it never changes occurrenceStatus. This applies to Occurrence cores and
         # to Occurrence extensions converted as occurrences alike.
         table = archive.tables[t]
-        if table.row_type == DWC + 'Occurrence' and DWC + 'individualCount' in table.terms:
-            source_row = table.rows[n]
-            count = source_row[table.terms.index(DWC + 'individualCount')].strip()
-            source = _source(table.terms, source_row)
-            if (count and re.fullmatch(r'\+?\d+', count)
-                    and not source.get(DWC + 'organismQuantity')
-                    and not source.get(DWC + 'organismQuantityType')):
-                mapped.setdefault('occurrence', {})['organismQuantity'] = str(int(count))
-                mapped['occurrence']['organismQuantityType'] = 'individuals'
+        route, count = (_individual_count(_source(table.terms, table.rows[n]))
+                        if table.row_type == DWC + 'Occurrence' and DWC + 'individualCount' in table.terms else (None, None))
+        if route == 'quantity':
+            mapped.setdefault('occurrence', {}).update(organismQuantity=count, organismQuantityType='individuals')
         occurrence = name_values(t, n, mapped.get("occurrence", {}))
         occurrence.update(occurrence_pk=_key(archive, "occurrence", t, source_id), event_fk=event_key)
         if not occurrence.get("occurrenceStatus"):
@@ -1331,6 +1382,10 @@ def convert(archive, plan, decisions):
         if occurrence.get('occurrenceID') and not missing_reference(occurrence['occurrenceID'], ()):
             occurrences_by_identifier[occurrence['occurrenceID']].append((occurrence['occurrence_pk'], event_key))
         add("occurrence", occurrence, t, n)
+        if route == 'assertion':
+            add('occurrence-assertion', {'occurrence_fk': occurrence['occurrence_pk'], 'assertionType': 'individualCount',
+                                         'assertionTypeIRI': DWC + 'individualCount', 'assertionValue': count,
+                                         'assertionUnit': 'individuals'}, t, n)
         if decisions.get(f'material:{t}', 'preserve') != 'preserve':
             material = dict(mapped.get('material', {}))
             group = (t, source_id) if decisions[f'material:{t}'] == 'per_row' else (t, material.get('materialEntityID', ''))
@@ -1713,60 +1768,71 @@ def convert(archive, plan, decisions):
             if not mapped_rows: target = 'preserve'
             elif target == 'derive': target = 'derived survey scope records' if family == 'humboldt' else 'derived extension records'
         skipped = skipped_by_table[column['table']]
-        typed_skipped = typed_withheld[(column['table'], column['column'])]
+        typed_skipped = typed_withheld[(column['table'], column['column'])] | placeholder_rows[(column['table'], column['column'])]
         if (skipped or typed_skipped) and not special and target not in {'preserve', 'join'}:
             copied = sum(bool(row[column['column']]) for n, row in enumerate(archive.tables[column['table']].rows) if n not in skipped and n not in typed_skipped)
             extra = {'mapped_rows': copied, 'retained_only_rows': column['nonempty'] - copied}
             if not copied: target = 'preserve'
+        if placeholder_rows[(column['table'], column['column'])]:
+            extra['empty_placeholder'] = len(placeholder_rows[(column['table'], column['column'])])
+        if column['term'] == QUALIFIER and qualifier_retained[column['table']]:
+            extra['retained_reasons'] = dict(sorted(qualifier_retained[column['table']].items()))
         dispositions.append({"source_table": archive.tables[column["table"]].name, "term": column["term"], "target": target,
                              "disposition": "retained-unmapped" if target == "preserve" else 'derived' if target == 'join' or target.startswith('derived ') else "mapped+retained", "nonempty": column["nonempty"], **extra})
     # Account for each converted occurrence's individualCount (core or extension)
-    # as a value-level derived disposition, including rows withheld because explicit
-    # quantity fields take precedence, the count is not a nonnegative integer, or
-    # the extension row itself stays in the originals.
+    # as a value-level derived disposition: the individuals quantity pair, or an
+    # individualCount assertion beside a different supplied quantity. Retained rows
+    # have counts that are not nonnegative integers, or are extension rows kept in originals.
     output_rows = {(entry['source_row'], entry['source_table_index']): entry['target_row']
                    for entry in crosswalk if entry['target_table'] == 'occurrence'}
+    assertion_rows = {(entry['source_row'], entry['source_table_index']): entry['target_row']
+                      for entry in crosswalk if entry['target_table'] == 'occurrence-assertion'}
     for t in count_tables:
         table = archive.tables[t]
         count_term = DWC + 'individualCount'
-        quantity, quantity_type = DWC + 'organismQuantity', DWC + 'organismQuantityType'
         derived_values = []
-        derived_count = 0
-        retained_conflict = invalid = empty = row_retained = 0
+        routes = Counter()
+        invalid = empty = row_retained = 0
         for row_number, row in enumerate(table.rows, start=1):
-            source = _source(table.terms, row)
-            count = source.get(count_term, '').strip()
-            if not count:
+            route, count = _individual_count(_source(table.terms, row))
+            if route is None and count == 'empty':
                 empty += 1
             elif (row_number, t) not in output_rows:
                 row_retained += 1  # The whole extension row stays in the originals.
-            elif source.get(quantity) or source.get(quantity_type):
-                retained_conflict += 1
-            elif re.fullmatch(r'\+?\d+', count):
-                derived_count += 1
-                if len(derived_values) < DERIVED_VALUE_EXAMPLE_LIMIT:
-                    derived_values.append({'source_row': row_number, 'source_value': count,
-                                           'target_table': 'occurrence',
-                                           'target_row': output_rows.get((row_number, t)),
-                                           'target_fields': {'organismQuantity': str(int(count)),
-                                                             'organismQuantityType': 'individuals'}})
-            else:
+            elif route is None:
                 invalid += 1
+            else:
+                routes[route] += 1
+                if route != 'supplied' and len(derived_values) < DERIVED_VALUE_EXAMPLE_LIMIT:
+                    derived_values.append({'source_row': row_number, 'source_value': count, **(
+                        {'target_table': 'occurrence', 'target_row': output_rows[(row_number, t)],
+                         'target_fields': {'organismQuantity': count, 'organismQuantityType': 'individuals'}}
+                        if route == 'quantity' else
+                        {'target_table': 'occurrence-assertion', 'target_row': assertion_rows.get((row_number, t)),
+                         'target_fields': {'assertionType': 'individualCount', 'assertionValue': count, 'assertionUnit': 'individuals'}})})
+        mapped = sum(routes.values())
         dispositions.append({
             'source_table': table.name, 'term': count_term,
-            'target': 'occurrence.organismQuantity + occurrence.organismQuantityType (individuals)',
-            'disposition': 'derived' if derived_count else 'retained-unmapped',
-            'nonempty': derived_count + retained_conflict + invalid + row_retained,
-            'mapped_rows': derived_count,
-            'retained_only_rows': retained_conflict + invalid + row_retained,
+            'target': 'derived individuals quantity → occurrence.organismQuantity, or individualCount assertion → occurrence-assertion.assertionValue',
+            'target_counts': {target: routes[route] for route, target in (('quantity', 'occurrence.organismQuantity'),
+                              ('assertion', 'occurrence-assertion.assertionValue')) if routes[route]},
+            'disposition': 'derived' if mapped else 'retained-unmapped',
+            'nonempty': mapped + invalid + row_retained,
+            'mapped_rows': mapped,
+            'retained_only_rows': invalid + row_retained,
             'empty_rows': empty,
+            'derived_routes': {name: routes[route] for route, name in (('quantity', 'quantity_pair'), ('assertion', 'assertion'),
+                               ('supplied', 'same_as_supplied_quantity')) if routes[route]},
             'derived_value_examples': derived_values,
-            'derived_value_examples_omitted': derived_count - len(derived_values),
-            'mapping_rule': 'Copy a nonnegative integer individualCount as organismQuantity with organismQuantityType=individuals only when both source quantity fields are empty. Zero does not determine occurrenceStatus; source individualCount remains in the originals.',
-            'retained_reasons': ({'explicit_quantity_present': retained_conflict,
-                                  'invalid_nonnegative_integer': invalid,
+            'derived_value_examples_omitted': routes['quantity'] + routes['assertion'] - len(derived_values),
+            'mapping_rule': 'A nonnegative integer individualCount becomes organismQuantity with organismQuantityType=individuals when both '
+                            'source quantity fields are empty. Beside a different supplied quantity, which keeps the quantity pair, it becomes '
+                            'an occurrence-assertion with assertionType individualCount and assertionUnit individuals; a supplied quantity of '
+                            'the same number of individuals already carries it. Zero does not determine occurrenceStatus; source '
+                            'individualCount remains in the originals.',
+            'retained_reasons': ({'invalid_nonnegative_integer': invalid,
                                   **({'row_retained_in_originals': row_retained} if row_retained else {})}
-                                 if retained_conflict or invalid or row_retained else {}),
+                                 if invalid or row_retained else {}),
         })
     survey_ids = defaultdict(set)
     for survey in resources.get('survey', []):
@@ -1860,7 +1926,8 @@ def convert(archive, plan, decisions):
                  if depth_split else {}),
               **({'shared_event_ids': {'parent_events': len(shared_children), 'row_events': sum(shared_children.values()),
                                        'policy': 'Each occurrence row has its own event. Rows that share a supplied eventID link to one '
-                                                 'parent event that holds only that eventID and an eventCategory, so no eventID repeats. '
+                                                 'parent event that holds only that eventID and an eventCategory. Placeholder eventIDs '
+                                                 'such as NA stay only in the originals, so no eventID repeats. '
                                                  'Row events keep their own details; nothing is combined or inherited.'}}
                  if shared_children else {}),
               "resources": {name: len(df) for name, df in frames.items()}, "validation": validation,

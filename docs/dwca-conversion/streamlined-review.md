@@ -56,19 +56,29 @@ claims without asking users to certify scientific validity.
   field, without requiring a second confirmation or creating an agent record.
 - A nonnegative integer `individualCount` becomes `organismQuantity` with
   `organismQuantityType=individuals` on every converted occurrence, from an
-  Occurrence core or an Occurrence extension, unless the row supplies its own
-  quantity or quantity type.
+  Occurrence core or an Occurrence extension, when the row supplies no quantity
+  of its own. Beside a different supplied quantity (a density in `ind/m3`, say),
+  which keeps the quantity pair, the count becomes an `occurrence-assertion`
+  with `assertionType` `individualCount` and `assertionUnit` `individuals`.
 - eMoF `measurementTypeID`, `measurementValueID` and `measurementUnitID` go to
-  `assertionTypeIRI`, `assertionValueIRI` and `assertionUnitIRI`. Values that
-  are not absolute IRIs, such as `NA`, are withheld and listed by source row.
+  `assertionTypeIRI`, `assertionValueIRI` and `assertionUnitIRI`. Missing-value
+  tokens (`NA`, `n/a`, `null`, `none`) count as empty cells, reported once per
+  column as `empty_placeholder`. Other text that is not an absolute IRI is
+  withheld and listed by source row.
 - The pinned DwC-DP has no `identificationQualifier` field. Wherever
-  `verbatimIdentification` is filled from the supplied name, the supplied
-  qualifier follows the name text (`Iguana sp. ?`, `Microcalanus spp.`) unless
-  the name already contains it. `scientificName` never receives the qualifier,
-  and a supplied `verbatimIdentification` is never rewritten.
+  `verbatimIdentification` is filled from the supplied name, a one-word
+  qualifier follows the name text (`Iguana sp. ?`, `Microcalanus spp.`). A
+  qualifier that names the part it qualifies goes before that part
+  (`aff. agrifolia var. oxyadenia` gives `Quercus aff. agrifolia var. oxyadenia
+  (Torr.) J.T. Howell`); if that part is not in the name, nothing is built and
+  the qualifier stays in the originals. Name text that already contains the
+  qualifier (`Pachyporidae?`) is kept as is. `scientificName` never receives
+  the qualifier, and a supplied `verbatimIdentification` is never rewritten.
 - When occurrence rows keep separate events, an eventID that several rows share
   goes to one parent event holding only that eventID and an eventCategory. The
-  row events link to it, so no eventID repeats; no row details are combined.
+  row events link to it; no row details are combined. Placeholder eventIDs
+  such as `NA` are left empty on separate row events (the originals keep them),
+  so no eventID repeats.
 - Specimen records without any occurrence status are `present` by convention
   (see [review policy §6.1](review-policy.md#61-who-may-decide)). This is a
   visible automatic choice with a notice and can be changed to `absent`.
