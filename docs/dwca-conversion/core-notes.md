@@ -133,6 +133,7 @@ taxonomy resources; they are not promoted to occurrences.
 - Upgrading an event to Survey or MaterialGathering.
 - Licences that vary per record or differ from the EML.
 - `associatedMedia`, `associatedOccurrences` and `previousIdentifications`.
+- Whether equal names denote one agent: by default one Agent per exact name within a dataset, as an automatic choice that can keep any name, or all names, as text only. Explicit IDs always decide identity.
 - Pairing lists of agent names with lists of agent IDs. A `|` list of distinct single agent IRIs links one Agent per IRI, but no name is paired by list position (Darwin Core gives list order no meaning).
 
 Model output may explain options, but it never discharges a review.

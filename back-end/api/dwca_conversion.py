@@ -28,7 +28,7 @@ from api.dwca_review import (apply_policy, effective_decisions, failed_requireme
 from api.dwca_semantic_audit import ASSERTION_IRI_FIELDS, is_age_like_remark, semantic_target_rejection
 from api.dwca_agents import ROLE_FIELDS, agent_name, build_agent_roles, composite_name_reason, split_agent_ids
 
-RULE_VERSION = "24"
+RULE_VERSION = "25"
 DERIVED_VALUE_EXAMPLE_LIMIT = 20
 ECO_SURVEY_ID = 'http://rs.tdwg.org/eco/terms/surveyID'
 REGISTERED_TERMS = {term for terms in REGISTRY['terms'].values() for term in terms}
@@ -92,6 +92,9 @@ def _column_id(t, c):
 def _reviewed_value_id(kind, t, c, value):
     digest = hashlib.sha256(value.encode('utf-8')).hexdigest()
     return f'{kind}:{t}:{c}:{digest}'
+
+
+AGENT_NAMES_ID = 'agent-names'
 
 
 def _agent_name_id(value):
@@ -486,9 +489,16 @@ def _streamline_plan(archive, core, plan, warnings):
             reason = ('Every source row explicitly declares PreservedSpecimen and has a distinct, complete '
                       'institutionCode, collectionCode, catalogNumber triple. One material entity is created '
                       'for each source row; no persistent material identifier is inferred.')
+        elif issue['id'] == AGENT_NAMES_ID:
+            default = 'shared'
+            reason = (f"Linked {issue['count']:,} {'mention' if issue['count'] == 1 else 'mentions'} of "
+                      f"{issue['names']:,} {'name' if issue['names'] == 1 else 'names'} without identifiers to one agent per "
+                      "exact name. Choose 'Keep all names without identifiers as text only' if equal names may stand "
+                      "for different people or organizations. Names with identifiers are linked by their identifier.")
         elif issue['id'].startswith('agent-share:'):
-            default = 'separate'
-            reason = 'Equal name text does not prove that separate source mentions identify the same agent. You can confirm this exact name in the advanced choices.'
+            default = 'shared'
+            reason = (f"Linked the {issue['count']:,} mentions of {issue['source_value'][:100]!r} to one agent. Choose "
+                      "'Keep this name as text only' if these are different people or organizations.")
         elif issue['id'].startswith('table:'):
             table = archive.tables[issue['table']]
             family = SUPPORTED_EXTENSIONS.get(table.row_type)
@@ -970,8 +980,9 @@ def build_plan(archive):
                     + (f' {zero_quantities} of those rows have a zero count. A zero alone doesn\'t prove absence, so please choose deliberately.' if zero_quantities else ''),
                     [{"value": "present", "label": "Present: the organism was recorded"}, {"value": "absent", "label": "Absent: it was looked for but not found"}],
                     **({'convention': convention} if convention else {})))
-    # Reviewable exact-name sharing is offered only for source names that are
-    # candidates for a mapped agent role. The default keeps them as text only.
+    # Name-only values that are candidates for a mapped agent role link to one agent
+    # per exact name by default: one automatic choice for all names, and one per
+    # repeated name, each of which can keep names as text only.
     agent_names = Counter()
     for column in columns:
         target = column['default']
@@ -987,14 +998,21 @@ def build_plan(archive):
             name = agent_name(row[column['column']])
             if name and composite_name_reason(name) is None:
                 agent_names[name] += 1
+    if agent_names:
+        issues.append(_issue(AGENT_NAMES_ID, 'People and organizations named without identifiers',
+            f'{sum(agent_names.values())} mapped mentions give a name without an identifier ({len(agent_names)} different names). '
+            'Each exact name can become one Agent linked to all its mentions, or every name can stay as text only.',
+            [{'value': 'shared', 'label': 'One Agent per exact name, linked to each mention'},
+             {'value': 'text', 'label': 'Keep all names without identifiers as text only'}],
+            kind='agent-identity', count=sum(agent_names.values()), names=len(agent_names)))
     for name, count in sorted(agent_names.items()):
         if count < 2:
             continue
         issues.append(_issue(_agent_name_id(name), f'Does {name[:100]!r} name one agent throughout?',
-            f'{count} source mentions use this exact name. Confirm sharing only if every mention refers to the same person or organization. '
-            'The source text alone does not establish this identity.',
-            [{'value': 'separate', 'label': 'Keep this name as text only, without an Agent'},
-             {'value': 'shared', 'label': 'Use one Agent for this exact name'}],
+            f'{count} source mentions use this exact name. By default they share one Agent. '
+            'Keep the name as text only if it covers different people or organizations.',
+            [{'value': 'shared', 'label': 'Use one Agent for this exact name'},
+             {'value': 'separate', 'label': 'Keep this name as text only, without an Agent'}],
             kind='agent-identity', source_value=name, count=count))
     plan = {"version": RULE_VERSION, "source_sha256": archive.fingerprint, "schema": dwc_dp_schema_snapshot(),
             "tables": profiles, "columns": columns, "issues": issues,
@@ -1885,10 +1903,11 @@ def convert(archive, plan, decisions):
         created_agents += 1
         for source_table, source_row in source_rows[1:]:
             trace('agent', {'agent_pk': agent_key}, source_table, source_row)
-    shared_names = [issue['source_value'] for issue in [*plan['issues'], *plan.get('automatic_choices', [])]
-                    if issue['id'].startswith('agent-share:') and decisions.get(issue['id']) == 'shared']
+    unlinked_names = [issue['source_value'] for issue in [*plan['issues'], *plan.get('automatic_choices', [])]
+                      if issue['id'].startswith('agent-share:') and decisions.get(issue['id']) == 'separate']
     agent_roles = build_agent_roles(resources, lambda *parts: _key(archive, *parts),
-                                    shared_names=shared_names, is_agent_identifier=_single_agent_iri)
+                                    link_names=decisions.get(AGENT_NAMES_ID, 'shared') == 'shared',
+                                    unlinked_names=unlinked_names, is_agent_identifier=_single_agent_iri)
     for emitted in agent_roles.rows:
         source_rows = sorted({source for resource_name, number, _field in emitted.mentions
                               for source in origins[(resource_name, number)]})

@@ -358,8 +358,8 @@ export default function DwcConversion() {
         </li>)}</ul>
       </details>}
       {agentRoles && (agentRoleLinks || agentRoles.unlinked_name_only) && <details className="small mb-3"><summary>People and organizations in Agent roles ({agentRoleLinks.toLocaleString()} links)</summary>
-        <p className="mt-2 mb-1">Names without identifiers remain in their mapped text fields unless a repeated exact name was confirmed as one Agent. Composite names stay in the mapped text field and are listed in the report.</p>
-        <p className="mb-0">New Agents: {(agentRoles.agents_created?.shared_name || 0).toLocaleString()} confirmed shared names, {(agentRoles.agents_created?.explicit_id || 0).toLocaleString()} explicit IDs. Unlinked name mentions: {(agentRoles.unlinked_name_only || 0).toLocaleString()}. Ambiguous mentions: {Object.values(agentRoles.skipped || {}).reduce((sum, count) => sum + count, 0).toLocaleString()}.</p>
+        <p className="mt-2 mb-1">Each exact name without an identifier became one Agent, linked to every record that mentions it, unless you kept that name (or all names) as text only. Names with an identifier are linked by that identifier. Placeholders such as “unknown” and composite names stay in the mapped text field and are listed in the report.</p>
+        <p className="mb-0">New Agents: {(agentRoles.agents_created?.name || 0).toLocaleString()} names, {(agentRoles.agents_created?.explicit_id || 0).toLocaleString()} explicit IDs. Name mentions kept as text only: {(agentRoles.unlinked_name_only || 0).toLocaleString()}. Skipped mentions: {Object.values(agentRoles.skipped || {}).reduce((sum, count) => sum + count, 0).toLocaleString()}.</p>
       </details>}
       {valueLedger.length > 0 && <details className="small mb-3"><summary>Where each source column's values went ({valueLedger.length})</summary>
         <p className="text-muted mt-2">Counts refer to source values. Mapped and derived values can share a target row. Your download has the complete report and original files.</p>

@@ -5,7 +5,8 @@ from pathlib import Path
 import pandas as pd
 from django.test import SimpleTestCase
 
-from api.dwca_agents import ROLE_FIELDS, RoleField, build_agent_roles, composite_name_reason, split_agent_ids
+from api.dwca_agents import (NAME_AGENT_REMARK, ROLE_FIELDS, RoleField, build_agent_roles, composite_name_reason,
+                             split_agent_ids)
 from api.dwca_conversion import _key, build_plan, convert
 from api.dwca_import import read_inputs
 from api.dwc_dp_specs import create_dwc_dp_archive, validate_dwc_dp_archive, validate_dwc_dp_resources
@@ -43,33 +44,46 @@ class AgentRoleTests(SimpleTestCase):
             b'o1,e1,Ola Nordmann,' + ORCID.encode() + b',NTNU University Museum,2025-01-01,present\n')])
         plan = build_plan(archive)
         frames, report = convert(archive, plan, {issue['id']: issue['options'][0]['value'] for issue in plan['issues']})
-        self.assertEqual(len(frames['agent']), 1)
-        self.assertEqual(len(frames['occurrence-agent-role']), 1)
-        self.assertEqual(report['agent_roles']['roles_created'], {'occurrence-agent-role': 1})
-        self.assertEqual(report['agent_roles']['unlinked_name_only'], 1)
-        self.assertEqual(len([row for row in report['row_crosswalk'] if row['target_table'] == 'occurrence-agent-role']), 1)
+        self.assertEqual(len(frames['agent']), 2)
+        self.assertEqual(len(frames['occurrence-agent-role']), 2)
+        self.assertEqual(report['agent_roles']['roles_created'], {'occurrence-agent-role': 2})
+        self.assertEqual(report['agent_roles']['agents_created'], {'name': 1, 'explicit_id': 0})
+        self.assertEqual(len([row for row in report['row_crosswalk'] if row['target_table'] == 'occurrence-agent-role']), 2)
         self.assert_package_valid(frames)
 
-    def test_converter_shares_only_a_confirmed_exact_name(self):
+    def test_exact_names_share_one_agent_by_default_and_can_be_kept_as_text(self):
+        # ds563: 1,229 Agent rows for 'OceanPro AS', one per mention.
         archive = read_inputs([('occurrence.csv',
             b'occurrenceID,eventID,recordedBy,eventDate,occurrenceStatus\n'
-            b'o1,e1,Ola Nordmann,2025-01-01,present\n'
-            b'o2,e2,Ola Nordmann,2025-01-02,present\n')])
+            + b''.join(b'o%d,e%d,OceanPro AS,2025-01-01,present\n' % (n, n) for n in range(1, 6))
+            + b'o6,e6,Kari Nordmann,2025-01-02,present\n')])
         plan = build_plan(archive)
-        issue = next(item for item in plan['automatic_choices'] if item['id'].startswith('agent-share:'))
-        self.assertEqual(issue['default'], 'separate')
-        self.assertTrue(next(option for option in issue['options'] if option['value'] == 'shared')['assertion'])
+        automatic = {item['id']: item for item in plan['automatic_choices']}
+        self.assertFalse([item for item in plan['issues'] if item['id'].startswith(('agent-share:', 'agent-names'))])
+        everyone = automatic['agent-names']
+        self.assertEqual((everyone['default'], everyone['count'], everyone['names']), ('shared', 6, 2))
+        self.assertIn('Linked 6 mentions of 2 names', everyone['reason'])
+        share = next(item for item in automatic.values() if item['id'].startswith('agent-share:'))
+        self.assertEqual((share['default'], share['source_value']), ('shared', 'OceanPro AS'))
+        self.assertIn("Linked the 5 mentions of 'OceanPro AS' to one agent", share['reason'])
+        self.assertFalse(any(option['assertion'] for item in (everyone, share) for option in item['options']))
         choices = {item['id']: item['options'][0]['value'] for item in plan['issues']}
-        separate, separate_report = convert(archive, plan, choices)
-        self.assertNotIn('agent', separate)
-        self.assertNotIn('occurrence-agent-role', separate)
-        self.assertEqual(separate_report['agent_roles']['unlinked_name_only'], 2)
-        shared, report = convert(archive, plan, {**choices, issue['id']: 'shared'})
-        self.assertEqual(len(shared['agent']), 1)
-        self.assertEqual(len(shared['occurrence-agent-role']), 2)
-        self.assertEqual(set(shared['occurrence-agent-role']['agent_fk']), set(shared['agent']['agent_pk']))
-        self.assertEqual(report['agent_roles']['agents_created']['shared_name'], 1)
-        self.assert_package_valid(shared)
+        frames, report = convert(archive, plan, choices)
+        self.assertEqual(sorted(frames['agent']['preferredAgentName']), ['Kari Nordmann', 'OceanPro AS'])
+        self.assertEqual(len(frames['occurrence-agent-role']), 6)
+        self.assertEqual(report['agent_roles']['agents_created'], {'name': 2, 'explicit_id': 0})
+        self.assert_package_valid(frames)
+        # Keeping one name as text only removes its agent and roles.
+        one, one_report = convert(archive, plan, {**choices, share['id']: 'separate'})
+        self.assertEqual(one['agent']['preferredAgentName'].tolist(), ['Kari Nordmann'])
+        self.assertEqual(len(one['occurrence-agent-role']), 1)
+        self.assertEqual(one_report['agent_roles']['unlinked_name_only'], 5)
+        # One control keeps every name without an identifier as text only.
+        none, none_report = convert(archive, plan, {**choices, 'agent-names': 'text'})
+        self.assertNotIn('agent', none)
+        self.assertNotIn('occurrence-agent-role', none)
+        self.assertEqual(none_report['agent_roles']['unlinked_name_only'], 6)
+        self.assert_package_valid(none)
 
     def assert_package_valid(self, frames):
         validation = validate_dwc_dp_resources(frames)
@@ -81,42 +95,46 @@ class AgentRoleTests(SimpleTestCase):
             archive_validation = validate_dwc_dp_archive(output, require_eml=False)
             self.assertTrue(archive_validation['valid'], archive_validation['errors'])
 
-    def test_unconfirmed_name_only_values_remain_in_text_fields(self):
+    def test_repeated_name_only_values_share_one_agent_per_exact_name(self):
+        # ds572 had 4,209 Agent rows for one collector, one per mention.
         archive, frames = converted(
             b'occurrenceID,eventID,recordedBy,identifiedBy,eventDate,occurrenceStatus\n'
-            b'o1,e1,Ola Nordmann,NTNU University Museum,2025-01-01,present\n'
-            b'o2,e2,Ola Nordmann,NTNU University Museum,2025-01-02,present\n'
-            b'o3,e3, Ola Nordmann ,NTNU University Museum,2025-01-03,present\n')
+            b'o1,e1,"Straumfors, Per",NTNU University Museum,2025-01-01,present\n'
+            b'o2,e2,"Straumfors, Per",NTNU University Museum,2025-01-02,present\n'
+            b'o3,e3," Straumfors,  Per ",NTNU University Museum,2025-01-03,present\n')
         result = build_agent_roles(frames, lambda *parts: _key(archive, *parts))
-        self.assertEqual(result.rows, [])
+        tables = result.tables()
+        roles = pd.DataFrame(tables['occurrence-agent-role'])
+        self.assertEqual(sorted(agent['preferredAgentName'] for agent in tables['agent']),
+                         ['NTNU University Museum', 'Straumfors, Per'])
+        self.assertTrue(all(not agent.get('agentID') and agent['agentRemarks'] == NAME_AGENT_REMARK
+                            for agent in tables['agent']))
+        # Role rows stay per mention.
+        self.assertEqual(Counter(roles['agentRole']), {'recordedBy': 3, 'identifiedBy': 3})
+        self.assertEqual(set(roles['agentRoleOrder']), {1})
+        self.assertEqual(set(roles['occurrence_fk']), set(frames['occurrence']['occurrence_pk']))
         self.assertEqual([(item['name'], item['mentions']) for item in result.report['repeated_names']],
-                         [('NTNU University Museum', 3), ('Ola Nordmann', 3)])
-        self.assertEqual(result.report['agents_created'], {'shared_name': 0, 'explicit_id': 0})
-        self.assertEqual(result.report['unlinked_name_only'], 6)
+                         [('NTNU University Museum', 3), ('Straumfors, Per', 3)])
+        self.assertEqual(result.report['agents_created'], {'name': 2, 'explicit_id': 0})
         # The mapped name fields are unchanged and the result is deterministic.
-        self.assertEqual(frames['occurrence']['recordedBy'].tolist()[2].strip(), 'Ola Nordmann')
+        self.assertEqual(frames['occurrence']['recordedBy'].tolist()[2], ' Straumfors,  Per ')
         self.assertEqual(build_agent_roles(frames, lambda *parts: _key(archive, *parts)).rows, result.rows)
         self.assert_package_valid(merged(frames, result))
 
-    def test_shared_identity_is_only_asserted_for_named_values(self):
+    def test_names_kept_as_text_get_no_agent(self):
         archive, frames = converted(
             b'occurrenceID,eventID,recordedBy,identifiedBy,eventDate,occurrenceStatus\n'
             b'o1,e1,Ola Nordmann,NTNU University Museum,2025-01-01,present\n'
             b'o2,e2,Ola Nordmann,NTNU University Museum,2025-01-02,present\n')
-        result = build_agent_roles(frames, lambda *parts: _key(archive, *parts),
-                                   shared_names=['Ola Nordmann', 'Ola Nordman'])
+        key = lambda *parts: _key(archive, *parts)  # noqa: E731
+        result = build_agent_roles(frames, key, unlinked_names=['Ola  Nordmann', 'Ola Nordman'])
         tables = result.tables()
-        collectors = [agent for agent in tables['agent'] if agent['preferredAgentName'] == 'Ola Nordmann']
-        self.assertEqual(len(collectors), 1)
-        roles = pd.DataFrame(tables['occurrence-agent-role'])
-        recorded = roles[roles['agentRole'] == 'recordedBy']
-        self.assertEqual(set(recorded['agent_fk']), {collectors[0]['agent_pk']})
-        self.assertEqual(len(recorded), 2)
-        self.assertEqual(set(roles['agentRole']), {'recordedBy'})
+        self.assertEqual([agent['preferredAgentName'] for agent in tables['agent']], ['NTNU University Museum'])
+        self.assertEqual(set(pd.DataFrame(tables['occurrence-agent-role'])['agentRole']), {'identifiedBy'})
         self.assertEqual(result.report['unlinked_name_only'], 2)
-        self.assertEqual(result.report['shared_names_unused'], ['Ola Nordman'])
-        self.assertEqual([item['name'] for item in result.report['repeated_names']], ['NTNU University Museum'])
+        self.assertEqual(result.report['unlinked_names_unused'], ['Ola Nordman'])
         self.assert_package_valid(merged(frames, result))
+        self.assertEqual(build_agent_roles(frames, key, link_names=False).rows, [])
 
     def test_composite_and_placeholder_names_are_reported_not_split(self):
         archive, frames = converted(
@@ -131,16 +149,50 @@ class AgentRoleTests(SimpleTestCase):
             b'o8,e1,P. Hansen,2025-01-01,present\n'
             b'o9,e1,"Hansen, P",2025-01-01,present\n')
         result = build_agent_roles(frames, lambda *parts: _key(archive, *parts))
-        self.assertEqual(result.rows, [])
         self.assertEqual(result.report['skipped'], {'comma_list': 1, 'conjunction': 1, 'delimited_list': 2,
                                                     'incomplete_group': 1, 'placeholder': 1})
-        self.assertEqual(result.report['fields']['occurrence.recordedBy']['unlinked_name_only'], 3)
+        self.assertEqual(result.report['fields']['occurrence.recordedBy']['name'], 3)
         skipped = {item['value']: (item['reason'], item['first_row']) for item in result.report['skipped_values']}
         self.assertEqual(skipped['P. Hansen | K. Olsen'], ('delimited_list', 2))
         self.assertEqual(skipped['Per Hansen, Kari Olsen'], ('comma_list', 4))
-        # Spelling variants are surfaced for review without creating identities.
+        # Spelling variants are surfaced for review but stay separate agents.
+        self.assertEqual(sorted(agent['preferredAgentName'] for agent in result.tables()['agent']),
+                         ['Hansen, P', 'Hansen, P.', 'P. Hansen'])
         self.assertEqual(result.report['variant_groups'], [['Hansen, P', 'Hansen, P.', 'P. Hansen']])
         self.assert_package_valid(merged(frames, result))
+
+    def test_placeholder_names_never_become_agents(self):
+        for value in ('unknown', 'Ukjent', 'NA', 'n/a', 'anon', 'Anon.', 'anonymous', '-', '?', 'none', 'NULL',
+                      'not recorded', 'Not  Recorded', 'unknown.', 'N.N.'):
+            self.assertEqual(composite_name_reason(value), 'placeholder', value)
+        archive = read_inputs([('occurrence.csv',
+            b'occurrenceID,eventID,recordedBy,eventDate,occurrenceStatus\n'
+            b'o1,e1,Ukjent,2025-01-01,present\no2,e2,Ukjent,2025-01-02,present\no3,e3,NA,2025-01-03,present\n')])
+        plan = build_plan(archive)
+        self.assertFalse([item for item in plan['automatic_choices'] if item['id'].startswith(('agent-share:', 'agent-names'))])
+        frames, report = convert(archive, plan, {issue['id']: issue['options'][0]['value'] for issue in plan['issues']})
+        self.assertNotIn('agent', frames)
+        self.assertEqual(report['agent_roles']['skipped'], {'placeholder': 3})
+
+    def test_explicit_ids_decide_identity_not_names(self):
+        other = 'https://orcid.org/0000-0001-5109-3700'
+        archive = read_inputs([('occurrence.csv', (
+            'occurrenceID,eventID,recordedBy,recordedByID,eventDate,occurrenceStatus\n'
+            f'o1,e1,Ola Nordmann,{ORCID},2025-01-01,present\n'
+            f'o2,e2,Ola Nordmann,{other},2025-01-02,present\n'
+            f'o3,e3,Ola Nordmann,,2025-01-03,present\n').encode())])
+        plan = build_plan(archive)
+        frames, report = convert(archive, plan, {issue['id']: issue['options'][0]['value'] for issue in plan['issues']})
+        # Two different ORCIDs with the same name stay two agents; the name-only mention gets its own
+        # name agent and is never merged into either ID.
+        agents = frames['agent']
+        self.assertEqual(sorted(agents['agentID']), ['', other, ORCID])
+        self.assertEqual(set(agents['preferredAgentName']), {'Ola Nordmann'})
+        roles = frames['occurrence-agent-role']
+        self.assertEqual(len(roles), 3)
+        self.assertEqual(len(set(roles['agent_fk'])), 3)
+        self.assertEqual(report['agent_roles']['agents_created']['name'], 1)
+        self.assert_package_valid(frames)
 
     def test_explicit_ids_reuse_converter_agents_and_pair_only_one_to_one(self):
         archive, frames = converted(
@@ -164,37 +216,6 @@ class AgentRoleTests(SimpleTestCase):
                          [{'agent_pk': alice, 'agentID': ORCID, 'preferredAgentName': 'Alice Smith'}])
         self.assertEqual(standalone.report['agents_created']['explicit_id'], 1)
 
-    def test_confirmed_name_shares_one_agent_across_whitespace_variants(self):
-        # ds572 had 4,209 Agent rows for one collector, one per mention. A confirmed name is one Agent.
-        archive, frames = converted(
-            b'occurrenceID,eventID,recordedBy,eventDate,occurrenceStatus\n'
-            b'o1,e1,"Straumfors, Per",2025-01-01,present\n'
-            b'o2,e2,"Straumfors, Per",2025-01-02,present\n'
-            b'o3,e3," Straumfors,  Per ",2025-01-03,present\n')
-        result = build_agent_roles(frames, lambda *parts: _key(archive, *parts), shared_names=['Straumfors,  Per'])
-        tables = result.tables()
-        self.assertEqual([agent['preferredAgentName'] for agent in tables['agent']], ['Straumfors, Per'])
-        roles = pd.DataFrame(tables['occurrence-agent-role'])
-        self.assertEqual(len(roles), 3)
-        self.assertEqual(set(roles['occurrence_fk']), set(frames['occurrence']['occurrence_pk']))
-        self.assertEqual(result.report['agents_created'], {'shared_name': 1, 'explicit_id': 0})
-        self.assertEqual((result.report['unlinked_name_only'], result.report['shared_names_unused']), (0, []))
-        # The mapped name field keeps its source text.
-        self.assertEqual(frames['occurrence']['recordedBy'].tolist()[2], ' Straumfors,  Per ')
-        self.assert_package_valid(merged(frames, result))
-
-    def test_whitespace_variants_form_one_sharing_question(self):
-        archive = read_inputs([('occurrence.csv',
-            b'occurrenceID,eventID,recordedBy,eventDate,occurrenceStatus\n'
-            b'o1,e1,"Straumfors, Per",2025-01-01,present\n'
-            b'o2,e2,"Straumfors,  Per",2025-01-02,present\n')])
-        plan = build_plan(archive)
-        issues = [item for item in plan['automatic_choices'] if item['id'].startswith('agent-share:')]
-        self.assertEqual([(item['source_value'], item['count']) for item in issues], [('Straumfors, Per', 2)])
-        frames, report = convert(archive, plan, {**{issue['id']: issue['options'][0]['value'] for issue in plan['issues']},
-                                                 issues[0]['id']: 'shared'})
-        self.assertEqual(len(frames['agent']), 1)
-        self.assertEqual(len(frames['occurrence-agent-role']), 2)
 
     def test_id_lists_link_one_agent_per_iri_without_positional_names(self):
         # ds560: 25 recordedBy/recordedByID list pairs were skipped as id_not_single_iri.
@@ -262,18 +283,12 @@ class AgentRoleTests(SimpleTestCase):
             b'urn:catalog:NHMO:J:4\tPreservedSpecimen\t4\t\t\t\t\t1880\tEsox lucius\n')])
         plan = build_plan(archive)
         choices = {issue['id']: issue['options'][0]['value'] for issue in plan['issues']}
-        # By default name-only mentions stay text, so there is no agent table at all.
-        unlinked, _ = convert(archive, plan, choices)
-        self.assertNotIn('agent', unlinked)
-        self.assert_package_valid(unlinked)
-        # Confirmed names create agents without agentID beside the empty *ByID columns: the 568 shape.
-        sharing = {item['id']: 'shared' for item in plan['automatic_choices'] if item['id'].startswith('agent-share:')}
-        self.assertEqual(len(sharing), 2)
-        frames, report = convert(archive, plan, {**choices, **sharing})
+        frames, report = convert(archive, plan, choices)
         self.assertTrue(report['validation']['valid'], report['validation']['errors'])
         self.assertNotIn('agentID', frames['agent'])
-        self.assertEqual(sorted(frames['agent']['preferredAgentName']), ['Anfinnsen, Martin T.', 'Perlini, Enrico Maria'])
-        self.assertEqual(Counter(frames['occurrence-agent-role']['agentRole']), {'recordedBy': 2, 'identifiedBy': 2})
+        self.assertEqual(sorted(frames['agent']['preferredAgentName']),
+                         ['Anfinnsen, Martin T.', 'Collett, Robert', 'Perlini, Enrico Maria'])
+        self.assertEqual(Counter(frames['occurrence-agent-role']['agentRole']), {'recordedBy': 3, 'identifiedBy': 2})
         self.assert_package_valid(frames)
         with tempfile.TemporaryDirectory() as directory:
             descriptor = create_dwc_dp_archive(Path(directory) / 'ds568.tar.gz', frames, 'ds568', 'Agents', include_eml=False)
@@ -281,6 +296,10 @@ class AgentRoleTests(SimpleTestCase):
         declared = [key['fields'] for keys in ('foreignKeys', 'weakForeignKeys') for key in occurrence['schema'].get(keys, [])]
         self.assertNotIn('recordedByID', declared)
         self.assertNotIn('identifiedByID', declared)
+        # With every name kept as text there is no agent table, and the package is still valid.
+        unlinked, _ = convert(archive, plan, {**choices, 'agent-names': 'text'})
+        self.assertNotIn('agent', unlinked)
+        self.assert_package_valid(unlinked)
 
     def test_role_order_continues_existing_roles_and_repeat_calls_add_nothing(self):
         archive, frames = converted(

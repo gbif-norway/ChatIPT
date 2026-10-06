@@ -5,9 +5,11 @@ This module only adds role rows that link those records to Agent rows:
 
 - A single explicit agent IRI in the paired *ByID field links to the Agent row
   with that agentID, reusing the converter's row when there is one.
-- A name-only value remains in its mapped text field unless review confirms
-  that every mention of that exact (whitespace-normalised) name denotes one
-  agent. A confirmed name creates one Agent row, with a role row per mention.
+- A name-only value that looks like one agent links to one Agent row per exact
+  (whitespace-normalised) name within the dataset, with a role row per
+  mention. Review can keep any name, or all names, as text only. Placeholders
+  never become agents. A name is never merged with an explicit-ID agent: the
+  ID alone decides that agent's identity.
 - A ``|``-delimited *ByID list of distinct single agent IRIs, beside a name
   field that is empty or lists the same number of names, links to one Agent per
   IRI. List order conveys no pairing (Darwin Core), so no name is taken from a
@@ -26,24 +28,29 @@ from dataclasses import dataclass, field
 from typing import Callable, Iterable, Mapping
 
 from api.dwc_dp_specs import TABLE_SPECS
+from api.dwca_hierarchy import EMPTY_REFERENCE_TOKENS
 
 EXAMPLE_LIMIT = 20
-SHARED_NAME_REMARK = ('Name-only source value. Review asserted that every name-only mention with '
-                      'this exact name refers to this one agent.')
+NAME_AGENT_REMARK = ('Name-only source value. One Agent stands for every name-only mention with this exact '
+                     'name in this dataset; no identifier was supplied and none is inferred.')
 POLICY = ('Role rows link mapped records to agents without changing the mapped name fields. A single '
-          'absolute IRI in the paired *ByID field links to the agent with that agentID. A name-only '
-          'value stays in its mapped text field unless review confirms that every mention of its exact '
-          '(whitespace-normalised) name denotes one agent. A |-delimited *ByID list of distinct single IRIs '
+          'absolute IRI in the paired *ByID field links to the agent with that agentID; agents with different '
+          'IDs are never merged, whatever their names. A name-only value links to one agent per exact '
+          '(whitespace-normalised) name in the dataset, with one role row per mention, unless review kept that '
+          'name (or all names) as text only; it is never merged into an explicit-ID agent. Placeholders such as '
+          '"unknown" never become agents. A |-delimited *ByID list of distinct single IRIs '
           'links one agent per IRI when the name field is empty or lists as many names; agentRoleOrder is the '
           'source ID order and no name is paired by position. Other lists, '
           'conjunctions, et al., placeholders and ID/name pairs that cannot be matched one-to-one are '
           'skipped and reported, never split. agentRole is the DwC-DP field name; agentRoleIRI and '
           'agentRoleSource are left empty.')
+# Includes the converter's empty-cell tokens (dwca_hierarchy.EMPTY_REFERENCE_TOKENS).
 PLACEHOLDERS = frozenset({
     'na', 'n/a', 'n.a.', 'nan', 'none', 'null', 'nil', 'unknown', 'unk', 'unkn', 'anonymous', 'anon',
-    'anon.', 'not recorded', 'not available', 'not known', 'missing', 'ukjent', 'ikke oppgitt',
-    '?', '??', '-', '--', '.', 's.n.', 'leg.', 'det.',
-})
+    'anon.', 'anonym', 'not recorded', 'not available', 'not known', 'not specified', 'unspecified',
+    'not stated', 'no data', 'missing', 'ukjent', 'ukjend', 'okänd', 'ikke oppgitt', 'ikke registrert',
+    'n.n.', 'n. n.', 'nn', '?', '??', '-', '--', '.', 's.n.', 'leg.', 'det.',
+}) | EMPTY_REFERENCE_TOKENS
 # "and" in languages common in GBIF Norway and European archives. Compound
 # surnames such as "Ortega y Gasset" are skipped too: skipping is reported,
 # whereas splitting would invent agents.
@@ -108,7 +115,8 @@ def composite_name_reason(value: str) -> str | None:
     text = value.strip()
     if not text:
         return 'empty'
-    if text.casefold() in PLACEHOLDERS:
+    folded = ' '.join(text.casefold().split())
+    if folded in PLACEHOLDERS or folded.rstrip('.') in PLACEHOLDERS:
         return 'placeholder'
     if not any(character.isalpha() for character in text):
         return 'not_a_name'
@@ -173,7 +181,8 @@ def build_agent_roles(
     resources: Mapping[str, object],
     key: Callable[..., str],
     *,
-    shared_names: Iterable[str] = (),
+    link_names: bool = True,
+    unlinked_names: Iterable[str] = (),
     fields: Iterable[tuple[str, str]] | None = None,
     is_agent_identifier: Callable[[str], bool] | None = None,
     example_limit: int = EXAMPLE_LIMIT,
@@ -187,15 +196,16 @@ def build_agent_roles(
     agent_pk as the converter's own ``key('agent', identifier)``. Nothing in
     ``resources`` is modified.
 
-    ``shared_names`` lists exact name strings that review confirmed each denote
-    a single agent, compared after ``agent_name`` normalisation. Other name-only
-    mentions get no Agent or role rows. ``fields`` limits the (resource, name
+    Name-only mentions link to one Agent per ``agent_name``. ``link_names=False``
+    keeps every name-only mention as text only; ``unlinked_names`` lists exact names
+    that review kept as text only. Those mentions get no Agent or role rows.
+    ``fields`` limits the (resource, name
     field) pairs processed; by default all pairs in ROLE_FIELDS present in
     ``resources`` are processed.
     """
     if is_agent_identifier is None:
         from api.dwca_conversion import _single_agent_iri as is_agent_identifier
-    shared = {agent_name(name) for name in shared_names if agent_name(name)}
+    unlinked = {agent_name(name) for name in unlinked_names if agent_name(name)}
     selected = sorted(ROLE_FIELDS if fields is None else fields)
     unknown = [pair for pair in selected if pair not in ROLE_FIELDS]
     if unknown:
@@ -225,9 +235,10 @@ def build_agent_roles(
     field_stats = {}
     skipped = Counter()
     skipped_values = {}
-    name_mentions = defaultdict(list)    # safe, unconfirmed name-only mentions
+    name_mentions = defaultdict(list)    # linked name-only mentions, by exact name
     safe_names = set()
-    used_shared = set()
+    used_unlinked = set()
+    unlinked_mentions = 0
     reused_ids = set()
     already_linked = 0
 
@@ -243,7 +254,7 @@ def build_agent_roles(
         if not rows:
             continue
         stats = field_stats[f'{spec.resource}.{spec.name_field}'] = {
-            'mentions': 0, 'linked_by_id': 0, 'linked_by_id_list': 0, 'unlinked_name_only': 0, 'shared_name': 0,
+            'mentions': 0, 'linked_by_id': 0, 'linked_by_id_list': 0, 'name': 0, 'unlinked_name_only': 0,
             'skipped': Counter()}
         for number, record in enumerate(rows, start=1):
             name, identifier = _text(record.get(spec.name_field)), _text(record.get(spec.id_field))
@@ -292,15 +303,17 @@ def build_agent_roles(
                 else:
                     exact = agent_name(part_name)
                     safe_names.add(exact)
-                    if exact not in shared:
-                        name_mentions[exact].append(mention)
+                    if not link_names or exact in unlinked:
+                        used_unlinked.add(exact)
+                        unlinked_mentions += 1
                         stats['unlinked_name_only'] += 1
                         continue
+                    # Keyed by the name alone, so it never coincides with an explicit-ID agent.
                     agent_pk = key('agent-name', exact)
                     new_agent(agent_pk, {'agent_pk': agent_pk, 'preferredAgentName': exact,
-                                         'agentRemarks': SHARED_NAME_REMARK}, mention, 'shared_name')
-                    used_shared.add(exact)
-                    stats['shared_name'] += 1
+                                         'agentRemarks': NAME_AGENT_REMARK}, mention, 'name')
+                    name_mentions[exact].append(mention)
+                    stats['name'] += 1
                 agent_pks.append(agent_pk)
             group = (spec.role_table, subject, spec.role, '', '')
             for agent_pk in agent_pks:
@@ -334,8 +347,8 @@ def build_agent_roles(
     bases = Counter(entry['basis'] for entry in new_agents.values())
     result.report = {
         'policy': POLICY,
-        'agents_created': {'shared_name': bases['shared_name'], 'explicit_id': bases['explicit_id']},
-        'unlinked_name_only': sum(len(mentions) for mentions in name_mentions.values()),
+        'agents_created': {'name': bases['name'], 'explicit_id': bases['explicit_id']},
+        'unlinked_name_only': unlinked_mentions,
         'explicit_id_agents_reused': len(reused_ids),
         'roles_created': dict(sorted(Counter(row.table for row in role_rows).items())),
         'roles_already_present': already_linked,
@@ -344,7 +357,7 @@ def build_agent_roles(
         'skipped': dict(sorted(skipped.items())),
         'skipped_values': examples[:example_limit],
         'skipped_values_omitted': max(0, len(examples) - example_limit),
-        # Repeated unlinked names are candidates for an explicit shared_names decision.
+        # The most-mentioned name agents; review can keep any of these names as text only.
         'repeated_names': [{'name': name, 'mentions': len(mentions),
                             'fields': sorted({f'{resource}.{name_field}' for resource, _number, name_field in mentions})}
                            for name, mentions in repeated[:example_limit]],
@@ -352,6 +365,6 @@ def build_agent_roles(
         # Possible spelling variants; never merged automatically.
         'variant_groups': variant_groups[:example_limit],
         'variant_groups_omitted': max(0, len(variant_groups) - example_limit),
-        'shared_names_unused': sorted(shared - used_shared),
+        'unlinked_names_unused': sorted(unlinked - used_unlinked),
     }
     return result

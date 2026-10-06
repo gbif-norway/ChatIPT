@@ -54,6 +54,12 @@ claims without asking users to certify scientific validity.
   unresolved or cyclic links remain unavailable.
 - A strictly valid `ecoiri:samplingPerformedBy` goes to the agent identifier
   field, without requiring a second confirmation or creating an agent record.
+- Names without identifiers in mapped `*By` fields link to one Agent per exact
+  (whitespace-normalised) name, with a role row per mention. This is an
+  automatic choice with a reason naming the mention count (`agent-names` for all
+  names, `agent-share:` per repeated name), never a question; either can keep
+  names as text only. Placeholders never become Agents, and explicit IDs decide
+  identity on their own (see fidelity-audit.md).
 - A nonnegative integer `individualCount` becomes `organismQuantity` with
   `organismQuantityType=individuals` on every converted occurrence, from an
   Occurrence core or an Occurrence extension, when the row supplies no quantity

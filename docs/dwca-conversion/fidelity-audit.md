@@ -49,12 +49,19 @@ invent a persistent `materialEntityID`. Duplicated or incomplete catalog
 identities still require review.
 
 The converter also emits `agent` and the relevant `*-agent-role` rows from
-mapped `*By` and `*ByID` fields when an agent has a single explicit IRI or a
-reviewed shared identity. A single explicit agent IRI reuses its Agent record.
-Names without identifiers stay in their mapped text fields and originals.
-Repeated exact names offer an advanced review choice to confirm one shared
-identity for that name across all its mapped mentions; the default creates no
-Agent or role rows for those name-only mentions.
+mapped `*By` and `*ByID` fields. A single explicit agent IRI reuses its Agent
+record; the ID alone decides identity, so two different IDs that share a name
+remain two Agents. A name without an identifier links, by default, to one
+Agent per exact name within the dataset, with one role row per mention
+(production archives otherwise produced 4,209 Agent rows for one collector in
+572 and 1,229 for one company in 563). Name agents carry no `agentID` and a
+remark saying they stand for an exact name only. A name-only mention is never
+merged into an explicit-ID Agent, even when the names are equal: it gets the
+separate name Agent. This is a visible automatic choice: `agent-names` keeps
+every name without an identifier as text only, and each repeated name has its
+own `agent-share:` choice to keep that name as text only. Placeholder names
+(`unknown`, `ukjent`, `NA`, `n/a`, `anon.`, `-`, `?`, `not recorded`, the
+converter's empty-cell tokens and similar) never become Agents.
 Names are compared after collapsing whitespace runs, in the converter's
 explicit-ID agents and in role rows alike. A `|`-delimited `*ByID` list of
 distinct single agent IRIs links one Agent and one role row per IRI when its
@@ -87,8 +94,8 @@ validation. No EML version conversion or license inference is performed.
 | --- | --- |
 | 556 | Shared event grouping still requires agreeing source event details; occurrence counts should gain a typed quantity pair. |
 | 557 | Per-row event context and counts remain; each non-code `countryCode` label gets a reviewed route to country, water body, or originals. |
-| 558 | Occurrence assertions retain their linked subjects and measurement units; collectors and identifiers gain Agent role links only after their repeated exact names are confirmed as shared identities. Source dates absent from the archive remain absent. |
-| 559 | Unique preserved specimen catalog identities create material records; counts gain a typed quantity pair. `0-0-0` identification dates are withheld; zero elevation/depth is flagged, age-like event remarks get reviewed routes, and confirmed agents gain roles. |
+| 558 | Occurrence assertions retain their linked subjects and measurement units; collectors and identifiers gain one Agent per exact name, with a role link per mention. Source dates absent from the archive remain absent. |
+| 559 | Unique preserved specimen catalog identities create material records; counts gain a typed quantity pair. `0-0-0` identification dates are withheld; zero elevation/depth is flagged, age-like event remarks get reviewed routes, and agents gain roles. |
 
 ## Schema status
 

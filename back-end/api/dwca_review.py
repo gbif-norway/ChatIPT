@@ -28,7 +28,8 @@ ISSUE_POLICY = {
     'taxon-occurrences': ('convert',),
     'material-identity': ALL,
     'column-mapping': (),
-    'agent-identity': ('shared',),
+    # One agent per exact name within a dataset is the converter's default reading, not a new fact.
+    'agent-identity': (),
     'name-semantics': (),
     'external-identifier': ALL,
     'row-handling': (),
@@ -43,7 +44,7 @@ _PREFIX_KINDS = (
     ('event-category', 'event-category'), ('status:', 'occurrence-status'), ('table:', 'extension-role'),
     ('material:', 'material-identity'), ('column:', 'column-mapping'), ('row-group:', 'row-handling'),
     ('country-label:', 'column-mapping'), ('age-remark:', 'column-mapping'),
-    ('agent-share:', 'agent-identity'),
+    ('agent-share:', 'agent-identity'), ('agent-names', 'agent-identity'),
     ('row:', 'row-handling'), ('trait-link:', 'trait-link'), ('hum-category:', 'survey-classification'),
     ('hum-scope-group:', 'survey-completeness'), ('hum-scope:', 'survey-completeness'),
     ('occurrence-events:', 'occurrence-events'),
