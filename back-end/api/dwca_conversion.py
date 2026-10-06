@@ -216,23 +216,67 @@ def _words_at(text, words):
     return found.start() if found else None
 
 
-def _qualified_name(name, qualifier):
+RANK_MARKERS = {'subsp.', 'ssp.', 'var.', 'subvar.', 'f.', 'fo.', 'forma', 'subf.', 'nothosubsp.', 'nothovar.', 'cv.', 'convar.'}
+# Name-text words that stay with the name: open nomenclature written into scientificName.
+NAME_QUALIFIER_WORDS = {'sp.', 'spp.', 'sp', 'spp', 'indet.', 'indet', '?', 'cf.', 'aff.', 'cf', 'aff'}
+# Lowercase words that begin an author string ('de Vries'); a name containing one is not split.
+AUTHOR_PARTICLES = {'de', 'del', 'della', 'der', 'den', 'des', 'di', 'du', 'la', 'le', 'van', 'von', 'zu', 'ex', 'in', 'et', 'non', 'sensu'}
+
+
+def _split_authorship(name, authorship=''):
+    """(name words, authorship) of supplied name text, or None when it cannot be split safely.
+
+    A supplied scientificNameAuthorship that ends the text is the authorship. Otherwise the
+    name words are a capitalised genus followed by lowercase epithets, rank markers and
+    open-nomenclature words, and what follows must start like an author string: '(' or an
+    uppercase letter ('Gray, 1842', '(Kuhl, 1820)'). Hybrids and author particles are not split.
+    """
+    if authorship and name.endswith(' ' + authorship):
+        words = name[:-len(authorship) - 1].rstrip().split(' ')
+        return (words, authorship) if words and words[0] else None
+    word = r"[^\W\d_]+(?:[-'][^\W\d_]+)*"
+    tokens = name.split(' ')
+    if '×' in name or not re.fullmatch(word, tokens[0]) or not tokens[0][0].isupper():
+        return None
+    end = 1
+    while end < len(tokens) and (tokens[end] in RANK_MARKERS or tokens[end] in NAME_QUALIFIER_WORDS
+                                 or (re.fullmatch(word, tokens[end]) and tokens[end].islower())):
+        end += 1
+    words, author = tokens[:end], ' '.join(tokens[end:])
+    if any(token in AUTHOR_PARTICLES for token in words[1:]) or (author and not (author[0] in '([' or author[0].isupper())):
+        return None
+    return words, author
+
+
+def _qualified_name(name, qualifier, authorship=''):
     """Supplied name text carrying the supplied qualifier, or None when it cannot be placed.
 
     Text that already contains the qualifier, as words or attached at the end
-    ('Rana cf. arvalis' + 'cf.', 'Pachyporidae?' + '?'), is kept as is. A single
-    word follows the name ('Iguana sp. ?'). A multi-word qualifier names the part
-    it qualifies ('aff. agrifolia var. oxyadenia'), so its first word goes where
-    that part starts; if the part is not in the name, no text is constructed.
+    ('Rana cf. arvalis' + 'cf.', 'Pachyporidae?' + '?'), is kept as is. A multi-word
+    qualifier names the part it qualifies ('aff. agrifolia var. oxyadenia'), so its
+    first word goes where that part starts. A single 'cf.' or 'aff.' goes before the
+    final epithet (and its rank marker) of a binomial or trinomial, as in
+    'Tropidolaemus cf. subannulatus Gray, 1842'; other single words ('sp.', '?')
+    follow the name before any authorship ('Iguana sp. ?'). When the name cannot be
+    split from its authorship, or the part is not in the name, no text is constructed.
     """
     name = name.rstrip()
     if _words_at(name, qualifier) is not None or name.endswith(qualifier):
         return name
     first, _, rest = qualifier.partition(' ')
-    if not rest:
-        return f'{name} {qualifier}'
-    position = _words_at(name, rest.strip())
-    return None if position is None else f'{name[:position]}{first} {name[position:]}'
+    if rest:
+        position = _words_at(name, rest.strip())
+        return None if position is None else f'{name[:position]}{first} {name[position:]}'
+    split = _split_authorship(name, authorship.strip())
+    if split is None:
+        return None
+    words, author = split
+    if qualifier.rstrip('.') in {'cf', 'aff'} and len(words) > 1 and words[-1] not in NAME_QUALIFIER_WORDS | RANK_MARKERS:
+        at = len(words) - 2 if len(words) > 2 and words[-2] in RANK_MARKERS else len(words) - 1
+        words = [*words[:at], qualifier, *words[at:]]
+    else:
+        words = [*words, qualifier]
+    return ' '.join([*words, *([author] if author else [])])
 
 
 def _name_needs_review(value, authorship=''):
@@ -1366,7 +1410,8 @@ def convert(archive, plan, decisions):
             # verbatimIdentification, so "cf.", "?" or "sp." survive without changing
             # scientificName. One that cannot be placed stays in the originals.
             qualifier = table.rows[n][table.terms.index(QUALIFIER)].strip() if QUALIFIER in table.terms else ''
-            qualified = _qualified_name(name, qualifier) if qualifier else None
+            authorship = table.rows[n][table.terms.index(AUTHORSHIP)] if AUTHORSHIP in table.terms else ''
+            qualified = _qualified_name(name, qualifier, authorship) if qualifier else None
             if qualified is not None:
                 name = qualified
                 column_consumption[(t, QUALIFIER)].add(n)

@@ -73,8 +73,14 @@ claims without asking users to certify scientific validity.
   withheld and listed by source row.
 - The pinned DwC-DP has no `identificationQualifier` field. Wherever
   `verbatimIdentification` is filled from the supplied name, a one-word
-  qualifier follows the name text (`Iguana sp. ?`, `Microcalanus spp.`). A
-  qualifier that names the part it qualifies goes before that part
+  `cf.` or `aff.` goes before the final epithet of a binomial or trinomial
+  (`Tropidolaemus cf. subannulatus Gray, 1842`); other one-word qualifiers
+  follow the name and precede any authorship (`Iguana sp. ?`,
+  `Microcalanus spp.`). The authorship is the supplied
+  `scientificNameAuthorship` when it ends the name, otherwise text after the
+  name words that starts with `(` or a capital; names with author particles
+  (`de Vries`) or hybrid signs are not split, and their qualifier stays in the
+  originals. A qualifier that names the part it qualifies goes before that part
   (`aff. agrifolia var. oxyadenia` gives `Quercus aff. agrifolia var. oxyadenia
   (Torr.) J.T. Howell`); if that part is not in the name, nothing is built and
   the qualifier stays in the originals. Name text that already contains the

@@ -409,12 +409,32 @@ class ArchiveTests(SimpleTestCase):
         frames, report = convert(archive, plan, decisions_for(plan))
         rows = frames['occurrence'].set_index('occurrenceID')
         self.assertEqual(rows['verbatimIdentification'].tolist(), [
-            'Iguana sp. ?', 'Tropidolaemus subannulatus Gray, 1842 cf.', 'Rana cf. arvalis', 'Microcalanus spp.', 'Aglantha digitale'])
+            'Iguana sp. ?', 'Tropidolaemus cf. subannulatus Gray, 1842', 'Rana cf. arvalis', 'Microcalanus spp.', 'Aglantha digitale'])
         # scientificName never receives a qualifier.
         self.assertEqual((rows.loc['urn:uuid:719cbdc1', 'scientificName'], rows.loc['d51a5613', 'scientificName']), ('Iguana sp.', 'Microcalanus'))
         item = next(column for column in report['columns'] if column['term'] == DWC + 'identificationQualifier')
         self.assertEqual((item['target'], item['disposition'], item['mapped_rows'], item['retained_only_rows']),
                          ('derived verbatim copy → occurrence.verbatimIdentification', 'derived', 4, 0))
+        self.assertTrue(report['validation']['valid'])
+
+    def test_cf_goes_before_the_final_epithet_and_never_after_the_authorship(self):
+        """NHMO reptiles whose names carry their authorship (production dataset 568)."""
+        archive = occurrence(b'occurrenceID,basisOfRecord,scientificName,scientificNameAuthorship,identificationQualifier,occurrenceStatus\n'
+                             b'urn:uuid:83a496fb,PreservedSpecimen,"Tropidolaemus subannulatus Gray, 1842",,cf.,present\n'
+                             b'urn:uuid:8aabf911,PreservedSpecimen,"Brookesia superciliaris (Kuhl, 1820)",,cf.,present\n'
+                             b'urn:uuid:bd99fab8,PreservedSpecimen,"Naja sumatrana M\xc3\xbcller, 1887","M\xc3\xbcller, 1887",cf.,present\n'
+                             b'urn:uuid:41583a43,PreservedSpecimen,Draco sp.,,?,present\n'
+                             b'urn:uuid:00000001,PreservedSpecimen,Quercus agrifolia var. oxyadenia,,cf.,present\n'
+                             b'urn:uuid:00000002,PreservedSpecimen,Aus bus de Vries,,cf.,present\n')
+        plan = build_plan(archive)
+        frames, report = convert(archive, plan, decisions_for(plan))
+        self.assertEqual(frames['occurrence']['verbatimIdentification'].tolist(), [
+            'Tropidolaemus cf. subannulatus Gray, 1842', 'Brookesia cf. superciliaris (Kuhl, 1820)', 'Naja cf. sumatrana M\u00fcller, 1887',
+            'Draco sp. ?', 'Quercus agrifolia cf. var. oxyadenia',
+            # An author particle makes the name unsafe to split, so the qualifier stays in the originals.
+            'Aus bus de Vries'])
+        item = next(column for column in report['columns'] if column['term'] == DWC + 'identificationQualifier')
+        self.assertEqual((item['mapped_rows'], item['retained_only_rows'], item['retained_reasons']), (5, 1, {'qualifier_not_placeable': 1}))
         self.assertTrue(report['validation']['valid'])
 
     def test_qualifiers_that_name_a_part_go_before_it_on_identification_extensions(self):
