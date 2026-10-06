@@ -523,6 +523,46 @@ class InvalidationTests(ConversionTestCase):
         self.assertEqual((conversion.conflicts, conversion.retryable), ([], False))
         self.assertEqual(conversion.decisions, decisions)
 
+    def test_repeated_internal_failure_waits_for_a_fix(self):
+        self.inspect_only()
+        conversion = self.conversion
+        review.apply_decision_changes(conversion, {'loose-links': 'confirm', 'table:1': 'nbn-context',
+                                                   'row-group:1:0': 'preserve'}, 'user')
+        broken = patch('api.conversion_jobs.create_dwc_dp_archive', side_effect=ValueError('Invalid DwC-DP descriptor: bug'))
+        with broken:
+            for _ in range(2):
+                self.assertEqual(self.post('convert').status_code, 202)
+                self.inspect_only()
+        conversion = self.conversion
+        self.assertEqual((conversion.status, conversion.retryable), ('review', False))
+        self.assertTrue(conversion.conflicts[0]['repeated'])
+        refused = self.post('convert')
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn('after a fix', refused.data['detail'])
+        # A released fix (new rule version) allows the same choices again.
+        with patch('api.conversion_jobs.RULE_VERSION', 'fixed'):
+            self.assertEqual(self.post('convert').status_code, 202)
+            self.inspect_only()
+        self.assertEqual(self.conversion.status, 'complete', self.conversion.error)
+
+    def test_internal_failure_during_inspect_keeps_the_previous_plan_and_choices(self):
+        self.inspect_only()
+        review.apply_decision_changes(self.conversion, {'loose-links': 'confirm'}, 'user')
+        before = self.conversion
+        self.assertEqual(self.client.post(self.url, {'action': 'inspect'}, format='json').status_code, 202)
+        with patch('api.conversion_jobs._eml_dataset_metadata', side_effect=KeyError('bug')):
+            self.inspect_only()
+        conversion = self.conversion
+        self.assertEqual((conversion.status, conversion.retryable), ('failed', True))
+        self.assertEqual(conversion.conflicts[0]['action'], 'inspect')
+        self.assertEqual(conversion.plan['id'], before.plan['id'])
+        self.assertEqual(conversion.decisions, before.decisions)
+        self.assertEqual(conversion.name_review, before.name_review)
+        # Re-inspecting is the retry.
+        self.assertEqual(self.client.post(self.url, {'action': 'inspect'}, format='json').status_code, 202)
+        self.inspect_only()
+        self.assertEqual(self.conversion.status, 'review')
+
 
 class EscalationRuleTests(SimpleTestCase):
     issue = {'id': 'x', 'kind': 'column-mapping', 'authority': 'ai-reviewable'}

@@ -622,6 +622,11 @@ class DatasetViewSet(viewsets.ModelViewSet):
                             raise ConversionError('Change one of the choices named by the last conversion attempt before converting again: '
                                                   + unchanged[0]['reason'][:300], category='decision',
                                                   decision_ids=[identifier for conflict in unchanged for identifier in conflict['decision_ids']])
+                        from api.conversion_jobs import internal_retry_exhausted
+                        if internal_retry_exhausted(conversion):
+                            raise ConversionError('The converter failed twice with these choices because of a problem on our side. '
+                                                  'Your choices are kept; converting them again will be possible after a fix '
+                                                  'is released, or after you change a choice.', category='internal')
                         blockers = conversion_review.convert_blockers(conversion)
                         if blockers:
                             raise ConversionError(f'Check {len(blockers)} AI choices made before a choice they depend on changed.',

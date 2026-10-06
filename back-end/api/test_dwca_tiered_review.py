@@ -132,10 +132,16 @@ class FailureCategoryTests(SimpleTestCase):
         self.assertEqual(conversion.status, 'blocked')
         apply_failure(conversion, classify_failure(OSError('Storage down')))
         self.assertEqual((conversion.status, conversion.retryable), ('review', True))
-        # A converter defect keeps the choices and can be converted again once fixed.
+        # A converter defect keeps the choices and offers one retry; the same failure again waits for a fix.
         apply_failure(conversion, classify_failure(KeyError('bug')))
         self.assertEqual((conversion.status, conversion.retryable), ('review', True))
         self.assertEqual(conversion.conflicts[0]['category'], 'internal')
+        apply_failure(conversion, classify_failure(KeyError('bug')))
+        self.assertEqual((conversion.status, conversion.retryable, conversion.conflicts[0]['repeated']), ('review', False, True))
+        # An inspect failure never puts a half-built plan into review; re-inspecting is the retry.
+        inspected = DwcConversion(plan={'id': 'p'})
+        apply_failure(inspected, classify_failure(KeyError('bug')), 'inspect')
+        self.assertEqual((inspected.status, inspected.retryable), ('failed', True))
         unplanned = DwcConversion(plan={})
         apply_failure(unplanned, classify_failure(KeyError('bug')))
         self.assertEqual((unplanned.status, unplanned.retryable), ('failed', True))

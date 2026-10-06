@@ -1,4 +1,5 @@
 """A separate durable queue for archive conversion; publication agents never run here."""
+import hashlib
 import json
 import logging
 import tempfile
@@ -11,7 +12,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from api.dwca_import import ConversionError, ImportFailure, read_inputs, source_zip
-from api.dwca_conversion import build_plan, convert
+from api.dwca_conversion import RULE_VERSION, build_plan, convert
 from api.conversion_evidence import publication_metadata, source_eml_content
 from api.dwca_eml_descriptor import extract_eml_descriptor_metadata
 from api.dwca_value_ledger import build_value_disposition_ledger
@@ -41,17 +42,41 @@ def classify_failure(exc):
         message = f'Unable to process this archive: {message}'
     return ConversionError(message, category=category).as_conflict()
 
-def apply_failure(conversion, record):
+def _decisions_digest(decisions):
+    return hashlib.sha256(json.dumps(decisions or {}, sort_keys=True).encode()).hexdigest()
+
+
+def _same_internal_failure(previous, record):
+    return all(previous.get(key) == record[key] for key in ('category', 'action', 'rule_version', 'decisions_sha256'))
+
+
+def internal_retry_exhausted(conversion):
+    """True when the same rules already failed twice internally on these exact choices."""
+    attempt = {'category': 'internal', 'action': 'convert', 'rule_version': RULE_VERSION,
+               'decisions_sha256': _decisions_digest(conversion.decisions)}
+    return any(conflict.get('repeated') and _same_internal_failure(conflict, attempt) for conflict in conversion.conflicts or [])
+
+
+def apply_failure(conversion, record, action='convert'):
     """Return to review only when a decision can remedy the failure, or a retry can.
 
-    Internal failures are retryable too: they are converter defects, so the same
-    choices can be converted again once a fix is released. The decisions are kept.
+    Internal failures are converter defects. A failed convert returns to review with
+    its choices kept and one retry offered; when the same rules fail again on the same
+    choices, a further retry waits for a fix (a new RULE_VERSION) or a changed choice.
+    A failed inspect keeps the previous plan and choices untouched and offers re-inspection.
     """
+    record['action'] = action
+    repeated = False
+    if record['category'] == 'internal':
+        record.update(rule_version=RULE_VERSION, decisions_sha256=_decisions_digest(conversion.decisions))
+        repeated = any(_same_internal_failure(previous, record) for previous in conversion.conflicts or [])
+        record['repeated'] = repeated
     conversion.error = record['reason'][:5000]
     conversion.conflicts = [record]
-    conversion.retryable = record['category'] in {'transient', 'internal'}
+    conversion.retryable = record['category'] == 'transient' or (record['category'] == 'internal' and not repeated)
     remedy = record['category'] in {'conflict', 'decision'} and record['decision_ids']
-    if conversion.plan and (remedy or record['category'] in {'stale-plan', 'transient', 'internal'}):
+    internal_convert = record['category'] == 'internal' and action == 'convert'
+    if conversion.plan and (remedy or internal_convert or record['category'] in {'stale-plan', 'transient'}):
         conversion.status = 'review'
     elif record['category'] in {'source', 'conflict', 'decision'}:
         conversion.status = 'blocked'
@@ -112,23 +137,28 @@ def process_next_conversion():
     additional_tables = {}
     try:
         if job.action == 'inspect':
+            # Everything is built first, so a failure leaves the previous plan and its choices intact.
             archive = load_sources(conversion)
-            conversion.plan = build_plan(archive)
+            plan = build_plan(archive)
             eml_metadata = _eml_dataset_metadata(archive)
-            sources = {}
+            sources, filled = {}, {}
             for field in ('title', 'description'):
                 if (getattr(conversion.dataset, field) or '').strip():
                     sources[field] = 'user'
                 elif eml_metadata[field]:
-                    setattr(conversion.dataset, field, eml_metadata[field])
+                    filled[field] = eml_metadata[field]
                     sources[field] = 'eml'
                 else:
                     sources[field] = 'none'
+            name_review = _collect_names(archive, plan)
+            for field, value in filled.items():
+                setattr(conversion.dataset, field, value)
+            conversion.plan = plan
             conversion.metadata_sources = {**sources, **({'truncated_from_eml': sorted(eml_metadata['truncated'])}
                                                          if eml_metadata['truncated'] else {})}
             conversion.decisions = {}; conversion.review = {}; conversion.report = {}
             conversion.conflicts = []; conversion.retryable = False
-            conversion.name_review = _collect_names(archive, conversion.plan)
+            conversion.name_review = name_review
             conversion.status = 'review'
         elif job.action == 'convert':
             archive = load_sources(conversion)
@@ -190,7 +220,7 @@ def process_next_conversion():
             raise ImportFailure('Unknown conversion job action.')
     except Exception as exc:
         logger.exception('Conversion %s failed', conversion.pk)
-        apply_failure(conversion, classify_failure(exc))
+        apply_failure(conversion, classify_failure(exc), job.action)
     old_output = conversion.output_file.name
     try:
         with transaction.atomic():
