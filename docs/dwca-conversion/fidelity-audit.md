@@ -38,12 +38,12 @@ invent a persistent `materialEntityID`. Duplicated or incomplete catalog
 identities still require review.
 
 The converter also emits `agent` and the relevant `*-agent-role` rows from
-mapped `*By` and `*ByID` fields. A single explicit agent IRI reuses its Agent
-record. A name without an identifier creates an Agent for that mention, linked
-by a role row; equal names are not automatically merged into one identity.
+mapped `*By` and `*ByID` fields when an agent has a single explicit IRI or a
+reviewed shared identity. A single explicit agent IRI reuses its Agent record.
+Names without identifiers stay in their mapped text fields and originals.
 Repeated exact names offer an advanced review choice to confirm one shared
-identity for that name across all its mapped mentions; the default keeps them
-separate.
+identity for that name across all its mapped mentions; the default creates no
+Agent or role rows for those name-only mentions.
 Composite names, placeholders, and ID/name lists that cannot be paired safely
 remain in the mapped text fields and originals, with skip reasons and examples
 in `agent_roles`. The role order is explicit. The converter does not infer
@@ -63,8 +63,8 @@ validation. No EML version conversion or license inference is performed.
 | --- | --- |
 | 556 | Shared event grouping still requires agreeing source event details; occurrence counts should gain a typed quantity pair. |
 | 557 | Per-row event context and counts remain; each non-code `countryCode` label gets a reviewed route to country, water body, or originals. |
-| 558 | Occurrence assertions retain their linked subjects and measurement units; name-only collectors and identifiers gain Agent role links without merging repeated names. Source dates absent from the archive remain absent. |
-| 559 | Unique preserved specimen catalog identities create material records; counts gain a typed quantity pair. `0-0-0` identification dates are withheld; zero elevation/depth is flagged, age-like event remarks get reviewed routes, and unambiguous agent mentions gain roles. |
+| 558 | Occurrence assertions retain their linked subjects and measurement units; collectors and identifiers gain Agent role links only after their repeated exact names are confirmed as shared identities. Source dates absent from the archive remain absent. |
+| 559 | Unique preserved specimen catalog identities create material records; counts gain a typed quantity pair. `0-0-0` identification dates are withheld; zero elevation/depth is flagged, age-like event remarks get reviewed routes, and confirmed agents gain roles. |
 
 ## Schema status
 

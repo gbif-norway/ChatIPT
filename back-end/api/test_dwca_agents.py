@@ -1,12 +1,10 @@
 import tempfile
-from collections import Counter
 from pathlib import Path
 
 import pandas as pd
 from django.test import SimpleTestCase
 
-from api.dwca_agents import (PER_MENTION_REMARK, ROLE_FIELDS, RoleField, build_agent_roles,
-                             composite_name_reason)
+from api.dwca_agents import ROLE_FIELDS, RoleField, build_agent_roles, composite_name_reason
 from api.dwca_conversion import _key, build_plan, convert
 from api.dwca_import import read_inputs
 from api.dwc_dp_specs import create_dwc_dp_archive, validate_dwc_dp_archive, validate_dwc_dp_resources
@@ -40,14 +38,15 @@ def merged(frames, result):
 class AgentRoleTests(SimpleTestCase):
     def test_converter_emits_agent_roles_with_source_crosswalk(self):
         archive = read_inputs([('occurrence.csv',
-            b'occurrenceID,eventID,recordedBy,identifiedBy,eventDate,occurrenceStatus\n'
-            b'o1,e1,Ola Nordmann,NTNU University Museum,2025-01-01,present\n')])
+            b'occurrenceID,eventID,recordedBy,recordedByID,identifiedBy,eventDate,occurrenceStatus\n'
+            b'o1,e1,Ola Nordmann,' + ORCID.encode() + b',NTNU University Museum,2025-01-01,present\n')])
         plan = build_plan(archive)
         frames, report = convert(archive, plan, {issue['id']: issue['options'][0]['value'] for issue in plan['issues']})
-        self.assertEqual(len(frames['agent']), 2)
-        self.assertEqual(len(frames['occurrence-agent-role']), 2)
-        self.assertEqual(report['agent_roles']['roles_created'], {'occurrence-agent-role': 2})
-        self.assertEqual(len([row for row in report['row_crosswalk'] if row['target_table'] == 'occurrence-agent-role']), 2)
+        self.assertEqual(len(frames['agent']), 1)
+        self.assertEqual(len(frames['occurrence-agent-role']), 1)
+        self.assertEqual(report['agent_roles']['roles_created'], {'occurrence-agent-role': 1})
+        self.assertEqual(report['agent_roles']['unlinked_name_only'], 1)
+        self.assertEqual(len([row for row in report['row_crosswalk'] if row['target_table'] == 'occurrence-agent-role']), 1)
         self.assert_package_valid(frames)
 
     def test_converter_shares_only_a_confirmed_exact_name(self):
@@ -60,8 +59,10 @@ class AgentRoleTests(SimpleTestCase):
         self.assertEqual(issue['default'], 'separate')
         self.assertTrue(next(option for option in issue['options'] if option['value'] == 'shared')['assertion'])
         choices = {item['id']: item['options'][0]['value'] for item in plan['issues']}
-        separate, _ = convert(archive, plan, choices)
-        self.assertEqual(len(separate['agent']), 2)
+        separate, separate_report = convert(archive, plan, choices)
+        self.assertNotIn('agent', separate)
+        self.assertNotIn('occurrence-agent-role', separate)
+        self.assertEqual(separate_report['agent_roles']['unlinked_name_only'], 2)
         shared, report = convert(archive, plan, {**choices, issue['id']: 'shared'})
         self.assertEqual(len(shared['agent']), 1)
         self.assertEqual(len(shared['occurrence-agent-role']), 2)
@@ -79,32 +80,18 @@ class AgentRoleTests(SimpleTestCase):
             archive_validation = validate_dwc_dp_archive(output, require_eml=False)
             self.assertTrue(archive_validation['valid'], archive_validation['errors'])
 
-    def test_repeated_name_only_values_get_one_agent_per_mention(self):
+    def test_unconfirmed_name_only_values_remain_in_text_fields(self):
         archive, frames = converted(
             b'occurrenceID,eventID,recordedBy,identifiedBy,eventDate,occurrenceStatus\n'
             b'o1,e1,Ola Nordmann,NTNU University Museum,2025-01-01,present\n'
             b'o2,e2,Ola Nordmann,NTNU University Museum,2025-01-02,present\n'
             b'o3,e3, Ola Nordmann ,NTNU University Museum,2025-01-03,present\n')
         result = build_agent_roles(frames, lambda *parts: _key(archive, *parts))
-        tables = result.tables()
-        roles = pd.DataFrame(tables['occurrence-agent-role'])
-        self.assertEqual(len(tables['agent']), 6)
-        self.assertEqual(len(roles), 6)
-        self.assertEqual(Counter(roles['agentRole']), {'recordedBy': 3, 'identifiedBy': 3})
-        self.assertEqual(set(roles['agentRoleOrder']), {1})
-        self.assertEqual(set(roles['occurrence_fk']), set(frames['occurrence']['occurrence_pk']))
-        self.assertEqual(len(set(roles['agent_fk'])), 6)
-        self.assertTrue(all(not agent.get('agentID') and agent['agentRemarks'] == PER_MENTION_REMARK
-                            for agent in tables['agent']))
-        self.assertEqual(Counter(agent['preferredAgentName'] for agent in tables['agent']),
-                         {'Ola Nordmann': 3, 'NTNU University Museum': 3})
-        # Each emitted row names the mapped record it came from, for the converter's crosswalk.
-        self.assertEqual(sorted(row.mentions for row in result.rows if row.table == 'occurrence-agent-role'),
-                         sorted((('occurrence', number, field),) for number in (1, 2, 3)
-                                for field in ('recordedBy', 'identifiedBy')))
+        self.assertEqual(result.rows, [])
         self.assertEqual([(item['name'], item['mentions']) for item in result.report['repeated_names']],
                          [('NTNU University Museum', 3), ('Ola Nordmann', 3)])
-        self.assertEqual(result.report['agents_created'], {'per_mention': 6, 'shared_name': 0, 'explicit_id': 0})
+        self.assertEqual(result.report['agents_created'], {'shared_name': 0, 'explicit_id': 0})
+        self.assertEqual(result.report['unlinked_name_only'], 6)
         # The mapped name fields are unchanged and the result is deterministic.
         self.assertEqual(frames['occurrence']['recordedBy'].tolist()[2].strip(), 'Ola Nordmann')
         self.assertEqual(build_agent_roles(frames, lambda *parts: _key(archive, *parts)).rows, result.rows)
@@ -124,7 +111,8 @@ class AgentRoleTests(SimpleTestCase):
         recorded = roles[roles['agentRole'] == 'recordedBy']
         self.assertEqual(set(recorded['agent_fk']), {collectors[0]['agent_pk']})
         self.assertEqual(len(recorded), 2)
-        self.assertEqual(len(set(roles[roles['agentRole'] == 'identifiedBy']['agent_fk'])), 2)
+        self.assertEqual(set(roles['agentRole']), {'recordedBy'})
+        self.assertEqual(result.report['unlinked_name_only'], 2)
         self.assertEqual(result.report['shared_names_unused'], ['Ola Nordman'])
         self.assertEqual([item['name'] for item in result.report['repeated_names']], ['NTNU University Museum'])
         self.assert_package_valid(merged(frames, result))
@@ -142,15 +130,14 @@ class AgentRoleTests(SimpleTestCase):
             b'o8,e1,P. Hansen,2025-01-01,present\n'
             b'o9,e1,"Hansen, P",2025-01-01,present\n')
         result = build_agent_roles(frames, lambda *parts: _key(archive, *parts))
-        names = sorted(agent['preferredAgentName'] for agent in result.tables()['agent'])
-        self.assertEqual(names, ['Hansen, P', 'Hansen, P.', 'P. Hansen'])
+        self.assertEqual(result.rows, [])
         self.assertEqual(result.report['skipped'], {'comma_list': 1, 'conjunction': 1, 'delimited_list': 2,
                                                     'incomplete_group': 1, 'placeholder': 1})
-        self.assertEqual(result.report['fields']['occurrence.recordedBy']['per_mention'], 3)
+        self.assertEqual(result.report['fields']['occurrence.recordedBy']['unlinked_name_only'], 3)
         skipped = {item['value']: (item['reason'], item['first_row']) for item in result.report['skipped_values']}
         self.assertEqual(skipped['P. Hansen | K. Olsen'], ('delimited_list', 2))
         self.assertEqual(skipped['Per Hansen, Kari Olsen'], ('comma_list', 4))
-        # Spelling variants are surfaced for review but stay separate agents.
+        # Spelling variants are surfaced for review without creating identities.
         self.assertEqual(result.report['variant_groups'], [['Hansen, P', 'Hansen, P.', 'P. Hansen']])
         self.assert_package_valid(merged(frames, result))
 
@@ -178,11 +165,11 @@ class AgentRoleTests(SimpleTestCase):
 
     def test_role_order_continues_existing_roles_and_repeat_calls_add_nothing(self):
         archive, frames = converted(
-            b'occurrenceID,eventID,recordedBy,eventDate,occurrenceStatus\n'
-            b'o1,e1,Ola Nordmann,2025-01-01,present\n')
+            b'occurrenceID,eventID,recordedBy,recordedByID,eventDate,occurrenceStatus\n'
+            b'o1,e1,Ola Nordmann,' + ORCID.encode() + b',2025-01-01,present\n')
         key = lambda *parts: _key(archive, *parts)  # noqa: E731
         occurrence = frames['occurrence'].loc[0, 'occurrence_pk']
-        frames['agent'] = pd.DataFrame([{'agent_pk': 'existing', 'preferredAgentName': 'Kari Nordmann'}])
+        frames['agent'] = pd.concat([frames['agent'], pd.DataFrame([{'agent_pk': 'existing', 'preferredAgentName': 'Kari Nordmann'}])], ignore_index=True)
         frames['occurrence-agent-role'] = pd.DataFrame([{'occurrence_fk': occurrence, 'agent_fk': 'existing',
                                                          'agentRole': 'recordedBy', 'agentRoleOrder': 1}])
         result = build_agent_roles(frames, key)
@@ -195,8 +182,8 @@ class AgentRoleTests(SimpleTestCase):
 
     def test_role_rows_without_order_fail_schema_validation(self):
         archive, frames = converted(
-            b'occurrenceID,eventID,recordedBy,eventDate,occurrenceStatus\n'
-            b'o1,e1,Ola Nordmann,2025-01-01,present\n')
+            b'occurrenceID,eventID,recordedBy,recordedByID,eventDate,occurrenceStatus\n'
+            b'o1,e1,Ola Nordmann,' + ORCID.encode() + b',2025-01-01,present\n')
         combined = merged(frames, build_agent_roles(frames, lambda *parts: _key(archive, *parts)))
         validation = validate_dwc_dp_resources({**combined, 'occurrence-agent-role':
                                                 combined['occurrence-agent-role'].drop(columns='agentRoleOrder')})

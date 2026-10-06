@@ -230,6 +230,7 @@ export default function DwcConversion() {
   const semanticFindings = state?.report?.semantic_value_audit?.findings || []
   const reviewedValueRoutes = state?.report?.reviewed_value_routes || []
   const agentRoles = state?.report?.agent_roles
+  const agentRoleLinks = Object.values(agentRoles?.roles_created || {}).reduce((sum, count) => sum + count, 0)
   const cardProps = { state, decisions, disabled, onChoose: choose, selected }
   // scientificName questions are answered inside the name check when it has names to check.
   const nameQuestionIds = new Set(state?.name_review?.question_ids || [])
@@ -351,9 +352,9 @@ export default function DwcConversion() {
           {route.source_table}: <strong>{route.source_value}</strong> ({route.count.toLocaleString()} source rows) → {route.target}
         </li>)}</ul>
       </details>}
-      {agentRoles && <details className="small mb-3"><summary>People and organizations in Agent roles ({Object.values(agentRoles.roles_created || {}).reduce((sum, count) => sum + count, 0).toLocaleString()} links)</summary>
-        <p className="mt-2 mb-1">Names without identifiers create one Agent for each source mention. Repeated names are kept separate until their shared identity is confirmed. Composite names are kept in the mapped text field and listed in the report.</p>
-        <p className="mb-0">New Agents: {(agentRoles.agents_created?.per_mention || 0).toLocaleString()} separate name-only mentions, {(agentRoles.agents_created?.shared_name || 0).toLocaleString()} confirmed shared names, {(agentRoles.agents_created?.explicit_id || 0).toLocaleString()} explicit IDs. Skipped ambiguous mentions: {Object.values(agentRoles.skipped || {}).reduce((sum, count) => sum + count, 0).toLocaleString()}.</p>
+      {agentRoles && (agentRoleLinks || agentRoles.unlinked_name_only) && <details className="small mb-3"><summary>People and organizations in Agent roles ({agentRoleLinks.toLocaleString()} links)</summary>
+        <p className="mt-2 mb-1">Names without identifiers remain in their mapped text fields unless a repeated exact name was confirmed as one Agent. Composite names stay in the mapped text field and are listed in the report.</p>
+        <p className="mb-0">New Agents: {(agentRoles.agents_created?.shared_name || 0).toLocaleString()} confirmed shared names, {(agentRoles.agents_created?.explicit_id || 0).toLocaleString()} explicit IDs. Unlinked name mentions: {(agentRoles.unlinked_name_only || 0).toLocaleString()}. Ambiguous mentions: {Object.values(agentRoles.skipped || {}).reduce((sum, count) => sum + count, 0).toLocaleString()}.</p>
       </details>}
       {valueLedger.length > 0 && <details className="small mb-3"><summary>Where each source column's values went ({valueLedger.length})</summary>
         <p className="text-muted mt-2">Counts refer to source values. Mapped and derived values can share a target row. Your download has the complete report and original files.</p>

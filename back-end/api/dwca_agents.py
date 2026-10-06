@@ -5,9 +5,9 @@ This module only adds role rows that link those records to Agent rows:
 
 - A single explicit agent IRI in the paired *ByID field links to the Agent row
   with that agentID, reusing the converter's row when there is one.
-- A name-only value that looks like one agent becomes its own Agent row for
-  that mention. Equal name strings are not asserted to be the same agent
-  unless the caller passes that exact name in ``shared_names``.
+- A name-only value remains in its mapped text field unless review confirms
+  that every mention of that exact name denotes one agent. Confirmed names
+  create one Agent row with role links to their mapped records.
 - Lists, conjunctions, ``et al.``, placeholders and ID/name pairs that cannot
   be matched one-to-one are never split or guessed. They are skipped and
   reported, and the source value stays in the mapped field and originals.
@@ -23,15 +23,13 @@ from typing import Callable, Iterable, Mapping
 from api.dwc_dp_specs import TABLE_SPECS
 
 EXAMPLE_LIMIT = 20
-PER_MENTION_REMARK = ('Name-only source value. This row represents one mention; it is not asserted '
-                      'to be the same agent as other rows with the same name.')
 SHARED_NAME_REMARK = ('Name-only source value. Review asserted that every name-only mention with '
                       'this exact name refers to this one agent.')
 POLICY = ('Role rows link mapped records to agents without changing the mapped name fields. A single '
           'absolute IRI in the paired *ByID field links to the agent with that agentID. A name-only '
-          'value creates one agent per mention unless review asserted that its exact name is one '
-          'agent. Lists, conjunctions, et al., placeholders and ID/name pairs that cannot be matched '
-          'one-to-one are skipped and reported, never split. agentRole is the DwC-DP field name; '
+          'value stays in its mapped text field unless review confirms that every mention of its exact '
+          'name denotes one agent. Lists, conjunctions, et al., placeholders and ID/name pairs that '
+          'cannot be matched one-to-one are skipped and reported, never split. agentRole is the DwC-DP field name; '
           'agentRoleIRI and agentRoleSource are left empty.')
 PLACEHOLDERS = frozenset({
     'na', 'n/a', 'n.a.', 'nan', 'none', 'null', 'nil', 'unknown', 'unk', 'unkn', 'anonymous', 'anon',
@@ -195,7 +193,7 @@ def build_agent_roles(
     field_stats = {}
     skipped = Counter()
     skipped_values = {}
-    name_mentions = defaultdict(list)    # safe name-only value -> mentions given separate agents
+    name_mentions = defaultdict(list)    # safe, unconfirmed name-only mentions
     safe_names = set()
     used_shared = set()
     reused_ids = set()
@@ -213,7 +211,7 @@ def build_agent_roles(
         if not rows:
             continue
         stats = field_stats[f'{spec.resource}.{spec.name_field}'] = {
-            'mentions': 0, 'linked_by_id': 0, 'per_mention': 0, 'shared_name': 0, 'skipped': Counter()}
+            'mentions': 0, 'linked_by_id': 0, 'unlinked_name_only': 0, 'shared_name': 0, 'skipped': Counter()}
         for number, record in enumerate(rows, start=1):
             name, identifier = _text(record.get(spec.name_field)), _text(record.get(spec.id_field))
             if not name and not identifier:
@@ -260,13 +258,10 @@ def build_agent_roles(
                 safe_names.add(name)
                 stats['shared_name'] += 1
             else:
-                basis = 'per_mention'
-                agent_pk = key('agent-mention', spec.resource, subject, spec.name_field, name)
-                new_agent(agent_pk, {'agent_pk': agent_pk, 'preferredAgentName': name,
-                                     'agentRemarks': PER_MENTION_REMARK}, mention, basis)
                 name_mentions[name].append(mention)
                 safe_names.add(name)
-                stats['per_mention'] += 1
+                stats['unlinked_name_only'] += 1
+                continue
             group = (spec.role_table, subject, spec.role, '', '')
             if agent_pk in linked[group]:
                 already_linked += 1
@@ -298,8 +293,8 @@ def build_agent_roles(
     bases = Counter(entry['basis'] for entry in new_agents.values())
     result.report = {
         'policy': POLICY,
-        'agents_created': {'per_mention': bases['per_mention'], 'shared_name': bases['shared_name'],
-                           'explicit_id': bases['explicit_id']},
+        'agents_created': {'shared_name': bases['shared_name'], 'explicit_id': bases['explicit_id']},
+        'unlinked_name_only': sum(len(mentions) for mentions in name_mentions.values()),
         'explicit_id_agents_reused': len(reused_ids),
         'roles_created': dict(sorted(Counter(row.table for row in role_rows).items())),
         'roles_already_present': already_linked,
@@ -308,7 +303,7 @@ def build_agent_roles(
         'skipped': dict(sorted(skipped.items())),
         'skipped_values': examples[:example_limit],
         'skipped_values_omitted': max(0, len(examples) - example_limit),
-        # Equal names kept as separate agents: candidates for an explicit shared_names decision.
+        # Repeated unlinked names are candidates for an explicit shared_names decision.
         'repeated_names': [{'name': name, 'mentions': len(mentions),
                             'fields': sorted({f'{resource}.{name_field}' for resource, _number, name_field in mentions})}
                            for name, mentions in repeated[:example_limit]],

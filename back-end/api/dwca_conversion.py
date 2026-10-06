@@ -28,7 +28,7 @@ from api.dwca_review import (apply_policy, effective_decisions, failed_requireme
 from api.dwca_semantic_audit import is_age_like_remark, semantic_target_rejection
 from api.dwca_agents import ROLE_FIELDS, build_agent_roles, composite_name_reason
 
-RULE_VERSION = "22"
+RULE_VERSION = "23"
 DERIVED_VALUE_EXAMPLE_LIMIT = 20
 ECO_SURVEY_ID = 'http://rs.tdwg.org/eco/terms/surveyID'
 REGISTERED_TERMS = {term for terms in REGISTRY['terms'].values() for term in terms}
