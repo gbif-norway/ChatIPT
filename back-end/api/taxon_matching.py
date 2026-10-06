@@ -89,6 +89,71 @@ def split_qualifier(label):
     return name, None
 
 
+# Highest first. Ranks outside this list are never compared.
+RANK_ORDER = (
+    "domain", "superkingdom", "kingdom", "subkingdom", "infrakingdom", "superphylum", "phylum", "subphylum",
+    "infraphylum", "parvphylum", "superclass", "megaclass", "gigaclass", "class", "subclass", "infraclass",
+    "subterclass", "superorder", "order", "suborder", "infraorder", "parvorder", "superfamily", "family",
+    "subfamily", "tribe", "subtribe", "genus", "subgenus", "section", "subsection", "series", "species aggregate",
+    "species", "subspecies", "variety", "subvariety", "form", "subform",
+)
+_NAME_MARKERS = {
+    "subsp.", "ssp.", "var.", "subvar.", "f.", "fo.", "forma", "subf.", "agg.", "sect.", "subsect.", "ser.",
+    "subg.", "nothosubsp.", "nothovar.", "×", "x",
+}
+
+
+def name_parts(name):
+    """Lower-cased genus (or uninomial) and epithets of a name, without markers, hybrid signs, subgenus or authorship."""
+    parts = []
+    for token in str(name or "").replace("×", " × ").split():
+        lowered = token.casefold()
+        if lowered in _NAME_MARKERS:
+            continue
+        if not parts:
+            parts.append(lowered)
+        elif len(parts) == 1 and re.fullmatch(r"\([A-Z][^()]*\)", token):
+            continue  # a subgenus
+        elif token[:1].islower() and token.replace("-", "").isalpha():
+            parts.append(lowered)
+        else:
+            break  # the authorship starts
+    return parts
+
+
+def rank_above(rank, other):
+    """True when both ranks are known and `rank` is strictly higher than `other`."""
+    return rank in RANK_ORDER and other in RANK_ORDER and RANK_ORDER.index(rank) < RANK_ORDER.index(other)
+
+
+def coarser_replacement(asserted, usage, match_type=None, asserted_rank=None):
+    """How accepting `usage` would replace the asserted name with a coarser or different taxon; None when it would not.
+
+    The same name (ignoring markers, authorship and case) is never a replacement, whatever the ranks say:
+    "Larus sp." accepted as the genus Larus keeps the user's assertion. A higher-rank match, a usage with fewer
+    name parts or a higher rank, or another genus replaces it: "Calanus" by the phylum Arthropoda, "Trientalis
+    europaea" by the genus Lysimachia. Such a usage is never accepted in bulk or by default.
+    """
+    mine, theirs = name_parts(asserted), name_parts((usage or {}).get("scientificName"))
+    if not mine or not theirs or mine == theirs:
+        return None
+    rank = _rank((usage or {}).get("taxonRank"))
+    if (str(match_type or "").upper() == "HIGHERRANK" or len(theirs) < len(mine)
+            or rank_above(rank, asserted_rank) or (len(mine) > 1 and rank_above(rank, "species"))):
+        mine_label = asserted_rank or "name"
+        theirs_label = rank or "higher taxon"
+        article = "an" if theirs_label[:1] in "aeiou" else "a"
+        return {"kind": "coarser", "from": asserted_rank, "to": rank,
+                "text": f"replaces your {mine_label} with {article} {theirs_label}"}
+    if mine[0] != theirs[0]:
+        genus = (usage.get("scientificName") or "").split()[0]
+        if len(mine) > 1:
+            return {"kind": "genus", "from": asserted_rank, "to": rank,
+                    "text": f"replaces your genus with {genus}"}
+        return {"kind": "genus", "from": asserted_rank, "to": rank, "text": f"replaces your name with {genus}"}
+    return None
+
+
 def _remaining(deadline):
     if deadline is None:
         return None
@@ -128,6 +193,22 @@ def _rank(value):
     return str(value or "").lower() or None
 
 
+def _name_without_authorship(usage):
+    """The usage's name as COL writes it, rank marker ("subsp.", "var.", "f.") and hybrid sign included.
+
+    GBIF's canonicalName drops the marker ("Betula pubescens czerepanovii"), which names a different
+    combination in botany, so the full name minus its trailing authorship is used. When the authorship is
+    not a plain suffix (an autonym, a nomenclatural note) the canonical name is the safe fallback.
+    """
+    name = " ".join(str(usage.get("name") or "").split())
+    authorship = " ".join(str(usage.get("authorship") or "").split())
+    if name and authorship and name.endswith(" " + authorship):
+        return name[:-len(authorship)].strip()
+    if name and not authorship:
+        return name
+    return usage.get("canonicalName") or name or None
+
+
 def _usage(usage, classification=None):
     if not usage:
         return None
@@ -138,7 +219,7 @@ def _usage(usage, classification=None):
             ranks[rank] = item["name"]
     return {
         "id": usage.get("key") or usage.get("id"),
-        "scientificName": usage.get("canonicalName") or usage.get("name"),
+        "scientificName": _name_without_authorship(usage),
         "scientificNameAuthorship": usage.get("authorship") or None,
         "label": usage.get("name") or usage.get("label"),
         "taxonRank": _rank(usage.get("rank")),
@@ -620,7 +701,9 @@ def bulk_acceptable(row):
     """Exact matches of names written in the label, without any identification qualifier.
 
     A variant or higher-rank match is a different name; an interpreted name (translation, expanded
-    abbreviation, typo fix) and a qualified label ("sp.", "cf.") each need a reviewer's own look.
+    abbreviation, typo fix) and a qualified label ("sp.", "cf.") each need a reviewer's own look. An
+    "exact" match whose name is coarser than or differs from the queried name (hints can steer the
+    matcher there) is never accepted in bulk either.
     """
     from api.models import TaxonNameMatch
 
@@ -633,6 +716,7 @@ def bulk_acceptable(row):
         and bool(match.get("usage"))
         and not row.identification_qualifier
         and not is_preprocessed(row)
+        and not coarser_replacement((row.query or {}).get("scientificName"), match["usage"], match.get("matchType"))
     )
 
 

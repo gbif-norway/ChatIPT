@@ -1,4 +1,6 @@
 import json
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -76,6 +78,53 @@ class SummarizeMatchTests(SimpleTestCase):
         self.assertIsNone(result["usage"])
         self.assertEqual(result["alternatives"][0]["id"], "C3DM4")
         self.assertEqual(result["alternatives"][0]["matchType"], "VARIANT")
+
+
+REAL = json.loads((Path(__file__).parent / "testdata" / "col_v2_real_matches.json").read_text())
+
+
+class RealNameTests(SimpleTestCase):
+    """Real GBIF v2 responses (trimmed) for names published wrongly from conversions 560 and 570."""
+
+    def test_rank_markers_survive_from_the_v2_name(self):
+        betula = taxon_matching.summarize_match(
+            REAL["Betula pubescens subsp. czerepanovii (N.I.Orlova) Hämet-Ahti"]["response"])["usage"]
+        # canonicalName is "Betula pubescens czerepanovii", a different combination in botany.
+        self.assertEqual((betula["scientificName"], betula["scientificNameAuthorship"], betula["taxonRank"]),
+                         ("Betula pubescens subsp. czerepanovii", "(N.I.Orlova) Hämet-Ahti", "subspecies"))
+        columba = taxon_matching.summarize_match(REAL["Columba livia var. domestica"]["response"])["usage"]
+        self.assertEqual((columba["scientificName"], columba["scientificNameAuthorship"]),
+                         ("Columba livia var. domestica", "J.F.Gmelin, 1789"))
+        larus = taxon_matching.summarize_match(REAL["Larus sp."]["response"])["usage"]
+        self.assertEqual(larus["scientificName"], "Larus")
+        # A higher taxon without authorship, and an alternative, keep their plain names.
+        calanus = taxon_matching.summarize_match(REAL["Calanus"]["response"])
+        self.assertEqual(calanus["usage"]["scientificName"], "Arthropoda")
+        self.assertEqual(calanus["alternatives"][0]["scientificName"], "Calanus")
+
+    def test_names_whose_authorship_is_not_a_suffix_fall_back_to_the_canonical_name(self):
+        self.assertEqual(taxon_matching._name_without_authorship(
+            {"name": "Aus bus L. subsp. bus", "canonicalName": "Aus bus bus", "authorship": "L."}), "Aus bus bus")
+        self.assertEqual(taxon_matching._name_without_authorship(
+            {"name": "Mentha × piperita L.", "canonicalName": "Mentha piperita", "authorship": "L."}), "Mentha × piperita")
+        self.assertEqual(taxon_matching._name_without_authorship({"canonicalName": "Aus"}), "Aus")
+
+    def test_name_parts_ignore_markers_subgenus_and_authorship(self):
+        self.assertEqual(taxon_matching.name_parts("Betula pubescens subsp. czerepanovii (N.I.Orlova) Hämet-Ahti"),
+                         ["betula", "pubescens", "czerepanovii"])
+        self.assertEqual(taxon_matching.name_parts("Carabus (Morphocarabus) kruberi Fischer, 1823"), ["carabus", "kruberi"])
+        self.assertEqual(taxon_matching.name_parts("Mentha x piperita"), taxon_matching.name_parts("Mentha × piperita L."))
+        self.assertEqual(taxon_matching.name_parts("Trachytes aegrota (C. L. Koch, 1841)"), ["trachytes", "aegrota"])
+
+    def test_publication_bulk_accept_skips_an_exact_match_on_another_name(self):
+        def row(label):
+            summary = taxon_matching.summarize_match(REAL[label]["response"])
+            query = REAL[label]["query"]
+            return SimpleNamespace(decision=TaxonNameMatch.Decision.PENDING, record_count=1, matched_at=timezone.now(), match=summary,
+                                   identification_qualifier="", query=query, verbatim_label=query["scientificName"])
+        # 568: the class hint steered "AmphibiaReptilia" to an EXACT match on the class Amphibia.
+        self.assertFalse(taxon_matching.bulk_acceptable(row("AmphibiaReptilia sp.")))
+        self.assertTrue(taxon_matching.bulk_acceptable(row("Columba livia var. domestica")))
 
 
 class MatchColTests(SimpleTestCase):

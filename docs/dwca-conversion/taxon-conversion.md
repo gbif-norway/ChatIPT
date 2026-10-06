@@ -79,3 +79,70 @@ unknown fields, literal missing-value tokens, occurrence classification conflict
 multiple occurrence extensions, reproducibility, broken serialized foreign keys,
 queue/export/download behaviour and original ZIP preservation. No real Taxon-core
 archive or live model recommendation quality has been benchmarked yet.
+
+## Scientific-name check
+
+Occurrence and Identification names are parsed with GBIF's name parser and
+matched against Catalogue of Life XR through GBIF's v2 matcher
+(`checklistKey`), in `back-end/api/conversion_names.py` with
+`back-end/api/taxon_matching.py`. A match is a suggestion. Only names are
+published. COL usage IDs are kept as provenance in the report and never become
+`taxonID`. `verbatimIdentification` keeps the source text.
+
+**Names keep their rank marker.** COL names come from the v2 usage `name` with
+its trailing authorship removed. They do not come from `canonicalName`, which
+drops "subsp."/"var."/"f." and turns "Betula pubescens subsp. czerepanovii"
+into a different botanical combination. When the authorship is not a plain
+suffix, as in some autonyms, the canonical name is used. The publication
+workflow's matcher shares this behaviour.
+
+**A coarser or different COL name never replaces the user's name by
+default.** Matching compares the asserted name (the parsed name, or the label
+without its qualifier) with each COL usage. Markers, authorship and case are
+ignored. A usage *replaces* the asserted name when it differs from it and any
+of these is true:
+
+- it is a HIGHERRANK match;
+- it has fewer name parts or a higher rank;
+- it is in another genus.
+
+Real cases include "Calanus" → the phylum Arthropoda, "Trientalis europaea" →
+the genus Lysimachia, and "AmphibiaReptilia sp." → the class Amphibia (an
+"exact" match steered there by the class hint). Genus spelling corrections such
+as Pelecopis → Pelecopsis also count, because a near spelling can also be a
+plant genus ("Calanus" → "Cajanus"). The same name is never a replacement,
+whatever ranks the source supplies: "Larus sp." accepted as the genus Larus
+keeps the user's assertion.
+
+The server enforces these rules:
+
+- A replacing usage is never accepted in bulk.
+- A single choice of a replacing usage needs `confirm_coarser: true`.
+- For such names, the suggested action is **Keep my name**.
+- A COL decision saved before this check, which would replace the name and was
+  never confirmed, is not applied at conversion. The review marks it to be made
+  again, and the report lists it under `not_applied`.
+
+The review lists same-name COL usages (homonyms) inline, with their
+kingdom › phylum › class. It names what a replacing option would do, for
+example "replaces your genus with a phylum", and asks for a second click.
+**Don't publish a name** (decision `empty`) is a secondary option. It leaves
+`scientificName`, its authorship and its rank empty. The supplied text fills
+`verbatimIdentification` wherever that would otherwise be empty.
+
+**Name, rank and authorship are written together.** Whenever a decision writes
+`scientificName`, it also writes the `taxonRank` and authorship that belong to
+that name. Each frame row reads its supplied authorship and rank from its own
+source row, so an occurrence and the identification made from it get identical
+values.
+
+| Decision | Rank | Authorship |
+| --- | --- | --- |
+| Parsed split | The parsed rank | The user's own authorship is kept and differences are counted; the parsed one fills a blank |
+| COL name | COL's rank | COL's authorship; the supplied one survives only when COL has none for the same name |
+
+Replaced rank values are counted per name (`ranksReplaced`, `ranks_replaced`).
+Replaced authorships are counted as `authorshipReplaced`.
+
+Regression fixtures are trimmed real v2 responses for conversions 560–570
+(`back-end/api/testdata/col_v2_real_matches.json`).
