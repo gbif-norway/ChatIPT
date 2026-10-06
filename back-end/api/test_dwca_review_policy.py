@@ -215,3 +215,60 @@ class StreamlinedReviewTests(SimpleTestCase):
         self.assertIn('withheld as invalid', notice['reason'])
         self.assertEqual(report['withheld_values'][0]['source_row'], 1)
         self.assertEqual(report['withheld_values'][0]['value'], 'NA')
+
+
+SPECIMEN_HEADERS = ['occurrenceID', 'basisOfRecord', 'institutionCode', 'collectionCode', 'catalogNumber', 'individualCount', 'sex', 'scientificName']
+# Helgeland Museum spiders (production datasets 559 and 572): specimens, no occurrenceStatus column.
+SPECIMENS = [['urn:catalog:RMZ:Araneae:0106', 'PreservedSpecimen', 'RMZ', 'Araneae', '0106', '1', 'f', 'Anyphaena accentuata'],
+             ['urn:catalog:RMZ:Araneae:0946', 'PreservedSpecimen', 'RMZ', 'Araneae', '0946', '1', 'm', 'Meioneta affinis']]
+
+
+class WhoDecidesTests(SimpleTestCase):
+    """Interpretations of supplied text, conventional defaults, and new facts (review-policy.md, "Who may decide")."""
+
+    def test_country_labels_and_age_remarks_are_interpretations_the_ai_may_apply(self):
+        archive = read_inputs([('occurrence.csv', table(
+            ['occurrenceID', 'basisOfRecord', 'countryCode', 'eventRemarks', 'scientificName', 'occurrenceStatus'],
+            [['urn:uuid:6f666495', 'HumanObservation', 'Svalbard and Jan Mayen', 'juv', 'Fulmarus glacialis', 'present'],
+             ['urn:uuid:5afa2fa7', 'HumanObservation', 'Great Britain', 'ad.', 'Bombycilla garrulus', 'present']]))])
+        plan = build_plan(archive)
+        routes = [issue for issue in plan['issues'] if issue['id'].startswith(('country-label:', 'age-remark:'))]
+        self.assertEqual(len(routes), 4)
+        for issue in routes:
+            with self.subTest(value=issue['source_value']):
+                self.assertEqual(issue['authority'], 'ai-reviewable')
+                self.assertFalse(any(option['assertion'] for option in issue['options']))
+
+    def test_specimens_without_status_are_present_by_a_visible_changeable_convention(self):
+        archive = read_inputs([('occurrence.csv', table(SPECIMEN_HEADERS, SPECIMENS))])
+        plan = build_plan(archive)
+        self.assertNotIn('status:0', {issue['id'] for issue in plan['issues']})
+        status = next(choice for choice in plan['automatic_choices'] if choice['id'] == 'status:0')
+        self.assertEqual(status['default'], 'present')
+        self.assertIn('PreservedSpecimen', status['reason'])
+        self.assertIn('Change this to absent', status['reason'])
+        self.assertTrue(status['convention'])
+        notice = next(warning for warning in plan['warnings'] if warning['id'] == 'status:0')
+        self.assertEqual(notice['title'], 'occurrence.csv: specimen records are recorded as present')
+        frames, report = convert(archive, plan, {**choices(plan), 'material:0': 'preserve'})
+        self.assertEqual(frames['occurrence']['occurrenceStatus'].tolist(), ['present', 'present'])
+        self.assertEqual(report['effective_decisions']['status:0'], 'present')
+        self.assertNotIn('status:0', report['decisions'])
+        # Undo: the user can still choose absent.
+        frames, report = convert(archive, plan, {**choices(plan), 'material:0': 'preserve', 'status:0': 'absent'})
+        self.assertEqual(frames['occurrence']['occurrenceStatus'].tolist(), ['absent', 'absent'])
+
+    def test_presence_stays_a_question_when_anything_could_report_an_absence(self):
+        cases = {
+            'zero count': (SPECIMEN_HEADERS, [*SPECIMENS, ['urn:catalog:RMZ:Araneae:0950', 'PreservedSpecimen', 'RMZ', 'Araneae', '0950', '0', '', 'Meioneta affinis']]),
+            'absence wording': (SPECIMEN_HEADERS + ['occurrenceRemarks'], [[*SPECIMENS[0], 'Searched, not found'], [*SPECIMENS[1], '']]),
+            'observation': (SPECIMEN_HEADERS, [SPECIMENS[0], [SPECIMENS[1][0], 'HumanObservation', *SPECIMENS[1][2:]]]),
+            'no basisOfRecord': (SPECIMEN_HEADERS[:1] + SPECIMEN_HEADERS[2:], [[row[0], *row[2:]] for row in SPECIMENS]),
+            'partial status': (SPECIMEN_HEADERS + ['occurrenceStatus'], [[*SPECIMENS[0], 'present'], [*SPECIMENS[1], '']]),
+        }
+        for name, (headers, rows) in cases.items():
+            with self.subTest(name):
+                plan = build_plan(read_inputs([('occurrence.csv', table(headers, rows))]))
+                status = next(issue for issue in plan['issues'] if issue['id'] == 'status:0')
+                self.assertEqual(status['authority'], 'user-assertion')
+                self.assertNotIn('status:0', {choice['id'] for choice in plan['automatic_choices']})

@@ -117,6 +117,8 @@ def build_value_disposition_ledger(plan, report, resources=None):
             'withheld_invalid_values': withheld_count,
             'emitted_but_flagged_values': emitted_flagged,
             'originals_only_values': originals_count,
+            # Missing-value tokens (NA, null, ...) left empty in identifier fields; part of originals_only_values.
+            'empty_placeholder_values': min(originals_count, int(summary.get('empty_placeholder', 0) or 0)),
             'unverified_values': unknown_count,
             'status': status,
             'needs_review': review,

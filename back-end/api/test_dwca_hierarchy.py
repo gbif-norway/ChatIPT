@@ -278,7 +278,12 @@ class OccurrenceCoreHierarchyTests(SimpleTestCase):
         column = parent_column(plan)
         self.assertEqual((column['default'], column['review']), ('preserve', True))
         frames, report = convert(archive, plan, decisions)
-        self.assertNotIn('parentEvent_fk', frames['event'])
+        # Separate row events: the repeated visit-1 gets one event holding that eventID, which its row events
+        # sit in. The supplied parentEventID (site-A) links nothing.
+        events = frames['event']
+        shared = events.set_index('eventID').loc['visit-1', 'event_pk']
+        self.assertEqual(sorted(events['parentEvent_fk']), ['', '', shared, shared])
+        self.assertEqual(events.set_index('eventID').loc['site-A', 'parentEvent_fk'], '')
         decisions[column['id']] = 'parent-link'
         with self.assertRaisesMessage(ImportFailure, 'combined by supplied eventID'):
             convert(archive, plan, decisions)

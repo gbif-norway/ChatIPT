@@ -5,6 +5,7 @@ Implementation update, 4 October 2026: rule versions 8–9 use
 roles and preserve-only outcomes proceed automatically with notices. This
 document retains the original broader design; its blanket confirmation language
 does not override the implemented distinction between interpretation and retention.
+Who may make each choice (interpretation, conventional default, new fact) is set out in §6.1.
 
 Target: ChatIPT's vendored TDWG DwC-DP `1.0_DEV` profile and 79 table schemas at
 `76898192fd298c2aa170a7059e1bdadf3ee2a828` (`back-end/api/templates/dwc-dp`).
@@ -220,6 +221,25 @@ Question rules:
 - Record the answer, who gave it, and the plan version it produced. Answers apply only to the
   dataset and plan version they were given for.
 - If the user does not know, the item stays `unresolved` and the default applies.
+
+### 6.1 Who may decide
+
+Implemented 6 October 2026. Every choice belongs to one of three classes. The class decides
+who may make it (`ISSUE_POLICY` and the per-issue `assertion_values` in the converter; see
+`api/dwca_review.py`).
+
+| class | examples | who decides |
+| --- | --- | --- |
+| **Interpretation of supplied text** | `country-label:` routes ("Norway" or "Great Britain" in `countryCode` → `event.country`, "Norwegian Sea" → `event.waterBody`); `age-remark:` routes ("juv", "ad." in `eventRemarks` → `occurrence.lifeStage` or `occurrenceRemarks`); column targets | Not assertions. The AI reviewer may apply them under the usual evidence and confidence rules; the user can change them. The text is always copied unchanged. |
+| **Conventional default** | `occurrenceStatus` = `present` for specimen records (see below) | Applied automatically as a visible automatic choice with a notice and a `reason`. It is marked `convention` and can be changed like any other automatic choice. Never asked. |
+| **New fact** | absence, survey completeness, survey or event category, splitting a repeated identity (`event-grain` `per_row`, `by_id_depth`, `occurrence-events` `per-row`), material identity, what media depicts, agent identity | Assertions. Only the user may choose them; an AI recommendation is shown for confirmation. |
+
+The specimen-presence convention applies to one Occurrence table when every row declares a
+`basisOfRecord` of `PreservedSpecimen`, `FossilSpecimen`, `MaterialSample`, `LivingSpecimen`
+or `MaterialCitation`, no row supplies `occurrenceStatus`, no `individualCount` or
+`organismQuantity` is zero, and no cell uses absence wording ("absent", "not found",
+"ikke funnet", …). GBIF interprets such records as present. Any exception keeps the
+present/absent question, which remains a user-only assertion.
 
 ## 7. Model context and avoiding per-row work
 

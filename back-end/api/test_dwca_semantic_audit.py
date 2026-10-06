@@ -1,7 +1,7 @@
 from django.test import SimpleTestCase
 
 from api.dwca_import import DWC, read_inputs
-from api.dwca_semantic_audit import audit_semantic_values
+from api.dwca_semantic_audit import audit_semantic_values, semantic_target_rejection
 
 
 class SemanticValueAuditTests(SimpleTestCase):
@@ -46,3 +46,11 @@ class SemanticValueAuditTests(SimpleTestCase):
                        if item['id'] == 'age_like_event_remarks')
         self.assertEqual(finding['count'], 3)
         self.assertEqual([example['value'] for example in finding['examples']], ['ad', 'juv.', 'adult + egg'])
+
+    def test_assertion_iri_fields_accept_only_absolute_iris(self):
+        for value in ('http://vocab.nerc.ac.uk/collection/P01/current/MSHSIZE1/', 'https://vocab.nerc.ac.uk/collection/P06/current/XXXX/',
+                      'urn:lsid:marinespecies.org:taxname:103259'):
+            self.assertIsNone(semantic_target_rejection('event-assertion.assertionTypeIRI', value))
+        for value in ('NA', 'micrometers', 'P01 MSHSIZE1', 'vocab.nerc.ac.uk/collection/S10/current/S102/'):
+            self.assertIn('absolute IRI', semantic_target_rejection('occurrence-assertion.assertionValueIRI', value))
+        self.assertIsNone(semantic_target_rejection('occurrence-assertion.assertionValue', 'NA'))

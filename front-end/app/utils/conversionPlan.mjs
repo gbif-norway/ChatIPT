@@ -119,6 +119,9 @@ export function columnDetails(state, selected) {
     let outcome
     if (retained) outcome = 'Kept in your original files with its table'
     else if (eventsKept) outcome = events === '' ? 'Waiting for your choice about event details on these rows' : 'Kept in your original files; event details on these rows are not copied'
+    else if (value === 'preserve' && column.verbatim_role === 'qualifier') outcome = partialCopy(state, column, selected)
+      ? `Added after the name text in ${column.verbatim_copy.split('.').pop()} where your file leaves it empty`
+      : `Added after the name text in ${column.verbatim_copy.split('.').pop()}`
     else if (value === 'preserve' && column.verbatim_copy) outcome = partialCopy(state, column, selected)
       ? `The text goes to ${column.verbatim_copy.split('.').pop()} where your file leaves it empty; scientificName comes from the name check or stays empty`
       : `The text goes to ${column.verbatim_copy.split('.').pop()}; scientificName comes from the name check or stays empty`

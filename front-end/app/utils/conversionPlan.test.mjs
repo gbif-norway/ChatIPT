@@ -159,6 +159,14 @@ test('a scientific name left empty says its text goes to verbatimIdentification'
   assert.match(columnDetails(named, makeSelector(named, {}))[0].outcome, /goes to verbatimIdentification/)
 })
 
+test('an identificationQualifier is described as added after the name, and counts as written', () => {
+  const qualified = { plan: { tables: [{ name: 't', core: true }], columns: [{ id: 'q', table: 0, term: term('identificationQualifier'), default: 'preserve',
+    verbatim_copy: 'occurrence.verbatimIdentification', verbatim_role: 'qualifier', options: [{ value: 'preserve' }] }], automatic_choices: [] } }
+  const selected = makeSelector(qualified, {})
+  assert.match(columnDetails(qualified, selected)[0].outcome, /^Added after the name text in verbatimIdentification$/)
+  assert.equal(summariseColumns(qualified, selected).mapped, 1)
+})
+
 test('event details on an occurrence table follow the occurrence-events choice in the diagram and summary', () => {
   const eventPlan = {
     tables: [{ name: 'event.txt', core: true, rows: 10 }, { name: 'occurrence.txt', core: false, rows: 40 }],

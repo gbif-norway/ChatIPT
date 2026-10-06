@@ -260,7 +260,7 @@ duplicates and unknown ids ignored):
 | 3 | choice not an option value | escalated, no recommendation | `invalid-option` |
 | 4 | option unavailable in current `option_status` | escalated, no recommendation | `unavailable-option` |
 | 5 | after dropping unknown refs, no substantive ref remains (anything other than `decision:*`) | escalated | `uncited` |
-| 6 | issue `authority == "user-assertion"` or `option.assertion` | escalated with recommendation | `assertion` |
+| 6 | issue `authority == "user-assertion"` or `option.assertion` (a new fact; interpretations of supplied text such as `country-label:`/`age-remark:` routes are not assertions, see [review policy §6.1](review-policy.md#61-who-may-decide)) | escalated with recommendation | `assertion` |
 | 7 | `needs_user` | escalated with recommendation | `model-needs-user` |
 | 8 | `confidence != "high"` | escalated with recommendation | `low-confidence` |
 | 9 | column-like issue chooses `preserve` while another available option maps the column to a target | escalated with recommendation | `drops-field` |
