@@ -97,6 +97,25 @@ def _reviewed_value_id(kind, t, c, value):
 AGENT_NAMES_ID = 'agent-names'
 
 
+def _agent_names_warnings(warnings, roles):
+    """The plan's notices, with the agent-names notice restated from the linked mentions (or dropped)."""
+    linked = sum(stats.get('name', 0) for stats in roles['fields'].values())
+    names = roles['agents_created'].get('name', 0)
+    kept = roles.get('unlinked_name_only', 0)
+    restated = []
+    for warning in warnings:
+        if warning.get('id') == AGENT_NAMES_ID:
+            if not linked:
+                continue
+            warning = {**warning, 'count': linked, 'names': names, 'reason': (
+                f"Linked {linked:,} {'mention' if linked == 1 else 'mentions'} of {names:,} "
+                f"{'name' if names == 1 else 'names'} without identifiers to one agent per exact name"
+                + (f"; {kept:,} {'mention was' if kept == 1 else 'mentions were'} kept as text only by your choices" if kept else '')
+                + '. Names with identifiers are linked by their identifier.')}
+        restated.append(warning)
+    return restated
+
+
 def _agent_name_id(value):
     return 'agent-share:' + hashlib.sha256(value.encode('utf-8')).hexdigest()
 
@@ -535,7 +554,9 @@ def _streamline_plan(archive, core, plan, warnings):
                       'for each source row; no persistent material identifier is inferred.')
         elif issue['id'] == AGENT_NAMES_ID:
             default = 'shared'
-            reason = (f"Linked {issue['count']:,} {'mention' if issue['count'] == 1 else 'mentions'} of "
+            # Other choices (a column kept in the originals, a name kept as text) can lower these counts;
+            # the conversion report restates the notice with what was linked.
+            reason = (f"Links up to {issue['count']:,} {'mention' if issue['count'] == 1 else 'mentions'} of "
                       f"{issue['names']:,} {'name' if issue['names'] == 1 else 'names'} without identifiers to one agent per "
                       "exact name. Choose 'Keep all names without identifiers as text only' if equal names may stand "
                       "for different people or organizations. Names with identifiers are linked by their identifier.")
@@ -1969,7 +1990,8 @@ def convert(archive, plan, decisions):
     validation = validate_dwc_dp_resources(frames)
     report = {"plan_id": plan["id"], "rule_version": RULE_VERSION, "source_sha256": namespace, "schema": plan["schema"],
               "decisions": user_decisions, 'effective_decisions': decisions,
-              'automatic_choices': plan.get('automatic_choices', []), 'warnings': plan.get('warnings', []),
+              'automatic_choices': plan.get('automatic_choices', []),
+              'warnings': _agent_names_warnings(plan.get('warnings', []), agent_roles.report),
               "columns": dispositions, "row_crosswalk": crosswalk, "files": plan["files"],
               'media_subjects': media_subjects,
               'extension_subjects': extension_subjects,

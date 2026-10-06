@@ -62,7 +62,7 @@ class AgentRoleTests(SimpleTestCase):
         self.assertFalse([item for item in plan['issues'] if item['id'].startswith(('agent-share:', 'agent-names'))])
         everyone = automatic['agent-names']
         self.assertEqual((everyone['default'], everyone['count'], everyone['names']), ('shared', 6, 2))
-        self.assertIn('Linked 6 mentions of 2 names', everyone['reason'])
+        self.assertIn('Links up to 6 mentions of 2 names', everyone['reason'])
         share = next(item for item in automatic.values() if item['id'].startswith('agent-share:'))
         self.assertEqual((share['default'], share['source_value']), ('shared', 'OceanPro AS'))
         self.assertIn("Linked the 5 mentions of 'OceanPro AS' to one agent", share['reason'])
@@ -214,18 +214,37 @@ class AgentRoleTests(SimpleTestCase):
         plan = build_plan(archive)
         names = next(item for item in plan['automatic_choices'] if item['id'] == 'agent-names')
         notice = next(item for item in plan['warnings'] if item['id'] == 'agent-names')
-        self.assertIn('Linked 3 mentions of 2 names', notice['reason'])
+        self.assertIn('Links up to 3 mentions of 2 names', notice['reason'])
         self.assertEqual(notice['reason'], names['reason'])
         choices = {issue['id']: issue['options'][0]['value'] for issue in plan['issues']}
         frames, report = convert(archive, plan, choices)
         linked = sum(stats['name'] for stats in report['agent_roles']['fields'].values())
         self.assertEqual((linked, len(frames['agent'])), (names['count'], names['names']))
-        self.assertIn('agent-names', {item.get('id') for item in report['warnings']})
-        # A column remapped to another agent role was counted too, so its names keep their choice.
+        restated = next(item for item in report['warnings'] if item.get('id') == 'agent-names')
+        self.assertTrue(restated['reason'].startswith('Linked 3 mentions of 2 names'), restated['reason'])
+
+        def notice_after(changes):
+            _, changed = convert(archive, plan, {**choices, **changes})
+            linked = sum(stats['name'] for stats in changed['agent_roles']['fields'].values())
+            return linked, next((item for item in changed['warnings'] if item.get('id') == 'agent-names'), None)
+
+        # The report restates the notice from what was linked after overrides.
         recorded = next(column for column in plan['columns'] if column['term'].endswith('/recordedBy'))
+        linked, kept_column = notice_after({recorded['id']: 'preserve'})
+        self.assertEqual(linked, 1)
+        self.assertTrue(kept_column['reason'].startswith('Linked 1 mention of 1 name without'), kept_column['reason'])
+        self.assertEqual((kept_column['count'], kept_column['names']), (1, 1))
+        share = next(item for item in plan['automatic_choices'] if item['id'].startswith('agent-share:'))
+        linked, kept_name = notice_after({share['id']: 'separate'})
+        self.assertEqual(linked, 1)
+        self.assertTrue(kept_name['reason'].startswith('Linked 1 mention of 1 name without identifiers to one agent per '
+                                                       'exact name; 2 mentions were kept as text only'), kept_name['reason'])
+        # With every name kept as text, nothing was linked and the notice is gone.
+        self.assertEqual(notice_after({'agent-names': 'text'}), (0, None))
+        # A column remapped to another agent role was counted too, so its names keep their choice.
         other = next(option['value'] for option in recorded['options']
                      if option['value'] != recorded['default'] and option['value'].endswith(('By', 'eventConductedBy')))
-        remapped, remapped_report = convert(archive, plan, {**choices, recorded['id']: other})
+        _, remapped_report = convert(archive, plan, {**choices, recorded['id']: other})
         self.assertEqual(sum(stats['name'] for stats in remapped_report['agent_roles']['fields'].values()), names['count'])
 
     def test_explicit_ids_decide_identity_not_names(self):

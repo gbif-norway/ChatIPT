@@ -58,13 +58,17 @@ Agent per exact name within the dataset, with one role row per mention
 remark saying they stand for an exact name only. A name-only mention is never
 merged into an explicit-ID Agent, even when the names are equal: it gets the
 separate name Agent; `agent_roles.name_agents_matching_id_agents` counts such
-names. This is an automatic choice shown as a notice ("Linked N mentions of M
-names…", with a link to the setting): `agent-names` keeps every name without an
-identifier as text only, and each repeated name has its own `agent-share:`
-choice to keep that name as text only. Per-name choices are inactive while
-`agent-names` keeps all names as text. Names are counted from every column that
-can map to an agent role, so a remapped column's names have the same choice and
-the notice's counts match the linked mentions. Placeholder names never become
+names. This is an automatic choice shown as a notice with a link to the
+setting: `agent-names` keeps every name without an identifier as text only, and
+each repeated name has its own `agent-share:` choice to keep that name as text
+only. Per-name choices are inactive while `agent-names` keeps all names as text.
+Names are counted from every column that can map to an agent role, so a
+remapped column's names have the same choice. During review the notice gives an
+upper bound ("Links up to N mentions of M names…"), since keeping a column in
+the originals or a name as text lowers it. The conversion report restates the
+notice from what was linked ("Linked N mentions of M names…; K mentions were
+kept as text only by your choices") and drops it when nothing was linked by
+name. Placeholder names never become
 Agents: the converter's empty-cell tokens and values such as `unknown`,
 `[Ukjent]`, `Unknown collector`, `Samler ukjent`, `Ikke angitt`, `s. n.`,
 `N.N`, `Indet.` or `<NA>` (a placeholder word with only role nouns, brackets,
