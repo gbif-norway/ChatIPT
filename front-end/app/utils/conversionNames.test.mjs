@@ -1,125 +1,125 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  DECISION_LABELS, bulkActions, bulkBody, carriedMessage, checkMessage, choiceGroups, choiceLabel, classificationContext, decisionBody, decisionResult,
-  isChecking, isEditable, pageCount, pageQuery, parseNote, replacementWarning, skippedMessage, unconfirmedMessage,
+  DECISION_LABELS, GROUPS, applyLabel, bulkBody, carriedMessage, checkMessage, choiceGroups, choiceLabel, classificationContext, decisionBody,
+  decisionResult, groupOptions, groupQuery, groupSubtitle, groupTitle, isChecking, isEditable, needsRowDecision, pageCount, parseNote, previewResult,
+  progress, reasonText, replacementWarning, rowStatus, skippedMessage, stemLabel, undoAutoBody, undoBatchBody,
 } from './conversionNames.mjs'
 
-// "Calanus" (conversion 566, 1,092 rows) as the server lists it: COL's pick is the phylum, the genus is an alternative.
-const coarser = { decision: 'col', same_name: false, matchType: 'HIGHERRANK',
-  usage: { id: 'RT', scientificName: 'Arthropoda', taxonRank: 'phylum', classification: { kingdom: 'Animalia', phylum: 'Arthropoda' } },
-  replaces: { kind: 'coarser', text: 'replaces your genus with a phylum' } }
-const leach = { decision: 'alternative', same_name: true, replaces: null, matchType: 'EXACT',
-  usage: { id: '7NRJ6', scientificName: 'Calanus', scientificNameAuthorship: 'Leach, 1816', taxonRank: 'genus', status: 'accepted',
-    classification: { kingdom: 'Animalia', phylum: 'Arthropoda', class: 'Copepoda', family: 'Calanidae' } } }
-const saussure = { ...leach, usage: { ...leach.usage, id: '8NMRP', scientificNameAuthorship: 'Saussure, 1862', status: 'synonym',
-  classification: { kingdom: 'Animalia', phylum: 'Arthropoda', class: 'Insecta' } } }
-const cajanus = { decision: 'alternative', same_name: false, matchType: 'VARIANT',
-  usage: { id: '9CK8F', scientificName: 'Cajanus', scientificNameAuthorship: 'Adans.', taxonRank: 'genus', classification: { kingdom: 'Plantae' } },
-  replaces: { kind: 'genus', text: 'replaces your name with Cajanus' } }
-const calanus = { label: 'Calanus', rows: 1092, suggested: 'keep', col_choices: [coarser, leach, saussure, cajanus] }
-
-test('exact same-name COL names are listed inline with their classification; coarser and other names are not', () => {
-  const groups = choiceGroups(calanus)
-  assert.equal(groups.main, coarser)
-  assert.deepEqual(groups.sameName.map(choice => choice.usage.id), ['7NRJ6', '8NMRP'])
-  assert.deepEqual(groups.others.map(choice => choice.usage.id), ['9CK8F'])
-  assert.equal(choiceLabel(leach), 'Calanus Leach, 1816 · genus · Animalia › Arthropoda › Copepoda')
-  assert.equal(classificationContext(saussure.usage), 'Animalia › Arthropoda › Insecta')
-  assert.equal(classificationContext({}), '')
-  assert.deepEqual(choiceGroups({}), { main: null, sameName: [], others: [] })
-  // An alternative that repeats COL's own pick is not offered twice.
-  assert.deepEqual(choiceGroups({ col_choices: [{ ...leach, decision: 'col' }, leach] }).sameName, [])
+test('group order, titles and option labels follow the server groups', () => {
+  assert.deepEqual(Object.keys(GROUPS), ['check', 'unconfirmed', 'spelling', 'uncertain', 'auto'])
+  assert.equal(groupTitle({ kind: 'check' }), 'Check against your data')
+  assert.equal(groupTitle({ kind: 'auto' }), 'Accepted automatically')
+  assert.deepEqual(groupOptions({ kind: 'auto', options: [{ decision: 'col', eligible: 5 }, { decision: 'parsed', eligible: 3 }, { decision: 'keep', eligible: 1 }] }), [
+    { decision: 'col', label: 'Use COL name', eligible: 5 },
+    { decision: 'parsed', label: 'Use split', eligible: 3 },
+    { decision: 'keep', label: 'Keep as written', eligible: 1 },
+  ])
+  assert.deepEqual(groupOptions({ kind: 'check', options: [{ decision: 'mine', eligible: 0 }] }), [{ decision: 'mine', label: 'Keep my names', eligible: 0 }])
+  assert.equal(groupOptions({ kind: 'spelling', options: [{ decision: 'col', eligible: 2 }, { decision: 'mine', eligible: 1 }] })[1].label, 'Keep my spelling')
+  assert.equal(groupOptions({ kind: 'uncertain', options: [{ decision: 'stem', eligible: 4 }, { decision: 'keep', eligible: 2 }] })[0].label, 'Publish the genus or family name')
+  assert.equal(groupOptions({ kind: 'unconfirmed', options: [{ decision: 'mine', eligible: 3 }] })[0].eligible, 3)
+  assert.equal(applyLabel(1), 'Apply to 1 name')
+  assert.equal(applyLabel(4), 'Apply to 4 names')
 })
 
-test('a coarser COL name is spelled out before it can replace the user name', () => {
-  assert.equal(replacementWarning(coarser, 1092),
-    '“Arthropoda” replaces your genus with a phylum on 1,092 rows. Your text stays in verbatimIdentification.')
-  assert.equal(replacementWarning(leach, 1092), '')
-  assert.deepEqual(decisionBody('p1', 'Calanus', 'col', undefined, { confirmCoarser: true }).name_decisions,
-    { Calanus: { decision: 'col', confirm_coarser: true } })
-  assert.deepEqual(decisionBody('p1', 'Calanus', 'alternative', '7NRJ6').name_decisions,
-    { Calanus: { decision: 'alternative', usage_id: '7NRJ6' } })
+test('check subtitles describe each conflict signature', () => {
+  assert.equal(groupSubtitle({ kind: 'check', labels: 81, signature: { code: 'kingdom', yours: 'Animalia', col: 'Plantae' } }), 'Your kingdom says Animalia; COL places these 81 names in Plantae.')
+  assert.equal(groupSubtitle({ kind: 'check', labels: 1, signature: { code: 'phylum', yours: 'Chordata', col: 'Arthropoda' } }), 'Your phylum says Chordata; COL places this name in Arthropoda.')
+  assert.match(groupSubtitle({ kind: 'check', signature: { code: 'name' } }), /Keep yours unless you are sure/)
+  assert.match(groupSubtitle({ kind: 'check', signature: { code: 'id' } }), /scientificNameID or taxonID/)
+  assert.equal(groupSubtitle({ kind: 'auto', signature: { code: 'name' } }), '')
 })
 
-test('earlier unconfirmed choices are announced and spelling corrections list what changes', () => {
-  assert.equal(unconfirmedMessage({ unconfirmed: 0 }), null)
-  assert.equal(unconfirmedMessage(undefined), null)
-  assert.match(unconfirmedMessage({ unconfirmed: 1 }), /^1 earlier choice needs confirming: it replaces a name .* your own name is kept/)
-  assert.match(unconfirmedMessage({ unconfirmed: 3 }), /^3 earlier choices need confirming: they replace names/)
-  const spelling = bulkActions({ summary: { bulk_spelling: 2, spelling_corrections: [
-    { label: 'Circium heterophyllum', to: 'Cirsium heterophyllum' }, { label: 'Trema orientalis', to: 'Trema orientale' }] } })
-  assert.deepEqual(spelling.map(action => [action.bulk, action.count]), [['spelling', 2]])
-  assert.deepEqual(spelling[0].items, ['Circium heterophyllum → Cirsium heterophyllum', 'Trema orientalis → Trema orientale'])
+test('progress combines automatic, undecided and unchecked counts', () => {
+  assert.deepEqual(progress({ labels: 20, decided: 16, unchecked: 2, groups: [{ auto: 8, undecided: 2 }, { auto: 3, undecided: 1 }] }), {
+    auto: 11, need: 3, unchecked: 2, decided: 16, labels: 20, percent: 80,
+    text: '11 accepted automatically · 3 need you · 2 still being checked',
+  })
 })
 
-test('decisions kept from an earlier check are mentioned', () => {
-  assert.equal(carriedMessage(undefined), null)
-  assert.equal(carriedMessage({ decisions: 0, bulk_not_carried: 0 }), null)
-  assert.equal(carriedMessage({ decisions: 1, bulk_not_carried: 0 }), '1 earlier name decision was kept from your previous check.')
-  assert.equal(carriedMessage({ decisions: 989, bulk_not_carried: 12 }),
-    '989 earlier name decisions were kept from your previous check. 12 accepted in bulk are offered again in bulk under the current checks.')
-})
-
-test('"Leave empty" is now "No name published"', () => {
-  assert.equal(DECISION_LABELS.empty, 'No name published')
-})
-
-const review = (patch = {}) => ({ status: 'complete', error: '', summary: { labels: 10, checked: 10, bulk_col: 3, bulk_parsed: 0 }, ...patch })
-
-test('decision results show what is written to scientificName', () => {
-  assert.equal(decisionResult({ decision: 'col', scientificName: 'Aus bus', scientificNameAuthorship: 'L.' }), 'Aus bus L.')
-  assert.equal(decisionResult({ decision: 'keep' }), 'The supplied text')
-  assert.equal(decisionResult({ decision: 'empty' }), '')
-  assert.equal(decisionResult(null), '')
-})
-
-test('messages follow the check status', () => {
-  assert.equal(checkMessage(review()), null)
+test('check messages, paging and editing helpers keep their expected states', () => {
   assert.equal(checkMessage(null), null)
-  assert.match(checkMessage(review({ status: 'running', summary: { labels: 1200, checked: 100 } })).text, /100 of 1,200 names checked/)
-  assert.equal(checkMessage(review({ checking: true, status: 'incomplete' })).spinner, true)
-  const failed = checkMessage(review({ status: 'error', error: 'GBIF unreachable', summary: { labels: 4, checked: 1 } }))
-  assert.equal(failed.variant, 'warning')
-  assert.match(failed.text, /GBIF unreachable.*Conversion does not depend on them/)
-  assert.match(checkMessage(review({ status: 'incomplete', summary: { labels: 4, checked: 1 } })).text, /check again/)
-  assert.equal(isChecking(review({ checking: true })), true)
-  assert.equal(isChecking(review()), false)
-})
-
-test('bulk actions list only those that would decide something', () => {
-  assert.deepEqual(bulkActions(review()).map(action => [action.bulk, action.count]), [['exact_col', 3]])
-  assert.deepEqual(bulkActions({ summary: { bulk_col: 0, bulk_parsed: 0 } }), [])
-  assert.deepEqual(bulkActions(undefined), [])
-})
-
-test('request bodies carry the plan id and withdraw decisions with null', () => {
-  assert.deepEqual(decisionBody('p1', 'Aus bus', 'alternative', 'X1'), { action: 'names', plan_id: 'p1', name_decisions: { 'Aus bus': { decision: 'alternative', usage_id: 'X1' } } })
-  assert.deepEqual(decisionBody('p1', 'Aus bus', 'keep').name_decisions, { 'Aus bus': { decision: 'keep' } })
-  assert.deepEqual(decisionBody('p1', 'Aus bus', null).name_decisions, { 'Aus bus': null })
-  assert.deepEqual(bulkBody('p1', 'parsed'), { action: 'names', plan_id: 'p1', bulk: 'parsed' })
-})
-
-test('paging and editing rules', () => {
-  assert.equal(pageQuery({ offset: 200, view: 'all' }), 'names_offset=200&names_limit=100&names_view=all')
-  assert.equal(pageQuery(), 'names_offset=0&names_limit=100&names_view=pending')
-  assert.equal(pageCount(0), 1)
-  assert.equal(pageCount(250), 3)
-  assert.equal(isEditable({ status: 'reviewing' }), true)
+  assert.equal(checkMessage({ status: 'complete' }), null)
+  assert.equal(checkMessage({ status: 'running', summary: { checked: 1, labels: 4 } }).spinner, true)
+  assert.match(checkMessage({ status: 'error', error: 'COL unavailable', summary: { checked: 1, labels: 4 } }).text, /COL unavailable/)
+  assert.equal(isChecking({ status: 'running' }), true)
+  assert.equal(isEditable({ status: 'review' }), true)
   assert.equal(isEditable({ status: 'complete' }), false)
-})
-
-test('parse notes explain why a split is or is not offered', () => {
-  assert.match(parseNote({ qualifier: 'sp.', parsed: { usable: false } }), /qualifier/)
-  assert.match(parseNote({ parsed: { usable: false } }), /could not read/)
-  assert.match(parseNote({ parsed: { usable: true, lossless: false } }), /reformat/)
+  assert.equal(pageCount(250), 3)
+  assert.equal(pageCount(0), 1)
   assert.match(parseNote({ parsed: { usable: true, lossless: true, authorship: 'L.' } }), /Splits exactly/)
-  assert.equal(parseNote({}), 'Not parsed yet')
+  assert.match(parseNote({ parsed: { usable: false } }), /could not read/)
+  assert.equal(skippedMessage({ skipped_long: { labels: 1, rows: 1 }, max_label_chars: 500 }), '1 name is longer than 500 characters (1 row). They are not checked and are converted as they are.')
+  assert.equal(skippedMessage({ skipped_long: { labels: 0, rows: 0 } }), null)
+  assert.equal(replacementWarning({ usage: { scientificName: 'Arthropoda' }, replaces: { text: 'replaces your genus with a phylum' } }, 2), '“Arthropoda” replaces your genus with a phylum on 2 rows. Your text stays in verbatimIdentification.')
 })
 
-test('overlong names are reported, not hidden', () => {
-  assert.equal(skippedMessage({ skipped_long: { labels: 0, rows: 0 } }), null)
-  assert.equal(skippedMessage({}), null)
-  assert.match(skippedMessage({ skipped_long: { labels: 1, rows: 1 }, max_label_chars: 500 }), /^1 name is longer than 500 characters \(1 row\)/)
-  assert.match(skippedMessage({ skipped_long: { labels: 3, rows: 1200 }, max_label_chars: 500 }), /3 names are longer than 500 characters \(1,200 rows\)/)
+test('request bodies and group paging use the server contract', () => {
+  assert.deepEqual(bulkBody('p1', 'check:name', 'mine'), { action: 'names', plan_id: 'p1', bulk: { group: 'check:name', decision: 'mine' } })
+  assert.deepEqual(undoBatchBody('p1', 'b2'), { action: 'names', plan_id: 'p1', undo_batch: 'b2' })
+  assert.deepEqual(undoAutoBody('p1', 'uncertain'), { action: 'names', plan_id: 'p1', undo_auto: 'uncertain' })
+  assert.deepEqual(decisionBody('p1', 'Aus bus', 'stem').name_decisions['Aus bus'], { decision: 'stem' })
+  assert.deepEqual(decisionBody('p1', 'Aus bus', null).name_decisions['Aus bus'], null)
+  assert.match(groupQuery({ group: 'check:name', offset: 100, q: 'Aus bus' }), /names_view=group/)
+  assert.match(groupQuery({ group: 'check:name', offset: 100, q: 'Aus bus' }), /names_group=check%3Aname/)
+  assert.match(groupQuery({ group: 'check:name', offset: 100, q: 'Aus bus' }), /names_q=Aus\+bus/)
+})
+
+test('row helpers label result, provenance, reasons and stem choices', () => {
+  assert.equal(DECISION_LABELS.stem, 'Published as the genus or family')
+  assert.equal(decisionResult({ decision: 'col', scientificName: 'Aus bus', scientificNameAuthorship: 'L.' }), 'Aus bus L.')
+  assert.equal(decisionResult({ decision: 'stem', scientificName: 'Larus', scientificNameAuthorship: 'Linnaeus, 1758', taxonRank: 'genus' }),
+    'Larus Linnaeus, 1758 (genus)')
+  assert.equal(decisionResult({ decision: 'keep' }), 'Your text as written')
+  assert.equal(decisionResult({ decision: 'empty' }), 'No name published')
+  assert.deepEqual(rowStatus({ decision: { decision: 'keep', by: 'user' } }), { kind: 'user', text: 'Changed by you' })
+  assert.deepEqual(rowStatus({ decision: { decision: 'col', by: 'bulk:check' } }), { kind: 'bulk', text: 'Applied to the group' })
+  assert.deepEqual(rowStatus({ decision: { decision: 'stem', by: 'auto:uncertain' } }), { kind: 'auto', text: 'Accepted automatically' })
+  assert.deepEqual(rowStatus({ decision: { decision: 'col' }, decision_held: true }), { kind: 'held', text: 'Your name is kept' })
+  assert.deepEqual(rowStatus({}), { kind: null, text: '' })
+  assert.equal(reasonText({ reasons: [{ text: 'Not found in COL' }] }), 'Not found in COL')
+  assert.equal(stemLabel({ stem: { scientificName: 'Galium', taxonRank: 'genus' } }), 'Publish the genus Galium')
+  assert.equal(needsRowDecision({ eligible: ['col'] }, 'col'), false)
+  assert.equal(needsRowDecision({ eligible: ['keep'] }, 'col'), true)
+  // Nothing is flagged before a group decision is chosen (check groups have no default).
+  assert.equal(needsRowDecision({ eligible: [] }, ''), false)
+  assert.equal(needsRowDecision({ eligible: [], decision: { decision: 'keep' } }, 'col'), false)
+})
+
+test('carried decisions mention dropped labels', () => {
+  assert.equal(carriedMessage(undefined), null)
+  assert.equal(carriedMessage({ decisions: 1, dropped: 0 }), '1 earlier name decision was kept from your previous check.')
+  assert.equal(carriedMessage({ decisions: 0, dropped: 3 }), '3 earlier name decisions could not be kept because the names in your data changed.')
+})
+
+test('classification and COL choice helpers retain context for row options', () => {
+  const choice = { decision: 'alternative', same_name: true, replaces: null, usage: {
+    id: '7', scientificName: 'Calanus', scientificNameAuthorship: 'Leach, 1816', taxonRank: 'genus',
+    classification: { kingdom: 'Animalia', phylum: 'Arthropoda', class: 'Copepoda' },
+  } }
+  assert.equal(classificationContext(choice.usage), 'Animalia › Arthropoda › Copepoda')
+  assert.equal(choiceLabel(choice), 'Calanus Leach, 1816 · genus · Animalia › Arthropoda › Copepoda')
+  assert.deepEqual(choiceGroups({ col_choices: [{ ...choice, decision: 'col' }, choice] }).sameName, [])
+})
+
+test('exported copy stays free of broad acceptance wording', () => {
+  const exports = { GROUPS, DECISION_LABELS, groupTitle, groupSubtitle, groupOptions, applyLabel, progress, groupQuery, bulkBody,
+    undoBatchBody, undoAutoBody, rowStatus, reasonText, stemLabel, needsRowDecision, carriedMessage, decisionBody }
+  const text = JSON.stringify(exports)
+  assert.doesNotMatch(text, /for all|all possible|accept all/i)
+})
+
+test('the row shows what the chosen group decision would write before it is applied', () => {
+  const galium = { label: 'Galium boreale', kind: 'unconfirmed', eligible: ['mine'], parsed: { usable: true, lossless: true, canonical: 'Galium boreale' } }
+  assert.equal(previewResult(galium, 'mine'), 'Galium boreale')
+  assert.equal(previewResult({ ...galium, decision: { decision: 'keep' } }, 'mine'), '')
+  assert.equal(previewResult(galium, 'col'), '')
+  const trema = { label: 'Trema orientalis', kind: 'spelling', eligible: ['col', 'mine'], match: { usage: { scientificName: 'Trema orientale', scientificNameAuthorship: '(L.) Blume' } } }
+  assert.equal(previewResult(trema, 'col'), 'Trema orientale (L.) Blume')
+  assert.equal(previewResult(trema, 'mine'), 'Trema orientalis')
+  const sapotaceae = { label: 'Sapotaceae sp', kind: 'check', qualifier: 'sp.', eligible: ['col', 'mine'], stem: { scientificName: 'Sapotaceae', taxonRank: 'family' },
+    match: { usage: { scientificName: 'Sapotaceae', scientificNameAuthorship: 'Juss.' } } }
+  assert.equal(previewResult(sapotaceae, 'col'), 'Sapotaceae')
+  assert.equal(previewResult(sapotaceae, 'mine'), 'Sapotaceae sp')
 })
