@@ -1,0 +1,1124 @@
+{
+ "source": "GBIF vocabulary server concepts and English labels, snapshot 2026-10-07; aliases curated for ChatIPT tidy-up (GBIF hidden labels are not used because some are wrong, e.g. Female lists \"juv\").",
+ "vocabularies": {
+  "lifeStage": {
+   "vocabulary": "https://api.gbif.org/v1/vocabularies/LifeStage",
+   "release": "1.0.4",
+   "concepts": [
+    {
+     "concept": "Adult",
+     "value": "adult",
+     "aliases": [
+      "ad",
+      "adult",
+      "Adult",
+      "adulte",
+      "adults",
+      "voksen",
+      "vuxen"
+     ]
+    },
+    {
+     "concept": "Calyptopsis",
+     "value": "calyptopsis",
+     "aliases": [
+      "Calyptopsis"
+     ]
+    },
+    {
+     "concept": "Caterpillar",
+     "value": "caterpillar",
+     "aliases": [
+      "Caterpillar"
+     ]
+    },
+    {
+     "concept": "Chick",
+     "value": "chick",
+     "aliases": [
+      "Chick"
+     ]
+    },
+    {
+     "concept": "Cyprid",
+     "value": "cyprid",
+     "aliases": [
+      "Cyprid"
+     ]
+    },
+    {
+     "concept": "Cyst",
+     "value": "cyst",
+     "aliases": [
+      "Cyst"
+     ]
+    },
+    {
+     "concept": "Deutonymph",
+     "value": "deutonymph",
+     "aliases": [
+      "Deutonymph"
+     ]
+    },
+    {
+     "concept": "Eft",
+     "value": "eft",
+     "aliases": [
+      "Eft"
+     ]
+    },
+    {
+     "concept": "Egg",
+     "value": "egg",
+     "aliases": [
+      "Egg",
+      "egg",
+      "eggs"
+     ]
+    },
+    {
+     "concept": "Embryo",
+     "value": "embryo",
+     "aliases": [
+      "Embryo",
+      "embryo",
+      "embryos"
+     ]
+    },
+    {
+     "concept": "Fetus",
+     "value": "fetus",
+     "aliases": [
+      "Fetus"
+     ]
+    },
+    {
+     "concept": "Fledgling",
+     "value": "fledgling",
+     "aliases": [
+      "fledgling",
+      "Fledgling",
+      "fledglings"
+     ]
+    },
+    {
+     "concept": "Flowering",
+     "value": "flowering",
+     "aliases": [
+      "Flowering"
+     ]
+    },
+    {
+     "concept": "Fruiting",
+     "value": "fruiting",
+     "aliases": [
+      "Fruiting"
+     ]
+    },
+    {
+     "concept": "Furcilia",
+     "value": "furcilia",
+     "aliases": [
+      "Furcilia"
+     ]
+    },
+    {
+     "concept": "Gametophyte",
+     "value": "gametophyte",
+     "aliases": [
+      "Gametophyte"
+     ]
+    },
+    {
+     "concept": "Hatchling",
+     "value": "hatchling",
+     "aliases": [
+      "Hatchling",
+      "hatchling",
+      "hatchlings"
+     ]
+    },
+    {
+     "concept": "Imago",
+     "value": "imago",
+     "aliases": [
+      "imagines",
+      "imago",
+      "Imago",
+      "imagos"
+     ]
+    },
+    {
+     "concept": "Immature",
+     "value": "immature",
+     "aliases": [
+      "imm",
+      "immature",
+      "Immature",
+      "immatures"
+     ]
+    },
+    {
+     "concept": "Juvenile",
+     "value": "juvenile",
+     "aliases": [
+      "juv",
+      "juvenil",
+      "juvenile",
+      "Juvenile",
+      "juveniles",
+      "juvs"
+     ]
+    },
+    {
+     "concept": "Larva",
+     "value": "larva",
+     "aliases": [
+      "larva",
+      "Larva",
+      "larvae",
+      "larval",
+      "larve",
+      "larver"
+     ]
+    },
+    {
+     "concept": "Mature",
+     "value": "mature",
+     "aliases": [
+      "Mature"
+     ]
+    },
+    {
+     "concept": "Medusa",
+     "value": "medusa",
+     "aliases": [
+      "Medusa"
+     ]
+    },
+    {
+     "concept": "Megalopa",
+     "value": "megalopa",
+     "aliases": [
+      "Megalopa"
+     ]
+    },
+    {
+     "concept": "Metanauplius",
+     "value": "metanauplius",
+     "aliases": [
+      "Metanauplius"
+     ]
+    },
+    {
+     "concept": "Nauplius",
+     "value": "nauplius",
+     "aliases": [
+      "Nauplius"
+     ]
+    },
+    {
+     "concept": "Neonate",
+     "value": "neonate",
+     "aliases": [
+      "Neonate"
+     ]
+    },
+    {
+     "concept": "Nestling",
+     "value": "nestling",
+     "aliases": [
+      "nestling",
+      "Nestling",
+      "nestlings",
+      "pull",
+      "pulli",
+      "pullus"
+     ]
+    },
+    {
+     "concept": "Nymph",
+     "value": "nymph",
+     "aliases": [
+      "Nymph",
+      "nymph",
+      "nymphs"
+     ]
+    },
+    {
+     "concept": "Polyp",
+     "value": "polyp",
+     "aliases": [
+      "Polyp"
+     ]
+    },
+    {
+     "concept": "Pupa",
+     "value": "pupa",
+     "aliases": [
+      "pupa",
+      "Pupa",
+      "pupae",
+      "puppe"
+     ]
+    },
+    {
+     "concept": "Seedling",
+     "value": "seedling",
+     "aliases": [
+      "Seedling",
+      "seedling",
+      "seedlings"
+     ]
+    },
+    {
+     "concept": "Subadult",
+     "value": "subadult",
+     "aliases": [
+      "sub adult",
+      "sub-adult",
+      "subad",
+      "Subadult",
+      "subadult",
+      "subadults"
+     ]
+    },
+    {
+     "concept": "Tadpole",
+     "value": "tadpole",
+     "aliases": [
+      "tadpole",
+      "Tadpole",
+      "tadpoles"
+     ]
+    },
+    {
+     "concept": "Unknown",
+     "value": "unknown",
+     "aliases": [
+      "age unknown",
+      "unknown",
+      "Unknown",
+      "unknown age"
+     ]
+    },
+    {
+     "concept": "Vegetative",
+     "value": "vegetative",
+     "aliases": [
+      "Vegetative"
+     ]
+    },
+    {
+     "concept": "Veliger",
+     "value": "veliger",
+     "aliases": [
+      "Veliger"
+     ]
+    },
+    {
+     "concept": "Zoea",
+     "value": "zoea",
+     "aliases": [
+      "Zoea"
+     ]
+    },
+    {
+     "concept": "Zygote",
+     "value": "zygote",
+     "aliases": [
+      "Zygote"
+     ]
+    }
+   ]
+  },
+  "sex": {
+   "vocabulary": "https://api.gbif.org/v1/vocabularies/Sex",
+   "release": "1.0.0",
+   "concepts": [
+    {
+     "concept": "Female",
+     "value": "female",
+     "aliases": [
+      "f",
+      "fem",
+      "female",
+      "Female",
+      "females",
+      "hona",
+      "hun",
+      "hunn",
+      "♀"
+     ]
+    },
+    {
+     "concept": "Indeterminate",
+     "value": "indeterminate",
+     "aliases": [
+      "indet",
+      "Indeterminate",
+      "indeterminate",
+      "undetermined"
+     ]
+    },
+    {
+     "concept": "Male",
+     "value": "male",
+     "aliases": [
+      "han",
+      "hane",
+      "hann",
+      "m",
+      "male",
+      "Male",
+      "males",
+      "♂"
+     ]
+    },
+    {
+     "concept": "Mixed",
+     "value": "mixed",
+     "aliases": [
+      "mixed",
+      "Mixed"
+     ]
+    },
+    {
+     "concept": "Other",
+     "value": "other",
+     "aliases": [
+      "Other"
+     ]
+    }
+   ]
+  },
+  "establishmentMeans": {
+   "vocabulary": "https://api.gbif.org/v1/vocabularies/EstablishmentMeans",
+   "release": "1.0.3",
+   "concepts": [
+    {
+     "concept": "introduced",
+     "value": "introduced",
+     "aliases": [
+      "introduced",
+      "Introduced (Alien, Exotic, Non-native, Nonindigenous)"
+     ]
+    },
+    {
+     "concept": "introducedAssistedColonisation",
+     "value": "introducedAssistedColonisation",
+     "aliases": [
+      "Introduced (Assisted colonisation)",
+      "introducedAssistedColonisation"
+     ]
+    },
+    {
+     "concept": "native",
+     "value": "native",
+     "aliases": [
+      "native",
+      "Native (Indigenous)"
+     ]
+    },
+    {
+     "concept": "nativeEndemic",
+     "value": "nativeEndemic",
+     "aliases": [
+      "nativeEndemic"
+     ]
+    },
+    {
+     "concept": "nativeReintroduced",
+     "value": "nativeReintroduced",
+     "aliases": [
+      "Native (Reintroduced)",
+      "nativeReintroduced"
+     ]
+    },
+    {
+     "concept": "uncertain",
+     "value": "uncertain",
+     "aliases": [
+      "uncertain",
+      "Uncertain (Unknown, Cryptogenic)"
+     ]
+    },
+    {
+     "concept": "vagrant",
+     "value": "vagrant",
+     "aliases": [
+      "vagrant",
+      "Vagrant (Casual)"
+     ]
+    }
+   ]
+  },
+  "degreeOfEstablishment": {
+   "vocabulary": "https://api.gbif.org/v1/vocabularies/DegreeOfEstablishment",
+   "release": "1.0.3",
+   "concepts": [
+    {
+     "concept": "captive",
+     "value": "captive",
+     "aliases": [
+      "Captive",
+      "captive"
+     ]
+    },
+    {
+     "concept": "casual",
+     "value": "casual",
+     "aliases": [
+      "Casual",
+      "casual"
+     ]
+    },
+    {
+     "concept": "colonising",
+     "value": "colonising",
+     "aliases": [
+      "colonising",
+      "Colonising"
+     ]
+    },
+    {
+     "concept": "cultivated",
+     "value": "cultivated",
+     "aliases": [
+      "cultivated",
+      "Cultivated"
+     ]
+    },
+    {
+     "concept": "established",
+     "value": "established",
+     "aliases": [
+      "Established",
+      "established"
+     ]
+    },
+    {
+     "concept": "failing",
+     "value": "failing",
+     "aliases": [
+      "Failing",
+      "failing"
+     ]
+    },
+    {
+     "concept": "invasive",
+     "value": "invasive",
+     "aliases": [
+      "Invasive",
+      "invasive"
+     ]
+    },
+    {
+     "concept": "managed",
+     "value": "managed",
+     "aliases": [
+      "managed"
+     ]
+    },
+    {
+     "concept": "native",
+     "value": "native",
+     "aliases": [
+      "Native",
+      "native"
+     ]
+    },
+    {
+     "concept": "naturalized",
+     "value": "naturalized",
+     "aliases": [
+      "naturalized"
+     ]
+    },
+    {
+     "concept": "released",
+     "value": "released",
+     "aliases": [
+      "Released",
+      "released"
+     ]
+    },
+    {
+     "concept": "reproducing",
+     "value": "reproducing",
+     "aliases": [
+      "reproducing",
+      "Reproducing"
+     ]
+    },
+    {
+     "concept": "spreading",
+     "value": "spreading",
+     "aliases": [
+      "spreading"
+     ]
+    },
+    {
+     "concept": "unestablished",
+     "value": "unestablished",
+     "aliases": [
+      "unestablished"
+     ]
+    },
+    {
+     "concept": "widespreadInvasive",
+     "value": "widespreadInvasive",
+     "aliases": [
+      "Widespread invasive",
+      "widespreadInvasive"
+     ]
+    }
+   ]
+  },
+  "pathway": {
+   "vocabulary": "https://api.gbif.org/v1/vocabularies/Pathway",
+   "release": "1.0.3",
+   "concepts": [
+    {
+     "concept": "agriculture",
+     "value": "agriculture",
+     "aliases": [
+      "agriculture",
+      "Agriculture (including biofuel feedstocks)"
+     ]
+    },
+    {
+     "concept": "aquacultureMariculture",
+     "value": "aquacultureMariculture",
+     "aliases": [
+      "Aquaculture/mariculture",
+      "aquacultureMariculture"
+     ]
+    },
+    {
+     "concept": "ballastWater",
+     "value": "ballastWater",
+     "aliases": [
+      "ballastWater",
+      "Ship/boat ballast water"
+     ]
+    },
+    {
+     "concept": "biologicalControl",
+     "value": "biologicalControl",
+     "aliases": [
+      "Biological control",
+      "biologicalControl"
+     ]
+    },
+    {
+     "concept": "conservationOrWildlifeManagement",
+     "value": "conservationOrWildlifeManagement",
+     "aliases": [
+      "Conservation or wildlife management",
+      "conservationOrWildlifeManagement"
+     ]
+    },
+    {
+     "concept": "containerBulk",
+     "value": "containerBulk",
+     "aliases": [
+      "Container/bulk",
+      "containerBulk"
+     ]
+    },
+    {
+     "concept": "contaminantNursery",
+     "value": "contaminantNursery",
+     "aliases": [
+      "Contaminant nursery material",
+      "contaminantNursery"
+     ]
+    },
+    {
+     "concept": "contaminantOnAnimals",
+     "value": "contaminantOnAnimals",
+     "aliases": [
+      "Contaminant on animals (except parasites, organisms transported by host/vector)",
+      "contaminantOnAnimals"
+     ]
+    },
+    {
+     "concept": "contaminantOnPlants",
+     "value": "contaminantOnPlants",
+     "aliases": [
+      "Contaminant on plants (except parasites, species transported by host/vector)",
+      "contaminantOnPlants"
+     ]
+    },
+    {
+     "concept": "contaminateBait",
+     "value": "contaminateBait",
+     "aliases": [
+      "contaminateBait",
+      "Contaminated bait"
+     ]
+    },
+    {
+     "concept": "corridor",
+     "value": "corridor",
+     "aliases": [
+      "Corridor",
+      "corridor"
+     ]
+    },
+    {
+     "concept": "corridorAndDispersal",
+     "value": "corridorAndDispersal",
+     "aliases": [
+      "Corridor and dispersal",
+      "corridorAndDispersal"
+     ]
+    },
+    {
+     "concept": "erosionControl",
+     "value": "erosionControl",
+     "aliases": [
+      "Erosion control",
+      "erosionControl"
+     ]
+    },
+    {
+     "concept": "escapeFromConfinement",
+     "value": "escapeFromConfinement",
+     "aliases": [
+      "Escape from confinement",
+      "escapeFromConfinement"
+     ]
+    },
+    {
+     "concept": "farmedAnimals",
+     "value": "farmedAnimals",
+     "aliases": [
+      "Farmed animals (including animals left under limited control)",
+      "farmedAnimals"
+     ]
+    },
+    {
+     "concept": "fisheryInTheWild",
+     "value": "fisheryInTheWild",
+     "aliases": [
+      "Fishery in the wild",
+      "fisheryInTheWild"
+     ]
+    },
+    {
+     "concept": "fishingEquipment",
+     "value": "fishingEquipment",
+     "aliases": [
+      "Angling/fishing equipment",
+      "fishingEquipment"
+     ]
+    },
+    {
+     "concept": "foodContaminant",
+     "value": "foodContaminant",
+     "aliases": [
+      "Food contaminant (including of live food)",
+      "foodContaminant"
+     ]
+    },
+    {
+     "concept": "forestry",
+     "value": "forestry",
+     "aliases": [
+      "forestry",
+      "Forestry (including reforestation)"
+     ]
+    },
+    {
+     "concept": "fur",
+     "value": "fur",
+     "aliases": [
+      "fur",
+      "Fur farms"
+     ]
+    },
+    {
+     "concept": "hitchhikersAirplane",
+     "value": "hitchhikersAirplane",
+     "aliases": [
+      "Hitchhikers in or on airplane",
+      "hitchhikersAirplane"
+     ]
+    },
+    {
+     "concept": "hitchhikersShip",
+     "value": "hitchhikersShip",
+     "aliases": [
+      "Hitchhikers on ship/boat (excluding ballast water and hull fouling)",
+      "hitchhikersShip"
+     ]
+    },
+    {
+     "concept": "horticulture",
+     "value": "horticulture",
+     "aliases": [
+      "Horticulture",
+      "horticulture"
+     ]
+    },
+    {
+     "concept": "hullFouling",
+     "value": "hullFouling",
+     "aliases": [
+      "hullFouling",
+      "Ship/boat hull fouling"
+     ]
+    },
+    {
+     "concept": "hunting",
+     "value": "hunting",
+     "aliases": [
+      "Hunting",
+      "hunting"
+     ]
+    },
+    {
+     "concept": "intentional",
+     "value": "intentional",
+     "aliases": [
+      "Intentional",
+      "intentional"
+     ]
+    },
+    {
+     "concept": "landscapeImprovement",
+     "value": "landscapeImprovement",
+     "aliases": [
+      "Landscape improvement",
+      "landscapeImprovement"
+     ]
+    },
+    {
+     "concept": "liveFoodLiveBait",
+     "value": "liveFoodLiveBait",
+     "aliases": [
+      "Live food and live bait",
+      "liveFoodLiveBait"
+     ]
+    },
+    {
+     "concept": "machineryEquipment",
+     "value": "machineryEquipment",
+     "aliases": [
+      "Machinery/equipment",
+      "machineryEquipment"
+     ]
+    },
+    {
+     "concept": "naturalDispersal",
+     "value": "naturalDispersal",
+     "aliases": [
+      "Natural dispersal across borders of invasive alien organisms",
+      "naturalDispersal"
+     ]
+    },
+    {
+     "concept": "ornamentalNonHorticulture",
+     "value": "ornamentalNonHorticulture",
+     "aliases": [
+      "Ornamental purpose other than horticulture",
+      "ornamentalNonHorticulture"
+     ]
+    },
+    {
+     "concept": "otherEscape",
+     "value": "otherEscape",
+     "aliases": [
+      "Other escape from confinement",
+      "otherEscape"
+     ]
+    },
+    {
+     "concept": "otherIntentionalRelease",
+     "value": "otherIntentionalRelease",
+     "aliases": [
+      "Other intentional release",
+      "otherIntentionalRelease"
+     ]
+    },
+    {
+     "concept": "otherTransport",
+     "value": "otherTransport",
+     "aliases": [
+      "Other means of transport",
+      "otherTransport"
+     ]
+    },
+    {
+     "concept": "packingMaterial",
+     "value": "packingMaterial",
+     "aliases": [
+      "Organic packing material, in particular wood packaging",
+      "packingMaterial"
+     ]
+    },
+    {
+     "concept": "parasitesOnAnimals",
+     "value": "parasitesOnAnimals",
+     "aliases": [
+      "Parasites on animals (including organisms transported by host and vector)",
+      "parasitesOnAnimals"
+     ]
+    },
+    {
+     "concept": "parasitesOnPlants",
+     "value": "parasitesOnPlants",
+     "aliases": [
+      "Parasites on plants (including species transported by host and vector)",
+      "parasitesOnPlants"
+     ]
+    },
+    {
+     "concept": "people",
+     "value": "people",
+     "aliases": [
+      "people",
+      "People and their luggage/equipment (in particular tourism)"
+     ]
+    },
+    {
+     "concept": "pet",
+     "value": "pet",
+     "aliases": [
+      "pet",
+      "Pet/aquarium/terrarium species (including live food for such species )"
+     ]
+    },
+    {
+     "concept": "publicGardenZooAquaria",
+     "value": "publicGardenZooAquaria",
+     "aliases": [
+      "Botanic garden/zoo/aquaria (excluding domestic aquaria)",
+      "publicGardenZooAquaria"
+     ]
+    },
+    {
+     "concept": "releaseInNature",
+     "value": "releaseInNature",
+     "aliases": [
+      "Release in nature",
+      "releaseInNature"
+     ]
+    },
+    {
+     "concept": "releasedForUse",
+     "value": "releasedForUse",
+     "aliases": [
+      "Released for use",
+      "releasedForUse"
+     ]
+    },
+    {
+     "concept": "research",
+     "value": "research",
+     "aliases": [
+      "research",
+      "Research and ex-situ breeding (in facilities)"
+     ]
+    },
+    {
+     "concept": "seedContaminant",
+     "value": "seedContaminant",
+     "aliases": [
+      "Seed contaminant",
+      "seedContaminant"
+     ]
+    },
+    {
+     "concept": "timberTrade",
+     "value": "timberTrade",
+     "aliases": [
+      "Timber trade",
+      "timberTrade"
+     ]
+    },
+    {
+     "concept": "transportContaminant",
+     "value": "transportContaminant",
+     "aliases": [
+      "Transport-contaminant",
+      "transportContaminant"
+     ]
+    },
+    {
+     "concept": "transportStowaway",
+     "value": "transportStowaway",
+     "aliases": [
+      "Transport-stowaway",
+      "transportStowaway"
+     ]
+    },
+    {
+     "concept": "transportationHabitatMaterial",
+     "value": "transportationHabitatMaterial",
+     "aliases": [
+      "Transportation of habitat material (soil, vegetation, wood etc)",
+      "transportationHabitatMaterial"
+     ]
+    },
+    {
+     "concept": "tunnelsBridges",
+     "value": "tunnelsBridges",
+     "aliases": [
+      "Tunnels and land bridges",
+      "tunnelsBridges"
+     ]
+    },
+    {
+     "concept": "unaided",
+     "value": "unaided",
+     "aliases": [
+      "Unaided",
+      "unaided"
+     ]
+    },
+    {
+     "concept": "unintentional",
+     "value": "unintentional",
+     "aliases": [
+      "unintentional",
+      "Unintentional"
+     ]
+    },
+    {
+     "concept": "vehicles",
+     "value": "vehicles",
+     "aliases": [
+      "vehicles",
+      "Vehicles (car, train, etc.)"
+     ]
+    },
+    {
+     "concept": "waterwaysBasinsSeas",
+     "value": "waterwaysBasinsSeas",
+     "aliases": [
+      "Interconnected waterways/basins/seas",
+      "waterwaysBasinsSeas"
+     ]
+    }
+   ]
+  },
+  "occurrenceStatus": {
+   "vocabulary": "https://api.gbif.org/v1/vocabularies/OccurrenceStatus",
+   "release": "unreleased (concepts listed 2026-10-07)",
+   "concepts": [
+    {
+     "concept": "Absent",
+     "value": "absent",
+     "aliases": [
+      "absence",
+      "Absent",
+      "absent"
+     ]
+    },
+    {
+     "concept": "Present",
+     "value": "present",
+     "aliases": [
+      "presence",
+      "present",
+      "Present"
+     ]
+    }
+   ]
+  },
+  "basisOfRecord": {
+   "vocabulary": "https://api.gbif.org/v1/vocabularies/BasisOfRecord",
+   "release": "unreleased (concepts listed 2026-10-07)",
+   "concepts": [
+    {
+     "concept": "Event",
+     "value": "Event",
+     "aliases": [
+      "Event"
+     ]
+    },
+    {
+     "concept": "FossilSpecimen",
+     "value": "FossilSpecimen",
+     "aliases": [
+      "Fossil specimen",
+      "FossilSpecimen"
+     ]
+    },
+    {
+     "concept": "HumanObservation",
+     "value": "HumanObservation",
+     "aliases": [
+      "Human observation",
+      "HumanObservation"
+     ]
+    },
+    {
+     "concept": "LivingSpecimen",
+     "value": "LivingSpecimen",
+     "aliases": [
+      "Living specimen",
+      "LivingSpecimen"
+     ]
+    },
+    {
+     "concept": "MachineObservation",
+     "value": "MachineObservation",
+     "aliases": [
+      "Machine observation",
+      "MachineObservation"
+     ]
+    },
+    {
+     "concept": "MaterialCitation",
+     "value": "MaterialCitation",
+     "aliases": [
+      "Material citation",
+      "MaterialCitation"
+     ]
+    },
+    {
+     "concept": "MaterialEntity",
+     "value": "MaterialEntity",
+     "aliases": [
+      "Material entity",
+      "MaterialEntity"
+     ]
+    },
+    {
+     "concept": "MaterialSample",
+     "value": "MaterialSample",
+     "aliases": [
+      "Material sample",
+      "MaterialSample"
+     ]
+    },
+    {
+     "concept": "Occurrence",
+     "value": "Occurrence",
+     "aliases": [
+      "Occurrence"
+     ]
+    },
+    {
+     "concept": "PreservedSpecimen",
+     "value": "PreservedSpecimen",
+     "aliases": [
+      "Preserved specimen",
+      "PreservedSpecimen"
+     ]
+    },
+    {
+     "concept": "Taxon",
+     "value": "Taxon",
+     "aliases": [
+      "Taxon"
+     ]
+    }
+   ]
+  }
+ }
+}
