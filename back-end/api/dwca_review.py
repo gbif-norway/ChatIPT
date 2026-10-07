@@ -117,6 +117,40 @@ def group_rows(row_issues, table_names):
 
 
 def effective_decisions(plan, decisions):
+    """Automatic defaults, group choices expanded to members, explicit choices, then conditional column defaults."""
+    effective = _base_effective(plan, decisions)
+    for identifier, result in conditional_defaults(plan, decisions, effective=effective).items():
+        effective[identifier] = result['value']
+    return effective
+
+
+def conditional_defaults(plan, decisions, effective=None):
+    """{column_id: {'value', 'reason'}} for columns with default_when that have no explicit decision.
+
+    The first branch whose conditions hold gives the default (reason None for the plain fallback).
+    Conditions may refer to other conditional columns (recordedByID follows recordedBy, which
+    follows the material answer), so values are recomputed until they stop changing.
+    """
+    conditional = [column for column in plan.get('columns', []) if column.get('default_when') and column['id'] not in decisions]
+    if not conditional:
+        return {}
+    current = dict(effective) if effective is not None else _base_effective(plan, decisions)
+    columns = _columns(plan)
+    for _ in range(len(conditional) + 1):
+        results = {}
+        for column in conditional:
+            branch = next((branch for branch in column['default_when']
+                           if all(_holds(plan, current, condition, columns) for condition in branch.get('when', []))), None)
+            results[column['id']] = {'value': branch['value'] if branch else column['default'],
+                                     'reason': branch.get('reason') if branch else None}
+        changed = any(current.get(identifier) != result['value'] for identifier, result in results.items())
+        current.update({identifier: result['value'] for identifier, result in results.items()})
+        if not changed:
+            return results
+    raise ValueError('Conditional column defaults refer to each other in a cycle.')
+
+
+def _base_effective(plan, decisions):
     """Automatic defaults, then group choices expanded to members, then explicit choices."""
     automatic = {item['id']: item['default'] for item in plan.get('automatic_choices', [])}
     effective = dict(automatic)
@@ -167,6 +201,15 @@ def _referenced(condition):
     return [condition[key] for key in ('id', 'column') if key in condition]
 
 
+def asked(plan, effective, entry):
+    """Whether a question is still asked: an earlier answer can settle it (ask_when no longer holds)."""
+    conditions = entry.get('ask_when')
+    if not conditions:
+        return True
+    columns = _columns(plan)
+    return all(_holds(plan, effective, condition, columns) for condition in conditions)
+
+
 def failed_requirements(plan, effective, decision_id, value, columns=None):
     columns = columns if columns is not None else _columns(plan)
     return [requirement for requirement in plan.get('requirements', {}).get(decision_id, {}).get(value, [])
@@ -186,6 +229,8 @@ def _entries(plan):
 
 def _active(plan, effective, entry):
     """Choices under a preserved table, row, or source column do not apply."""
+    if not asked(plan, effective, entry):
+        return False
     t = entry.get('table')
     if t is None or entry['id'] == f'table:{t}':
         return True
@@ -207,6 +252,9 @@ def violations(plan, decisions):
     for decision_id, by_value in plan.get('requirements', {}).items():
         if decision_id in columns:
             column = columns[decision_id]
+            entry = entries.get(decision_id)
+            if entry is not None and not _active(plan, effective, entry):
+                continue
             value = column_target(plan, effective, column)
         else:
             entry = entries.get(decision_id)
@@ -228,9 +276,15 @@ def option_status(plan, decisions, prefix=''):
     effective = effective_decisions(plan, decisions)
     columns = _columns(plan)
     status = {}
+    conditional_references = {identifier for column in plan.get('columns', [])
+                              for branch in column.get('default_when', [])
+                              for condition in branch.get('when', []) for identifier in _referenced(condition)}
     for decision_id, by_value in plan.get('requirements', {}).items():
         for value in by_value:
-            failed = failed_requirements(plan, effective, decision_id, value, columns)
+            candidate_effective = effective
+            if decision_id in conditional_references:
+                candidate_effective = effective_decisions(plan, {**decisions, decision_id: value})
+            failed = failed_requirements(plan, candidate_effective, decision_id, value, columns)
             status.setdefault(prefix + decision_id, {})[value] = {
                 'available': not failed, 'reasons': [requirement['reason'] for requirement in failed]}
     for entry in [*plan.get('issues', []), *plan.get('automatic_choices', []), *plan.get('columns', [])]:

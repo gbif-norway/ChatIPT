@@ -232,9 +232,21 @@ def _decision_refs(condition):
     return [condition['id']] if condition['type'] == 'decision_in' else []
 
 
+def _condition_refs(plan, conditions):
+    found = []
+    column_ids = {column['id'] for column in plan.get('columns', [])}
+    for condition in conditions:
+        found.extend(_decision_refs(condition))
+        if condition['type'] in {'any', 'all'}:
+            found.extend(_condition_refs(plan, condition['conditions']))
+        elif condition['type'] in {'target_in', 'target_not_in'} and condition.get('column') in column_ids:
+            found.append(condition['column'])
+    return found
+
+
 def dependencies(plan, item_id):
     """Judgment dependencies, always at a strictly lower level (§8.1). Group members listed last."""
-    known = entries(plan)
+    known = {**{column['id']: column for column in plan.get('columns', [])}, **entries(plan)}
     item = known.get(item_id)
     if item is None:
         return []
@@ -266,6 +278,12 @@ def dependencies(plan, item_id):
             for condition in [*requirement.get('when', []), *requirement['conditions']]:
                 for identifier in _decision_refs(condition):
                     add(prefix + identifier if prefix and not identifier.startswith('taxon-occurrence:') else identifier)
+    conditions = [*item.get('ask_when', [])]
+    column = next((column for column in plan.get('columns', []) if column['id'] == item_id), None)
+    if column is not None:
+        conditions.extend(condition for branch in column.get('default_when', []) for condition in branch.get('when', []))
+    for identifier in _condition_refs(plan, conditions):
+        add(prefix + identifier if prefix and not identifier.startswith('taxon-occurrence:') else identifier)
     return found
 
 

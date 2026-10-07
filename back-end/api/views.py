@@ -483,10 +483,12 @@ class DatasetViewSet(viewsets.ModelViewSet):
         from api import conversion_names
         from api.conversion_review import state_section
         from api.dwca_conversion import option_status, validate_decisions
+        from api.dwca_review import conditional_defaults
         plan = conversion.plan
         return {'status': conversion.status, 'plan': plan, 'decisions': conversion.decisions,
                 'drop_unlinked_extension_rows': conversion.drop_unlinked_extension_rows,
                 'unresolved': validate_decisions(plan, conversion.decisions, require_complete=False) if plan else [],
+                'conditional_defaults': conditional_defaults(plan, conversion.decisions) if plan else {},
                 'option_status': option_status(plan, conversion.decisions) if plan else {},
                 'conflicts': conversion.conflicts, 'retryable': conversion.retryable, 'error': conversion.error,
                 'report': {key: value for key, value in conversion_names.public_report(conversion.report).items() if key != 'row_crosswalk'},

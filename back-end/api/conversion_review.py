@@ -841,7 +841,8 @@ def report_section(conversion):
         elif event.evidence:
             entry['evidence'] = event.evidence
         provenance.append(entry)
-    automatic = [{'id': choice['id'], 'value': choice['default'], 'source': 'automatic'}
+    effective = effective_decisions(conversion.plan, conversion.decisions)
+    automatic = [{'id': choice['id'], 'value': effective.get(choice['id'], choice['default']), 'source': 'automatic'}
                  for choice in conversion.plan.get('automatic_choices', []) if choice['id'] not in conversion.decisions]
     state = review_state(conversion)
     recommendations = state['recommendations']

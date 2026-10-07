@@ -24,7 +24,7 @@ from api.dwca_legacy import (LEGACY_FAMILIES, LEGACY_DERIVED_TERMS, BMDE, NXF, G
 from api.dwc_dp_specs import TABLE_SPECS, dwc_dp_schema_snapshot, validate_dwc_dp_resources
 from api.dwca_preflight import preflight
 from api.dwca_review import (apply_policy, effective_decisions, failed_requirements, group_rows,  # noqa: F401
-                             option_status, remove_unavailable, violations)
+                             option_status, remove_unavailable, violations, conditional_defaults, asked)
 from api.dwca_semantic_audit import ASSERTION_IRI_FIELDS, is_age_like_remark, semantic_target_rejection
 from api.dwca_agents import ROLE_FIELDS, agent_name, build_agent_roles, composite_name_reason, split_agent_ids
 
@@ -273,11 +273,16 @@ def _split_authorship(name, authorship=''):
     words, author = tokens[:end], authorship if supplied else ' '.join(tokens[end:])
     if supplied and end != len(tokens):
         return None
+    author_tokens = author.split(' ')
+    filius = (len(author_tokens) >= 2 and author_tokens[-1] in {'f.', 'fil.'}
+              and author_tokens[-2].endswith('.')
+              and (author_tokens[-2][0].isupper() or author_tokens[-2].startswith('(')))
+    rank_tokens = author_tokens[:-1] if filius else author_tokens
     if (any(token in AUTHOR_PARTICLES | NOT_EPITHETS for token in words[1:])
             or any(token.casefold() in HYBRID_MARKERS for token in tokens) or '×' in name
             # 'Aus sp. A' is an informal designation; 'Aus bus L. subsp. cus' has an infraspecific name after an author.
             or (author and (words[-1] in {'sp.', 'spp.', 'sp', 'spp'} or not (author[0] in '([' or author[0].isupper())
-                            or any(token in RANK_MARKERS for token in author.split(' '))))):
+                            or any(token in RANK_MARKERS for token in rank_tokens)))):
         return None
     return words, author
 
@@ -480,6 +485,41 @@ def _scientific_summary(audit):
         'checks': len(audit['checks']), 'finding_sample': actionable[:10]}
 
 
+def _example_values(values):
+    counts = Counter(value for value in values if value)
+    first = {value: position for position, value in enumerate(counts)}
+    ordered = sorted(counts, key=lambda value: (-counts[value], first[value]))[:3]
+    return ' · '.join(value[:40] for value in ordered)
+
+
+def _material_modes(table, material_column, comparison_term=None, recorded=False):
+    """Material identity modes supported by supplied IDs and occurrence links."""
+    occurrence_col = table.terms.index(DWC + 'occurrenceID') if DWC + 'occurrenceID' in table.terms else None
+    usable = [row[occurrence_col] and not missing_reference(row[occurrence_col], ()) for row in table.rows] if occurrence_col is not None else []
+    modes = ['per_row'] if not recorded or (usable and all(usable)) else []
+    if material_column is None or (recorded and (not usable or not all(usable))):
+        return modes
+    groups = defaultdict(list)
+    for row in table.rows:
+        identifier = row[material_column]
+        if not identifier or missing_reference(identifier, ()):
+            return modes
+        groups[identifier].append(row)
+    occurrence_agrees = occurrence_col is not None and all(len({row[occurrence_col] for row in rows}) == 1 for rows in groups.values())
+    values_agree = comparison_term is None or all(
+        len({row[table.terms.index(comparison_term)] for row in rows}) == 1 for rows in groups.values())
+    if (not recorded or occurrence_agrees) and values_agree:
+        modes.append('by_id')
+    return modes
+
+
+def _material_identifier_column(table):
+    for term in (DWC + 'materialSampleID', DWC + 'materialEntityID'):
+        if term in table.terms and any(row[table.terms.index(term)] for row in table.rows):
+            return table.terms.index(term)
+    return None
+
+
 def _specimen_presence(table):
     """A conventional 'present' status for specimen records, as {'default', 'title', 'reason'}, or None.
 
@@ -572,6 +612,8 @@ def _streamline_plan(archive, core, plan, warnings):
             reason = ('Every source row explicitly declares PreservedSpecimen and has a distinct, complete '
                       'institutionCode, collectionCode, catalogNumber triple. One material entity is created '
                       'for each source row; no persistent material identifier is inferred.')
+            if issue.get('followers') and ' If yes,' in issue['reason']:
+                reason += ' If yes,' + issue['reason'].split(' If yes,', 1)[1]
         elif issue['id'] == AGENT_NAMES_ID:
             default = 'shared'
             # Other choices (a column kept in the originals, a name kept as text) can lower these counts;
@@ -648,7 +690,7 @@ def build_plan(archive):
     material_context = core.row_type == DWC + 'Occurrence' and any(
         term in core.terms and any(row[core.terms.index(term)] for row in core.rows)
         for term in (DWC + 'materialSampleID', DWC + 'materialEntityID'))
-    issues, columns, profiles, warnings, row_issues = [], [], [], dropped_extension_warnings(archive), []
+    issues, columns, profiles, warnings, row_issues, proposed_automatic = [], [], [], dropped_extension_warnings(archive), [], []
     nodes, hierarchy_unsupported, hierarchy = _hierarchy(archive, core)
     scientific = _scientific_hierarchy(archive, core, nodes, hierarchy)
     if not archive.has_meta:
@@ -773,6 +815,9 @@ def build_plan(archive):
             media_reason = None
             if family == 'media':
                 options, media_reason = media_targets(term, values)
+                if term in {'http://purl.org/dc/terms/format', 'http://purl.org/dc/terms/created',
+                            'http://purl.org/dc/terms/creator', 'http://purl.org/dc/elements/1.1/type'} and len(options) == 1:
+                    media_reason = None
             if family in {'eol-media', 'eol-reference'}:
                 options, media_reason = eol_targets(table.row_type, term, values)
                 if family == 'eol-reference' and options and any(source.get('http://eol.org/schema/reference/full_reference') for source in sources) and term != 'http://eol.org/schema/reference/full_reference':
@@ -824,8 +869,95 @@ def build_plan(archive):
                 options = ["nucleotide-sequence.sequence"]
             if has_material and term == DWC + 'materialSampleID':
                 options = ['material.materialEntityID']
-            if term == DWC + 'recordedByID' and own == 'occurrence' and (table.is_core or family == 'occurrence'):
-                options = ['occurrence.recordedByID']
+            occurrence_context = own == 'occurrence' and (table.is_core or family == 'occurrence')
+            default_when = []
+            automatic_family = None
+            automatic_reason = None
+            glance = True
+            special_chosen = None
+            if family == 'media' and term in {'http://purl.org/dc/terms/format', 'http://purl.org/dc/terms/created',
+                                              'http://purl.org/dc/terms/creator', 'http://purl.org/dc/elements/1.1/type'} and len(options) == 1:
+                target = options[0]
+                automatic_family, automatic_reason = 'media', (
+                    f'{term.rsplit("/", 1)[-1]} is copied to {target} exactly as written. This is the standard match between the media vocabulary and the Data Package field; choose "Keep in original files only" if the column means something else.')
+            if term == NAME and occurrence_context:
+                options = [target for target in options if target.startswith('occurrence.')]
+            if term == DWC + 'recordedBy' and has_material and occurrence_context and 'material.collectedBy' in options:
+                n, d = len(values), len(set(values))
+                ex = _example_values(values)
+                occurrence_col = table.terms.index(DWC + 'occurrenceID') if DWC + 'occurrenceID' in table.terms else None
+                identifier_col = _material_identifier_column(table)
+                modes = _material_modes(table, identifier_col, term, recorded=True)
+                link_condition = ([{'type': 'target_in', 'column': _column_id(t, occurrence_col),
+                                    'targets': ['occurrence.occurrenceID']}] if occurrence_col is not None else [])
+                basis_values = [row[table.terms.index(DWC + 'basisOfRecord')] for row in table.rows
+                                if DWC + 'basisOfRecord' in table.terms and row[table.terms.index(DWC + 'basisOfRecord')]]
+                basis = ('your rows are specimens or samples (' + ' / '.join(list(dict.fromkeys(basis_values))[:4]) + ') and '
+                         if basis_values else '')
+                record_index = table.terms.index(DWC + 'recordNumber') if DWC + 'recordNumber' in table.terms else None
+                rn = (f" The collector numbers (recordNumber, {sum(bool(row[record_index]) for row in table.rows):,} rows) are stored on the same specimen records."
+                      if record_index is not None and any(row[record_index] for row in table.rows) and
+                      'material.collectorNumber' in _candidates(DWC + 'recordNumber', target_tables) else '')
+                material_msg = (f"{n:,} rows name people in recordedBy ({d:,} different names, e.g. {ex}). They are saved as who collected the specimen, on each specimen record. "
+                                f"Why: {basis}a specimen record is created for each row, and in specimen collections this column names the collector.{rn}")
+                if modes:
+                    default_when.append({'value': 'material.collectedBy',
+                        'when': [{'type': 'decision_in', 'id': f'material:{t}', 'values': modes}, *link_condition],
+                        'reason': material_msg})
+                ambiguous_reason = (f"{n:,} rows name people in recordedBy ({d:,} different names, e.g. {ex}). They are saved as who saw or recorded the organism, on each observation record. Why: "
+                    + ("some rows have no usable occurrenceID, so a specimen record could not be linked to its observation, and GBIF reads collectors from the observation record in that case."
+                       if 'per_row' not in modes else "when specimen records are combined by identifier, some would belong to several observations, so the names stay on each observation, where GBIF can read them."))
+                default_when.append({'value': 'occurrence.recordedBy',
+                    'when': [{'type': 'decision_in', 'id': f'material:{t}', 'values': ['per_row', 'by_id']}],
+                    'reason': ambiguous_reason})
+                fallback_reason = (f"{n:,} rows name people in recordedBy ({d:,} different names, e.g. {ex}). They are saved as who saw or recorded the organism, on each observation record. Why: no specimen records are created for these rows.")
+                automatic_family, automatic_reason = 'agent-role', fallback_reason
+                # The usual occurrence target remains the plain fallback.
+                special_chosen = 'occurrence.recordedBy'
+            if term == DWC + 'recordedByID' and occurrence_context:
+                recorded_col = table.terms.index(DWC + 'recordedBy') if DWC + 'recordedBy' in table.terms else None
+                if recorded_col is not None:
+                    name_options = _candidates(DWC + 'recordedBy', target_tables)
+                    if has_material and 'material.collectedBy' in name_options:
+                        name_options = ['occurrence.recordedBy', *[target for target in name_options if target != 'occurrence.recordedBy']]
+                    partners = {}
+                    for (resource, name_field), role in ROLE_FIELDS.items():
+                        partners[f'{resource}.{name_field}'] = f'{resource}.{role.id_field}'
+                    options = list(dict.fromkeys(partners[target] for target in name_options if target in partners))
+                    default_when = []
+                    for target in name_options:
+                        if target not in partners or target == 'occurrence.recordedBy':
+                            continue
+                        record_kind = {'material': 'specimen', 'event': 'event', 'occurrence': 'observation'}[target.split('.')[0]]
+                        default_when.append({'value': partners[target],
+                            'when': [{'type': 'target_in', 'column': _column_id(t, recorded_col), 'targets': [target]}],
+                            'reason': f"Identifiers in recordedByID follow the names in recordedBy, so each name keeps its identifier: on each {record_kind} record."})
+                    special_chosen = 'occurrence.recordedByID'
+                    automatic_family, automatic_reason, glance = 'agent-role', 'Identifiers in recordedByID follow the names in recordedBy, so each name keeps its identifier: on each observation record.', False
+                else:
+                    options = ['occurrence.recordedByID']
+                    special_chosen = 'occurrence.recordedByID'
+            if term in {DWC + 'typeStatus', DWC + 'typeDesignationType'} and occurrence_context:
+                field = term.rsplit('/', 1)[-1]
+                special_chosen = f'identification.{field}'
+                if has_material:
+                    material_target = f'material.{field}'
+                    identifier_col = _material_identifier_column(table)
+                    modes = _material_modes(table, identifier_col, term)
+                    if material_target in options:
+                        if modes:
+                            ex = _example_values(values)
+                            short = term.rsplit('/', 1)[-1]
+                            description = 'type status' if short == 'typeStatus' else short
+                            disagreement = 'different type statuses' if short == 'typeStatus' else f'different {short} values'
+                            default_when = [
+                                {'value': material_target, 'when': [{'type': 'decision_in', 'id': f'material:{t}', 'values': modes}],
+                                 'reason': f"{len(values):,} rows give a {description} (e.g. {ex}). It is saved as the {description} of each specimen record, because a specimen record is created for each row and a type status describes a specimen."},
+                                {'value': special_chosen, 'when': [{'type': 'decision_in', 'id': f'material:{t}', 'values': ['per_row', 'by_id']}],
+                                 'reason': f"{len(values):,} rows give a {description} (e.g. {ex}). It is saved with the identification of each observation, because combined specimen records would mix {disagreement}."}]
+                automatic_family = 'type-status'
+                description = 'type status' if field == 'typeStatus' else field
+                automatic_reason = f"{len(values):,} rows give a {description} (e.g. {_example_values(values)}). It is saved with the identification of each observation, because no specimen records are created for these rows."
             parent_blocked = parent_default = None
             if term == PARENT and (table.is_core or family == 'occurrence'):
                 # Parent links are resolved from persistent eventIDs of source Event identities, never copied as keys.
@@ -848,7 +980,7 @@ def build_plan(archive):
                     media_reason = (media_reason + ' ' if media_reason else '') + ('Occurrence rows do not establish events by themselves. Parent links are available only when events are '
                                     'combined by supplied eventID, and each parent eventID is itself such a combined event. '
                                     'No parent event is created or inferred.')
-            chosen = parent_default or (options[0] if options else "preserve")
+            chosen = parent_default or special_chosen or (options[0] if options else "preserve")
             join_only = (table.loose and not table.is_core and term == DWC + ('eventID' if core.row_type == DWC + 'Event' else 'occurrenceID') and bool(table.ids)) or (family == 'assertion' and term == DWC + 'occurrenceID')
             if join_only:
                 chosen = 'join'
@@ -863,7 +995,8 @@ def build_plan(archive):
             # Prefer an exact field on the declared subject over duplicate annotations
             # on identification/material fields. A different subject still needs review.
             exact_subject_default = False
-            if (table.is_core or family == 'occurrence') and len(options) > 1:
+            if (table.is_core or family == 'occurrence') and len(options) > 1 and not (
+                    occurrence_context and term in {DWC + 'typeStatus', DWC + 'typeDesignationType'}):
                 own_options = [target for target in options if target.startswith(own + '.')]
                 if len(own_options) == 1:
                     chosen = own_options[0]
@@ -875,12 +1008,12 @@ def build_plan(archive):
                 re.fullmatch(r'[+-]?[0-9]{4}\.[0-9]+', value.strip()) or
                 value.strip().lower() in {'na', 'n/a', 'null', 'none', 'unknown', 'not recorded'} for value in values)
             date_reason = ('Some event dates are float-shaped years or unknown-value tokens. The original text is copied without repair or interpreting these tokens as empty. Their meaning remains unverified.') if date_ambiguity else None
-            subject_move = chosen.startswith('material.') and term not in {DWC + 'materialSampleID', DWC + 'materialEntityID'} and not (
-                strong_specimen and term in {*specimen_terms, DWC + 'preparations'})
-            review = bool(not join_only and values and (not options or (len(options) > 1 and not exact_subject_default) or media_reason or subject_move or name_ambiguity or (own == 'occurrence' and term == DWC + 'typeStatus') or chosen.startswith('molecular-protocol.env_') or (has_material and term == DWC + 'recordedBy')))
+            review = bool(not join_only and values and (not options or (len(options) > 1 and not exact_subject_default) or media_reason or name_ambiguity or chosen.startswith('molecular-protocol.env_')) and automatic_family is None)
             item = {"id": _column_id(t, c), "table": t, "column": c, "term": term,
                     "default": chosen, "review": review, "options": ([{'value': 'join', 'label': 'Used to join source rows to the core'}] if join_only else [_choice(value) for value in options] + ([] if chosen in {'occurrence.occurrenceStatus', 'event.eventCategory'} else [PRESERVE])),
                     "nonempty": len(values), "distinct": len(set(values)), "samples": [value[:500] for value in list(dict.fromkeys(values))[:3]],
+                    **({'default_when': default_when} if default_when else {}),
+                    **({'follows': f'material:{t}'} if chosen.startswith('material.') and not default_when else {}),
                     **({'incompatible_values': incompatible} if incompatible else {}),
                     **({'parent_link_unavailable': parent_blocked} if parent_blocked else {})}
             if parent_default:
@@ -913,7 +1046,7 @@ def build_plan(archive):
                     'reason': ' '.join(filter(None, (typed_reason, date_reason))), 'table': t,
                     'nonempty': len(values), 'samples': item['samples']})
             if review:
-                issues.append(_issue(item["id"], term.rsplit("/", 1)[-1],
+                issue = _issue(item["id"], term.rsplit("/", 1)[-1],
                     kind='name-semantics' if name_ambiguity and not media_reason else 'column-mapping', reason=media_reason or (
                         "Some names look like they include an author, a qualifier such as 'cf.', or another unusual form. In a Darwin Core Data Package, scientificName holds only the name, without its author. "
                         + ("The full text fills verbatimIdentification wherever that would otherwise be empty, and your original files keep everything. "
@@ -925,7 +1058,17 @@ def build_plan(archive):
                         else "This column could describe more than one thing, for example the occurrence or its identification. Choose where it belongs, or keep it only in your original files." if options
                         else "Darwin Core Data Packages have no field for this term, so the values stay in your original files." if term not in SCHEMA_TERMS
                         else "This converter does not map this term yet, so the values stay in your original files."),
-                    options=item["options"], table=t, nonempty=len(values), samples=[value[:250] for value in item["samples"]]))
+                    options=item["options"], table=t, nonempty=len(values), samples=[value[:250] for value in item["samples"]])
+                non_preserve = [option['value'] for option in item['options'] if option['value'] != 'preserve']
+                if has_material and non_preserve and all(target.startswith('material.') for target in non_preserve) and any(issue['id'] == f'material:{t}' for issue in issues):
+                    issue['ask_when'] = [{'type': 'decision_in', 'id': f'material:{t}', 'values': ['per_row', 'by_id']}]
+                issues.append(issue)
+            if automatic_family and values:
+                proposed_automatic.append({'id': item['id'], 'title': f"{table.name}: {term.rsplit('/', 1)[-1]}",
+                    'reason': automatic_reason, 'options': item['options'], 'default': chosen,
+                    'default_when': default_when,
+                    'table': t, 'term': term, 'family': automatic_family, 'glance': glance,
+                    'nonempty': len(values), 'distinct': len(set(values)), 'samples': item['samples']})
             if table.is_core and own == 'occurrence' and term == DWC + 'countryCode' and chosen == 'event.countryCode':
                 for source_value, count in sorted(Counter(values).items()):
                     if not semantic_target_rejection('event.countryCode', source_value):
@@ -1100,6 +1243,15 @@ def build_plan(archive):
             [{'value': 'shared', 'label': 'Use one Agent for this exact name'},
              {'value': 'separate', 'label': 'Keep this name as text only, without an Agent'}],
             kind='agent-identity', source_value=name, count=count))
+    for t in range(len(archive.tables)):
+        followers = [column['id'] for column in columns if column['table'] == t and column.get('follows') == f'material:{t}' and column['nonempty'] > 0]
+        material_issue = next((issue for issue in issues if issue['id'] == f'material:{t}'), None)
+        if material_issue:
+            material_issue['followers'] = followers
+            names = [next(column['term'].rsplit('/', 1)[-1] for column in columns if column['id'] == identifier) for identifier in followers]
+            if names:
+                shown = ', '.join(names[:8]) + (f', and {len(names) - 8:,} more' if len(names) > 8 else '')
+                material_issue['reason'] += f' If yes, these details are stored on the specimen records: {shown}. If no, they stay in your original files.'
     plan = {"version": RULE_VERSION, "source_sha256": archive.fingerprint, "schema": dwc_dp_schema_snapshot(),
             "tables": profiles, "columns": columns, "issues": issues,
             "files": [{"name": name, "sha256": hashlib.sha256(content).hexdigest(), "bytes": len(content)} for name, content in sorted(archive.files.items())]}
@@ -1112,6 +1264,10 @@ def build_plan(archive):
         plan['scientific_hierarchy'] = _scientific_summary(scientific)
     _preflight_plan(archive, core, plan, row_issues)
     _streamline_plan(archive, core, plan, warnings)
+    for choice in proposed_automatic:
+        column = next(column for column in plan['columns'] if column['id'] == choice['id'])
+        choice['options'] = column['options']
+    plan['automatic_choices'].extend(proposed_automatic)
     _require_valid_defaults(plan)
     apply_policy(plan['issues']); apply_policy(plan['automatic_choices'])
     plan["id"] = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
@@ -1143,18 +1299,20 @@ def _require_valid_defaults(plan):
     while True:
         effective = effective_decisions(plan, {})
         failing = [choice for choice in plan['automatic_choices']
-                   if failed_requirements(plan, effective, choice['id'], choice['default'])]
+                   if failed_requirements(plan, effective, choice['id'], effective.get(choice['id'], choice['default']))]
         if not failing:
             return
         for choice in failing:
-            reasons = ' '.join(requirement['reason'] for requirement in failed_requirements(plan, effective, choice['id'], choice['default']))
+            value = effective.get(choice['id'], choice['default'])
+            reasons = ' '.join(requirement['reason'] for requirement in failed_requirements(plan, effective, choice['id'], value))
             plan['automatic_choices'].remove(choice)
             plan['warnings'] = [warning for warning in plan['warnings'] if warning['id'] != choice['id']]
-            question = {key: value for key, value in choice.items() if key not in {'default', 'question_reason'}}
+            question = {key: item for key, item in choice.items() if key not in {'default', 'question_reason', 'default_when'}}
             plan['issues'].append(question | {'reason': choice.get('question_reason', choice['reason']) + ' ' + reasons})
             for column in plan['columns']:
                 if column['id'] == choice['id']:
                     column['review'] = True
+                    column.pop('default_when', None)
 
 
 def validate_decisions(plan, decisions, require_complete=True):
@@ -1188,7 +1346,7 @@ def validate_decisions(plan, decisions, require_complete=True):
         # A group is resolved when every member has an effective choice, even without a group key.
         return all(member in effective for member in item['members']) if item.get('members') else item['id'] in effective
 
-    unresolved = [item["id"] for item in plan["issues"] if item['id'] not in nested_ids and not resolved(item) and not (
+    unresolved = [item["id"] for item in plan["issues"] if item['id'] not in nested_ids and asked(plan, effective, item) and not resolved(item) and not (
         item.get('source_column') is not None and effective.get(f"column:{item['table']}:{item['source_column']}") == 'preserve') and not (
         "table" in item and (effective.get(f"table:{item['table']}") == "preserve" or
                             ('row' in item and effective.get(f"row:{item['table']}:{item['row'] - 1}") == 'preserve')))]

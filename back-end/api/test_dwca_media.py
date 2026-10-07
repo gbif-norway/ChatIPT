@@ -59,14 +59,17 @@ class MediaConversionTests(SimpleTestCase):
         self.assertEqual(len([r for r in report['row_crosswalk'] if r['target_table'] == 'provenance']), 3)
         self.assertTrue(report['validation']['valid'])
 
-    def test_simple_multimedia_event_links_and_literal_aliases_are_reviewed(self):
+    def test_simple_multimedia_event_links_and_standard_literal_aliases_are_automatic(self):
         archive = media_archive([DCT + 'identifier', DCT + 'format', DCT + 'creator', DCT + 'source'],
                                 [['e1', 'https://example.org/image.jpg', 'image/jpeg', 'Photographer', 'A collection']],
                                 core=('event.csv', b'eventID,eventCategory\ne1,survey\n'), name='multimedia.csv')
         plan = build_plan(archive)
         fields = {c['term']: c for c in plan['columns'] if c['table'] == 1}
-        for term in (DCT + 'format', DCT + 'creator', DCT + 'source'):
-            self.assertTrue(fields[term]['review'])
+        # format and creator are the standard media-vocabulary matches: automatic, visible and changeable.
+        for term in (DCT + 'format', DCT + 'creator'):
+            self.assertFalse(fields[term]['review'])
+            self.assertIn(fields[term]['id'], {choice['id'] for choice in plan['automatic_choices']})
+        self.assertTrue(fields[DCT + 'source']['review'])
         frames, report = convert(archive, plan, choices(plan))
         self.assertEqual(frames['media'].iloc[0]['format'], 'image/jpeg')
         self.assertNotIn('formatIRI', frames['media'])
