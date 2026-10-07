@@ -931,6 +931,27 @@ class LabelLengthTests(SimpleTestCase):
         exact = 'A' * names.MAX_LABEL_CHARS
         self.assertEqual(len(names.collect_state(read_inputs([('occurrence.csv', f'occurrenceID,scientificName\na,{exact}\n'.encode())]), {'id': 'p'})['labels']), 1)
 
+    def test_collection_records_mixed_classification_hints_and_ignores_parenthetical_variants(self):
+        content = (b'occurrenceID,scientificName,kingdom,phylum,class\n'
+                   b'a,Anura,Animalia,Chordata,Amphibia\n'
+                   b'b,Anura,Animalia,Arthropoda,Insecta\n'
+                   b'c,Squamata,Animalia,Chordata,Squamata (lizards)\n'
+                   b'd,Squamata,Animalia,Chordata,Squamata\n')
+        state = names.collect_state(read_inputs([('occurrence.csv', content)]), {'id': 'plan'})
+        records = {record['label']: record for record in state['labels']}
+        self.assertEqual(records['Anura']['mixed_hints'], ['class', 'phylum'])
+        self.assertEqual(records['Squamata']['mixed_hints'], [])
+
+    def test_source_qualifier_counts_are_bounded_to_kept_values(self):
+        values = [f'qualifier-{index}' for index in range(names.MAX_SOURCE_QUALIFIERS + 4)]
+        table = SimpleNamespace(row_type=DWC + 'Occurrence', terms=[DWC + 'occurrenceID', names.NAME,
+                                                                    DWC + 'identificationQualifier'],
+                                rows=[[f'a{index}', 'Name', value] for index, value in enumerate(values)])
+        record = names.collect_state(SimpleNamespace(tables=[table]), {'id': 'plan'})['labels'][0]
+        self.assertEqual(len(record['source_qualifiers']), names.MAX_SOURCE_QUALIFIERS)
+        self.assertLessEqual(len(record['source_qualifier_counts']), names.MAX_SOURCE_QUALIFIERS)
+        self.assertTrue(record['qualifiers_truncated'])
+
 
 def respond(payload, max_retries=None):
     return reply([answer(item_id, 'confirm', refs=['table:0']) for item_id in requested(payload)])
@@ -1363,6 +1384,40 @@ class GroupDecisionTests(SimpleTestCase):
         self.assertNotIn('Bosqueia phoberos clone', conversion.name_review['decisions'])
         self.assertEqual(conversion.name_review['decisions']['Bosqueia phoberos']['decision'], 'keep')
 
+    def test_mixed_and_class_conflicts_are_checked_before_auto_acceptance(self):
+        mixed = names.collect_state(read_inputs([('occurrence.csv',
+            b'occurrenceID,scientificName,kingdom,phylum,class\n'
+            b'a,Anura,Animalia,Chordata,Amphibia\n'
+            b'b,Anura,Animalia,Arthropoda,Insecta\n')]), {'id': 'plan'})['labels'][0]
+        mixed.update(parsed=real_parse('Anura', 'order'), match={
+            'matchType': 'EXACT', 'hintOnly': False, 'usage': {'scientificName': 'Anura', 'taxonRank': 'order',
+                'scientificNameAuthorship': None, 'classification': {'kingdom': 'Animalia', 'phylum': 'Chordata', 'class': 'Amphibia'}}})
+        classified = names.classify(mixed)
+        self.assertEqual((classified['group'], classified['reasons'][0]['code']), ('check:mixed', 'mixed'))
+        self.assertNotIn('col', classified['eligible'])
+        self.assertIn('mine', classified['eligible'])
+        self.assertEqual(names.groups({'labels': [mixed], 'decisions': {}})[0]['signature'],
+                         {'code': 'mixed', 'yours': 'class, phylum', 'col': None})
+
+        copepod = {'label': 'Calanus', 'parsed': real_parse('Calanus', 'genus'), 'hints': {'class': 'Copepoda'},
+                   'mixed_hints': [], 'qualifier': None, 'match': {'matchType': 'EXACT', 'hintOnly': False,
+                   'usage': {'scientificName': 'Calanus', 'taxonRank': 'genus', 'scientificNameAuthorship': None,
+                             'classification': {'class': 'Insecta'}}}}
+        classified = names.classify(copepod)
+        self.assertEqual((classified['group'], classified['reasons'][0]['code']), ('check:class:Copepoda:Insecta', 'class'))
+        # Never accepted automatically; COL's name is only the user's explicit group choice, as for 558's kingdom.
+        state = {'labels': [copepod], 'decisions': {}, 'col_release': RELEASE}
+        self.assertEqual(names.auto_accept(state), 0)
+        self.assertEqual(classified['eligible'], ['col', 'mine'])
+
+    def test_spelling_group_reasons_explain_trema_and_albizzia(self):
+        for label in ('Trema orientalis', 'Albizzia zygia'):
+            record = copy.deepcopy(FIXTURE_RECORDS[label])
+            classification = names.classify(record)
+            found = names.change(record, record['match']['usage'], record['match']['matchType'])
+            self.assertEqual(classification['reasons'][0]['text'],
+                             f"COL suggests {record['match']['usage']['scientificName']}; it {found['text']}")
+
     def test_fixture_auto_and_bulk_writes_obey_name_and_authorship_safety(self):
         fixtures = {case['label']: fixture_record(case) for case in GROUP_MATCHES}
         id_labels = {case['label'] for case in ID_MATCHES_FIXTURE}
@@ -1666,6 +1721,17 @@ class CarryDecisionTests(SimpleTestCase):
         fresh = self.fresh()
         fresh['labels'] = [{'label': 'Calanus', 'hints': {'kingdom': 'Plantae'}}, {'label': 'Aus bus', 'source_rank': 'species'}]
         self.assertEqual(list(names.carry_decisions(previous, fresh, {'source_sha256': 'sha-2'})['decisions']), ['Aus bus'])
+
+    def test_source_qualifier_change_drops_a_carried_decision(self):
+        previous = self.conversion({'Aus bus': decision('keep', None, source='verbatim')})
+        previous.name_review['labels'] = [{'label': 'Calanus'}, {'label': 'Aus bus', 'source_qualifiers': [],
+                                                                    'source_ids': {}, 'mixed_hints': []}]
+        fresh = self.fresh()
+        fresh['labels'] = [{'label': 'Calanus'}, {'label': 'Aus bus', 'source_qualifiers': ['cf.'],
+                                                  'source_ids': {}, 'mixed_hints': []}]
+        carried = names.carry_decisions(previous, fresh, {'source_sha256': 'sha-2'})
+        self.assertEqual(carried['decisions'], {})
+        self.assertEqual(carried['carried']['dropped'], 1)
 
     def test_auto_decisions_are_not_carried_but_declines_and_dropped_users_are_counted(self):
         user = decision('keep', None, source='verbatim')

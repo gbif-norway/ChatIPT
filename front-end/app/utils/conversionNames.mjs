@@ -64,13 +64,14 @@ export const groupTitle = (group) => {
 export const groupSubtitle = (group) => {
   const signature = group?.signature
   if (group?.kind !== 'check' || !signature) return ''
-  if (signature.code === 'kingdom' || signature.code === 'phylum') {
+  if (['kingdom', 'phylum', 'class'].includes(signature.code)) {
     const count = group.labels || 0
     const subject = count === 1 ? 'this name' : `these ${count.toLocaleString()} names`
     return `Your ${signature.code} says ${signature.yours}; COL places ${subject} in ${signature.col}.`
   }
   if (signature.code === 'name') return 'COL returned a different name for these. Keep yours unless you are sure.'
   if (signature.code === 'id') return 'Your scientificNameID or taxonID points to another name in Catalogue of Life.'
+  if (signature.code === 'mixed') return `Rows with the same name give different ${signature.yours || 'classifications'}, so they may be different taxa. Keep yours unless you are sure.`
   return ''
 }
 

@@ -123,3 +123,10 @@ test('the row shows what the chosen group decision would write before it is appl
   assert.equal(previewResult(sapotaceae, 'col'), 'Sapotaceae')
   assert.equal(previewResult(sapotaceae, 'mine'), 'Sapotaceae sp')
 })
+
+test('class and mixed-classification conflicts get their own explanation', () => {
+  assert.equal(groupSubtitle({ kind: 'check', labels: 1, signature: { code: 'class', yours: 'Copepoda', col: 'Insecta' } }),
+    'Your class says Copepoda; COL places this name in Insecta.')
+  assert.match(groupSubtitle({ kind: 'check', labels: 2, signature: { code: 'mixed', yours: 'kingdom, class', col: null } }),
+    /^Rows with the same name give different kingdom, class/)
+})

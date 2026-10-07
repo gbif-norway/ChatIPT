@@ -104,6 +104,7 @@ def collect_state(archive, plan):
             record = found.setdefault(label, {'label': label, 'rows': 0, 'tables': {}, 'context': defaultdict(set),
                                               'source_ids': defaultdict(set), 'source_qualifiers': set(),
                                               'source_qualifier_rows': 0, 'source_qualifier_counts': Counter(),
+                                              'source_qualifiers_truncated': False,
                                               'has_qualifier_column': False})
             record['rows'] += 1
             record['tables'][target] = record['tables'].get(target, 0) + 1
@@ -128,14 +129,17 @@ def collect_state(archive, plan):
                 value = normal(raw, MAX_CONTEXT_CHARS)
                 if value and len(value) <= MAX_CONTEXT_CHARS:
                     record['source_qualifier_rows'] += 1
-                    record['source_qualifier_counts'][_normal_qualifier(value)] += 1
-                    if len(record['source_qualifiers']) < MAX_SOURCE_QUALIFIERS + 1:
+                    if value in record['source_qualifiers']:
+                        record['source_qualifier_counts'][_normal_qualifier(value)] += 1
+                    elif len(record['source_qualifiers'] - {'\0overlong'}) < MAX_SOURCE_QUALIFIERS:
                         record['source_qualifiers'].add(value)
+                        record['source_qualifier_counts'][_normal_qualifier(value)] += 1
+                    else:
+                        record['source_qualifiers_truncated'] = True
                 elif str(raw or '').strip():
                     record['source_qualifier_rows'] += 1
+                    record['source_qualifiers'].add('\0overlong')
                     record['source_qualifier_counts']['\0overlong'] += 1
-                    if len(record['source_qualifiers']) < MAX_SOURCE_QUALIFIERS + 1:
-                        record['source_qualifiers'].add('\0overlong')
     ordered = sorted(found.values(), key=lambda record: (-record['rows'], record['label']))
     labels = []
     for record in ordered[:MAX_LABELS]:
@@ -144,6 +148,8 @@ def collect_state(archive, plan):
         qualifier = split_qualifier(record['label'])[1]
         # The supplied authorships, so that accepting COL's in bulk never silently rewrites a different one.
         authorships = sorted(record['context'].get('scientificNameAuthorship', ()))
+        mixed_hints = sorted(rank for rank in ('kingdom', 'phylum', 'class')
+                             if len({_hint_normal(value) for value in record['context'].get(rank, ()) if _hint_normal(value)}) > 1)
         source_ids = {}
         for field, values in record['source_ids'].items():
             if len(values) == 1:
@@ -152,15 +158,23 @@ def collect_state(archive, plan):
                     source_ids[field] = value
         item = {'label': record['label'], 'rows': record['rows'], 'tables': record['tables'],
                        'hints': {rank: value for rank, value in context.items() if rank in HINT_RANKS},
+                       'mixed_hints': mixed_hints,
                        'source_rank': context.get('taxonRank', '').lower() or None, 'qualifier': qualifier,
                        'source_authorships': authorships[:MAX_AUTHORSHIPS], 'authorships_truncated': len(authorships) > MAX_AUTHORSHIPS,
                        'source_ids': source_ids}
         if record['has_qualifier_column'] and record['source_qualifiers']:
-            qualifiers = sorted(record['source_qualifiers'])
-            item.update(source_qualifiers=qualifiers[:MAX_SOURCE_QUALIFIERS],
+            qualifiers = sorted(record['source_qualifiers'] - {'\0overlong'})
+            kept_qualifiers = qualifiers[:MAX_SOURCE_QUALIFIERS]
+            if '\0overlong' in record['source_qualifiers']:
+                kept_qualifiers.append('\0overlong')
+            kept_counts = {_normal_qualifier(value) for value in kept_qualifiers if value != '\0overlong'}
+            if '\0overlong' in kept_qualifiers:
+                kept_counts.add('\0overlong')
+            item.update(source_qualifiers=sorted(kept_qualifiers),
                         source_qualifier_rows=record['source_qualifier_rows'],
-                        source_qualifier_counts=dict(record['source_qualifier_counts']),
-                        qualifiers_truncated=len(qualifiers) > MAX_SOURCE_QUALIFIERS)
+                        source_qualifier_counts={key: count for key, count in record['source_qualifier_counts'].items()
+                                                 if key in kept_counts},
+                        qualifiers_truncated=record['source_qualifiers_truncated'])
         labels.append(item)
     return {'plan_id': plan['id'], 'status': 'pending' if labels else 'none', 'error': '', 'runs': 0,
             'truncated': max(len(ordered) - MAX_LABELS, 0),
@@ -190,7 +204,8 @@ def carry_decisions(conversion, fresh, plan):
     def same_context(label):
         # Another source with the same labels: a decision carries only where the name's supplied context is unchanged.
         return same_source or (same_labels and label in before and all(records[label].get(key) == before[label].get(key)
-                                                   for key in ('hints', 'source_rank', 'source_authorships', 'qualifier')))
+                                                   for key in ('hints', 'source_rank', 'source_authorships', 'qualifier',
+                                                               'source_qualifiers', 'source_ids', 'mixed_hints')))
     carried, bulk, dropped = {}, 0, 0
     auto_declined = [label for label in (previous.get('auto_declined') or [])
                      if label in records and same_context(label)]
@@ -538,7 +553,7 @@ def stem_usage(record):
 
 
 def _hint_normal(value):
-    value = re.sub(r'\s*\([^)]*\)', '', normal(value) or '').casefold()
+    value = re.sub(r'\s*\([^)]*\)', '', normal(value) or '').strip().casefold()
     return {'metazoa': 'animalia', 'viridiplantae': 'plantae'}.get(value, value)
 
 
@@ -556,7 +571,10 @@ def _conflicts(record):
         fields = ', '.join((idcheck.get('fields') or record.get('source_ids') or {}).keys()) or 'identifier'
         target = (match.get('matchedId') or {}).get('scientificName') or (idcheck.get('usage') or {}).get('scientificName') or 'another name'
         out.append(('id', 'check:id', f'Your {fields} points to {target}'))
-    for rank in ('kingdom', 'phylum') if match.get('matchType') == 'EXACT' else ():
+    mixed = record.get('mixed_hints') or []
+    if mixed:
+        out.append(('mixed', 'check:mixed', f"Your rows give this name different {', '.join(mixed)}"))
+    for rank in ('kingdom', 'phylum', 'class') if match.get('matchType') == 'EXACT' else ():
         hint = (record.get('hints') or {}).get(rank)
         theirs = ((usage.get('classification') or {}).get(rank))
         if hint and theirs and _hint_normal(hint) != _hint_normal(theirs):
@@ -644,6 +662,8 @@ def eligible(record, option, classification, decisions=None):
     if option == 'stem':
         return kind == 'uncertain' and stem_usage(record) is not None
     if option == 'col':
+        if kind == 'check' and record.get('mixed_hints'):
+            return False
         if kind == 'check' and qkind == 'uncertain':
             stem = stem_usage(record)
             return bool(stem and change(record, stem, 'EXACT') is None)
@@ -682,7 +702,15 @@ def classify(record):
                 reasons.append({'code': 'authorship', 'text': f"COL's authorship {usage.get('scientificNameAuthorship') or '(none)'} differs; yours is kept"})
         elif (match.get('matchType') in {'VARIANT', 'FUZZY', 'CANONICAL'} and usage
               and not match.get('hintOnly')):
-            group, kind, reasons = 'spelling', 'spelling', []
+            group, kind = 'spelling', 'spelling'
+            if found and found.get('kind') == 'spelling':
+                reasons = [{'code': 'spelling', 'text': f"COL spells it {usage.get('scientificName')}"}]
+            elif found:
+                reasons = [{'code': 'suggestion', 'text': f"COL suggests {usage.get('scientificName')}; it {found.get('text')}"}]
+            else:
+                authorship = usage.get('scientificNameAuthorship')
+                suffix = f' {authorship}' if authorship else ''
+                reasons = [{'code': 'variant', 'text': f"COL writes it {usage.get('scientificName')}{suffix}"}]
         else:
             group, kind, reasons = 'unconfirmed', 'unconfirmed', _reason_for_unconfirmed(record)
     result = {'group': group, 'kind': kind, 'reasons': reasons, 'default': None, 'eligible': []}
@@ -741,15 +769,17 @@ def groups(state, classified=None):
                     counts[option] += 1
         signature = None
         if kind == 'check':
-            reason = next((r for r in bucket['reasons'] if r['code'] in {'kingdom', 'phylum', 'id'}), None)
+            reason = next((r for r in bucket['reasons'] if r['code'] in {'mixed', 'kingdom', 'phylum', 'class', 'id'}), None)
             if reason is None:
                 reason = next((r for r in bucket['reasons'] if r['code'] == 'name'), None)
             if reason:
                 record = members[0][0]
                 code = reason['code']
-                if code in {'kingdom', 'phylum'}:
+                if code in {'kingdom', 'phylum', 'class'}:
                     signature = {'code': code, 'yours': (record.get('hints') or {}).get(code),
                                  'col': (((record.get('match') or {}).get('usage') or {}).get('classification') or {}).get(code)}
+                elif code == 'mixed':
+                    signature = {'code': code, 'yours': ', '.join(record.get('mixed_hints') or []), 'col': None}
                 elif code == 'id':
                     idcheck = (record.get('match') or {}).get('idCheck') or {}
                     signature = {'code': code, 'yours': ', '.join((idcheck.get('fields') or {}).keys()) or None,

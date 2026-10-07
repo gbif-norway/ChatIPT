@@ -148,7 +148,7 @@ The server assigns each checked label to a group and computes which bulk choices
 | Uncertain to genus or family | Resolvable `sp.`, `spp.` and `indet.` labels | Publish the exact genus or family stem | Stem, keep | Candidate choice, empty |
 | Spelling differs from COL | `VARIANT`, `FUZZY` or `CANONICAL` matches with a usage, no qualifier or conflict | COL when any row is eligible; otherwise mine | COL, mine | Changes needing confirmation |
 | Not confirmed by COL | Ambiguous names, higher-rank-only matches, no match, doubtful qualifiers and unresolvable stems | Mine | Mine where eligible | Choose a candidate, confirm a replacement, empty |
-| Check against your data | Name, identifier, kingdom or phylum conflicts | No selection | COL, mine when eligible | Resolve each row where a bulk choice is unsafe |
+| Check against your data | Name, identifier, mixed classification, kingdom, phylum or class conflicts | No selection | COL, mine when eligible | Resolve each row where a bulk choice is unsafe |
 
 `mine` uses the parsed split only when it is lossless and there is no qualifier. Otherwise it keeps the supplied text. `cf.`, `aff.`, `nr.` and other doubtful qualifiers are never accepted automatically or in bulk. The server checks eligibility again when it applies each choice.
 
@@ -158,7 +158,7 @@ For `sp.`, `spp.` and `indet.`, the published `scientificName` is the genus or f
 
 A `stem` decision requires an exact COL match for the asserted stem. If homonyms disagree on authorship, or COL's authorship disagrees with any supplied authorship, the stem has no authorship. For an exact-name automatic decision, a differing supplied authorship is kept. COL authorship is written only when it agrees with the supplied authorship; when COL has no authorship, the supplied authorship survives.
 
-**Check against your data.** A conflict is grouped by its signature. For example, in conversion 558, `kingdom Animalia` versus COL's `Plantae` groups the affected labels together; one decision can cover 81 names. `Sapotaceae sp` in that group is written as the stem. A bulk `mine` choice keeps or losslessly splits each name as above.
+**Check against your data.** A conflict is grouped by its signature. Conflicts include a label whose rows disagree on kingdom, phylum or class, plus kingdom, phylum or class disagreements with an exact COL usage. Mixed classification groups say which ranks vary; COL cannot be selected for those rows. For example, in conversion 558, `kingdom Animalia` versus COL's `Plantae` groups the affected labels together; one decision can cover 81 names. `Sapotaceae sp` in that group is written as the stem. A bulk `mine` choice keeps or losslessly splits each name as above.
 
 **Source IDs are a second matching step.** A consistent source `scientificNameID` or `taxonID` can disambiguate a non-exact first match. It never overrides an exact same-name match: `Parathemisto libellula` stays `Parathemisto libellula`. ID diagnostics remain available as issues. For example, Calanus and Chaetognatha without IDs are not confirmed; a matching WoRMS ID can confirm the same name. An ID that points elsewhere or is not found is shown as a conflict or reason.
 
