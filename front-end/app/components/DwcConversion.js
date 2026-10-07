@@ -5,7 +5,7 @@ import config from '../config'
 import { getCsrfToken } from '../utils/csrf'
 import { useDataset } from '../contexts/DatasetContext'
 import { attentionItems, chatVisible, conflictsFor, optionState, shownRecommendation, unresolvedIssues } from '../utils/conversionReview.mjs'
-import { AGENT_NAMES_ID, automaticSummary, conversionTitle, dedupeNotices, glossaryEntry, makeSelector } from '../utils/conversionPlan.mjs'
+import { AGENT_NAMES_ID, automaticSummary, conversionTitle, dedupeNotices, glossaryEntry, isColumnId, makeSelector } from '../utils/conversionPlan.mjs'
 import { focusDecision } from '../utils/focusDecision'
 import ConversionAiDecisions from './ConversionAiDecisions'
 import ConversionAutomaticSummary from './ConversionAutomaticSummary'
@@ -109,8 +109,8 @@ function ChoiceCard({ item, state, decisions, disabled, onChoose, selected, numb
           <input type="radio" name={item.id} value={option.value} checked={value === option.value} disabled={disabled || !availability.available}
             onChange={() => onChoose(item.id, option.value, suggested ? { accepted_recommendations: [item.id] } : {})} aria-describedby={!availability.available ? `reason-${item.id}-${index}` : undefined} />
           <span>{option.label}{suggested && <small className="suggested-label"><i className="bi bi-stars me-1" aria-hidden="true" />Suggested by ChatIPT</small>}
-            {(option.value !== 'preserve' || item.id.startsWith('column:')) && glossaryEntry(state, option.value)?.gloss && <small className="d-block text-body-secondary">{glossaryEntry(state, option.value).gloss}</small>}
-            {(option.value !== 'preserve' || item.id.startsWith('column:')) && glossaryEntry(state, option.value)?.consequence && <small className="d-block text-body-secondary">{glossaryEntry(state, option.value).consequence}</small>}
+            {(option.value !== 'preserve' || isColumnId(item.id)) && glossaryEntry(state, option.value)?.gloss && <small className="d-block text-body-secondary">{glossaryEntry(state, option.value).gloss}</small>}
+            {(option.value !== 'preserve' || isColumnId(item.id)) && glossaryEntry(state, option.value)?.consequence && <small className="d-block text-body-secondary">{glossaryEntry(state, option.value).consequence}</small>}
             {item.option_notes?.[option.value] && <small className="d-block"><em>{item.option_notes[option.value]}</em></small>}
             {option.technical && <small className="d-block text-body-secondary">{option.technical}</small>}
             {automatic && option.value === (state.conditional_defaults?.[item.id]?.value ?? item.default) && <small className="d-block text-body-secondary">Our choice</small>}
@@ -123,7 +123,7 @@ function ChoiceCard({ item, state, decisions, disabled, onChoose, selected, numb
       {item.options.map(option => <option key={option.value} value={option.value}>
         {option.label}{optionState(state, item.id, option.value).available ? '' : ' (not available with your other choices)'}</option>)}
     </select>{glossaryEntry(state, value)?.gloss && <small className="d-block text-body-secondary mt-1">{glossaryEntry(state, value).gloss}</small>}</>}
-    {guided && item.id.startsWith('column:') && state.plan?.glossary?.copy_note && <p className="small text-body-secondary mt-2 mb-0">{state.plan.glossary.copy_note}</p>}
+    {guided && isColumnId(item.id) && state.plan?.glossary?.copy_note && <p className="small text-body-secondary mt-2 mb-0">{state.plan.glossary.copy_note}</p>}
     {guided && item.options.some(option => glossaryEntry(state, option.value)?.definition) && <details className="small mt-2"><summary>Official Darwin Core definitions</summary>
       <dl className="mt-2 mb-0">{item.options.filter(option => glossaryEntry(state, option.value)?.definition).map(option => <div key={option.value}><dt>{option.technical || option.value}</dt><dd>{glossaryEntry(state, option.value).definition}</dd></div>)}</dl></details>}
     {guided && recommendation?.rationale && <details className="small mt-2"><summary>Why ChatIPT suggests this answer</summary><p className="mt-2 mb-0">{recommendation.rationale}</p></details>}
@@ -241,8 +241,6 @@ export default function DwcConversion() {
     ? Object.entries(state.report?.taxonomy?.event_hierarchies || {}).map(([index, hierarchy]) => [index, hierarchy.scientific_consistency])
     : Object.entries(state?.plan?.taxonomy?.scientific_hierarchies || {})
   const scientificAudits = [...(scientific ? [['core', scientific]] : []), ...nestedScientific].filter(([, audit]) => audit)
-  const panelIds = inReview ? automaticSummary(state, selected).ids : new Set()
-  const notices = dedupeNotices(state, state?.status === 'complete' ? state.report?.warnings || [] : state?.plan?.warnings || [], selected, panelIds)
   const valueLedger = state?.report?.value_disposition?.source_terms || []
   const semanticFindings = state?.report?.semantic_value_audit?.findings || []
   const reviewedValueRoutes = state?.report?.reviewed_value_routes || []
@@ -260,6 +258,10 @@ export default function DwcConversion() {
   const choiceOrder = [...(state?.plan?.issues || []), ...automaticChoices, ...(state?.plan?.columns || [])]
   const answeredItems = [...new Map(choiceOrder.filter(item => answeredHere.includes(item.id) && !openIds.has(item.id) && !retainedIssue(item)).map(item => [item.id, item])).values()]
   const guidedItems = [...openItems, ...answeredItems].sort((a, b) => choiceOrder.findIndex(item => item.id === a.id) - choiceOrder.findIndex(item => item.id === b.id))
+  // A choice shown as a question is not repeated in "What we decided for you", and the panel's notices are not repeated below.
+  const guidedIds = new Set(guidedItems.map(item => item.id))
+  const panelIds = inReview ? automaticSummary(state, selected, guidedIds).ids : new Set()
+  const notices = dedupeNotices(state, state?.status === 'complete' ? state.report?.warnings || [] : state?.plan?.warnings || [], selected, panelIds)
   return <div className="container conversion-workspace">
     <header className="workspace-heading">
       <span className="eyebrow"><i className="bi bi-arrow-left-right me-2" aria-hidden="true" />Archive conversion</span>
@@ -330,7 +332,7 @@ export default function DwcConversion() {
           <i className="bi bi-stars me-1" aria-hidden="true" />Review {reviewable} {reviewable === 1 ? 'choice' : 'choices'} with AI
         </button>}
       </div>
-      <ConversionAutomaticSummary state={state} selected={selected} disabled={disabled} renderChoice={item => <ChoiceCard item={item} asRadios {...cardProps} />} />
+      <ConversionAutomaticSummary state={state} selected={selected} hidden={guidedIds} disabled={disabled} renderChoice={item => <ChoiceCard item={item} asRadios {...cardProps} />} />
       {guidedItems.map((item, index) => <ChoiceCard key={item.id} item={item} number={index + 1} {...cardProps} onChoose={(...args) => {
         setAnsweredHere(ids => ids.includes(item.id) ? ids : [...ids, item.id])
         choose(...args)

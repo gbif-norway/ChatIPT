@@ -20,9 +20,9 @@ function SummaryLine({ line, icon, renderChoice, disabled }) {
   </div>
 }
 
-export default function ConversionAutomaticSummary({ state, selected, disabled, renderChoice }) {
+export default function ConversionAutomaticSummary({ state, selected, hidden, disabled, renderChoice }) {
   const [specimenOpen, setSpecimenOpen] = useState({})
-  const { glance, specimen, silent } = automaticSummary(state, selected)
+  const { glance, specimen, silent } = automaticSummary(state, selected, hidden)
   if (!glance.length && !specimen.length && !silent.length) return null
   const groups = [...new Map(glance.map(line => [line.family, line.heading])).entries()]
   // Routine choices can be many (one per repeated agent name), so each family folds on its own.
@@ -38,7 +38,8 @@ export default function ConversionAutomaticSummary({ state, selected, disabled, 
     {specimen.map(line => <div className="automatic-summary-line" data-decision-id={line.id} key={line.id}>
       <div className="d-flex align-items-start gap-2"><i className="bi bi-archive text-body-secondary mt-1" aria-hidden="true" /><div className="flex-grow-1">
         <strong>{line.title}</strong>
-        <details className="small"><summary>See the list</summary><p className="mt-1 mb-1">{line.names.join(', ')}</p></details>
+        <details className="small"><summary>See the list</summary><p className="mt-1 mb-1">{line.names.join(', ')}</p>
+          {line.overridden.length > 0 && <p className="mb-1">Changed by you: {line.overridden.join(', ')}</p>}</details>
         <p className="small text-body-secondary mb-1">{line.why}</p>
         <button type="button" className="btn btn-link btn-sm p-0" disabled={disabled} aria-expanded={Boolean(specimenOpen[line.id])}
           onClick={() => setSpecimenOpen(current => ({ ...current, [line.id]: !current[line.id] }))}>{specimenOpen[line.id] ? 'Close' : 'Change'}</button>

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  automaticSummary, columnDetails, conversionStep, conversionTitle, dedupeNotices, makeSelector, planDiagram, statusLine, stepStates,
+  automaticSummary, columnDetails, conversionStep, conversionTitle, dedupeNotices, isColumnId, makeSelector, planDiagram, statusLine, stepStates,
   summariseColumns, summaryLines, targetTable, unmappedReason,
 } from './conversionPlan.mjs'
 
@@ -112,7 +112,26 @@ test('automatic summary groups glance choices, hides retained or empty entries, 
   waitingState.plan.glossary.targets['occurrence.recordedBy'] = { decided: 'saved as who saw or recorded the organism, on each observation record' }
   const waiting = automaticSummary(waitingState, makeSelector(waitingState, {})).glance.find(line => line.id === 'column:0:0')
   assert.equal(waiting.title, 'recordedBy → waiting for your answer')
-  assert.equal(waiting.text, 'Depends on your answer to “Create specimen records?”: saved as who collected the specimen, on each specimen record if yes; otherwise saved as who saw or recorded the organism, on each observation record.')
+  assert.equal(waiting.text, 'Depends on your answer to “Create specimen records?”. “Yes”: saved as who collected the specimen, on each specimen record; otherwise saved as who saw or recorded the organism, on each observation record.')
+
+  // A choice that is open as a question is shown there only.
+  const hiddenSummary = automaticSummary(state, selected, new Set(['column:0:0']))
+  assert.ok(!hiddenSummary.ids.has('column:0:0'))
+
+  // A follower the user moved elsewhere is listed apart, not counted as stored.
+  const overriddenState = summaryState({ 'material:0': 'per_row', 'column:0:2': 'preserve' })
+  overriddenState.plan.columns[0].options = [{ value: 'material.catalogNumber', label: 'Catalogue number' }, { value: 'preserve', label: 'Keep in original files only' }]
+  const overridden = automaticSummary(overriddenState, makeSelector(overriddenState, overriddenState.decisions)).specimen[0]
+  assert.equal(overridden.count, 1)
+  assert.deepEqual(overridden.names, ['institution'])
+  assert.deepEqual(overridden.overridden, ['catalogue number (Keep in original files only)'])
+
+  // While a changed answer is being saved, a default that follows it says it is updating.
+  const savingState = summaryState({})
+  savingState.plan.automatic_choices[0].default_when = [
+    { value: 'material.collectedBy', when: [{ type: 'decision_in', id: 'material:0', values: ['per_row'] }] }]
+  const saving = automaticSummary(savingState, makeSelector(savingState, { 'material:0': 'per_row' })).glance.find(line => line.id === 'column:0:0')
+  assert.equal(saving.title, 'recordedBy → updating to follow your answer')
 })
 
 test('columns are summarised by how they are handled, using column.unmapped when present', () => {
@@ -337,4 +356,22 @@ test('a partial verbatim copy follows whether the file\'s own verbatimIdentifica
   const elsewhere = (id, fallback) => (id === 'column:0:1' ? 'identification.verbatimIdentification' : fallback)
   assert.equal(summariseColumns(state, elsewhere).mapped, 2)
   assert.doesNotMatch(columnDetails(state, elsewhere)[0].outcome, /where your file leaves it empty/)
+})
+
+test('nested Taxon-core choices are recognised by their local ids', () => {
+  const prefix = 'taxon-occurrence:1:'
+  const state = { decisions: {}, conditional_defaults: { [`${prefix}column:0:4`]: { value: 'material.collectedBy', reason: 'Specimens are created.' } }, plan: {
+    tables: [{ core: true }, { core: false }],
+    automatic_choices: [{ id: `${prefix}column:0:4`, table: 1, term: term('recordedBy'), family: 'agent-role', glance: true, nonempty: 2,
+      default: 'occurrence.recordedBy', reason: 'Fallback.', options: [{ value: 'occurrence.recordedBy', label: 'Recorded' }, { value: 'material.collectedBy', label: 'Collected' }] },
+    { id: `${prefix}material:0`, table: 1, title: 'Specimens?', default: 'per_row', options: [{ value: 'per_row', label: 'Yes' }] }],
+    issues: [], columns: [{ id: `${prefix}column:0:2`, table: 1, term: term('catalogNumber'), follows: `${prefix}material:0`, default: 'material.catalogNumber', nonempty: 2 }],
+    glossary: { targets: { 'material.collectedBy': { decided: 'saved as who collected the specimen' } } } } }
+  const summary = automaticSummary(state, makeSelector(state, {}))
+  assert.equal(summary.glance[0].title, 'recordedBy → saved as who collected the specimen')
+  assert.equal(summary.glance[0].text, 'Specimens are created.')
+  assert.equal(summary.specimen[0].id, `${prefix}material:0`)
+  assert.equal(summary.specimen[0].state, 'stored')
+  assert.ok(isColumnId(`${prefix}column:0:4`))
+  assert.ok(!isColumnId(`${prefix}material:0`))
 })

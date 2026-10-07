@@ -29,38 +29,65 @@ const FAMILY_ORDER = ['agent-role', 'specimens', 'type-status', 'status', 'media
 const optionLabel = (item, value) => item?.options?.find(option => option.value === value)?.label || value
 const formatTemplate = (text, count) => String(text || '').replaceAll('{count}', count.toLocaleString())
 
-export function automaticSummary(state, selected) {
+// Choices of occurrence records nested in a Taxon-core archive carry a 'taxon-occurrence:<i>:' prefix.
+const NESTED_PREFIX = /^(?:taxon-occurrence:\d+:)+/
+export const idPrefix = id => NESTED_PREFIX.exec(String(id || ''))?.[0] || ''
+export const localId = id => String(id || '').slice(idPrefix(id).length)
+export const isColumnId = id => localId(id).startsWith('column:')
+
+const conditionIds = item => (item.default_when || []).flatMap(branch => branch.when || [])
+  .filter(condition => condition.type === 'decision_in').map(condition => condition.id)
+
+// The decisions the server has saved, as the selector would read them without unsaved local changes.
+const savedValue = (state, id) => state?.decisions?.[id] ??
+  (state?.plan?.automatic_choices || []).find(choice => choice.id === id)?.default
+
+export function automaticSummary(state, selected, hidden = new Set()) {
   const plan = state?.plan || {}
   const automatic = plan.automatic_choices || []
   const issues = plan.issues || []
   const columns = plan.columns || []
+  const entries = [...issues, ...automatic]
   const warningIds = new Set((plan.warnings || []).map(warning => warning.id).filter(Boolean))
   const lines = []
   for (const item of automatic) {
+    // A choice that needs an answer is shown once, as a question.
+    if (hidden.has(item.id)) continue
+    const prefix = idPrefix(item.id)
+    const local = localId(item.id)
     const tablePreserved = item.table !== undefined && !plan.tables?.[item.table]?.core && selected(`table:${item.table}`) === 'preserve'
     if (tablePreserved && item.id !== `table:${item.table}`) continue
-    if (item.source_column != null && selected(`column:${item.table}:${item.source_column}`) === 'preserve') continue
-    if (item.id.startsWith('agent-share:') && selected('agent-names', 'shared') === 'text') continue
-    if (item.id.startsWith('column:') && item.nonempty === 0) continue
+    const sourceColumn = prefix ? `${prefix}column:0:${item.source_column}` : `column:${item.table}:${item.source_column}`
+    if (item.source_column != null && selected(sourceColumn) === 'preserve') continue
+    if (local.startsWith('agent-share:') && selected(`${prefix}agent-names`, 'shared') === 'text') continue
+    const isColumn = isColumnId(item.id)
+    if (isColumn && item.nonempty === 0) continue
     const value = selected(item.id, item.default)
     const changed = Object.hasOwn(state?.decisions || {}, item.id)
     const family = item.family || KIND_FAMILY[item.kind] || 'other'
     const heading = plan.glossary?.families?.[family] || FAMILY_HEADINGS[family] || FAMILY_HEADINGS.other
-    const isColumn = item.id.startsWith('column:')
     const target = glossaryEntry(state, value)
     const decided = option => glossaryEntry(state, option)?.decided ?? optionLabel(item, option)
-    // A default that depends on a question still open says so, rather than explaining today's fallback.
-    const waitingFor = changed ? null : (item.default_when || []).flatMap(branch => branch.when || [])
-      .filter(condition => condition.type === 'decision_in' && (state?.unresolved || []).includes(condition.id))
-      .map(condition => [...issues, ...automatic].find(entry => entry.id === condition.id))[0]
     let title = isColumn ? `${shortTerm(item.term)} → ${target?.decided ?? optionLabel(item, value)}` : item.title
     let text = isColumn
       ? changed ? `You chose this: ${optionLabel(item, value)}.` : (state?.conditional_defaults?.[item.id]?.reason ?? item.reason)
       : changed ? `You chose: ${optionLabel(item, value)}.` : `${optionLabel(item, value)}. ${item.reason || ''}`.trim()
+    // A default that depends on a question still open says what each answer does, rather than explaining today's fallback.
+    const referenced = changed ? [] : conditionIds(item).map(id => prefix && !idPrefix(id) ? prefix + id : id)
+    const waitingFor = referenced.filter(id => (state?.unresolved || []).includes(id))
+      .map(id => entries.find(entry => entry.id === id)).find(Boolean)
     if (waitingFor) {
-      const branch = item.default_when.find(entry => entry.value !== item.default)
+      const outcomes = waitingFor.options.filter(option => option.value !== 'preserve').map(option => {
+        const branch = item.default_when.find(entry => (entry.when || []).some(condition =>
+          condition.type === 'decision_in' && localId(condition.id) === localId(waitingFor.id) && condition.values.includes(option.value)))
+        return `“${option.label}”: ${decided(branch ? branch.value : item.default)}`
+      })
       title = `${shortTerm(item.term)} → waiting for your answer`
-      text = `Depends on your answer to “${waitingFor.title}”: ${branch ? `${decided(branch.value)} if yes; otherwise ` : ''}${decided(item.default)}.`
+      text = `Depends on your answer to “${waitingFor.title}”. ${outcomes.join('; ')}; otherwise ${decided(item.default)}.`
+    } else if (referenced.some(id => selected(id) !== savedValue(state, id))) {
+      // The server recomputes this default from an answer that is still being saved.
+      title = `${shortTerm(item.term)} → updating to follow your answer`
+      text = 'This follows the answer you just changed; it updates once your answer is saved.'
     }
     lines.push({ line: { id: item.id, item, family, heading, title, text, value, changed },
       glance: Boolean(item.glance || item.convention || warningIds.has(item.id)) })
@@ -73,15 +100,19 @@ export function automaticSummary(state, selected) {
     .map((entry, index) => ({ entry, index })).sort((a, b) => rank(a.entry.line.family) - rank(b.entry.line.family) || a.index - b.index).map(entry => entry.entry.line)
   const silent = lines.filter(entry => !entry.glance).map(entry => entry.line)
   const specimen = []
-  const materialEntries = new Map([...issues, ...automatic].filter(item => item.id.startsWith('material:')).map(item => [item.id, item]))
+  const materialEntries = new Map(entries.filter(item => localId(item.id).startsWith('material:')).map(item => [item.id, item]))
   const details = plan.glossary?.specimen_details || {}
   for (const [id, item] of materialEntries) {
     const followers = columns.filter(column => column.follows === id && column.nonempty > 0)
     if (!followers.length) continue
     const value = selected(id)
     const specimenState = ['per_row', 'by_id'].includes(value) ? 'stored' : value == null || value === '' ? 'pending' : 'kept'
-    const names = followers.map(column => glossaryEntry(state, column.default)?.field_label || shortTerm(column.term))
-    const count = followers.length
+    const name = column => glossaryEntry(state, column.default)?.field_label || shortTerm(column.term)
+    // A detail the user moved elsewhere (or kept in the originals) is listed apart, not counted as stored.
+    const following = followers.filter(column => !Object.hasOwn(state?.decisions || {}, column.id) || selected(column.id, column.default) === column.default)
+    const overridden = followers.filter(column => !following.includes(column)).map(column => `${name(column)} (${optionLabel(column, selected(column.id, column.default))})`)
+    const count = following.length
+    if (!count && !overridden.length) continue
     const title = formatTemplate(details[specimenState], count) || {
       stored: `${count} specimen ${count === 1 ? 'detail' : 'details'} stored on specimen records`,
       kept: `${count} specimen ${count === 1 ? 'detail' : 'details'} kept in your original files`,
@@ -91,7 +122,7 @@ export function automaticSummary(state, selected) {
       stored: 'You chose to create specimen records.', kept: 'You chose not to create specimen records.',
       pending: 'Your choice about specimen records is still open.',
     }[specimenState]
-    specimen.push({ id, item, count, names, state: specimenState, title, why })
+    specimen.push({ id, item, count, names: following.map(name), overridden, state: specimenState, title, why })
   }
   return { glance: glanceLines, specimen, silent, ids: new Set([...lines.map(entry => entry.line.id), ...specimen.map(line => line.id)]) }
 }
