@@ -339,6 +339,11 @@ class TidyModelFlowTests(ConversionTestCase):
         same.save()
         third = DwcConversion.objects.create(dataset=Dataset.objects.create(user=conversion.dataset.user, workflow_type='dwca_conversion'))
         self.assertEqual(conversion_tidy._model_cache(third, fingerprint)['entries'], conversion.tidy['model']['entries'])
+        # An abstention stored by the third (own answers first) never hides a reading paid for elsewhere.
+        third.tidy = {'model': {**failed, 'entries': {key: {**entry, 'fields': {}, 'confidence': 'low', 'note': 'No answer.'}
+                                                  for key, entry in conversion.tidy['model']['entries'].items()}}}
+        merged = conversion_tidy._model_cache(third, fingerprint)['entries']
+        self.assertTrue(any(entry['fields'] for entry in merged.values()))
 
     def test_values_left_out_of_an_answer_are_not_asked_again(self):
         def response(args, max_retries=None):

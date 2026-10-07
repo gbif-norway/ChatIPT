@@ -231,9 +231,13 @@ def _model_cache(conversion, fingerprint):
         return {}
     # A failed or partial call elsewhere never hides answers another upload already paid for.
     merged, entries, verdicts = dict(records[0]), {}, {}
+    def substantive(entry):
+        return entry.get('confidence') in {'high', 'medium'} and bool(entry.get('fields') or entry.get('residue'))
     for record in records:
         for key, entry in (record.get('entries') or {}).items():
-            entries.setdefault(key, entry)
+            # An answer that reads the value wins over an abstention or a missing answer stored elsewhere.
+            if key not in entries or (substantive(entry) and not substantive(entries[key])):
+                entries[key] = entry
         for key, verdict in (record.get('verdicts') or {}).items():
             verdicts.setdefault(key, verdict)
     merged.update(entries=entries, verdicts=verdicts)
