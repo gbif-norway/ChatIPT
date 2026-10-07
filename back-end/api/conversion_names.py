@@ -470,13 +470,12 @@ def authorship_agrees(record, usage):
     supplied = [*record.get('source_authorships', ()), *([parsed['authorship']] if parsed.get('usable') and parsed.get('authorship') else [])]
     if record.get('authorships_truncated'):
         return False
-    theirs = (usage or {}).get('scientificNameAuthorship')
-    if not normal(theirs):
-        return True
     if not parsed.get('usable') and _unread_trailing_text(record):
-        # The parser could not read the label, and text after the name may be an authorship nobody can compare.
+        # The parser could not read the label, and text after the name may be an authorship nobody can compare; not even
+        # COL's lack of one may replace it (the user's text is kept instead).
         return False
-    return all(authorships_agree(value, theirs) for value in supplied)
+    theirs = (usage or {}).get('scientificNameAuthorship')
+    return not normal(theirs) or all(authorships_agree(value, theirs) for value in supplied)
 
 
 def _unread_trailing_text(record):

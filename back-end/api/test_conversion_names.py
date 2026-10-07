@@ -1420,6 +1420,8 @@ class GroupDecisionTests(SimpleTestCase):
         self.assertNotIn('col', names.classify(record)['eligible'])
         # A bare name with nothing after it still agrees.
         self.assertTrue(names.authorship_agrees({**record, 'label': 'Aus bus'}, record['match']['usage']))
+        # Nor does a COL usage without any authorship drop the unread one.
+        self.assertFalse(names.authorship_agrees(record, {'scientificName': 'Aus bus', 'scientificNameAuthorship': None}))
 
     def test_doubt_markers_joined_to_the_epithet_are_seen(self):
         for label in ('Larus cf.argentatus', 'Larus aff.argentatus', 'Larus nr.argentatus'):
