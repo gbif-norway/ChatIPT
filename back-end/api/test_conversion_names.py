@@ -1458,6 +1458,32 @@ class GroupDecisionTests(SimpleTestCase):
             with self.subTest(label=label):
                 self.assertEqual(names.authorship_agrees({'label': label, 'parsed': unparsed}, usage), agrees)
 
+    def test_a_new_species_marker_is_never_published_as_its_genus_automatically(self):
+        for label in ('Larus sp. nov.', 'Larus sp. n.', 'Larus sp.nov. 2'):
+            record = {'label': label, 'rows': 1, 'qualifier': taxon_matching.split_qualifier(label)[1], 'parsed': real_parse('Larus'),
+                      'match': {'matchType': 'EXACT', 'hintOnly': False, 'alternatives': [],
+                                'usage': {'scientificName': 'Larus', 'taxonRank': 'genus', 'scientificNameAuthorship': 'Linnaeus, 1758'}}}
+            with self.subTest(label=label):
+                self.assertEqual(names.qualifier_kind(record), 'doubt')
+                self.assertEqual(names.auto_accept({'labels': [record], 'decisions': {}, 'col_release': RELEASE}), 0)
+
+    def test_a_same_name_usage_without_authorship_or_in_another_family_is_a_homonym(self):
+        def record(other):
+            return {'label': 'Aus', 'rows': 1, 'qualifier': None, 'parsed': real_parse('Aus'),
+                    'match': {'matchType': 'EXACT', 'hintOnly': False, 'usage': {
+                        'id': '1', 'scientificName': 'Aus', 'scientificNameAuthorship': 'Smith, 1900', 'taxonRank': 'genus',
+                        'classification': {'kingdom': 'Animalia', 'family': 'Aidae'}},
+                        'alternatives': [{'id': '2', 'scientificName': 'Aus', 'taxonRank': 'genus', 'matchType': 'EXACT', **other}]}}
+        for other in ({'scientificNameAuthorship': None, 'classification': {'kingdom': 'Animalia', 'family': 'Aidae'}},
+                      {'scientificNameAuthorship': 'Smith, 1900', 'classification': {'kingdom': 'Animalia', 'family': 'Bidae'}}):
+            with self.subTest(other=other):
+                self.assertEqual(names.row_default(record(other), names.classify(record(other))), 'parsed')
+        same = {'scientificNameAuthorship': 'Smith 1900', 'classification': {'kingdom': 'Animalia', 'family': 'Aidae'}}
+        self.assertEqual(names.row_default(record(same), names.classify(record(same))), 'col')
+        stem = record({'scientificNameAuthorship': None})
+        stem.update(label='Aus sp.', qualifier='sp.', parsed=real_parse())
+        self.assertIsNone(names.stem_usage(stem)['scientificNameAuthorship'])
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,

@@ -183,7 +183,7 @@ names that still carry that batch; a name changed since stays as it is.
 **Uncertain names ("sp.", "spp.", "indet.").** The label's qualifier, or a
 `identificationQualifier` column whose values are all sp./spp./indet. (blank
 rows allowed), marks the name as uncertain to its genus or family. Any other
-value ("cf.", "?") on any row, or "cf.", "aff.", "nr." or "?" anywhere in the name itself, makes it a decision for
+value ("cf.", "?") on any row, or "cf.", "aff.", "nr.", "?" or "sp. nov." anywhere in the name itself, makes it a decision for
 the user, with how many rows say so. The stem (`stem` decision) is the COL usage of the same name:
 the matcher's own pick, or exact alternatives that agree on one rank. COL's
 authorship is written only when the same-name usages agree on it and it agrees

@@ -55,6 +55,8 @@ UNCERTAIN_QUALIFIERS = {'sp.', 'spp.', 'indet.'}
 # Rank markers inside a name; any other word after the genus in an unparsed label may be an authorship.
 RANK_MARKER_WORDS = {'subsp.', 'ssp.', 'var.', 'subvar.', 'f.', 'fo.', 'forma', 'subf.', 'agg.', 'nothosubsp.', 'nothovar.', '×', 'x'}
 # "cf.", "aff.", "nr." or "?" anywhere in a label make the identification doubtful, even beside a trailing "sp.".
+# "sp. nov." / "sp. n.": an unnamed new species, never published as its genus without the user.
+_NEW_SPECIES = re.compile(r'\s+sp(?:ec)?\.?\s*n(?:ov)?\.?(?:\s|$)', re.IGNORECASE)
 _DOUBT_MARKER = re.compile(r'\?|(?:^|\s)(?:cf|aff|nr)(?:\.|(?=\s|$))', re.IGNORECASE)
 GROUP_OPTIONS = {
     'auto': ['col', 'parsed', 'keep'],
@@ -527,7 +529,7 @@ def qualifier_kind(record):
     """Classify the label and source-column qualifier as uncertain, doubtful, or absent."""
     qualifier = normal(record.get('qualifier'))
     label = str(record.get('label') or '')
-    label_kind = ('doubt' if _DOUBT_MARKER.search(label) else
+    label_kind = ('doubt' if _DOUBT_MARKER.search(label) or _NEW_SPECIES.search(label) else
                   None if not qualifier else ('uncertain' if _normal_qualifier(qualifier) in UNCERTAIN_QUALIFIERS else 'doubt'))
     values = record.get('source_qualifiers') or []
     if values:
@@ -575,8 +577,9 @@ def stem_usage(record):
         usage = candidates[0][0]
         authorship = usage.get('scientificNameAuthorship')
         if (not authorship_agrees(record, usage)
-                or any(not authorships_agree(authorship, other.get('scientificNameAuthorship'))
-                       for other, _ in candidates[1:] if other.get('scientificNameAuthorship'))):
+                or any(not (normal(authorship) and normal(other.get('scientificNameAuthorship'))
+                            and authorships_agree(authorship, other.get('scientificNameAuthorship')))
+                       for other, _ in candidates[1:])):
             authorship = None
         return {'scientificName': usage.get('scientificName'), 'scientificNameAuthorship': authorship,
                 'taxonRank': usage.get('taxonRank'), 'usageId': str(usage['id']) if usage.get('id') is not None else None,
@@ -611,7 +614,7 @@ def _homonyms(record):
     pick = _same_name_match(record)
     if not pick:
         return []
-    lineage = {rank: _hint_normal((pick.get('classification') or {}).get(rank)) for rank in ('kingdom', 'phylum', 'class')}
+    lineage = {rank: _hint_normal((pick.get('classification') or {}).get(rank)) for rank in CONTEXT_RANKS}
     found = []
     for usage in (record.get('match') or {}).get('alternatives') or []:
         if usage.get('matchType') != 'EXACT' or name_parts(usage.get('scientificName')) != name_parts(pick.get('scientificName')):
@@ -620,8 +623,9 @@ def _homonyms(record):
             continue
         theirs = {rank: _hint_normal((usage.get('classification') or {}).get(rank)) for rank in lineage}
         other_lineage = any(lineage[rank] and theirs[rank] and lineage[rank] != theirs[rank] for rank in lineage)
-        other_author = (normal(usage.get('scientificNameAuthorship')) and normal(pick.get('scientificNameAuthorship'))
-                        and not authorships_agree(usage.get('scientificNameAuthorship'), pick.get('scientificNameAuthorship')))
+        # The same authors only when both are given and agree; a missing authorship cannot show it is the same taxon.
+        other_author = not (normal(usage.get('scientificNameAuthorship')) and normal(pick.get('scientificNameAuthorship'))
+                            and authorships_agree(usage.get('scientificNameAuthorship'), pick.get('scientificNameAuthorship')))
         if other_lineage or other_author:
             found.append(usage)
     return found
