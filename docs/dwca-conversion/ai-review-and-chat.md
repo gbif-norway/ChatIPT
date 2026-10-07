@@ -162,12 +162,14 @@ a stable `ref` that the model must cite:
   ≤ 5 examples) and the current `option_status` (`satisfied`).
 - **Targets**: pinned DwC-DP definitions for every `table.field` option value
   (`TABLE_SPECS[table].field_descriptors[field]`: description ≤ 500, comments ≤ 300,
-  ≤ 3 examples; table description ≤ 300). At most 8.
+  ≤ 3 examples; table description ≤ 300), plus the plain-language `plain_label`, `gloss`
+  and `consequence` from `api/dwca_glossary.py` when it has them. At most 8.
 - **Context**: the item's dependency decisions (§8.1) with effective value and source
   (`automatic`, `user`, `ai-reviewer`, `chat` or `null` when unresolved).
 
 Hard cap 8,000 characters per serialised packet. Overflow is trimmed in a fixed
-order: rows beyond 3, top values beyond 5, target comments, columns beyond 8.
+order: rows beyond 3, top values beyond 5, target comments, target glosses and
+consequences, plain labels beyond 80 characters, columns beyond 8.
 `packet_sha256` is the hash of the canonical JSON.
 
 Packets are recomputed rather than stored. The chat tool fetches the same packet
@@ -224,7 +226,9 @@ presence, absence, completeness, survey status, depicted subjects or physical
 material from names alone; assertion options are recommendations for the user, not
 choices you make; write `user_question` in plain language for a non-specialist,
 without Darwin Core jargon, ≤ 300 characters, with one sentence on the consequence of
-each sensible option.
+each sensible option, naming options by their plain labels and explaining them with the
+target glosses and consequences. The question card shows this `user_question` as its
+first line when there is one, with the fixed explanation under "More about this question".
 
 User message: canonical JSON
 `{"schema_revision", "untrusted_dataset_metadata": <EML>, "items": [packets]}`.
@@ -502,6 +506,10 @@ strictly lower level (§3):
 - every `decision_in` id in the item's option requirements
   (`plan["requirements"][item][value]`, from both `conditions` and `when`, recursing
   into `any`/`all`) that is at a lower level;
+- every decision (and column, at a lower level) referenced by the item's `ask_when`
+  conditions and, for a column item, by its `default_when` branches, so an item waits
+  for the earlier answer that can settle it or change its default (for example
+  `material:<t>`; see [streamlined review](streamlined-review.md#fewer-questions-and-plain-language));
 - for nested Taxon items, the same rules inside the nested plan, prefixed, plus the
   outer `table:<i>`;
 - for a group item, every member id (members are never AI items, so they change only

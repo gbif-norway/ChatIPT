@@ -241,6 +241,14 @@ or `MaterialCitation`, no row supplies `occurrenceStatus`, no `individualCount` 
 "ikke funnet", …). GBIF interprets such records as present. Any exception keeps the
 present/absent question, which remains a user-only assertion.
 
+Column targets that follow from an earlier answer are interpretations applied automatically
+([streamlined review](streamlined-review.md#fewer-questions-and-plain-language)): specimen
+details follow the material answer, collectors (recordedBy, with recordedByID beside them)
+go to the specimen record when specimen records exist and each links to exactly one
+occurrence, and type status follows the specimen answer. They are visible automatic choices
+with a dataset-specific reason and can be changed. The material answer itself stays a new
+fact for the user.
+
 ## 7. Model context and avoiding per-row work
 
 A review packet (target ≤ a few thousand tokens) contains only:

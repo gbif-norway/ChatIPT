@@ -101,12 +101,82 @@ claims without asking users to certify scientific validity.
   (see [review policy §6.1](review-policy.md#61-who-may-decide)). This is a
   visible automatic choice with a notice and can be changed to `absent`.
 
+## Fewer questions and plain language
+
+October 2026 (next rule version, after 25). A review of production runs 560–572
+found that most column questions had only one sensible answer, and that users could
+not tell the options apart ("occurrence → recordedBy, event → eventConductedBy,
+material → collectedBy all seemed fine to me"). The converter now asks less, explains
+what it decided, and words the remaining questions for non-experts.
+
+- **Specimen details follow the specimen answer.** A column whose only Data Package
+  field is on the specimen (material) record — catalogNumber, institutionCode,
+  collectionCode, preparations, disposition, recordNumber, modified, … — is no longer
+  asked about. It is stored on the specimen records when specimen records are created
+  and stays in the original files when they are not. The column carries
+  `follows: 'material:<t>'`; the specimen question (or automatic choice) lists these
+  columns as `followers` and names them in its explanation.
+- **Conditional defaults.** A column may carry `default_when`: branches of
+  `{value, when, reason}` whose conditions use the requirement language. The first
+  branch that holds is the column's default; an explicit choice always wins.
+  `dwca_review.conditional_defaults` resolves them (by fixed point, since one column
+  can follow another), `effective_decisions` includes them, and the conversion state
+  returns them as `conditional_defaults` with the dataset-specific reason. Option
+  availability for a decision that conditions refer to (the specimen answer) is
+  evaluated as if that option were chosen. Nested Taxon-core occurrence plans resolve
+  their own conditions.
+- **Collectors.** In an Occurrence core (or an Occurrence extension of an Event core)
+  with possible specimen records, recordedBy goes to `material.collectedBy` when
+  specimen records are created and every specimen links to exactly one occurrenceID
+  that no other specimen uses; otherwise it stays on `occurrence.recordedBy`. GBIF reads
+  a specimen's collectors only through that unambiguous `evidenceForOccurrenceID`
+  link, and the converter writes the link only in that case. recordedByID follows the
+  names (`material.collectedByID`, `event.eventConductedByID` or
+  `occurrence.recordedByID`); a requirement refuses any choice that would put names and
+  identifiers on different records. Recording who carried out the fieldwork
+  (`event.eventConductedBy`) remains an option.
+- **Type status.** typeStatus and typeDesignationType go to the specimen record when
+  specimen records are created (combined specimens only when their values agree), and
+  to the identification otherwise. Neither is asked any more.
+- **Media.** The standard media-vocabulary matches (dcterms:format, created, creator and
+  dc:type to the media/provenance fields) are automatic choices instead of confirmations.
+- **scientificName** no longer asks which table; in the occurrence context the options
+  are the occurrence's scientificName or leaving it empty (the name check settles that).
+- **Questions an earlier answer settles.** An issue may carry `ask_when`; while its
+  conditions do not hold it is not unresolved and its default applies (for example a
+  core materialEntityID question while no specimen records are created). The AI
+  reviewer's dependencies include `ask_when` and `default_when` references, so it waits
+  for, and is invalidated by, the earlier answer.
+- **Visible automatic choices.** These choices are automatic choice entries with a
+  `family` (people, type status, media, …) and `glance: true` when worth a look. The
+  interface lists them in a "What we decided for you" panel above the questions, with
+  the reason for this dataset and a Change button; routine choices are collapsed into a
+  count, and the specimen details form one line. Notices that repeat an automatic
+  choice are not listed twice.
+- **Plain-language glossary.** `api/dwca_glossary.py` holds every explanation of tables,
+  fields and options in one reviewed file, pinned to the DwC-DP snapshot. Options carry
+  a plain `label` and a `technical` name; `plan['glossary']` carries, for the targets the
+  plan can show, a gloss, a consequence, when to choose it and the official definition.
+  Column questions with several targets use family wording (people, identification,
+  record details, type status, specimen identifiers). Evidence packets add the plain
+  labels and glosses, and the AI reviewer writes its `user_question` with them; the
+  question card shows that `user_question` first when there is one.
+
+The DwC-A projection used for GBIF validation fills an empty recordedBy from the
+collectors of the one specimen linked to the occurrence, then from ordered collector
+agent roles, as GBIF's own DwC-DP ingestion does; an identifier comes along only
+with its names.
+
+On production sources the questions drop from 18 to 3 (568), 5 to 1 (562) and
+15 to 13 (572; its 12 remaining questions are per-value remarks handled by value
+tidying); 560 and 563 are unchanged at 3.
+
 ## Decisions that remain
 
 Missing occurrence status (except the specimen convention above), missing event category, loose-file roles/joins,
 merging repeated event identities, physical material identity, media subjects,
-molecular/legacy interpretations and subject-changing mappings still require
-input. Zero quantities are highlighted in the missing-status question and do not
+molecular/legacy interpretations and subject-changing mappings with several real
+options still require input. Zero quantities are highlighted in the missing-status question and do not
 establish either presence or absence.
 
 Reconstructing a combined survey target or supplying its completeness still
@@ -132,8 +202,9 @@ Plans separate required `issues`, overrideable `automatic_choices` and `warnings
 All options and defaults are included in the plan hash and validated. Reports
 distinguish submitted user decisions from effective automatic choices, retain
 notices and full scientific findings, and account for every source column and row.
-The interface keeps notices separate from required choices and exposes automatic
-mappings in an optional section.
+The interface keeps notices separate from required choices, lists automatic choices
+in the "What we decided for you" panel and keeps per-column mappings in an optional
+section.
 
 Codex implemented this policy in the reviewed `5581` worktree. Claude independently
 audited the triggers and challenged quantities, half-pairs, names, dates and
