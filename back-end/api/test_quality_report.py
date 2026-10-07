@@ -159,7 +159,8 @@ class ProvisionalCoreTests(TestCase):
         ]))
         Table.objects.create(dataset=dataset, title="material", df=pd.DataFrame([
             {"materialEntity_pk": "m1", "evidenceForOccurrenceID": "urn:1", "collectedBy": "Hagen, Yngvar", "collectedByID": "https://orcid.org/0000-0001"},
-            {"materialEntity_pk": "m2", "evidenceForOccurrenceID": "urn:2", "collectedBy": "Collett, Robert", "collectedByID": ""},
+            # The occurrence names its own recorder: the specimen's collector and identifier are not mixed in.
+            {"materialEntity_pk": "m2", "evidenceForOccurrenceID": "urn:2", "collectedBy": "Collett, Robert", "collectedByID": "https://orcid.org/0000-0002"},
             # Two materials name one occurrence: ambiguous, never joined.
             {"materialEntity_pk": "m3a", "evidenceForOccurrenceID": "urn:3", "collectedBy": "A", "collectedByID": ""},
             {"materialEntity_pk": "m3b", "evidenceForOccurrenceID": "urn:3", "collectedBy": "B", "collectedByID": ""},
@@ -179,7 +180,7 @@ class ProvisionalCoreTests(TestCase):
 
         self.assertEqual(core["recordedBy"].fillna("").tolist(),
                          ["Hagen, Yngvar", "Own, Name", "", "Kjernslie, O.L. | Second, Person", ""])
-        self.assertEqual(core["recordedByID"].fillna("").tolist()[0], "https://orcid.org/0000-0001")
+        self.assertEqual(core["recordedByID"].fillna("").tolist(), ["https://orcid.org/0000-0001", "", "", "", ""])
         self.assertEqual(core["occurrenceID"].tolist(), ["o1", "o2", "o3", "o4", "o5"])
 
     def test_no_record_resources_means_no_projection(self):

@@ -131,9 +131,15 @@ def conditional_defaults(plan, decisions, effective=None):
     Conditions may refer to other conditional columns (recordedByID follows recordedBy, which
     follows the material answer), so values are recomputed until they stop changing.
     """
+    nested = {}
+    # Occurrence plans nested in a Taxon-core plan resolve their own conditions; their ids carry the outer prefix.
+    for index, inner in plan.get('taxonomy', {}).get('occurrence_plans', {}).items():
+        prefix = f'taxon-occurrence:{index}:'
+        inner_decisions = {key[len(prefix):]: value for key, value in decisions.items() if key.startswith(prefix)}
+        nested.update({prefix + key: value for key, value in conditional_defaults(inner, inner_decisions).items()})
     conditional = [column for column in plan.get('columns', []) if column.get('default_when') and column['id'] not in decisions]
     if not conditional:
-        return {}
+        return nested
     current = dict(effective) if effective is not None else _base_effective(plan, decisions)
     columns = _columns(plan)
     for _ in range(len(conditional) + 1):
@@ -146,7 +152,7 @@ def conditional_defaults(plan, decisions, effective=None):
         changed = any(current.get(identifier) != result['value'] for identifier, result in results.items())
         current.update({identifier: result['value'] for identifier, result in results.items()})
         if not changed:
-            return results
+            return {**nested, **results}
     raise ValueError('Conditional column defaults refer to each other in a cycle.')
 
 

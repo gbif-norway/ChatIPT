@@ -5,11 +5,12 @@ import tempfile
 from pathlib import Path
 
 from django.test import SimpleTestCase
+from unittest.mock import patch
 
 from api.conversion_evidence import dependencies
-from api.dwca_conversion import (DWC, _qualified_name, build_plan, convert,
+from api.dwca_conversion import (DWC, _candidates, _qualified_name, build_plan, convert,
                                 validate_decisions)
-from api.dwca_import import read_inputs, source_zip
+from api.dwca_import import ConversionError, read_inputs, source_zip
 from api.dwca_media import DCT
 from api.dwca_review import conditional_defaults, effective_decisions, option_status
 from api.dwc_dp_specs import create_dwc_dp_archive, validate_dwc_dp_archive
@@ -63,9 +64,50 @@ class ConversionQuestionTests(SimpleTestCase):
         self.assertIn(column_by_term['recordedByID']['id'], automatic_ids)
         self.assertIn(column_by_term['typeStatus']['id'], automatic_ids)
         material = next(issue for issue in plan['issues'] if issue['id'] == 'material:0')
+        self.assertEqual([option['label'] for option in material['options'] if option['value'] == 'per_row'],
+                         ['Yes: one specimen record per row'])
         self.assertEqual(material['followers'], [column['id'] for column in plan['columns'] if column['term'].rsplit('/', 1)[-1] in
             ('institutionCode', 'collectionCode', 'catalogNumber', 'recordNumber', 'preparations', 'disposition', 'modified', 'materialSampleID')])
         self.assertIn('If yes, these details are stored on the specimen records:', material['reason'])
+        recorded = next(choice for choice in plan['automatic_choices'] if choice['id'] == column_by_term['recordedBy']['id'])
+        options = {option['value']: option for option in recorded['options']}
+        self.assertEqual(options['occurrence.recordedBy']['label'], 'Who saw or recorded the organism')
+        self.assertEqual(options['event.eventConductedBy']['label'], 'Who carried out the fieldwork')
+        self.assertIn('technical', options['event.eventConductedBy'])
+        self.assertEqual(recorded['option_notes']['event.eventConductedBy'],
+                         'Each of your rows has its own event, so here this works like "Who saw or recorded the organism".')
+        self.assertEqual(column_by_term['recordedBy']['option_notes'], recorded['option_notes'])
+        targets = plan['glossary']['targets']
+        for target in ('material.collectedBy', 'occurrence.recordedBy', 'event.eventConductedBy', 'material.catalogNumber'):
+            self.assertIn(target, targets)
+        for target in ('material.collectedBy', 'occurrence.recordedBy', 'event.eventConductedBy'):
+            self.assertTrue({'gloss', 'consequence', 'definition', 'decided'} <= set(targets[target]))
+        self.assertEqual(targets['material.catalogNumber']['field_label'], 'catalogue number')
+
+    def test_ambiguous_family_column_question_uses_plain_language_and_evidence(self):
+        from api.conversion_evidence import evidence_packet
+        archive = read_inputs([('occurrence.csv', b'occurrenceID,associatedReferences\no1,reference\n')])
+        original = _candidates
+
+        def candidates(term, tables):
+            if term == DWC + 'associatedReferences':
+                return ['event.eventReferences', 'identification.identificationReferences']
+            return original(term, tables)
+
+        with patch('api.dwca_conversion._candidates', side_effect=candidates):
+            plan = build_plan(archive)
+        issue = next(issue for issue in plan['issues'] if issue.get('term') == DWC + 'associatedReferences')
+        self.assertEqual(issue['title'], 'What does associatedReferences describe?')
+        self.assertIn('Choose the record it is about.', issue['reason'])
+        self.assertTrue(issue['reason'].endswith('Every option copies the values exactly as written.'))
+        self.assertEqual(issue['family'], 'record-metadata')
+        column = next(column for column in plan['columns'] if column.get('term') == DWC + 'associatedReferences')
+        self.assertEqual(column['family'], 'record-metadata')
+        packet, _ = evidence_packet(plan, archive, {}, issue['id'])
+        targets = {target['ref']: target for target in packet['evidence']['targets']}
+        for target in ('event.eventReferences', 'identification.identificationReferences'):
+            self.assertIn('plain_label', targets[f'target:{target}'])
+            self.assertIn('gloss', targets[f'target:{target}'])
 
     def test_per_row_material_routes_and_export_validate(self):
         archive = specimen_archive(recorded_ids=True)
@@ -125,6 +167,53 @@ class ConversionQuestionTests(SimpleTestCase):
         self.assertEqual(effective_decisions(plan, explicit)[by_term['recordedByID']['id']], 'event.eventConductedByID')
         explicit[by_term['recordedByID']['id']] = 'occurrence.recordedByID'
         self.assertEqual(effective_decisions(plan, explicit)[by_term['recordedByID']['id']], 'occurrence.recordedByID')
+        # An explicit choice that would split names from their identifiers is refused, and the option shows why.
+        status = option_status(plan, explicit)[by_term['recordedByID']['id']]
+        self.assertFalse(status['occurrence.recordedByID']['available'])
+        self.assertTrue(status['event.eventConductedByID']['available'])
+        answers = {issue['id']: issue['options'][0]['value'] for issue in plan['issues']}
+        with self.assertRaises(ConversionError) as raised:
+            validate_decisions(plan, {**answers, **explicit})
+        self.assertIn(by_term['recordedBy']['id'], raised.exception.decision_ids)
+
+    def test_repeated_occurrence_ids_keep_collectors_on_the_observation(self):
+        # Two specimens naming one occurrenceID give GBIF no unambiguous link, so collectors stay on the occurrence.
+        terms = ['occurrenceID', 'basisOfRecord', 'materialSampleID', 'recordedBy', 'occurrenceStatus']
+        meta = ('<archive xmlns="http://rs.tdwg.org/dwc/text/"><core rowType="' + DWC + 'Occurrence" fieldsTerminatedBy="," '
+                'ignoreHeaderLines="1"><files><location>occ.csv</location></files><id index="0"/>'
+                + ''.join(f'<field index="{n + 1}" term="{DWC + term}"/>' for n, term in enumerate(terms)) + '</core></archive>')
+        plan = build_plan(read_inputs([('meta.xml', meta.encode()), ('occ.csv', (
+            'id,' + ','.join(terms) + '\n'
+            'r1,urn:catalog:1,PreservedSpecimen,urn:uuid:m1,Hagen,present\n'
+            'r2,urn:catalog:1,PreservedSpecimen,urn:uuid:m2,Collett,present\n').encode())]))
+        column_id = column_by_term_id(plan, 'recordedBy')
+        for material in ('per_row', 'by_id'):
+            resolved = conditional_defaults(plan, {'material:0': material})[column_id]
+            self.assertEqual(resolved['value'], 'occurrence.recordedBy')
+            self.assertIn('some occurrenceIDs repeat', resolved['reason'])
+
+    def test_taxon_core_nested_occurrences_resolve_their_own_conditional_defaults(self):
+        from api.test_dwca_taxon import manifest_archive
+        source = read_inputs(manifest_archive([
+            ('records.csv', DWC + 'Occurrence', [DWC + term for term in
+             ('occurrenceID', 'occurrenceStatus', 'basisOfRecord', 'materialSampleID', 'recordedBy', 'recordedByID')],
+             [['join-a', 'occ-1', 'present', 'PreservedSpecimen', 'm-1', 'Yngvar Hagen', 'https://orcid.org/0000-0001'],
+              ['join-b', 'occ-2', 'present', 'MaterialSample', 'm-2', 'Robert Collett', '']]),
+        ]).items())
+        plan = build_plan(source)
+        prefix = 'taxon-occurrence:1:'
+        nested = plan['taxonomy']['occurrence_plans']['1']
+        recorded = prefix + column_by_term_id(nested, 'recordedBy')
+        identifier = prefix + column_by_term_id(nested, 'recordedByID')
+        decisions = {prefix + 'material:0': 'per_row'}
+        self.assertEqual(effective_decisions(plan, decisions)[recorded], 'material.collectedBy')
+        self.assertEqual(conditional_defaults(plan, decisions)[identifier]['value'], 'material.collectedByID')
+        self.assertNotIn('default_when', next(column for column in plan['columns'] if column['id'] == recorded))
+        answers = {issue['id']: issue['options'][0]['value'] for issue in plan['issues']}
+        frames, report = convert(source, plan, {**answers, **decisions, 'table:1': 'convert'})
+        self.assertEqual(frames['material']['collectedBy'].tolist(), ['Yngvar Hagen', 'Robert Collett'])
+        self.assertEqual(frames['material']['collectedByID'].tolist(), ['https://orcid.org/0000-0001', ''])
+        self.assertTrue(report['validation']['valid'])
 
     def test_missing_occurrence_id_prevents_collector_link_default(self):
         plan = build_plan(specimen_archive(missing_occurrence=True))
@@ -191,6 +280,7 @@ class ConversionQuestionTests(SimpleTestCase):
             self.assertFalse(column['review'])
             self.assertEqual(automatic[column['id']]['family'], 'media')
             self.assertIn('exactly as written', automatic[column['id']]['reason'])
+            self.assertNotIn('media.', automatic[column['id']]['reason'])
 
     def test_filius_suffix_is_not_mistaken_for_forma_rank(self):
         self.assertEqual(_qualified_name('Aus bus L. f.', 'cf.'), 'Aus cf. bus L. f.')

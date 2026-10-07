@@ -22,6 +22,7 @@ from api.dwca_scientific import audit_hierarchy
 from api.dwca_legacy import (LEGACY_FAMILIES, LEGACY_DERIVED_TERMS, BMDE, NXF, GROUPS, UTM, TIMES, NBN_DATE,
                             legacy_targets, legacy_row_review, nbn_event_date, emit_legacy_records)
 from api.dwc_dp_specs import TABLE_SPECS, dwc_dp_schema_snapshot, validate_dwc_dp_resources
+from api import dwca_glossary
 from api.dwca_preflight import preflight
 from api.dwca_review import (apply_policy, effective_decisions, failed_requirements, group_rows,  # noqa: F401
                              option_status, remove_unavailable, violations, conditional_defaults, asked)
@@ -136,7 +137,59 @@ def _candidates(term, tables):
 def _choice(target):
     if target == PARENT_LINK:
         return {"value": target, "label": "Link to the source event with this persistent eventID"}
-    return {"value": target, "label": 'Use reviewed extension rules' if target == 'derive' else target.replace(".", " → ")}
+    if target == 'derive':
+        return {"value": target, "label": 'Use reviewed extension rules'}
+    explanation = dwca_glossary.explain(target)
+    if explanation is None or 'technical' not in explanation:
+        return {"value": target, "label": target.replace(".", " → ")}
+    return {"value": target, "label": explanation['label'], 'technical': explanation['technical']}
+
+
+def _glossary(plan):
+    """Plain-language glossary entries that are relevant to the choices in this plan."""
+    targets = set()
+    for item in [*plan.get('issues', []), *plan.get('automatic_choices', [])]:
+        for option in [*item.get('options', []), *item.get('unavailable_options', [])]:
+            value = option.get('value', '')
+            if '.' in value:
+                targets.add(value)
+    for column in plan.get('columns', []):
+        if column.get('follows') or column.get('default_when'):
+            values = [column.get('default')]
+            values.extend(branch.get('value') for branch in column.get('default_when', []))
+            targets.update(value for value in values if isinstance(value, str) and '.' in value)
+
+    found, table_names = {}, set()
+    for target in sorted(targets):
+        table, field = target.split('.', 1)
+        spec = TABLE_SPECS.get(table)
+        if spec is None or field not in spec.field_descriptors:
+            continue
+        explanation = dwca_glossary.explain(target) or {}
+        description = spec.field_descriptors[field].get('description') or ''
+        definition = description if len(description) <= 300 else description[:299] + '…'
+        found[target] = {**explanation, 'decided': dwca_glossary.decided(target),
+                         'field_label': dwca_glossary.field_label(field), 'definition': definition}
+        table_names.add(table)
+    if any(issue.get('id', '').startswith('material:')
+           for issue in [*plan.get('issues', []), *plan.get('automatic_choices', [])]):
+        table_names.add('material')
+    return {
+        'revision': dwca_glossary.SCHEMA_REVISION,
+        'copy_note': dwca_glossary.COPY_NOTE,
+        'preserve': dwca_glossary.PRESERVE,
+        'families': {name: family['summary'] for name, family in sorted(dwca_glossary.FAMILIES.items())},
+        'specimen_details': {
+            'stored': dwca_glossary.SPECIMEN_DETAILS_STORED,
+            'stored_why': dwca_glossary.SPECIMEN_DETAILS_STORED_WHY,
+            'kept': dwca_glossary.SPECIMEN_DETAILS_KEPT,
+            'kept_why': dwca_glossary.SPECIMEN_DETAILS_KEPT_WHY,
+            'pending': dwca_glossary.SPECIMEN_DETAILS_PENDING,
+            'pending_why': dwca_glossary.SPECIMEN_DETAILS_PENDING_WHY,
+        },
+        'tables': {name: dwca_glossary.TABLES[name] for name in sorted(table_names) if name in dwca_glossary.TABLES},
+        'targets': found,
+    }
 
 
 def _typed_field(target):
@@ -489,15 +542,25 @@ def _example_values(values):
     counts = Counter(value for value in values if value)
     first = {value: position for position, value in enumerate(counts)}
     ordered = sorted(counts, key=lambda value: (-counts[value], first[value]))[:3]
-    return ' · '.join(value[:40] for value in ordered)
+    return ' · '.join(value[:40].rstrip() + ('…' if len(value) > 40 else '') for value in ordered)
 
 
 def _material_modes(table, material_column, comparison_term=None, recorded=False):
-    """Material identity modes supported by supplied IDs and occurrence links."""
+    """Material modes ('per_row', 'by_id') under which a column can default to its material field.
+
+    by_id needs a usable material identifier on every row, and the column's values (comparison_term)
+    must agree within each identifier, or combining would conflict. With recorded=True the column
+    names collectors, which GBIF reads from a specimen only through one unambiguous link: each
+    material must name exactly one occurrenceID, used by no other material (as convert() sets
+    evidenceForOccurrenceID).
+    """
     occurrence_col = table.terms.index(DWC + 'occurrenceID') if DWC + 'occurrenceID' in table.terms else None
-    usable = [row[occurrence_col] and not missing_reference(row[occurrence_col], ()) for row in table.rows] if occurrence_col is not None else []
-    modes = ['per_row'] if not recorded or (usable and all(usable)) else []
-    if material_column is None or (recorded and (not usable or not all(usable))):
+    occurrence_ids = [row[occurrence_col] for row in table.rows] if occurrence_col is not None else []
+    linked = bool(occurrence_ids) and all(value and not missing_reference(value, ()) for value in occurrence_ids)
+    if recorded and not linked:
+        return []
+    modes = ['per_row'] if not recorded or len(set(occurrence_ids)) == len(occurrence_ids) else []
+    if material_column is None:
         return modes
     groups = defaultdict(list)
     for row in table.rows:
@@ -505,12 +568,15 @@ def _material_modes(table, material_column, comparison_term=None, recorded=False
         if not identifier or missing_reference(identifier, ()):
             return modes
         groups[identifier].append(row)
-    occurrence_agrees = occurrence_col is not None and all(len({row[occurrence_col] for row in rows}) == 1 for rows in groups.values())
-    values_agree = comparison_term is None or all(
-        len({row[table.terms.index(comparison_term)] for row in rows}) == 1 for rows in groups.values())
-    if (not recorded or occurrence_agrees) and values_agree:
-        modes.append('by_id')
-    return modes
+    if comparison_term is not None:
+        column = table.terms.index(comparison_term)
+        if any(len({row[column] for row in rows}) > 1 for rows in groups.values()):
+            return modes
+    if recorded:
+        per_group = [{row[occurrence_col] for row in rows} for rows in groups.values()]
+        if any(len(ids) != 1 for ids in per_group) or len({next(iter(ids)) for ids in per_group}) != len(per_group):
+            return modes
+    return [*modes, 'by_id']
 
 
 def _material_identifier_column(table):
@@ -795,10 +861,10 @@ def build_plan(archive):
                 ('Every row declares PreservedSpecimen and has a distinct institutionCode, collectionCode, catalogNumber triple. '
                  if strong_specimen else 'The source declares preserved specimens with catalog fields, but some catalog identities repeat or are incomplete. '
                  if specimen_context else 'Some rows have material sample identifiers. ') +
-                'If these identify physical things, such as a specimen, tissue or soil sample, they can become material records: '
+                'If these identify physical things, such as a specimen, tissue or soil sample, they can become specimen records: '
                 'one per row, or one per identifier when all of its rows agree. Otherwise keep the identifiers only in your original files.',
-                [PRESERVE, {'value': 'per_row', 'label': 'Yes: one material record per row'},
-                 {'value': 'by_id', 'label': 'Yes: one material record per identifier'}],
+                [PRESERVE, {'value': 'per_row', 'label': 'Yes: one specimen record per row'},
+                 {'value': 'by_id', 'label': 'Yes: one specimen record per identifier'}],
                 **({'strong_specimen_signal': True, 'table': t} if strong_specimen else {})))
         target_tables = [own] + (["event", "identification"] if own == "occurrence" else []) + (["material"] if has_material else []) if table.is_core or family == "occurrence" else {
             "identification": ["identification"], "assertion": ["occurrence-assertion"],
@@ -871,6 +937,7 @@ def build_plan(archive):
                 options = ['material.materialEntityID']
             occurrence_context = own == 'occurrence' and (table.is_core or family == 'occurrence')
             default_when = []
+            follows_names = None
             automatic_family = None
             automatic_reason = None
             glance = True
@@ -879,7 +946,7 @@ def build_plan(archive):
                                               'http://purl.org/dc/terms/creator', 'http://purl.org/dc/elements/1.1/type'} and len(options) == 1:
                 target = options[0]
                 automatic_family, automatic_reason = 'media', (
-                    f'{term.rsplit("/", 1)[-1]} is copied to {target} exactly as written. This is the standard match between the media vocabulary and the Data Package field; choose "Keep in original files only" if the column means something else.')
+                    f'Values in {term.rsplit("/", 1)[-1]} are {dwca_glossary.decided(target)}, exactly as written. This is the standard match between the media vocabulary and the Data Package; choose "Keep in original files only" if the column means something else.')
             if term == NAME and occurrence_context:
                 options = [target for target in options if target.startswith('occurrence.')]
             if term == DWC + 'recordedBy' and has_material and occurrence_context and 'material.collectedBy' in options:
@@ -904,9 +971,18 @@ def build_plan(archive):
                     default_when.append({'value': 'material.collectedBy',
                         'when': [{'type': 'decision_in', 'id': f'material:{t}', 'values': modes}, *link_condition],
                         'reason': material_msg})
-                ambiguous_reason = (f"{n:,} rows name people in recordedBy ({d:,} different names, e.g. {ex}). They are saved as who saw or recorded the organism, on each observation record. Why: "
-                    + ("some rows have no usable occurrenceID, so a specimen record could not be linked to its observation, and GBIF reads collectors from the observation record in that case."
-                       if 'per_row' not in modes else "when specimen records are combined by identifier, some would belong to several observations, so the names stay on each observation, where GBIF can read them."))
+                # GBIF reads collectors from a specimen only through one unambiguous link to its observation.
+                occurrence_ids = [row[occurrence_col] for row in table.rows] if occurrence_col is not None else None
+                if occurrence_ids is None:
+                    why = "no occurrenceID column links specimen records to their observations"
+                elif not all(value and not missing_reference(value, ()) for value in occurrence_ids):
+                    why = "some rows have no usable occurrenceID, so a specimen record could not be linked to its observation"
+                elif len(set(occurrence_ids)) != len(occurrence_ids):
+                    why = "some occurrenceIDs repeat, so a specimen record could not be linked to just one observation"
+                else:
+                    why = "when specimen records are combined by identifier, some would not link to exactly one observation"
+                ambiguous_reason = (f"{n:,} rows name people in recordedBy ({d:,} different names, e.g. {ex}). They are saved as who saw or recorded the organism, on each observation record. "
+                                    f"Why: {why}, and GBIF reads collectors from the observation record in that case.")
                 default_when.append({'value': 'occurrence.recordedBy',
                     'when': [{'type': 'decision_in', 'id': f'material:{t}', 'values': ['per_row', 'by_id']}],
                     'reason': ambiguous_reason})
@@ -933,6 +1009,8 @@ def build_plan(archive):
                             'when': [{'type': 'target_in', 'column': _column_id(t, recorded_col), 'targets': [target]}],
                             'reason': f"Identifiers in recordedByID follow the names in recordedBy, so each name keeps its identifier: on each {record_kind} record."})
                     special_chosen = 'occurrence.recordedByID'
+                    follows_names = {'column': _column_id(t, recorded_col),
+                                     'targets': {partners[target]: target for target in name_options if target in partners}}
                     automatic_family, automatic_reason, glance = 'agent-role', 'Identifiers in recordedByID follow the names in recordedBy, so each name keeps its identifier: on each observation record.', False
                 else:
                     options = ['occurrence.recordedByID']
@@ -1009,10 +1087,26 @@ def build_plan(archive):
                 value.strip().lower() in {'na', 'n/a', 'null', 'none', 'unknown', 'not recorded'} for value in values)
             date_reason = ('Some event dates are float-shaped years or unknown-value tokens. The original text is copied without repair or interpreting these tokens as empty. Their meaning remains unverified.') if date_ambiguity else None
             review = bool(not join_only and values and (not options or (len(options) > 1 and not exact_subject_default) or media_reason or name_ambiguity or chosen.startswith('molecular-protocol.env_')) and automatic_family is None)
+            non_preserve_options = [target for target in options if target != 'preserve']
+            first_field = non_preserve_options[0].split('.', 1)[1] if non_preserve_options and '.' in non_preserve_options[0] else None
+            glossary_family = dwca_glossary.family_of(first_field) if first_field else None
+            option_notes = None
+            if (table.is_core and core.row_type == DWC + 'Occurrence' and term == DWC + 'recordedBy' and
+                    'event.eventConductedBy' in options):
+                event_id = DWC + 'eventID'
+                event_values = [row[table.terms.index(event_id)].strip() for row in table.rows] if event_id in table.terms else []
+                nonempty_event_ids = [value for value in event_values if value]
+                if not event_values or len(set(nonempty_event_ids)) == len(nonempty_event_ids):
+                    option_notes = {'event.eventConductedBy': 'Each of your rows has its own event, so here this works like "Who saw or recorded the organism".'}
+            generic_reason = ('This column could describe more than one thing, for example the occurrence or its identification. '
+                              'Choose where it belongs, or keep it only in your original files.')
             item = {"id": _column_id(t, c), "table": t, "column": c, "term": term,
                     "default": chosen, "review": review, "options": ([{'value': 'join', 'label': 'Used to join source rows to the core'}] if join_only else [_choice(value) for value in options] + ([] if chosen in {'occurrence.occurrenceStatus', 'event.eventCategory'} else [PRESERVE])),
                     "nonempty": len(values), "distinct": len(set(values)), "samples": [value[:500] for value in list(dict.fromkeys(values))[:3]],
+                    **({'family': glossary_family} if glossary_family else {}),
+                    **({'option_notes': option_notes} if option_notes else {}),
                     **({'default_when': default_when} if default_when else {}),
+                    **({'follows_names': follows_names} if follows_names else {}),
                     **({'follows': f'material:{t}'} if chosen.startswith('material.') and not default_when else {}),
                     **({'incompatible_values': incompatible} if incompatible else {}),
                     **({'parent_link_unavailable': parent_blocked} if parent_blocked else {})}
@@ -1046,8 +1140,8 @@ def build_plan(archive):
                     'reason': ' '.join(filter(None, (typed_reason, date_reason))), 'table': t,
                     'nonempty': len(values), 'samples': item['samples']})
             if review:
-                issue = _issue(item["id"], term.rsplit("/", 1)[-1],
-                    kind='name-semantics' if name_ambiguity and not media_reason else 'column-mapping', reason=media_reason or (
+                title = term.rsplit('/', 1)[-1]
+                reason = media_reason or (
                         "Some names look like they include an author, a qualifier such as 'cf.', or another unusual form. In a Darwin Core Data Package, scientificName holds only the name, without its author. "
                         + ("The full text fills verbatimIdentification wherever that would otherwise be empty, and your original files keep everything. "
                            if VERBATIM_NAME in table.terms else "The full text is always kept in verbatimIdentification. ")
@@ -1055,10 +1149,18 @@ def build_plan(archive):
                         if name_ambiguity else ("Darwin Core Data Packages have no identificationQualifier field, and scientificName excludes qualifiers. "
                         "Each qualifier is added after the name text in verbatimIdentification wherever that is filled from scientificName, "
                         "so the uncertainty stays visible; your original files keep the column too.") if qualifier_copy
-                        else "This column could describe more than one thing, for example the occurrence or its identification. Choose where it belongs, or keep it only in your original files." if options
+                        else generic_reason if options
                         else "Darwin Core Data Packages have no field for this term, so the values stay in your original files." if term not in SCHEMA_TERMS
-                        else "This converter does not map this term yet, so the values stay in your original files."),
-                    options=item["options"], table=t, nonempty=len(values), samples=[value[:250] for value in item["samples"]])
+                        else "This converter does not map this term yet, so the values stay in your original files.")
+                if reason == generic_reason and len(non_preserve_options) > 1:
+                    title, family_reason = dwca_glossary.question(first_field, term.rsplit('/', 1)[-1])
+                    reason = family_reason + ' ' + dwca_glossary.COPY_NOTE
+                    item['family'] = glossary_family or 'other'
+                issue = _issue(item["id"], title,
+                    kind='name-semantics' if name_ambiguity and not media_reason else 'column-mapping', reason=reason,
+                    options=item["options"], table=t, term=term, nonempty=len(values), samples=[value[:250] for value in item["samples"]],
+                    **({'family': item['family']} if item.get('family') else {}),
+                    **({'option_notes': option_notes} if option_notes else {}))
                 non_preserve = [option['value'] for option in item['options'] if option['value'] != 'preserve']
                 if has_material and non_preserve and all(target.startswith('material.') for target in non_preserve) and any(issue['id'] == f'material:{t}' for issue in issues):
                     issue['ask_when'] = [{'type': 'decision_in', 'id': f'material:{t}', 'values': ['per_row', 'by_id']}]
@@ -1068,6 +1170,7 @@ def build_plan(archive):
                     'reason': automatic_reason, 'options': item['options'], 'default': chosen,
                     'default_when': default_when,
                     'table': t, 'term': term, 'family': automatic_family, 'glance': glance,
+                    **({'option_notes': option_notes} if option_notes else {}),
                     'nonempty': len(values), 'distinct': len(set(values)), 'samples': item['samples']})
             if table.is_core and own == 'occurrence' and term == DWC + 'countryCode' and chosen == 'event.countryCode':
                 for source_value, count in sorted(Counter(values).items()):
@@ -1263,6 +1366,13 @@ def build_plan(archive):
     if scientific is not None:
         plan['scientific_hierarchy'] = _scientific_summary(scientific)
     _preflight_plan(archive, core, plan, row_issues)
+    for column in plan['columns']:
+        # A name and its identifier stay on the same record: recordedByID may only go where recordedBy goes.
+        for value, name_target in (column.get('follows_names') or {}).get('targets', {}).items():
+            plan['requirements'].setdefault(column['id'], {}).setdefault(value, []).append({
+                'conditions': [{'type': 'target_in', 'column': column['follows_names']['column'], 'targets': [name_target, 'preserve']}],
+                'reason': f"recordedByID can only go where the names in recordedBy go ({name_target}), so each name keeps its identifier. "
+                          'Change where recordedBy goes, or keep recordedByID only in your original files.'})
     _streamline_plan(archive, core, plan, warnings)
     for choice in proposed_automatic:
         column = next(column for column in plan['columns'] if column['id'] == choice['id'])
@@ -1270,6 +1380,7 @@ def build_plan(archive):
     plan['automatic_choices'].extend(proposed_automatic)
     _require_valid_defaults(plan)
     apply_policy(plan['issues']); apply_policy(plan['automatic_choices'])
+    plan['glossary'] = _glossary(plan)
     plan["id"] = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
     return plan
 

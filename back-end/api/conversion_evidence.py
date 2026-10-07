@@ -460,6 +460,7 @@ def _example_rows(evidence):
 
 def _targets(item):
     from api.dwc_dp_specs import TABLE_SPECS
+    from api import dwca_glossary
     found = []
     for option in item.get('options', []) + item.get('unavailable_options', []):
         value = option['value']
@@ -470,11 +471,16 @@ def _targets(item):
         if spec is None or field not in spec.field_descriptors:
             continue
         definition = spec.field_descriptors[field]
+        explanation = dwca_glossary.explain(value) or {}
         examples = definition.get('examples') or []
-        found.append({'ref': f'target:{value}', 'table_meaning': clip(spec.description, 300),
+        target = {'ref': f'target:{value}', 'table_meaning': clip(spec.description, 300),
                       'field_meaning': clip(definition.get('description', ''), 500),
                       'comments': clip(definition.get('comments', ''), 300),
-                      'examples': [clip(example, 120) for example in (examples if isinstance(examples, list) else [examples])[:3]]})
+                      'examples': [clip(example, 120) for example in (examples if isinstance(examples, list) else [examples])[:3]]}
+        for source, output, limit in (('label', 'plain_label', 160), ('gloss', 'gloss', 300), ('consequence', 'consequence', 300)):
+            if explanation.get(source):
+                target[output] = clip(explanation[source], limit)
+        found.append(target)
     return found[:8]
 
 
@@ -571,6 +577,8 @@ def _fit(packet):
         lambda: evidence.__setitem__('rows', evidence['rows'][:3]),
         lambda: [column.__setitem__('top_values', column['top_values'][:5]) for column in evidence['columns']],
         lambda: [target.__setitem__('comments', '') for target in evidence['targets']],
+        lambda: [target.pop(key, None) for target in evidence['targets'] for key in ('gloss', 'consequence')],
+        lambda: [target.__setitem__('plain_label', clip(target['plain_label'], 80)) for target in evidence['targets'] if 'plain_label' in target],
         lambda: evidence.__setitem__('columns', evidence['columns'][:8]),
         lambda: [requirement.__setitem__('evidence', clip(canonical(requirement['evidence']), 300))
                  for requirement in evidence['requirements']],

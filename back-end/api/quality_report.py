@@ -296,17 +296,22 @@ def _fill_collectors(core, tables):
         unique = ids.notna() & ~ids.duplicated(keep=False)
         by_occurrence = material.set_index('evidenceForOccurrenceID')
         linked = ids.where(unique).map(by_occurrence['materialEntity_pk'])
-        for source, target in (('collectedBy', 'recordedBy'), ('collectedByID', 'recordedByID')):
-            if source not in by_occurrence:
-                continue
-            values = ids.where(unique).map(by_occurrence[source])
-            fill = (blank() if target == 'recordedBy' else
-                    (_blank(core[target]) if target in core else pd.Series(True, index=core.index)))
-            fill &= values.notna() & ~_blank(values)
-            if fill.any():
-                if target not in core:
-                    core[target] = pd.NA
-                core[target] = core[target].astype('object').where(~fill, values)
+        if 'collectedBy' in by_occurrence:
+            names = ids.where(unique).map(by_occurrence['collectedBy'])
+            filled = blank() & names.notna() & ~_blank(names)
+            if filled.any():
+                if 'recordedBy' not in core:
+                    core['recordedBy'] = pd.NA
+                core['recordedBy'] = core['recordedBy'].astype('object').where(~filled, names)
+                # An identifier comes along only with the names it belongs to, never beside other supplied names.
+                if 'collectedByID' in by_occurrence:
+                    identifiers = ids.where(unique).map(by_occurrence['collectedByID'])
+                    fill = filled & identifiers.notna() & ~_blank(identifiers)
+                    if 'recordedByID' in core:
+                        fill &= _blank(core['recordedByID'])
+                    else:
+                        core['recordedByID'] = pd.NA
+                    core['recordedByID'] = core['recordedByID'].astype('object').where(~fill, identifiers)
 
     agents = tables.get('agent')
     if agents is None or 'agent_pk' not in agents or 'preferredAgentName' not in agents:

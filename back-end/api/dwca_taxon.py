@@ -121,6 +121,29 @@ def occurrence_proxy(archive, index):
     return SourceArchive(archive.files, [proxy], archive.fingerprint, archive.has_meta, archive.uploaded_files), conflicts
 
 
+def _prefixed_condition(condition, prefix):
+    if condition['type'] in {'any', 'all'}:
+        return {**condition, 'conditions': [_prefixed_condition(inner, prefix) for inner in condition['conditions']]}
+    return {**condition, **{key: prefix + condition[key] for key in ('id', 'column') if key in condition}}
+
+
+def _outer(entry, prefix, **changes):
+    """A nested plan entry as the outer plan lists it, with its references to nested decisions prefixed.
+
+    Conditional defaults stay with the nested plan, which resolves them against its own tables
+    (dwca_review.conditional_defaults handles nested plans); the outer copy keeps the plain default.
+    """
+    found = {key: value for key, value in entry.items() if key != 'default_when'}
+    found.update(id=prefix + entry['id'], **changes)
+    if entry.get('ask_when'):
+        found['ask_when'] = [_prefixed_condition(condition, prefix) for condition in entry['ask_when']]
+    if entry.get('follows'):
+        found['follows'] = prefix + entry['follows']
+    if entry.get('followers'):
+        found['followers'] = [prefix + identifier for identifier in entry['followers']]
+    return found
+
+
 def build_taxon_plan(archive):
     from api.dwca_conversion import RULE_VERSION, PRESERVE, _issue, build_plan
     from api.dwca_review import apply_policy
@@ -156,7 +179,7 @@ def build_taxon_plan(archive):
             {**PRESERVE, 'label': 'Keep these records in additional taxonomy tables only'}], table=t, kind='taxon-occurrences'))
         prefix = f'taxon-occurrence:{t}:'
         for column in inner['columns']:
-            outer = {**column, 'id': prefix + column['id'], 'table': t}
+            outer = _outer(column, prefix, table=t)
             outer['options'] = [taxonomy_preserve if option['value'] == 'preserve' else option for option in column['options']]
             if column['term'] == DWC + 'taxonID' and column['nonempty']:
                 external = all(re.fullmatch(r'https?://[^\s/]+(?:/[^\s]*)?|urn:[^\s]+', row[column['column']])
@@ -167,13 +190,13 @@ def build_taxon_plan(archive):
                     'DwC-DP taxonID refers to a globally resolvable external taxon record. Local checklist identifiers remain in taxonomy tables and their explicit attachment links. Confirm external meaning before copying an IRI.',
                     outer['options'], table=t, kind='external-identifier'))
             columns.append(outer)
-        issues.extend({**issue, 'id': prefix + issue['id'], 'table': t,
+        issues.extend({**_outer(issue, prefix, table=t),
                        'options': [taxonomy_preserve if option['value'] == 'preserve' else option for option in issue['options']],
                        **({'members': [prefix + member for member in issue['members']]} if issue.get('members') else {})}
                       for issue in inner['issues'])
         row_issues.extend({**member, 'id': prefix + member['id'], 'group': prefix + member['group'], 'table': t}
                           for member in inner.get('row_issues', []))
-        automatic.extend({**choice, 'id': prefix + choice['id'], 'table': t,
+        automatic.extend({**_outer(choice, prefix, table=t),
                           'options': [taxonomy_preserve if option['value'] == 'preserve' else option for option in choice['options']],
                           **({'members': [prefix + member for member in choice['members']]} if choice.get('members') else {})}
                          for choice in inner.get('automatic_choices', []))
