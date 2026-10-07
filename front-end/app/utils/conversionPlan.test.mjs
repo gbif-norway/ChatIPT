@@ -399,3 +399,24 @@ test('nested Taxon-core choices are recognised by their local ids', () => {
   assert.ok(isColumnId(`${prefix}column:0:4`))
   assert.ok(!isColumnId(`${prefix}material:0`))
 })
+
+test('column summaries follow the specimen answer for specimen fields', () => {
+  const columns = [
+    { id: 'column:0:0', table: 0, term: term('catalogNumber'), default: 'material.catalogNumber', follows: 'material:0', nonempty: 2,
+      options: [{ value: 'material.catalogNumber', label: 'Catalogue number, on the specimen record' }, { value: 'preserve', label: 'Keep in original files only' }] },
+    { id: 'column:0:1', table: 0, term: term('locality'), default: 'event.locality', nonempty: 2, options: [{ value: 'event.locality', label: 'Locality' }] },
+  ]
+  const build = decisions => ({ decisions, plan: { tables: [{ name: 'occurrence.txt', core: true, rows: 2 }], columns,
+    issues: [{ id: 'material:0', table: 0, options: [{ value: 'per_row' }, { value: 'preserve' }] }], automatic_choices: [] } })
+  const declined = build({ 'material:0': 'preserve' })
+  const summary = summariseColumns(declined, makeSelector(declined, declined.decisions))
+  assert.equal(summary.mapped, 1)
+  assert.deepEqual(summary.groups.chosen.names, ['catalogNumber'])
+  assert.equal(columnDetails(declined, makeSelector(declined, declined.decisions))[0].outcome, 'Kept in your original files: no specimen records are created')
+  assert.ok(!planDiagram(declined, makeSelector(declined, declined.decisions)).targets.some(target => target.name === 'material'))
+  const open = build({})
+  assert.equal(summariseColumns(open, makeSelector(open, {})).review, 1)
+  const created = build({ 'material:0': 'per_row' })
+  assert.equal(summariseColumns(created, makeSelector(created, created.decisions)).mapped, 2)
+  assert.equal(columnDetails(created, makeSelector(created, created.decisions))[0].mapped, true)
+})

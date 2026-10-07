@@ -174,6 +174,17 @@ const partialCopy = (state, column, selected) => {
   // Only the file's own text in the same destination field takes precedence over the copy.
   return Boolean(source) && !retainedTable(state, selected, source.table) && selected(source.id, source.default) === column.verbatim_copy
 }
+// A specimen (material) field only receives values once specimen records are created:
+// 'stored', 'pending' while that question is open, 'kept' (originals only) otherwise, null for other targets.
+export function specimenState(state, selected, column, value) {
+  if (!String(value).startsWith('material.')) return null
+  const prefix = idPrefix(column.id)
+  const id = `${prefix}material:${prefix ? 0 : column.table}`
+  if (![...(state?.plan?.issues || []), ...(state?.plan?.automatic_choices || [])].some(entry => entry.id === id)) return null
+  const answer = selected(id)
+  return ['per_row', 'by_id'].includes(answer) ? 'stored' : answer == null || answer === '' ? 'pending' : 'kept'
+}
+
 const writtenTarget = (state, column, value, selected) =>
   value === 'preserve' && column.verbatim_copy && !partialCopy(state, column, selected) ? column.verbatim_copy : value
 
@@ -188,7 +199,9 @@ export function summariseColumns(state, selected) {
       retainedColumns[column.table] = (retainedColumns[column.table] || 0) + 1
       continue
     }
-    const value = writtenTarget(state, column, selected(column.id, column.default), selected)
+    const specimen = specimenState(state, selected, column, selected(column.id, column.default))
+    if (specimen === 'pending') { summary.review += 1; continue }
+    const value = specimen === 'kept' ? 'preserve' : writtenTarget(state, column, selected(column.id, column.default), selected)
     const events = value === 'preserve' ? null : eventDetailsChoice(state, selected, column, value)
     if (value !== 'preserve' && eventDetailsMapped(events)) {
       if (column.review) summary.review += 1; else summary.mapped += 1
@@ -196,7 +209,7 @@ export function summariseColumns(state, selected) {
     }
     // An unanswered occurrence-events question is covered by the choices below; "preserve" is the user's choice.
     if (value !== 'preserve' && events === '') { summary.review += 1; continue }
-    const reason = value === 'preserve' ? unmappedReason(column) : 'chosen'
+    const reason = specimen === 'kept' ? 'chosen' : value === 'preserve' ? unmappedReason(column) : 'chosen'
     const group = summary.groups[reason] ||= { count: 0, names: [] }
     group.count += 1
     const name = shortTerm(column.term)
@@ -244,12 +257,15 @@ export function columnDetails(state, selected) {
     const table = plan.tables[column.table]
     const retained = retainedTable(state, selected, column.table)
     const chosen = selected(column.id, column.default)
+    const specimen = retained ? null : specimenState(state, selected, column, chosen)
     const events = retained || chosen === 'preserve' ? null : eventDetailsChoice(state, selected, column, chosen)
     const eventsKept = !eventDetailsMapped(events)
-    const value = retained || eventsKept ? 'preserve' : chosen
+    const value = retained || eventsKept || (specimen && specimen !== 'stored') ? 'preserve' : chosen
     const option = (column.options || []).find(item => item.value === value)
     let outcome
     if (retained) outcome = 'Kept in your original files with its table'
+    else if (specimen === 'pending') outcome = 'Waiting for your choice about specimen records'
+    else if (specimen === 'kept') outcome = 'Kept in your original files: no specimen records are created'
     else if (eventsKept) outcome = events === '' ? 'Waiting for your choice about event details on these rows' : 'Kept in your original files; event details on these rows are not copied'
     else if (value === 'preserve' && column.verbatim_role === 'qualifier') outcome = partialCopy(state, column, selected)
       ? `Added after the name text in ${column.verbatim_copy.split('.').pop()} where your file leaves it empty`
@@ -361,6 +377,7 @@ export function planDiagram(state, selected) {
     if (retainedTable(state, selected, column.table)) continue
     const value = writtenTarget(state, column, selected(column.id, column.default), selected)
     if (!eventDetailsMapped(eventDetailsChoice(state, selected, column, value))) continue
+    if (['pending', 'kept'].includes(specimenState(state, selected, column, value))) continue
     const target = targetTable(value)
     if (target) add(column.table, target, 1)
   }
