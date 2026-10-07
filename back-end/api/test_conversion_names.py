@@ -1561,6 +1561,32 @@ class GroupDecisionTests(SimpleTestCase):
                                                          'usage': {'scientificName': 'Anura', 'taxonRank': 'order'}})
         self.assertEqual(names.classify(record)['group'], 'check:rank:genus:order')
 
+    def test_another_explicit_rank_marker_is_another_name(self):
+        record = {'label': 'Carex nigra subsp. juncea', 'rows': 1, 'qualifier': None,
+                  'parsed': real_parse('Carex nigra subsp. juncea', 'subspecies'),
+                  'match': {'matchType': 'EXACT', 'hintOnly': False, 'usage': {
+                      'scientificName': 'Carex nigra var. juncea', 'taxonRank': 'variety', 'scientificNameAuthorship': '(Fr.) Hyl.'}}}
+        found = names.change(record, record['match']['usage'], 'EXACT')
+        self.assertEqual((found['kind'], found['confirm']), ('marker', True))
+        self.assertEqual(names.classify(record)['group'], 'check:name')
+        self.assertEqual(names.auto_accept({'labels': [record], 'decisions': {}, 'col_release': RELEASE}), 0)
+        # "ssp." and "subsp." are one marker.
+        same = {**record['match']['usage'], 'scientificName': 'Carex nigra ssp. juncea', 'taxonRank': 'subspecies'}
+        self.assertIsNone(names.change(record, same, 'EXACT'))
+
+    def test_another_family_keeps_the_users_authorship_and_mixed_families_are_a_check(self):
+        record = {'label': 'Aus bus', 'rows': 1, 'qualifier': None, 'parsed': real_parse('Aus bus'), 'hints': {'family': 'Bidae'},
+                  'match': {'matchType': 'EXACT', 'hintOnly': False, 'usage': {
+                      'id': '1', 'scientificName': 'Aus bus', 'scientificNameAuthorship': 'Smith', 'taxonRank': 'species',
+                      'classification': {'family': 'Aidae'}}}}
+        classification = names.classify(record)
+        self.assertEqual(classification['kind'], 'auto')
+        self.assertEqual(names.row_default(record, classification), 'parsed')
+        self.assertNotIn('col', classification['eligible'])
+        content = b'occurrenceID,scientificName,family\na,Aus,Aidae\nb,Aus,Bidae\n'
+        mixed = names.collect_state(read_inputs([('occurrence.csv', content)]), {'id': 'plan'})['labels'][0]
+        self.assertEqual(mixed['mixed_hints'], ['family'])
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,

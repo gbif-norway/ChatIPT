@@ -209,6 +209,18 @@ def _is_spelling(mine, theirs, match_type, asserted_rank, rank, usage, hints):
     return _classification_agrees(usage, hints, uninomial=len(mine) == 1)
 
 
+# Infraspecific rank markers and their usual variants; "ssp." is "subsp.", "fo."/"forma" is "f.".
+_MARKER_FORMS = {"subsp.": "subsp.", "ssp.": "subsp.", "var.": "var.", "subvar.": "subvar.", "f.": "f.", "fo.": "f.",
+                 "forma": "f.", "subf.": "subf."}
+
+
+def _explicit_markers(name):
+    """The infraspecific rank markers written in a name, normalised ("ssp." is "subsp."); authorship words are ignored."""
+    tokens = str(name or "").split()
+    return [_MARKER_FORMS[token.casefold()] for index, token in enumerate(tokens)
+            if token.casefold() in _MARKER_FORMS and index + 1 < len(tokens) and tokens[index + 1][:1].islower()]
+
+
 def name_change(asserted, usage, match_type=None, asserted_rank=None, hints=None):
     """How accepting `usage` would change the asserted name; None when it is the same name.
 
@@ -228,6 +240,10 @@ def name_change(asserted, usage, match_type=None, asserted_rank=None, hints=None
         return None
     asserted_rank = asserted_rank or implied_rank(mine)
     change = {"from": asserted_rank, "to": rank, "confirm": True}
+    # The same parts with another explicit rank marker ("subsp. juncea" and "var. juncea") are another name.
+    my_markers, their_markers = _explicit_markers(asserted), _explicit_markers(usage.get("scientificName"))
+    if mine == theirs and my_markers and their_markers and my_markers != their_markers:
+        return {**change, "kind": "marker", "text": f"writes your {' '.join(my_markers)} as {' '.join(their_markers)}"}
     if mine == theirs:
         # Only an infrageneric name carries its rank in its parts; any other same name is the user's assertion.
         if any("." in part for part in mine) and asserted_rank and rank and asserted_rank != rank:

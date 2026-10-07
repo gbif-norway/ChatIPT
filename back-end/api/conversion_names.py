@@ -168,7 +168,7 @@ def collect_state(archive, plan):
         qualifier = split_qualifier(record['label'])[1]
         # The supplied authorships, so that accepting COL's in bulk never silently rewrites a different one.
         authorships = sorted(record['context'].get('scientificNameAuthorship', ()))
-        mixed_hints = sorted(rank for rank in ('kingdom', 'phylum', 'class')
+        mixed_hints = sorted(rank for rank in ('kingdom', 'phylum', 'class', 'family')
                              if len({_hint_normal(value) for value in record['context'].get(rank, ()) if _hint_normal(value)}) > 1)
         # A uninomial's rows giving two ranks at genus or above ("Anura" order and genus) may be two taxa; a "species"
         # beside "Larus sp." says nothing about the uninomial and is ignored.
@@ -647,6 +647,23 @@ def _homonyms(record):
     return found
 
 
+def _family_differs(record):
+    """The source's family (one value, or several across rows) is not the family of COL's pick for the same name."""
+    if 'family' in (record.get('mixed_hints') or []):
+        return True
+    hint = _hint_normal((record.get('hints') or {}).get('family'))
+    theirs = _hint_normal(((_same_name_match(record) or {}).get('classification') or {}).get('family'))
+    return bool(hint and theirs and hint != theirs)
+
+
+def _usage_doubtful(record):
+    """COL's pick may not be the user's taxon (homonyms, or another family than the source's): keep the user's authorship.
+
+    A family difference is usually a taxonomic change, so it does not stop the automatic acceptance of the name itself.
+    """
+    return bool(_homonyms(record)) or _family_differs(record)
+
+
 def _stem_rank_too_high(record, stem):
     """'sp.'/'spp.' follow a genus or family: a stem COL has at a higher rank ("Anura sp.", the order) is not what was meant."""
     qualifiers = {_normal_qualifier(value) for value in [record.get('qualifier'), *(record.get('source_qualifiers') or [])] if value}
@@ -772,7 +789,7 @@ def row_default(record, classification):
         usage = (record.get('match') or {}).get('usage') or {}
         parsed = record.get('parsed') or {}
         mine = 'parsed' if parsed.get('usable') and parsed.get('lossless') else 'keep'
-        return 'col' if authorship_agrees(record, usage) and not _homonyms(record) else mine
+        return 'col' if authorship_agrees(record, usage) and not _usage_doubtful(record) else mine
     if kind == 'uncertain':
         return 'stem'
     if kind == 'spelling':
@@ -810,7 +827,7 @@ def eligible(record, option, classification, decisions=None):
         found = change(record, usage, match.get('matchType')) if usage else None
         return (kind in {'auto', 'spelling', 'check'} and qkind is None and bool(usage) and not match.get('hintOnly')
                 and (found is None or (kind == 'spelling' and found.get('kind') == 'spelling'))
-                and authorship_agrees(record, usage) and not _homonyms(record))
+                and authorship_agrees(record, usage) and not _homonyms(record) and (kind == 'check' or not _family_differs(record)))
     return False
 
 
@@ -847,6 +864,8 @@ def classify(record):
             homonyms = _homonyms(record)
             if homonyms:
                 reasons.append({'code': 'homonym', 'text': f"COL has {len(homonyms) + 1} taxa written this way; your name is kept without choosing one"})
+            elif _family_differs(record):
+                reasons.append({'code': 'family', 'text': "COL places this name in another family than your data; your authorship is kept"})
         elif (match.get('matchType') in {'VARIANT', 'FUZZY', 'CANONICAL'} and usage
               and not match.get('hintOnly')):
             group, kind = 'spelling', 'spelling'
@@ -963,6 +982,8 @@ def build_decision(record, spec, state, by='user', group_kind=None):
         raise NameDecisionError('A name whose rows or rank may mean another taxon takes a COL name only one at a time.')
     if by != 'user' and kind in {'col', 'alternative'} and _homonyms(record):
         raise NameDecisionError('COL has more than one taxon with this name; choose one name at a time.')
+    if by != 'user' and kind in {'col', 'alternative'} and _family_differs(record) and group_kind != 'check':
+        raise NameDecisionError('COL places this name in another family than your data; take its name one at a time.')
     if by != 'user' and kind == 'stem' and _stem_rank_too_high(record, stem_usage(record)):
         raise NameDecisionError('"sp." follows a genus or family; this stem is decided one name at a time.')
     snapshot = {'decision': kind, 'by': by, 'at': timezone.now().isoformat(), 'scientificName': None,

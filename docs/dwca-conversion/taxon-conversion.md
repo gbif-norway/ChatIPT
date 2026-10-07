@@ -197,7 +197,12 @@ against the source's kingdom, phylum and class like any other name. Every
 exact match is also fetched with GBIF's verbose output, because the batch
 response leaves out homonyms; the batch's pick stands and only the homonyms are
 added. An exact name with a homonym (another authorship, a missing one, or
-another lineage down to family) keeps the user's authorship. DwC-DP has no
+another lineage down to family) keeps the user's authorship, and so does one
+COL places in another family than the source (usually a taxonomic change, so
+the name itself is still accepted). Rows of one label that give different
+families are a mixed-classification check. The same name parts with another
+explicit rank marker ("subsp. juncea" and "var. juncea") are another name
+(change kind `marker`), confirmed one name at a time. DwC-DP has no
 identificationQualifier, so identification rows get `taxonFormula` "A sp.",
 "A spp." or "A indet." from their own row's qualifier, else the label's (blank
 cells only). `verbatimIdentification` still holds the text as written.
