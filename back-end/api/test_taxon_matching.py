@@ -263,6 +263,12 @@ class MatchColTests(SimpleTestCase):
         get_json.side_effect = [[exact], jones]
         summary = taxon_matching.match_col([{"scientificName": "Sterna"}], verbose_exact=True)[0]
         self.assertEqual((summary["usage"]["id"], [(item["id"], item["matchType"]) for item in summary["alternatives"]]), ("1", [("J", "EXACT")]))
+        get_json.reset_mock(side_effect=True)
+        # A variant pick is fetched again too, keeping the batch's pick.
+        variant = {"diagnostics": {"matchType": "VARIANT"}, "usage": {"key": "V", "name": "Aus bus", "rank": "SPECIES"}}
+        get_json.side_effect = [[variant], jones]
+        summary = taxon_matching.match_col([{"scientificName": "Aus bus"}], verbose_exact=True)[0]
+        self.assertEqual((summary["matchType"], summary["usage"]["id"], [item["id"] for item in summary["alternatives"]]), ("VARIANT", "V", ["J"]))
         self.assertEqual(verbose[0].kwargs["params"]["verbose"], "true")
         get_json.reset_mock(side_effect=True)
         get_json.side_effect = [[exact]]

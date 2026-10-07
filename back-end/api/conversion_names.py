@@ -467,7 +467,8 @@ def change(record, usage, match_type):
     The markers are also read from the label itself, as the parser's canonical name may drop a hybrid sign or "agg.".
     """
     found = name_change(asserted_name(record), usage, match_type, asserted_rank(record), record.get('hints'))
-    if found is None and usage and usage.get('scientificName') and name_parts(split_qualifier(record.get('label'))[0]):
+    if (found is None or found.get('kind') == 'spelling') and usage and usage.get('scientificName') \
+            and name_parts(split_qualifier(record.get('label'))[0]):
         label_markers = taxon_matching.explicit_markers(split_qualifier(record.get('label'))[0])
         their_markers = taxon_matching.explicit_markers(usage['scientificName'])
         if label_markers != their_markers:
@@ -680,6 +681,29 @@ def _usage_doubtful(record):
     A family difference is usually a taxonomic change, so it does not stop the automatic acceptance of the name itself.
     """
     return bool(_homonyms(record)) or _family_differs(record)
+
+
+def _rank_change(record, usage):
+    """What a COL usage does to the rank the source supplies for its own name ("makes your genus an order"); else None.
+
+    Compared for a uninomial supplied at genus or above, and for a trinomial supplied at a specific infraspecific rank.
+    """
+    source_rank, col_rank = record.get('source_rank'), (usage or {}).get('taxonRank')
+    if source_rank not in RANK_ORDER or col_rank not in RANK_ORDER or source_rank == col_rank:
+        return None
+    parts = len(name_parts(asserted_name(record)))
+    uninomial = parts == 1 and RANK_ORDER.index(source_rank) <= RANK_ORDER.index('genus')
+    trinomial = parts > 2 and source_rank in INFRASPECIFIC_RANKS and col_rank in INFRASPECIFIC_RANKS
+    return f'makes your {source_rank} {_article(col_rank)} {col_rank}' if uninomial or trinomial else None
+
+
+def _stem_confirmation(record, stem):
+    """Why publishing this stem needs the user's second click, or None."""
+    if not stem:
+        return None
+    if _stem_rank_too_high(record, stem):
+        return f"is {_article(stem['taxonRank'])} {stem['taxonRank']}, while “sp.” follows a genus or family"
+    return _rank_change(record, stem)
 
 
 def _stem_rank_too_high(record, stem):
@@ -1020,6 +1044,9 @@ def build_decision(record, spec, state, by='user', group_kind=None):
                 raise NameDecisionError(f'There is no exact stem name in Catalogue of Life for "{record["label"]}".')
             if by != 'user' and change(record, usage, 'EXACT') is not None:
                 raise NameDecisionError('A non-user decision cannot change the asserted name or decide a doubtful identification.')
+            confirmation = _stem_confirmation(record, usage)
+            if confirmation and spec.get('confirm_coarser') is not True:
+                raise NameDecisionError(f'"{usage["scientificName"]}" {confirmation}. Confirm it explicitly, or keep your name.')
             snapshot.update(source='col', scientificName=usage['scientificName'], scientificNameAuthorship=usage.get('scientificNameAuthorship'),
                             taxonRank=usage.get('taxonRank'), usageId=usage.get('usageId'), candidates=usage['candidates'],
                             checklist=_checklist(state), changeKind=None, nameRules=NAME_RULES_VERSION)
@@ -1048,6 +1075,8 @@ def build_decision(record, spec, state, by='user', group_kind=None):
                 raise NameDecisionError('A non-user decision cannot replace a different authorship.')
         if replaces and spec.get('confirm_coarser') is not True:
             raise NameDecisionError(f'"{usage["scientificName"]}" {replaces["text"]} for "{record["label"]}". Confirm that replacement explicitly, or keep your name.')
+        if _rank_change(record, usage) and spec.get('confirm_coarser') is not True:
+            raise NameDecisionError(f'"{usage["scientificName"]}" {_rank_change(record, usage)}. Confirm that explicitly, or keep your name.')
         if (normal(usage.get('scientificNameAuthorship')) and not authorship_agrees(record, usage)
                 and spec.get('confirm_coarser') is not True):
             raise NameDecisionError(f'Catalogue of Life writes the authorship of "{usage["scientificName"]}" as '
@@ -1476,7 +1505,8 @@ def col_choices(record):
                         'replaces': found if found and found['confirm'] else None,
                         'corrects': found['text'] if found and found['kind'] == 'spelling' else None, 'rank_note': None,
                         # COL's authorship is not the user's: the review asks before writing it over theirs.
-                        'authorship_differs': bool(normal(usage.get('scientificNameAuthorship'))) and not authorship_agrees(record, usage)})
+                        'authorship_differs': bool(normal(usage.get('scientificNameAuthorship'))) and not authorship_agrees(record, usage),
+                        'rank_change': _rank_change(record, usage)})
     # Homonyms of the user's name at another rank ("Anura" the order and the genus) say so.
     mine = asserted_rank(record)
     ranks = {choice['usage'].get('taxonRank') for choice in choices if choice['same_name']}
@@ -1525,7 +1555,8 @@ def _entry(record, decisions, held=(), classification=None):
             'eligible': [option for option in GROUP_OPTIONS.get(classification['kind'], [])
                          if eligible(record, option, classification, decisions)],
             'row_default': row_default(record, classification),
-            'stem': stem_usage(record) if qualifier_kind(record) == 'uncertain' else None}
+            'stem': stem_usage(record) if qualifier_kind(record) == 'uncertain' else None,
+            'stem_confirm': _stem_confirmation(record, stem_usage(record)) if qualifier_kind(record) == 'uncertain' else None}
 
 
 def state_section(conversion, offset=0, limit=PAGE_SIZE, view='all', group=None, q=''):

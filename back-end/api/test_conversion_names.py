@@ -1630,6 +1630,26 @@ class GroupDecisionTests(SimpleTestCase):
         self.assertIsNone(names.stem_usage(record))
         self.assertEqual(names.classify(record)['kind'], 'unconfirmed')
 
+    def test_a_rank_the_source_does_not_give_needs_a_second_click_per_name(self):
+        record = {'label': 'Anura', 'rows': 1, 'qualifier': None, 'source_rank': 'genus', 'parsed': real_parse('Anura'),
+                  'match': {'matchType': 'EXACT', 'hintOnly': False, 'usage': {'id': 'O', 'scientificName': 'Anura', 'taxonRank': 'order'}}}
+        self.assertEqual(names.col_choices(record)[0]['rank_change'], 'makes your genus an order')
+        with self.assertRaisesRegex(names.NameDecisionError, 'makes your genus an order'):
+            names.build_decision(record, {'decision': 'col'}, {'col_release': RELEASE})
+        self.assertEqual(names.build_decision(record, {'decision': 'col', 'confirm_coarser': True}, {'col_release': RELEASE})['taxonRank'], 'order')
+        stem = copy.deepcopy(FIXTURE_RECORDS['Anura indet.'])
+        stem.update(label='Anura sp.', qualifier='sp.')
+        with self.assertRaisesRegex(names.NameDecisionError, 'follows a genus or family'):
+            names.build_decision(stem, {'decision': 'stem'}, {'col_release': RELEASE})
+        self.assertEqual(names.build_decision(stem, {'decision': 'stem', 'confirm_coarser': True}, {'col_release': RELEASE})['taxonRank'], 'order')
+
+    def test_a_spelling_correction_that_drops_a_hybrid_sign_is_a_marker_change(self):
+        record = {'label': 'Rosa × caninus', 'rows': 1, 'qualifier': None, 'parsed': real_parse('Rosa caninus'), 'hints': {'kingdom': 'Plantae', 'family': 'Rosaceae'},
+                  'match': {'matchType': 'VARIANT', 'hintOnly': False, 'usage': {
+                      'scientificName': 'Rosa canina', 'taxonRank': 'species', 'classification': {'kingdom': 'Plantae', 'family': 'Rosaceae'}}}}
+        self.assertEqual(names.change(record, record['match']['usage'], 'VARIANT')['kind'], 'marker')
+        self.assertNotIn('col', names.classify(record)['eligible'])
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,
@@ -1642,7 +1662,7 @@ class GroupDecisionTests(SimpleTestCase):
         self.assertEqual(classification['eligible'], ['mine'])
         with self.assertRaises(names.NameDecisionError):
             names.build_decision(record, {'decision': 'col'}, {'col_release': RELEASE}, by='bulk:check', group_kind='check')
-        self.assertEqual(names.build_decision(record, {'decision': 'col'}, {'col_release': RELEASE})['taxonRank'], 'order')
+        self.assertEqual(names.build_decision(record, {'decision': 'col', 'confirm_coarser': True}, {'col_release': RELEASE})['taxonRank'], 'order')
         self.assertEqual(names.auto_accept({'labels': [record], 'decisions': {}, 'col_release': RELEASE}), 0)
         self.assertEqual(names.groups({'labels': [record], 'decisions': {}})[0]['signature'],
                          {'code': 'rank', 'yours': 'genus', 'col': 'order'})

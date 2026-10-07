@@ -55,7 +55,7 @@ function RowChoices({ entry, busy, onDecide }) {
       {main && <button type="button" className="btn btn-sm btn-outline-primary" disabled={busy} onClick={() => choose(main)}>
         {needsConfirmation(main) ? `Use ${formatName(main.usage)}…` : `Use ${formatName(main.usage)}`}
       </button>}
-      {(entry.kind === 'uncertain' || entry.stem) && entry.stem?.scientificName && <button type="button" className="btn btn-sm btn-outline-primary" disabled={busy} onClick={() => submit('stem')}>
+      {(entry.kind === 'uncertain' || entry.stem) && entry.stem?.scientificName && <button type="button" className="btn btn-sm btn-outline-primary" disabled={busy} onClick={() => choose({ decision: 'stem', usage: entry.stem, rank_change: entry.stem_confirm })}>
         {stemLabel(entry)}
       </button>}
       <button type="button" className="btn btn-sm btn-link" aria-expanded={more} onClick={() => setMore(!more)}>{more ? 'Less' : 'More…'}</button>

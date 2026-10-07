@@ -588,7 +588,7 @@ def match_col(queries, deadline=None, verbose_exact=False):
     # With verbose_exact, exact names are fetched again for their alternatives: the batch response leaves out the
     # homonyms an automatic decision must see.
     retry = [key for key, summary in results.items() if summary["status"] not in {"exact", "variant"}
-             or (verbose_exact and summary["status"] == "exact")]
+             or (verbose_exact and summary["status"] in {"exact", "variant"})]
 
     def verbose_match(key):
         return _get_json(
@@ -602,7 +602,7 @@ def match_col(queries, deadline=None, verbose_exact=False):
         for key, single in zip(retry, pool.map(verbose_match, retry)):
             if single is None:
                 continue
-            if results[key]["status"] == "exact":
+            if results[key]["status"] in {"exact", "variant"}:
                 # The batch's exact match stands (the verbose answer can differ); its homonyms are added, and so is the
                 # verbose pick when it is another usage.
                 verbose = summarize_match(single)

@@ -152,3 +152,9 @@ test('a COL name with another authorship than the user\'s asks before replacing 
   assert.equal(needsConfirmation({ ...jones, authorship_differs: false }), false)
   assert.match(replacementWarning(jones, 3), /writes the authorship of “Aus bus” as “Jones, 1900”.*on 3 rows/)
 })
+
+test('a COL name at another rank than the source gives asks first', () => {
+  const order = { decision: 'col', replaces: null, rank_change: 'makes your genus an order', usage: { scientificName: 'Anura' } }
+  assert.equal(needsConfirmation(order), true)
+  assert.equal(replacementWarning(order, 2), '“Anura” makes your genus an order on 2 rows. It may be a different taxon with the same name.')
+})
