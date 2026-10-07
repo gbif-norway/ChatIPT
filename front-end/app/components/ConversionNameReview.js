@@ -70,7 +70,7 @@ function RowChoices({ entry, busy, onDecide }) {
       {replacementWarning(confirming, entry.rows)}
       <div className="d-flex flex-wrap gap-1 mt-1">
         <button ref={confirmRef} type="button" className="btn btn-sm btn-warning" disabled={busy}
-          onClick={async () => { if (await submit(confirming.decision, usageIdOf(confirming), { confirmCoarser: Boolean(confirming.replaces) })) setConfirming(null) }}>Replace with {formatName(confirming.usage)}</button>
+          onClick={async () => { if (await submit(confirming.decision, usageIdOf(confirming), { confirmCoarser: true })) setConfirming(null) }}>Replace with {formatName(confirming.usage)}</button>
         <button type="button" className="btn btn-sm btn-link" onClick={cancel}>Cancel</button>
       </div>
     </div>}

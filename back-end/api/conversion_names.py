@@ -156,6 +156,11 @@ def collect_state(archive, plan):
     for record in ordered[:MAX_LABELS]:
         # Context is a matching hint only when the label's rows agree on it.
         context = {rank: next(iter(values)) for rank, values in record['context'].items() if len(values) == 1}
+        # Classification hints that differ only in case or a parenthesised remark ("Animalia"/"animalia") agree.
+        for rank in HINT_RANKS:
+            values = record['context'].get(rank) or ()
+            if len(values) > 1 and len({_hint_normal(value) for value in values}) == 1:
+                context[rank] = sorted(values)[0]
         qualifier = split_qualifier(record['label'])[1]
         # The supplied authorships, so that accepting COL's in bulk never silently rewrites a different one.
         authorships = sorted(record['context'].get('scientificNameAuthorship', ()))
@@ -797,7 +802,7 @@ def eligible(record, option, classification, decisions=None):
             return False
         if kind == 'check' and qkind == 'uncertain':
             stem = stem_usage(record)
-            return bool(stem and change(record, stem, 'EXACT') is None)
+            return bool(stem and change(record, stem, 'EXACT') is None and not _stem_rank_too_high(record, stem))
         found = change(record, usage, match.get('matchType')) if usage else None
         return (kind in {'auto', 'spelling', 'check'} and qkind is None and bool(usage) and not match.get('hintOnly')
                 and (found is None or (kind == 'spelling' and found.get('kind') == 'spelling'))
@@ -996,6 +1001,10 @@ def build_decision(record, spec, state, by='user', group_kind=None):
                 raise NameDecisionError('A non-user decision cannot replace a different authorship.')
         if replaces and spec.get('confirm_coarser') is not True:
             raise NameDecisionError(f'"{usage["scientificName"]}" {replaces["text"]} for "{record["label"]}". Confirm that replacement explicitly, or keep your name.')
+        if (normal(usage.get('scientificNameAuthorship')) and not authorship_agrees(record, usage)
+                and spec.get('confirm_coarser') is not True):
+            raise NameDecisionError(f'Catalogue of Life writes the authorship of "{usage["scientificName"]}" as '
+                                    f'"{usage["scientificNameAuthorship"]}", not as in your data. Confirm that replacement explicitly, or keep your name.')
         snapshot.update(source='col', scientificName=usage['scientificName'], scientificNameAuthorship=usage.get('scientificNameAuthorship'),
                         taxonRank=usage.get('taxonRank'), usageId=str(usage['id']) if usage.get('id') is not None else None,
                         taxonomicStatus=usage.get('status'), matchType=match_type, checklist=_checklist(state),
@@ -1298,7 +1307,10 @@ def apply_name_decisions(frames, name_review, source_names):
             names, authorship, rank = column('scientificName'), column('scientificNameAuthorship'), column('taxonRank')
             decided_name, decided_authorship = decision.get('scientificName') or '', decision.get('scientificNameAuthorship') or ''
             # A COL name that is the asserted name may keep supplied parts COL lacks; a different name may not.
-            keeps_name = kind in {'col', 'alternative', 'stem'} and same_name(records.get(label) or {'label': label}, {'scientificName': decided_name})
+            # A COL name that is the asserted name, or only corrects its spelling, may keep supplied parts COL lacks;
+            # a different name may not.
+            keeps_name = kind in {'col', 'alternative', 'stem'} and (decision.get('changeKind') == 'spelling'
+                                                                     or same_name(records.get(label) or {'label': label}, {'scientificName': decided_name}))
             formula = decision.get('taxonFormula')
             if taxon_formula is None and table == 'identification' and formula:
                 taxon_formula = column('taxonFormula')

@@ -1518,6 +1518,41 @@ class GroupDecisionTests(SimpleTestCase):
         self.assertIsNone(names.stem_usage(record))
         self.assertEqual(names.auto_accept({'labels': [record], 'decisions': {}, 'col_release': RELEASE}), 0)
 
+    def test_hints_differing_only_in_case_or_remarks_are_kept(self):
+        content = (b'occurrenceID,scientificName,kingdom,order\n'
+                   b'a,Aus bus,Animalia,Squamata (lizards)\nb,Aus bus,animalia,Squamata\n')
+        record = names.collect_state(read_inputs([('occurrence.csv', content)]), {'id': 'plan'})['labels'][0]
+        self.assertEqual(names._hint_normal(record['hints']['kingdom']), 'animalia')
+        self.assertEqual(names._hint_normal(record['hints']['order']), 'squamata')
+        self.assertEqual(record['mixed_hints'], [])
+
+    def test_a_spelling_correction_keeps_the_supplied_authorship_when_col_has_none(self):
+        state = {'labels': [{'label': 'Circium heterophyllum'}], 'decisions': {'Circium heterophyllum': {
+            'decision': 'col', 'source': 'col', 'scientificName': 'Cirsium heterophyllum', 'scientificNameAuthorship': None,
+            'taxonRank': 'species', 'changeKind': 'spelling', 'nameRules': names.NAME_RULES_VERSION, 'by': 'bulk:spelling'}}}
+        frame = pd.DataFrame([{'occurrence_pk': 'o1', 'scientificName': 'Circium heterophyllum', 'scientificNameAuthorship': '(L.) Hill',
+                               'taxonRank': 'species'}])
+        result, _ = names.apply_name_decisions({'occurrence': frame}, state, {'occurrence': [
+            {'name': 'Circium heterophyllum', 'authorship': '(L.) Hill', 'rank': 'species'}]})
+        self.assertEqual(result['occurrence'].loc[0, ['scientificName', 'scientificNameAuthorship']].tolist(),
+                         ['Cirsium heterophyllum', '(L.) Hill'])
+
+    def test_replacing_a_different_supplied_authorship_needs_confirmation_through_the_api_too(self):
+        record = {'label': 'Aus bus', 'rows': 1, 'qualifier': None, 'parsed': real_parse('Aus bus'), 'source_authorships': ['Smith'],
+                  'match': {'matchType': 'EXACT', 'hintOnly': False, 'usage': {
+                      'id': 'X', 'scientificName': 'Aus bus', 'scientificNameAuthorship': 'Linnaeus', 'taxonRank': 'species'}}}
+        with self.assertRaisesRegex(names.NameDecisionError, 'authorship'):
+            names.build_decision(record, {'decision': 'col'}, {'col_release': RELEASE})
+        confirmed = names.build_decision(record, {'decision': 'col', 'confirm_coarser': True}, {'col_release': RELEASE})
+        self.assertEqual(confirmed['scientificNameAuthorship'], 'Linnaeus')
+
+    def test_a_check_group_never_counts_a_stem_it_cannot_apply(self):
+        record = copy.deepcopy(FIXTURE_RECORDS['Anura indet.'])
+        record.update(label='Anura sp.', qualifier='sp.', hints={**record['hints'], 'kingdom': 'Plantae'})
+        classification = names.classify(record)
+        self.assertEqual(classification['kind'], 'check')
+        self.assertNotIn('col', classification['eligible'])
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,
