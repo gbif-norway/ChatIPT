@@ -216,11 +216,18 @@ _MARKER_FORMS = {"subsp.": "subsp.", "ssp.": "subsp.", "var.": "var.", "subvar."
                  "forma": "f.", "subf.": "subf.", "nothosubsp.": "nothosubsp.", "nothovar.": "nothovar."}
 
 
-def _explicit_markers(name):
-    """The infraspecific rank markers written in a name, normalised ("ssp." is "subsp."); authorship words are ignored."""
+def explicit_markers(name):
+    """The meaning-bearing markers written in a name: infraspecific rank markers, normalised ("ssp." is "subsp."), a
+    hybrid sign ("Rosa × canina", "×Agropogon", "Rosa x canina") and "agg."; authorship words are ignored."""
     tokens = str(name or "").split()
-    return [_MARKER_FORMS[token.casefold()] for index, token in enumerate(tokens)
-            if token.casefold() in _MARKER_FORMS and index + 1 < len(tokens) and tokens[index + 1][:1].islower()]
+    markers = [_MARKER_FORMS[token.casefold()] for index, token in enumerate(tokens)
+               if token.casefold() in _MARKER_FORMS and index + 1 < len(tokens) and tokens[index + 1][:1].islower()]
+    if "×" in str(name or "") or any(token == "x" and index + 1 < len(tokens) and tokens[index + 1][:1].islower()
+                                     for index, token in enumerate(tokens[1:], 1)):
+        markers.append("×")
+    if any(token.casefold() == "agg." for token in tokens):
+        markers.append("agg.")
+    return markers
 
 
 def name_change(asserted, usage, match_type=None, asserted_rank=None, hints=None):
@@ -243,7 +250,7 @@ def name_change(asserted, usage, match_type=None, asserted_rank=None, hints=None
     asserted_rank = asserted_rank or implied_rank(mine)
     change = {"from": asserted_rank, "to": rank, "confirm": True}
     # The same parts with another explicit rank marker ("subsp. juncea" and "var. juncea") are another name.
-    my_markers, their_markers = _explicit_markers(asserted), _explicit_markers(usage.get("scientificName"))
+    my_markers, their_markers = explicit_markers(asserted), explicit_markers(usage.get("scientificName"))
     if mine == theirs and my_markers != their_markers:
         mine_text = " ".join(my_markers) or "name without a rank marker"
         return {**change, "kind": "marker", "text": f"writes your {mine_text} as {' '.join(their_markers) or 'a name without one'}"}

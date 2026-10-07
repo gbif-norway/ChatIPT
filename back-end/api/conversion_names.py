@@ -462,8 +462,18 @@ def asserted_rank(record):
 
 
 def change(record, usage, match_type):
-    """How accepting a COL usage would change the asserted name (see taxon_matching.name_change); None for the same name."""
-    return name_change(asserted_name(record), usage, match_type, asserted_rank(record), record.get('hints'))
+    """How accepting a COL usage would change the asserted name (see taxon_matching.name_change); None for the same name.
+
+    The markers are also read from the label itself, as the parser's canonical name may drop a hybrid sign or "agg.".
+    """
+    found = name_change(asserted_name(record), usage, match_type, asserted_rank(record), record.get('hints'))
+    if found is None and usage and usage.get('scientificName') and name_parts(split_qualifier(record.get('label'))[0]):
+        label_markers = taxon_matching.explicit_markers(split_qualifier(record.get('label'))[0])
+        their_markers = taxon_matching.explicit_markers(usage['scientificName'])
+        if label_markers != their_markers:
+            return {'from': asserted_rank(record), 'to': usage.get('taxonRank'), 'confirm': True, 'kind': 'marker',
+                    'text': f"writes your {' '.join(label_markers) or 'name without a marker'} as {' '.join(their_markers) or 'a name without one'}"}
+    return found
 
 
 def replacement(record, usage, match_type):
@@ -582,6 +592,8 @@ def _stem_candidates(record):
 
 def stem_usage(record):
     """Resolve the exact COL usage for an uncertain label's stem, if unambiguous."""
+    if (record.get('match') or {}).get('exactAlternativesDropped'):
+        return None  # more exact usages than were kept: the stem's homonyms cannot all be checked
     candidates = _stem_candidates(record)
     if not candidates:
         return None

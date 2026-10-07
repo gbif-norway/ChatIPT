@@ -1615,6 +1615,21 @@ class GroupDecisionTests(SimpleTestCase):
         self.assertTrue(names._homonyms(record))
         self.assertEqual(names.row_default(record, names.classify(record)), 'parsed')
 
+    def test_a_hybrid_sign_or_agg_is_part_of_the_name(self):
+        for label, theirs in (('Rosa × canina', 'Rosa canina'), ('Rosa canina agg.', 'Rosa canina'), ('Rosa x canina', 'Rosa canina'),
+                              ('Rosa canina', 'Rosa × canina')):
+            record = {'label': label, 'rows': 1, 'qualifier': None, 'parsed': real_parse('Rosa canina'),
+                      'match': {'matchType': 'EXACT', 'hintOnly': False, 'usage': {'scientificName': theirs, 'taxonRank': 'species'}}}
+            with self.subTest(label=label, theirs=theirs):
+                self.assertEqual(names.change(record, record['match']['usage'], 'EXACT')['kind'], 'marker')
+                self.assertEqual(names.auto_accept({'labels': [record], 'decisions': {}, 'col_release': RELEASE}), 0)
+
+    def test_a_stem_with_unlisted_exact_alternatives_is_not_resolved(self):
+        record = copy.deepcopy(FIXTURE_RECORDS['Larus sp.'])
+        record['match']['exactAlternativesDropped'] = True
+        self.assertIsNone(names.stem_usage(record))
+        self.assertEqual(names.classify(record)['kind'], 'unconfirmed')
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,

@@ -201,7 +201,7 @@ another lineage down to family) keeps the user's authorship, and so does one
 COL places in another family than the source (usually a taxonomic change, so
 the name itself is still accepted). Rows of one label that give different
 families are a mixed-classification check. The same name parts with another (or no)
-explicit rank marker ("subsp. juncea" and "var. juncea") are another name
+explicit rank marker ("subsp. juncea" and "var. juncea"), hybrid sign or "agg." are another name
 (change kind `marker`), confirmed one name at a time. DwC-DP has no
 identificationQualifier, so identification rows get `taxonFormula` "A sp.",
 "A spp." or "A indet." from their own row's qualifier, else the label's (blank
