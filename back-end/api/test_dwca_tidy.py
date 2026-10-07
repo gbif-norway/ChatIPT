@@ -197,3 +197,18 @@ class DwcaTidyTests(SimpleTestCase):
         view, _ = tidy_archive(namibia)
         self.assertEqual([row[1:] for row in view.tables[0].rows], [['NA', ''], ['', '']])
 
+    def test_review_round_two_cases(self):
+        # Only upper-case NA is Namibia; lower-case na in countryCode is a placeholder.
+        codes = self.build('occurrenceID,countryCode', ['a,NA', 'b,na'])
+        self.assertEqual([row[1] for row in tidy_archive(codes)[0].tables[0].rows], ['NA', ''])
+        # Three zero columns could be a coastal surface survey: suggested only.
+        coast = self.build('occurrenceID,minimumElevationInMeters,maximumElevationInMeters,minimumDepthInMeters',
+                           ['a,0,0,0', 'b,0,0,0'])
+        view, table = tidy_archive(coast)
+        self.assertEqual(view.tables[0].rows[0][1:], ['0', '0', '0'])
+        self.assertTrue(all(group['tier'] == 'suggest' for group in table['groups']))
+        # Group totals count rewritten and cleared cells for the ledger, beyond any listed values.
+        sex = self.build('occurrenceID,sex', ['a,f', 'b,Unknown', 'c,F'])
+        table = tidy_archive(sex)[1]
+        self.assertEqual((self.group(table, 'vocabulary')['tidied_rows'], self.group(table, 'empty-placeholder')['cleared_rows']), (2, 1))
+

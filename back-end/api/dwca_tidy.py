@@ -119,8 +119,8 @@ def _rule(name, value, data, row_type):
             if len(parts) >= 2 and all(mapped):
                 values = list(dict.fromkeys(mapped))
                 return 'vocabulary', AUTO, {name: ' | '.join(values)}, False
-    # countryCode NA is Namibia; a bare NA in country is ambiguous, so it stays as written.
-    if k in _NULL and not (name == 'countryCode' and k == 'na') and not (name == 'country' and w == 'NA'):
+    # countryCode NA is Namibia (lower-case na is not); a bare NA in country is ambiguous, so it stays as written.
+    if k in _NULL and not (name in {'countryCode', 'country'} and w == 'NA'):
         return 'empty-placeholder', AUTO, {name: ''}, False
     if name in {'countryCode', 'country'}:
         alpha2, alpha3, names = data['alpha2'], data['alpha3'], data['country_names']
@@ -235,9 +235,9 @@ def tidy_archive(archive, overrides=None, model_changes=None):
                 if counts and all(_is_zero(value) for value in counts):
                     zero_cols['elev' if name in _ELEV else 'depth'].append(c)
         if zero_cols['elev'] and zero_cols['depth']:
-            # Three or four zero columns are a placeholder pattern (572); one elevation and one depth column
-            # of zeros could be a real shoreline or surface record, so that is only suggested.
-            tier = AUTO if len(zero_cols['elev']) + len(zero_cols['depth']) >= 3 else SUGGEST
+            # All four zero on every row is the placeholder pattern of 572 (cleared, with undo); fewer zero columns
+            # could be a real shoreline or surface record, so those are only suggested.
+            tier = AUTO if len(zero_cols['elev']) + len(zero_cols['depth']) == 4 else SUGGEST
             for c in zero_cols['elev'] + zero_cols['depth']:
                 name = table.terms[c].rsplit('/', 1)[-1]
                 for value, rows in column_values[t, c].items():
@@ -464,6 +464,10 @@ def tidy_archive(archive, overrides=None, model_changes=None):
         group['rows'] = sum(v['rows'] for v in group['values'])
         group['changed_rows'] = sum(v['changed_rows'] for v in group['values'])
         group['conflict_rows'] = sum(v['conflict_rows'] for v in group['values'])
+        # Cells of this column rewritten, and cells left empty (placeholders cleared or values moved out).
+        own = [(v['fields'].get(group['field'], v['value']), v) for v in group['values'] if v['applied']]
+        group['tidied_rows'] = sum(v['changed_rows'] for text, v in own if text not in ('', v['value']))
+        group['cleared_rows'] = sum(v['changed_rows'] for text, v in own if text == '')
         # An undone or suggested group still says what it would change.
         n = group['changed_rows'] if group['tier'] == AUTO and group['changed_rows'] else group['rows']
         group['title'] = _title(rule, group['field'], group['values'], n)
@@ -486,6 +490,13 @@ def tidy_archive(archive, overrides=None, model_changes=None):
         new_tables[t] = replace(original, terms=terms, rows=rows)
     view = replace(archive, tables=new_tables, tidy=table)
     return view, table
+
+
+def pending_suggestions(archive, t, c):
+    """Values of a column the tidy-up offers as suggestions that are not applied (they keep their own question-free route)."""
+    groups = (getattr(archive, 'tidy', None) or {}).get('groups', [])
+    return {value['value'] for group in groups if group['table'] == t and group['column'] == c and group['tier'] == SUGGEST
+            for value in group['values'] if not value['applied']}
 
 
 def column_note(archive, t, c):

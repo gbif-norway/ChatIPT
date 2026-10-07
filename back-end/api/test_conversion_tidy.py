@@ -33,8 +33,9 @@ class TidyFlowTests(ConversionTestCase):
         conversion = self.conversion
         self.assertTrue(conversion.tidy['summary']['groups'])
         self.assertIn('tidy', conversion.plan)
-        self.assertFalse(any(item['id'].startswith(('country-label:', 'age-remark:'))
-                             for item in conversion.plan['issues']))
+        # Settled labels and remarks are not asked about; '1 juv.' is left for a person (or the model layer).
+        self.assertEqual([item['source_value'] for item in conversion.plan['issues']
+                          if item['id'].startswith(('country-label:', 'age-remark:'))], ['1 juv.'])
         country_column = next(item for item in conversion.plan['columns'] if item['term'].endswith('/country'))
         self.assertIn('tidy_added', country_column)
         country_code = next(item for item in conversion.plan['columns'] if item['term'].endswith('/countryCode'))
@@ -61,11 +62,24 @@ class TidyFlowTests(ConversionTestCase):
         self.assertFalse(next(item for item in conversion.tidy['summary']['groups'] if item['id'] == group['id'])['applied'])
         country_code = next(item for item in conversion.plan['columns'] if item['term'].endswith('/countryCode'))
         self.assertEqual(country_code['samples'], ['Norway', 'Great Britain', 'NO'])
+        # Undone country names are asked about again, one question per label.
+        self.assertEqual(sorted(item['source_value'] for item in conversion.plan['issues'] if item['id'].startswith('country-label:')),
+                         ['Great Britain', 'Norway'])
         event = DwcConversionDecisionEvent.objects.filter(conversion=conversion, plan_id=conversion.plan['id'],
                                                           decision_id=choice['id']).latest('id')
         self.assertEqual(event.transcript, {'carried_from_plan': old_plan})
         message.refresh_from_db()
         self.assertEqual(message.plan_id, conversion.plan['id'])
+        # A conversation about a question the undo changed stays with the plan it was about.
+        asked = DwcConversionMessage.objects.create(conversion=conversion, role='assistant', content='Where does countryCode go?',
+                                                    plan_id=conversion.plan['id'], asked=['column:0:2'])
+        redo_from = conversion.plan['id']
+        self.assertEqual(self.post('tidy', changes={group['id']: None}).status_code, 202)
+        process_next_conversion()
+        conversion.refresh_from_db()
+        asked.refresh_from_db(); message.refresh_from_db()
+        self.assertNotEqual(conversion.plan['id'], redo_from)
+        self.assertEqual((asked.plan_id, message.plan_id), (redo_from, redo_from))
 
         suggestion = next(item for item in conversion.tidy['summary']['groups'] if item['rule'] == 'trailing-separator')
         value_id = suggestion['values'][0]['id']
@@ -202,9 +216,8 @@ class TidyUnitTests(SimpleTestCase):
             {'id': 'column:0:0', 'table': 0, 'column': 0, 'term': 'http://rs.tdwg.org/dwc/terms/sex',
              'nonempty': 2, 'default': 'occurrence.sex'}]}
         report = {'columns': [], 'tidy': {'groups': [{
-            'table': 0, 'column': 0, 'field': 'sex', 'applied': True,
-            'values': [{'applied': True, 'changed_rows': 1, 'fields': {'sex': 'female'}},
-                       {'applied': True, 'changed_rows': 1, 'fields': {'sex': ''}}]}]}}
+            'table': 0, 'column': 0, 'field': 'sex', 'applied': True, 'tidied_rows': 1, 'cleared_rows': 1,
+            'values': [{'applied': True, 'changed_rows': 1, 'fields': {'sex': 'female'}}]}]}}
         entry = build_value_disposition_ledger(plan, report)['source_terms'][0]
         self.assertEqual(entry['tidied_values'], 1)
         self.assertEqual(entry['tidy_cleared_values'], 1)

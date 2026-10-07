@@ -439,11 +439,18 @@ def report_section(conversion, view):
 def commit_carry(conversion):
     """Inside the fenced store of a replan: copy carried provenance and move the conversation to the new plan."""
     from api.models import DwcConversionDecisionEvent
-    copies, old_id, new_id = getattr(conversion, '_tidy_carry', ([], '', ''))
+    copies, old_id, new_id, unchanged = getattr(conversion, '_tidy_carry', ([], '', '', set()))
     if copies:
         DwcConversionDecisionEvent.objects.bulk_create(copies)
-    if old_id and new_id:
-        conversion.messages.filter(plan_id=old_id).update(plan_id=new_id)
+    if not (old_id and new_id):
+        return
+    messages = conversion.messages.filter(plan_id=old_id)
+    referenced = {identifier for message in messages for identifier in
+                  [*(message.asked or []), *(item.get('id') for item in message.proposals or [] if isinstance(item, dict))]}
+    # The conversation continues only when every question and proposal in it still means the same; otherwise it
+    # stays with the previous plan (still shown) and the new plan starts a fresh one.
+    if referenced <= unchanged:
+        messages.update(plan_id=new_id)
 
 
 def _items(plan):
@@ -497,7 +504,9 @@ def carry_plan_state(conversion, old_plan, new_plan, view):
                 reasoning_effort=event.reasoning_effort, response_id=event.response_id, confidence=event.confidence,
                 evidence=event.evidence, rationale=event.rationale, message=event.message,
                 transcript={'carried_from_plan': old_plan['id']}))
-    conversion._tidy_carry = (copies, old_plan.get('id', ''), new_plan['id'])
+    unchanged = {key for key in old_items if key in new_items
+                 and json.dumps(old_items[key], sort_keys=True) == json.dumps(new_items[key], sort_keys=True)}
+    conversion._tidy_carry = (copies, old_plan.get('id', ''), new_plan['id'], unchanged)
     old_review = conversion.review if isinstance(conversion.review, dict) else {}
     recommendations = {key: {**record, **({'plan_id': new_plan['id']} if 'plan_id' in record else {})}
                         for key, record in old_review.get('recommendations', {}).items()

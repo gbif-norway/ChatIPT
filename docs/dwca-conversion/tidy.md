@@ -21,9 +21,11 @@ Columns the tidy-up adds (for example `country` filled from names that were in `
 `lifeStage` filled from remarks) are appended after the table's own columns, so existing
 `column:t:c` ids stay stable. Their plan column carries `tidy_added`.
 
-With `CONVERSION_TIDY_ENABLED=0` (or when `build_plan` is given an untidied archive) the earlier
-per-value questions return as a fallback: `country-label:` (a label in `countryCode` that is not an
-ISO code) and `age-remark:` (an event remark that starts with a life-stage word).
+The earlier per-value questions remain as a fallback for what the tidy-up leaves: `country-label:` (a
+label in `countryCode` that is still not an ISO code) and `age-remark:` (an event remark of an occurrence
+row that still starts with a life-stage word, such as `1 juv.`). Values the tidy-up settled no longer
+qualify, and a value it offers as a suggestion is not asked about as well; undoing a change brings the
+question back for its values. With `CONVERSION_TIDY_ENABLED=0` every such value is asked about.
 
 ## Rules (deterministic, `TIDY_VERSION` 1)
 
@@ -41,7 +43,7 @@ Leading/trailing spaces and runs of spaces are removed on their own when nothing
 | Other country-column text with a water word | `United Kingdom (English Channel)` → `waterBody`? | suggestion |
 | Life stages in remarks of occurrence rows | `eventRemarks` `juv.` → `lifeStage` `juvenile` | auto |
 | Decimal commas in numbers | `1000,0` → `1000.0` | auto |
-| All-zero elevation and depth | every row 0 in three or four of the elevation/depth columns → empty | auto (one elevation and one depth column only: suggestion) |
+| All-zero elevation and depth | every row 0 in all four elevation/depth columns → empty | auto (two or three such columns: suggestion) |
 | Spelling variants | `2 cy.` → `2 cy` when `2 cy` is more common | auto |
 | Comma that may be a thousands separator | `1,000` → `1.000` | suggestion |
 | Trailing separator | `1,` → `1` | suggestion |
@@ -53,7 +55,8 @@ Details that matter:
   server with curated aliases). GBIF's hidden labels are not used because some are wrong (Female lists
   `juv`). Sex has no "unknown" concept, so `Unknown` sex is left empty; life stage `Unknown` becomes the
   GBIF concept `unknown`.
-- `countryCode` `NA` is Namibia, never a placeholder; a bare `NA` in `country` is ambiguous and stays as written. Country names and aliases come from ISO 3166-1
+- `countryCode` `NA` is Namibia, never a placeholder (lower-case `na` is a placeholder); a bare `NA` in `country`
+  is ambiguous and stays as written. Country names and aliases come from ISO 3166-1
   (pycountry) plus a curated alias list (`tidy-countries.json`): Great Britain, England, Scotland and Wales
   are GB; Svalbard and Jan Mayen is SJ; Norge, Sverige and other Nordic names are included.
 - A change applies to a row as a whole: its own rewrite and every value it moves or fills happen only when
@@ -61,10 +64,9 @@ Details that matter:
   counted as a conflict (for example `countryCode` `Norway` beside `country` `Sweden` keeps both). Fills
   never overwrite a different supplied value. Changes whose fills all agree already change nothing and are
   not listed.
-- All-zero elevation and depth are cleared automatically only when at least three of the four
-  elevation/depth columns are zero on every row, including an elevation and a depth column (the
-  placeholder pattern of 572). One elevation and one depth column of zeros could be a real shoreline or
-  surface record and is only suggested; zero depths alone stay.
+- All-zero elevation and depth are cleared automatically only when all four elevation/depth columns are
+  zero on every row (the placeholder pattern of 572), with a visible Undo. Two or three such columns could
+  be a real shoreline or surface survey and are only suggested; zero depths alone stay.
 - Protected columns are never changed: identifiers and anything ending in `ID`, catalogue and record
   numbers, scientific names and other taxon terms, identification qualifiers, dates and times,
   coordinates, `verbatim*` fields, measurement terms other than remarks, relationship terms other than
@@ -86,15 +88,18 @@ group, including any beyond the 30 listed). Undo/Apply posts
 An Undo or Apply queues a `replan` job. It rebuilds the plan from the tidied view and carries
 the user's state to the new plan id: decisions whose id, column term and option still exist
 (AI-reviewer decisions only when their question is unchanged), their provenance events (copied with
-`transcript.carried_from_plan`), AI review records for unchanged questions, the name review (names
-are never tidied) and the conversation. If the replan fails, the previous plan and overrides stay.
+`transcript.carried_from_plan`), AI review records for unchanged questions and the name review (names
+are never tidied). The conversation moves to the new plan only when every question and proposal in it
+is unchanged; otherwise it stays with the previous plan and a fresh one starts. If the replan fails,
+the previous plan and overrides stay.
 
 ## Report
 
 `conversion-report.json` has a `tidy` section: version, digest, overrides and every group with every
 distinct value (space-only groups list their first 500), its rows, output fields, whether it was applied, and changed/conflict/agree row counts.
 The value-disposition ledger adds `tidied_values` (cells rewritten), `tidy_cleared_values`
-(placeholders cleared or values moved out) and `source_nonempty_values` per source column, and marks
+(placeholders cleared or values moved out; both from group totals, so they also cover values a report
+group does not list) and `source_nonempty_values` per source column, and marks
 added columns with `tidy_added`.
 
 ## Production archives (566–572, deterministic rules only)
@@ -107,6 +112,6 @@ added columns with `tidy_added`.
 | 569 | 3 → 3 | countryCode NO filled for 14,776 rows |
 | 570 | 17 → 2 | all 15 country-label questions gone; ISO codes for 70,951 rows; 3 sea names → waterBody; sex `Unknown` ×63,677 empty; Pullus → nestling |
 | 571 | 2 → 2 | countryCode UG filled |
-| 572 | 14 → 3 | all 11 life-stage remark questions gone (1,525 rows → lifeStage); f/m → female/male; all-zero elevation/depth cleared |
+| 572 | 14 → 6 | 8 of 11 life-stage remark questions gone (1,525 rows → lifeStage); `1 juv.`, `ad + egg`, `ad.m.egg` left for the model layer; f/m → female/male; all-zero elevation/depth cleared |
 
 Every package validated.
