@@ -153,6 +153,17 @@ test('automatic summary groups glance choices, hides retained or empty entries, 
   assert.equal(declinedLine.title, 'recordedBy → kept in your original files')
   assert.match(declinedLine.text, /no specimen records are created/)
 
+  // A specimen target chosen before the specimen question is answered waits for that answer.
+  const early = summaryState({ 'column:0:0': 'material.collectedBy' })
+  const earlyLine = automaticSummary(early, makeSelector(early, early.decisions)).glance.find(line => line.id === 'column:0:0')
+  assert.equal(earlyLine.title, 'recordedBy → waiting for your answer')
+  assert.match(earlyLine.text, /once you answer “Create specimen records\?”/)
+
+  // A specimen line under a retained extension table is not shown.
+  const retained = summaryState({ 'material:0': 'per_row', 'table:1': 'preserve' })
+  retained.plan.issues[0].table = 1
+  assert.equal(automaticSummary(retained, makeSelector(retained, retained.decisions)).specimen.length, 0)
+
   // An open specimen question is answered below, not from the specimen line.
   const openSpecimen = automaticSummary(summaryState({}), makeSelector(summaryState({}), {}), new Set(['material:0'])).specimen[0]
   assert.equal(openSpecimen.editable, false)
