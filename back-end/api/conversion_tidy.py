@@ -270,9 +270,10 @@ def model_changes(view_or_archive, entries):
     stats = _corroboration(view_or_archive, apply_tidy(view_or_archive)[0], initial)
     concepts = dwca_tidy.life_stage_values()
     for change in initial:
-        agree, conflict = stats.get(id(change), (0, 0))
+        agree, conflict, rows = stats.get(id(change), (0, 0, 0))
         confidence = change['confidence']
-        tier = 'auto' if conflict == 0 and (confidence == 'high' or (confidence == 'medium' and agree > 0)) else 'suggest'
+        # A medium reading applies by itself only where every row with the value already agrees with it.
+        tier = 'auto' if conflict == 0 and (confidence == 'high' or (confidence == 'medium' and rows and agree == rows)) else 'suggest'
         t, c, original = change['table'], change['column'], change['value']
         own = view_or_archive.tables[t].terms[c].rsplit('/', 1)[-1]
         rewritten = change['fields'][own]
@@ -285,12 +286,14 @@ def model_changes(view_or_archive, entries):
             tier = 'suggest'  # a life stage read from another field must be a GBIF concept to apply by itself
         elif any(field not in CHECKED_FILLS and text != original for field, text in others.items()):
             tier = 'suggest'  # free text written into another field must be the exact source text to apply by itself
+        elif others.get('individualCount') and not re.search(r'(?<!\d)0*' + others['individualCount'] + r'(?!\d)', original):
+            tier = 'suggest'  # a count must be written in the value itself
         change['tier'] = tier
     return initial
 
 
 def _corroboration(raw, rules_view, changes):
-    """{id(change): (agree rows, conflict rows)} against the source after the deterministic rules only.
+    """{id(change): (agree rows, conflict rows, rows)} against the source after the deterministic rules only.
 
     A row agrees when another field the answer fills already holds the same text, and conflicts when it holds a
     different one. Cells filled by other model answers never count, so answers cannot corroborate each other.
@@ -318,9 +321,10 @@ def _corroboration(raw, rules_view, changes):
                 if current:
                     # The source text copied word for word (kept in occurrenceRemarks, a moved place) is no evidence.
                     agree, conflict = agree or (current == wanted and wanted != change['value']), conflict or current != wanted
-            counts = stats.setdefault(id(change), [0, 0])
+            counts = stats.setdefault(id(change), [0, 0, 0])
             counts[0] += bool(agree and not conflict)
             counts[1] += bool(conflict)
+            counts[2] += 1
     return {key: tuple(value) for key, value in stats.items()}
 
 

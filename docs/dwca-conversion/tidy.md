@@ -107,8 +107,9 @@ Values the rules cannot settle go to the model once per dataset (`conversion_tid
   keeps its exact text in `occurrenceRemarks` beside the interpreted field. A place restated word for word
   in another field (`county` `Norway` → country) moves there. A split without anything left over (copepod
   `AF` → adult + female) keeps the exact text in the originals and the report only.
-- **Tiers**: high confidence applies automatically; medium only when another column of the same row
-  already agrees (`fad` with sex `f`); a conflict with the row (`1 juv.` where individualCount is 2)
+- **Tiers**: high confidence applies automatically; medium only when, in every row with the value, another
+  column already agrees (`fad` with sex `f`); a count applies by itself only when the number is written in
+  the value; a conflict with the row (`1 juv.` where individualCount is 2)
   makes a suggestion. Agreement is counted against the source after the rules only, so answers never
   corroborate each other, and a copy of the source text itself (kept in occurrenceRemarks) is no evidence. Clearing a value, rewording free text that is not damaged (`ind/m3`), and a
   non-GBIF life stage read from another field are always suggestions, as is any other free text written

@@ -213,6 +213,19 @@ class TidyModelSafetyTests(SimpleTestCase):
         with patch.object(conversion_tidy, 'REQUEST_CHARS', 50):
             self.assertEqual(conversion_tidy.candidates(tidy_archive(long)[0]), [])
 
+    def test_review_round_ten_cases(self):
+        def entry(value, fields, confidence):
+            return {'k': {'table': 0, 'column': 2, 'value': value, 'fields': fields, 'residue': '', 'confidence': confidence, 'note': ''}}
+        # One row with sex f does not vouch for the other rows with the same remark and no sex.
+        mixed = archive([['o1', 'f', 'fad', '1', '', 'Aus bus', 'present'], ['o2', '', 'fad', '1', '', 'Aus bus', 'present']])
+        self.assertEqual(conversion_tidy.model_changes(mixed, entry('fad', {'lifeStage': 'adult', 'sex': 'female'}, 'medium'))[0]['tier'],
+                         'suggest')
+        # A count must be written in the value: '1 juv.' read as 2 individuals is only a suggestion.
+        count = archive([['o1', '', '1 juv.', '', '', 'Aus bus', 'present']])
+        tiers = [conversion_tidy.model_changes(count, entry('1 juv.', {'lifeStage': 'juvenile', 'individualCount': n}, 'high'))[0]['tier']
+                 for n in ('2', '1')]
+        self.assertEqual(tiers, ['suggest', 'auto'])
+
     def test_model_answers_never_corroborate_each_other(self):
         # Both remarks columns propose lifeStage adult for a row whose own lifeStage is empty: nothing in the source agrees.
         source = archive([['o1', '', 'fad', '1', '', 'Aus bus', 'present', 'adult female']], extra_terms=('occurrenceRemarks',))
