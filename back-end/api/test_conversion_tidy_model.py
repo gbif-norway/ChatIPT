@@ -255,10 +255,11 @@ class TidyModelSafetyTests(SimpleTestCase):
         self.assertEqual((change['fields'], change['tier']), ({'countryCode': 'NO', 'stateProvince': 'Norway'}, 'suggest'))
 
     def test_counts_inside_stage_codes_are_not_written_counts(self):
-        source = archive([['o1', '', 'L3 larva', '', '', 'Aus bus', 'present']])
-        change = conversion_tidy.model_changes(source, {'k': {'table': 0, 'column': 2, 'value': 'L3 larva', 'residue': '',
-            'fields': {'lifeStage': 'larva', 'individualCount': '3'}, 'confidence': 'high', 'note': ''}})[0]
-        self.assertEqual(change['tier'], 'suggest')
+        for value in ('L3 larva', 'instar 3'):
+            source = archive([['o1', '', value, '', '', 'Aus bus', 'present']])
+            change = conversion_tidy.model_changes(source, {'k': {'table': 0, 'column': 2, 'value': value, 'residue': '',
+                'fields': {'lifeStage': 'larva', 'individualCount': '3'}, 'confidence': 'high', 'note': ''}})[0]
+            self.assertEqual(change['tier'], 'suggest', value)
 
     def test_model_answers_never_corroborate_each_other(self):
         # Both remarks columns propose lifeStage adult for a row whose own lifeStage is empty: nothing in the source agrees.

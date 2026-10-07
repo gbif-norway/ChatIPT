@@ -310,9 +310,11 @@ def model_changes(view_or_archive, entries, overrides=None):
             tier = 'suggest'  # a life stage read from another field must be a GBIF concept to apply by itself
         elif any(field not in CHECKED_FILLS and text != original for field, text in others.items()):
             tier = 'suggest'  # free text written into another field must be the exact source text to apply by itself
-        elif others.get('individualCount') and int(others['individualCount']) not in {
-                int(token.rstrip('.')) for token in re.split(r'[\s,;:()]+', original) if re.fullmatch(r'\d+\.?', token)}:
-            tier = 'suggest'  # a count must be written in the value itself
+        elif others.get('individualCount') and not (
+                (count := re.match(r'\s*(\d+)\.?(?:\s|$)', original)) and int(count.group(1)) == int(others['individualCount'])):
+            # A count applies by itself only when the value leads with it ('1 juv.', '2 females'); a number elsewhere
+            # may be a stage ('instar 3', 'L3').
+            tier = 'suggest'
         elif own in PLACE_FIELDS and rewritten == original and any(field in {'country', 'countryCode', 'waterBody'} for field in others):
             tier = 'suggest'  # a place read as a country or sea must move there, not stay behind as well
         change['tier'] = tier
