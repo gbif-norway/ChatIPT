@@ -580,10 +580,14 @@ def _material_modes(table, material_column, comparison_term=None, recorded=False
 
 
 def _material_identifier_column(table):
-    for term in (DWC + 'materialSampleID', DWC + 'materialEntityID'):
-        if term in table.terms and any(row[table.terms.index(term)] for row in table.rows):
-            return table.terms.index(term)
-    return None
+    """The one column that can identify combined material, or None.
+
+    When both materialSampleID and materialEntityID have values, either may become the identifier
+    by_id combines on, so no single column predicts which rows share a material.
+    """
+    supplied = [table.terms.index(term) for term in (DWC + 'materialSampleID', DWC + 'materialEntityID')
+                if term in table.terms and any(row[table.terms.index(term)] for row in table.rows)]
+    return supplied[0] if len(supplied) == 1 else None
 
 
 def _specimen_presence(table):
@@ -965,12 +969,13 @@ def build_plan(archive):
                 rn = (f" The collector numbers (recordNumber, {sum(bool(row[record_index]) for row in table.rows):,} rows) are stored on the same specimen records."
                       if record_index is not None and any(row[record_index] for row in table.rows) and
                       'material.collectorNumber' in _candidates(DWC + 'recordNumber', target_tables) else '')
-                material_msg = (f"{n:,} rows name people in recordedBy ({d:,} different names, e.g. {ex}). They are saved as who collected the specimen, on each specimen record. "
-                                f"Why: {basis}a specimen record is created for each row, and in specimen collections this column names the collector.{rn}")
-                if modes:
+                for mode in modes:
+                    created = ('a specimen record is created for each row' if mode == 'per_row' else
+                               'rows that share a specimen identifier become one specimen record, linked to one observation')
                     default_when.append({'value': 'material.collectedBy',
-                        'when': [{'type': 'decision_in', 'id': f'material:{t}', 'values': modes}, *link_condition],
-                        'reason': material_msg})
+                        'when': [{'type': 'decision_in', 'id': f'material:{t}', 'values': [mode]}, *link_condition],
+                        'reason': f"{n:,} rows name people in recordedBy ({d:,} different names, e.g. {ex}). They are saved as who collected the specimen, on each specimen record. "
+                                  f"Why: {basis}{created}, and in specimen collections this column names the collector.{rn}"})
                 # GBIF reads collectors from a specimen only through one unambiguous link to its observation.
                 occurrence_ids = [row[occurrence_col] for row in table.rows] if occurrence_col is not None else None
                 if occurrence_ids is None:
@@ -1029,8 +1034,11 @@ def build_plan(archive):
                             description = 'type status' if short == 'typeStatus' else short
                             disagreement = 'different type statuses' if short == 'typeStatus' else f'different {short} values'
                             default_when = [
-                                {'value': material_target, 'when': [{'type': 'decision_in', 'id': f'material:{t}', 'values': modes}],
-                                 'reason': f"{len(values):,} rows give a {description} (e.g. {ex}). It is saved as the {description} of each specimen record, because a specimen record is created for each row and a type status describes a specimen."},
+                                *({'value': material_target, 'when': [{'type': 'decision_in', 'id': f'material:{t}', 'values': [mode]}],
+                                   'reason': f"{len(values):,} rows give a {description} (e.g. {ex}). It is saved as the {description} of each specimen record, because "
+                                             + ('a specimen record is created for each row' if mode == 'per_row' else
+                                                'rows that share a specimen identifier become one specimen record, and they agree on it')
+                                             + ', and a type status describes a specimen.'} for mode in modes),
                                 {'value': special_chosen, 'when': [{'type': 'decision_in', 'id': f'material:{t}', 'values': ['per_row', 'by_id']}],
                                  'reason': f"{len(values):,} rows give a {description} (e.g. {ex}). It is saved with the identification of each observation, because combined specimen records would mix {disagreement}."}]
                 automatic_family = 'type-status'

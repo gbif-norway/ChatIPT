@@ -192,6 +192,24 @@ class ConversionQuestionTests(SimpleTestCase):
             self.assertEqual(resolved['value'], 'occurrence.recordedBy')
             self.assertIn('some occurrenceIDs repeat', resolved['reason'])
 
+    def test_two_material_identifier_columns_keep_combined_collectors_on_the_observation(self):
+        # by_id may combine on either identifier, so collectors go to specimens only when each row is its own specimen.
+        plan = build_plan(read_inputs([('occurrence.csv', (
+            'occurrenceID,basisOfRecord,materialSampleID,materialEntityID,recordedBy,occurrenceStatus\n'
+            'o1,PreservedSpecimen,s1,e1,Hagen,present\n'
+            'o2,PreservedSpecimen,s2,e1,Collett,present\n').encode())]))
+        column_id = column_by_term_id(plan, 'recordedBy')
+        self.assertEqual(conditional_defaults(plan, {'material:0': 'per_row'})[column_id]['value'], 'material.collectedBy')
+        combined = conditional_defaults(plan, {'material:0': 'by_id'})[column_id]
+        self.assertEqual(combined['value'], 'occurrence.recordedBy')
+
+    def test_by_id_reasons_say_rows_are_combined(self):
+        plan = build_plan(specimen_archive())
+        column = next(column for column in plan['columns'] if column['term'] == DWC + 'recordedBy')
+        by_id = next(branch for branch in column['default_when'] if branch['when'][0].get('values') == ['by_id'])
+        self.assertEqual(by_id['value'], 'material.collectedBy')
+        self.assertIn('share a specimen identifier become one specimen record', by_id['reason'])
+
     def test_taxon_core_nested_occurrences_resolve_their_own_conditional_defaults(self):
         from api.test_dwca_taxon import manifest_archive
         source = read_inputs(manifest_archive([
