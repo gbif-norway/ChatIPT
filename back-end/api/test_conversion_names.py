@@ -1650,6 +1650,21 @@ class GroupDecisionTests(SimpleTestCase):
         self.assertEqual(names.change(record, record['match']['usage'], 'VARIANT')['kind'], 'marker')
         self.assertNotIn('col', names.classify(record)['eligible'])
 
+    def test_variant_and_other_rank_same_name_usages_are_homonyms(self):
+        def record(other):
+            return {'label': 'Aus', 'rows': 1, 'qualifier': None, 'parsed': real_parse('Aus'),
+                    'match': {'matchType': 'EXACT', 'hintOnly': False, 'alternatives': [{'id': '2', 'scientificName': 'Aus', **other}],
+                              'usage': {'id': '1', 'scientificName': 'Aus', 'scientificNameAuthorship': 'Smith', 'taxonRank': 'genus'}}}
+        self.assertTrue(names._homonyms(record({'matchType': 'VARIANT', 'scientificNameAuthorship': 'Jones', 'taxonRank': 'genus'})))
+        self.assertTrue(names._homonyms(record({'matchType': 'EXACT', 'scientificNameAuthorship': 'Smith', 'taxonRank': 'order'})))
+        self.assertFalse(names._homonyms(record({'matchType': 'EXACT', 'scientificNameAuthorship': 'Smith', 'taxonRank': 'subgenus'})))
+
+    def test_a_confirmation_is_bound_to_the_usage_it_showed(self):
+        record = {'label': 'Calanus', 'rows': 1, 'qualifier': None, 'parsed': real_parse('Calanus'),
+                  'match': {'matchType': 'HIGHERRANK', 'hintOnly': False, 'usage': {'id': 'P', 'scientificName': 'Plantae', 'taxonRank': 'kingdom'}}}
+        with self.assertRaisesRegex(names.NameDecisionError, 'now suggests another name'):
+            names.build_decision(record, {'decision': 'col', 'usage_id': 'RT', 'confirm_coarser': True}, {'col_release': RELEASE})
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,

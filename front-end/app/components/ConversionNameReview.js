@@ -119,7 +119,7 @@ function NameRow({ entry, editable, busy, selectedOption, undecidedChip = false,
         : 'This earlier choice replaces your name with a coarser or different taxon, so your name is kept until you confirm it.'}</div>
       {editable && <div className="d-flex flex-wrap gap-2 mt-1">
         <button type="button" className="btn btn-sm btn-outline-warning" disabled={busy}
-          onClick={() => onDecide(entry.label, entry.decision.decision, entry.decision.decision === 'alternative' ? entry.decision.usageId : undefined, { confirmCoarser: true })}>Confirm {entry.decision.scientificName}</button>
+          onClick={() => onDecide(entry.label, entry.decision.decision, entry.decision.usageId || undefined, { confirmCoarser: true })}>Confirm {entry.decision.scientificName}</button>
         <button type="button" className="btn btn-sm btn-success" disabled={busy} onClick={() => onDecide(entry.label, 'mine')}>Keep my name</button>
       </div>}
     </div> : null}

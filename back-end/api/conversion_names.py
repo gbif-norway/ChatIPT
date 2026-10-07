@@ -609,7 +609,7 @@ def stem_usage(record):
     if candidates[0][1]:
         usage = candidates[0][0]
         authorship = usage.get('scientificNameAuthorship')
-        if not authorship_agrees(record, usage) or any(not _same_taxon(usage, other) for other, _ in candidates[1:]):
+        if not authorship_agrees(record, usage) or any(not _same_taxon(usage, other) for other in _same_name_others(record, usage)):
             authorship = None
         return {'scientificName': usage.get('scientificName'), 'scientificNameAuthorship': authorship,
                 'taxonRank': usage.get('taxonRank'), 'usageId': str(usage['id']) if usage.get('id') is not None else None,
@@ -643,21 +643,26 @@ def _homonyms(record):
     pick = _same_name_match(record)
     if not pick:
         return []
-    found = []
-    for usage in (record.get('match') or {}).get('alternatives') or []:
-        if usage.get('matchType') != 'EXACT' or name_parts(usage.get('scientificName')) != name_parts(pick.get('scientificName')):
-            continue
-        if str(usage.get('id')) == str(pick.get('id')):
-            continue
-        if not _same_taxon(pick, usage):
-            found.append(usage)
+    # Any other usage of the same name counts, whatever its match type (a verbose pick can come back as a variant).
+    found = [usage for usage in _same_name_others(record, pick) if not _same_taxon(pick, usage)]
     if (record.get('match') or {}).get('exactAlternativesDropped'):
         found.append({'id': None, 'scientificName': pick.get('scientificName'), 'unlisted': True})
     return found
 
 
+def _same_name_others(record, pick):
+    """The match's other usages written with the same name parts as `pick`."""
+    return [usage for usage in (record.get('match') or {}).get('alternatives') or []
+            if name_parts(usage.get('scientificName')) == name_parts(pick.get('scientificName'))
+            and str(usage.get('id')) != str(pick.get('id'))]
+
+
 def _same_taxon(left, right):
-    """Two same-name usages are one taxon only with agreeing authorships (both given) and no lineage difference."""
+    """Two same-name usages are one taxon only at one rank (a genus and its subgenus count as one), with agreeing
+    authorships (both given) and no lineage difference."""
+    ranks = {'genus' if usage.get('taxonRank') == 'subgenus' else usage.get('taxonRank') for usage in (left, right)}
+    if len(ranks) > 1:
+        return False
     lineages = [{rank: _hint_normal((usage.get('classification') or {}).get(rank)) for rank in CONTEXT_RANKS} for usage in (left, right)]
     if any(lineages[0][rank] and lineages[1][rank] and lineages[0][rank] != lineages[1][rank] for rank in CONTEXT_RANKS):
         return False
@@ -1057,6 +1062,9 @@ def build_decision(record, spec, state, by='user', group_kind=None):
     elif kind in {'col', 'alternative'}:
         if kind == 'col':
             usage = match.get('usage')
+            # A confirmation names the usage it was shown; COL's pick may have changed since (a new check).
+            if usage and spec.get('usage_id') is not None and str(spec['usage_id']) != str(usage.get('id')):
+                raise NameDecisionError(f'Catalogue of Life now suggests another name for "{record["label"]}"; choose again.')
         else:
             wanted = str(spec.get('usage_id')) if spec.get('usage_id') is not None else None
             usage = next((item for item in match.get('alternatives') or [] if wanted and str(item['id']) == wanted), None)
