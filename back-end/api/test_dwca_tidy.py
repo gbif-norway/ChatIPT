@@ -212,3 +212,21 @@ class DwcaTidyTests(SimpleTestCase):
         table = tidy_archive(sex)[1]
         self.assertEqual((self.group(table, 'vocabulary')['tidied_rows'], self.group(table, 'empty-placeholder')['cleared_rows']), (2, 1))
 
+    def test_review_round_six_cases(self):
+        from api.dwca_conversion import build_plan
+        # A value some rows keep as written because of a conflict still gets its fallback question.
+        both = self.build('occurrenceID,countryCode,country,eventRemarks,lifeStage,occurrenceStatus',
+                          ['a,Norway,Sweden,juv.,adult,present', 'b,Norway,Norway,ad,,present'])
+        view, _ = tidy_archive(both)
+        asked = {issue['source_value'] for issue in build_plan(view)['issues']
+                 if issue['id'].startswith(('country-label:', 'age-remark:'))}
+        self.assertEqual(asked, {'Norway', 'juv.'})
+        # A model answer about a value after the space clean-up applies to the source spelling with spaces too.
+        spaced = self.build('occurrenceID,eventRemarks,sex', ['a,"fad ",f'])
+        model = [{'table': 0, 'column': 1, 'value': 'fad', 'tier': 'auto', 'move': True,
+                  'fields': {'eventRemarks': '', 'lifeStage': 'adult', 'occurrenceRemarks': 'fad'}}]
+        view, table = tidy_archive(spaced, model_changes=model)
+        row = dict(zip([term.rsplit('/', 1)[-1] for term in view.tables[0].terms], view.tables[0].rows[0]))
+        self.assertEqual((row['eventRemarks'], row['lifeStage'], row['occurrenceRemarks']), ('', 'adult', 'fad'))
+        self.assertFalse(any(group['rule'] == 'whitespace' for group in table['groups']))
+

@@ -297,7 +297,8 @@ def _corroboration(raw, rules_view, changes):
         for position, term in enumerate(tidied.terms):
             index.setdefault(term, position)
         for r, row in enumerate(source.rows):
-            change = values.get(row[c] if c < len(row) else '')
+            # Answers are about the value after the rules (spacing cleaned), as the model saw it.
+            change = values.get(tidied.rows[r][c] if c < len(tidied.rows[r]) else '')
             if change is None:
                 continue
             agree = conflict = False
@@ -585,27 +586,32 @@ def carry_plan_state(conversion, old_plan, new_plan, view):
         if event and event.source == 'ai-reviewer' and json.dumps(item, sort_keys=True) != json.dumps(fresh, sort_keys=True):
             dropped.append(identifier); continue
         kept[identifier] = value
-    for _ in range(20):
-        try:
-            validate_decisions(new_plan, kept, require_complete=False)
-            break
-        except ConversionError as exc:
-            invalid = exc.decision_ids
-            if not invalid:
-                dropped.extend(kept)
-                kept = {}
-                break
-            for identifier in invalid:
-                if identifier in kept:
-                    kept.pop(identifier); dropped.append(identifier)
     # An AI choice or recommendation also needs the evidence the reviewer saw to be unchanged: tidying a neighbouring
-    # column can change the samples in its packet while the question itself stays the same.
+    # column can change the samples in its packet while the question itself stays the same. Dropping one choice can
+    # change the evidence or validity of another, so both checks repeat until nothing more is dropped.
     old_review = conversion.review if isinstance(conversion.review, dict) else {}
     old_records = old_review.get('recommendations', {})
-    sources = {identifier: old_events[identifier].source if identifier in old_events else 'user' for identifier in kept}
-    same_evidence = _same_evidence(new_plan, view, kept, sources, old_records)
-    for identifier in [key for key, source in sources.items() if source == 'ai-reviewer' and not same_evidence(key)]:
-        kept.pop(identifier); dropped.append(identifier)
+    for _ in range(20):
+        for _ in range(20):
+            try:
+                validate_decisions(new_plan, kept, require_complete=False)
+                break
+            except ConversionError as exc:
+                invalid = exc.decision_ids
+                if not invalid:
+                    dropped.extend(kept)
+                    kept = {}
+                    break
+                for identifier in invalid:
+                    if identifier in kept:
+                        kept.pop(identifier); dropped.append(identifier)
+        sources = {identifier: old_events[identifier].source if identifier in old_events else 'user' for identifier in kept}
+        same_evidence = _same_evidence(new_plan, view, kept, sources, old_records)
+        stale = [key for key, source in sources.items() if source == 'ai-reviewer' and not same_evidence(key)]
+        if not stale:
+            break
+        for identifier in stale:
+            kept.pop(identifier); dropped.append(identifier)
     conversion.decisions = kept
     from api.models import DwcConversionDecisionEvent
     copies = []

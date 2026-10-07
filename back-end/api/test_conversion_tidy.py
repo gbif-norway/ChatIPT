@@ -98,6 +98,26 @@ class TidyFlowTests(ConversionTestCase):
         suggestion = next(item for item in conversion.tidy['summary']['groups'] if item['id'] == suggestion['id'])
         self.assertTrue(suggestion['values'][0]['applied'])
 
+    def test_dropping_a_stale_ai_choice_rechecks_the_choices_depending_on_it(self):
+        with override_settings(CONVERSION_AI_REVIEW_ENABLED=False, CONVERSION_NAME_CHECKS_ENABLED=False):
+            process_next_conversion()
+        conversion = self.conversion
+        first, second = 'column:0:3', 'column:0:4'
+        defaults = {item['id']: item['default'] for item in conversion.plan['columns']}
+        conversion_review.apply_decision_changes(conversion, {first: defaults[first], second: defaults[second]}, 'ai-reviewer')
+        conversion.save()
+
+        def evidence(plan, view, decisions, sources, records):
+            # The first choice's evidence changed; the second relied on the first.
+            return lambda item_id: item_id == second and first in decisions
+        group = next(item for item in conversion.tidy['summary']['groups'] if item['rule'] == 'country-name')
+        self.post('tidy', changes={group['id']: 'undo'})
+        with patch('api.conversion_tidy._same_evidence', side_effect=evidence):
+            process_next_conversion()
+        conversion = self.conversion
+        self.assertFalse({first, second} & set(conversion.decisions))
+        self.assertTrue({first, second} <= set(conversion.tidy['last_replan']['dropped']))
+
     def test_evidence_check_accepts_an_unchanged_review_packet(self):
         with override_settings(CONVERSION_AI_REVIEW_ENABLED=False, CONVERSION_NAME_CHECKS_ENABLED=False):
             process_next_conversion()

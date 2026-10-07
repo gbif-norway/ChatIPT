@@ -186,6 +186,16 @@ class TidyModelSafetyTests(SimpleTestCase):
         changes = conversion_tidy.model_changes(twice, {'a': entry(2, 'fad', {'lifeStage': 'adult', 'sex': 'female'}, 'medium')})
         self.assertEqual(changes[0]['tier'], 'suggest')
 
+    def test_answers_about_spaced_values_are_corroborated_and_applied(self):
+        source = archive([['o1', 'f', 'fad ', '1', '', 'Aus bus', 'present']])
+        view = tidy_archive(source)[0]
+        remarks = next(column for column in conversion_tidy.candidates(view) if column['field'] == 'eventRemarks')
+        self.assertEqual([value['value'] for value in remarks['values']], ['fad'])
+        change = conversion_tidy.model_changes(source, {'k': {'table': 0, 'column': 2, 'value': 'fad', 'residue': '',
+            'fields': {'lifeStage': 'adult', 'sex': 'female'}, 'confidence': 'medium', 'note': ''}})[0]
+        self.assertEqual(change['tier'], 'auto')  # sex f in the row agrees
+        self.assertEqual(tidy_archive(source, model_changes=[change])[0].tables[0].rows[0][2], '')
+
     def test_model_answers_never_corroborate_each_other(self):
         # Both remarks columns propose lifeStage adult for a row whose own lifeStage is empty: nothing in the source agrees.
         source = archive([['o1', '', 'fad', '1', '', 'Aus bus', 'present', 'adult female']], extra_terms=('occurrenceRemarks',))

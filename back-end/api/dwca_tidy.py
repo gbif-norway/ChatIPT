@@ -285,19 +285,24 @@ def tidy_archive(archive, overrides=None, model_changes=None):
                     or not isinstance(value, str)):
                 continue
             name = archive.tables[t].terms[c].rsplit('/', 1)[-1]
-            if (_protected(archive.tables[t].terms[c], name) or (t, c, value) in proposed
-                    or value not in column_values.get((t, c), {})):
+            if _protected(archive.tables[t].terms[c], name):
                 continue
         except (IndexError, TypeError):
             continue
+        # The model read the value after the space clean-up, so its answer also covers source spellings that differ
+        # only in spacing ('fad ' read as 'fad'); it replaces that clean-up, never another rule.
+        sources = [raw for raw in column_values.get((t, c), {})
+                   if raw == value and (t, c, raw) not in proposed
+                   or normalize_space(raw) == value and proposed.get((t, c, raw), {}).get('rule') == 'whitespace']
         fields = dict(item['fields'])
         if name not in fields:
             fields[name] = value
-        if fields[name] == value and len(fields) == 1:
-            continue
-        proposed[t, c, value] = {'rule': 'model', 'tier': item['tier'], 'fields': fields,
-            'move': bool(item.get('move')), 'rows': column_values.get((t, c), Counter()).get(value, 0),
-            'by': 'model', 'confidence': str(item.get('confidence', '')), 'note': str(item.get('note', ''))}
+        for raw in sources:
+            if fields[name] == raw and len(fields) == 1:
+                continue
+            proposed[t, c, raw] = {'rule': 'model', 'tier': item['tier'], 'fields': fields,
+                'move': bool(item.get('move')), 'rows': column_values[t, c][raw],
+                'by': 'model', 'confidence': str(item.get('confidence', '')), 'note': str(item.get('note', ''))}
 
     grouped = defaultdict(list)
     for (t, c, value), change in proposed.items():
@@ -493,10 +498,13 @@ def tidy_archive(archive, overrides=None, model_changes=None):
 
 
 def settled_values(archive, t, c):
-    """Values of a column the tidy-up has dealt with: applied changes and open suggestions. Undone changes are not settled."""
+    """Values of a column the tidy-up has dealt with: applied changes and open suggestions.
+
+    Undone changes are not settled, nor are values some rows kept as written because of a conflict.
+    """
     groups = (getattr(archive, 'tidy', None) or {}).get('groups', [])
     return {value['value'] for group in groups if group['table'] == t and group['column'] == c
-            for value in group['values'] if value['applied'] or group['tier'] == SUGGEST}
+            for value in group['values'] if (value['applied'] and not value['conflict_rows']) or group['tier'] == SUGGEST}
 
 
 def column_note(archive, t, c):

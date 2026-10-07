@@ -24,8 +24,8 @@ Columns the tidy-up adds (for example `country` filled from names that were in `
 The earlier per-value questions remain as a fallback for what the tidy-up leaves: `country-label:` (a
 label in `countryCode` that is still not an ISO code) and `age-remark:` (an event remark of an occurrence
 row that still starts with a life-stage word, such as `1 juv.`). Values the tidy-up settled no longer
-qualify, and a value it offers as a suggestion is not asked about as well; undoing a change brings the
-question back for its values. With `CONVERSION_TIDY_ENABLED=0` every such value is asked about.
+qualify, and a value it offers as a suggestion is not asked about as well; undoing a change, or a conflict
+that keeps a value as written in some rows, brings the question back for that value. With `CONVERSION_TIDY_ENABLED=0` every such value is asked about.
 
 ## Rules (deterministic, `TIDY_VERSION` 1)
 
@@ -113,7 +113,8 @@ Values the rules cannot settle go to the model once per dataset (`conversion_tid
 - **Cache**: answers are stored in `conversion.tidy.model` with the source fingerprint and prompt
   version, so inspect, replan and convert produce the same view and plan id without calling again.
   A byte-identical re-upload by the same owner reuses them (571/572 were re-uploads of 558/559). Values an
-  answer leaves out are stored as abstentions, so they are never paid for twice.
+  answer leaves out are stored as abstentions, so they are never paid for twice. The model reads values
+  after the space clean-up; its answer covers the source spellings that differ only in spacing.
 
 ## Seeing and undoing changes
 
