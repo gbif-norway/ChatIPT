@@ -247,3 +247,22 @@ class DwcaTidyTests(SimpleTestCase):
         self.assertEqual(view.tables[0].rows[0][1], 'United Kingdom (English Channel)')
         self.assertTrue(any(issue['id'].startswith('country-label:') for issue in build_plan(view)['issues']))
 
+    def test_review_round_eight_cases(self):
+        from api.dwca_conversion import build_plan
+        from api.dwca_value_ledger import build_value_disposition_ledger
+        # Two remarks naming different life stages for one row: both stay, whatever the column order.
+        for header, row in (('occurrenceID,eventRemarks,occurrenceRemarks', 'a,ad,juv'),
+                            ('occurrenceID,occurrenceRemarks,eventRemarks', 'a,juv,ad')):
+            view, _ = tidy_archive(self.build(header, [row]))
+            self.assertEqual(view.tables[0].rows[0][1:3], row.split(',')[1:], header)
+            self.assertNotIn(DWC + 'lifeStage', view.tables[0].terms)
+        # Cells filled from another column were empty in the source: an existing empty column and an added one.
+        for header, rows in (('occurrenceID,country,countryCode,occurrenceStatus', ['a,Norway,,present', 'b,Sweden,SE,present']),
+                             ('occurrenceID,country,occurrenceStatus', ['a,Norway,present', 'b,Sweden,present'])):
+            view, table = tidy_archive(self.build(header, rows))
+            plan = build_plan(view)
+            ledger = build_value_disposition_ledger(plan, {'columns': [], 'tidy': {'groups': table['groups']}})
+            entry = next(item for item in ledger['source_terms'] if item['source_term'] == DWC + 'countryCode')
+            self.assertEqual((entry['nonempty_values'], entry['tidy_filled_values'], entry['source_nonempty_values']),
+                             (2, 2 if 'countryCode' not in header else 1, 0 if 'countryCode' not in header else 1), header)
+

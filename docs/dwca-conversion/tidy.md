@@ -61,7 +61,8 @@ Details that matter:
   are GB; Svalbard and Jan Mayen is SJ; Norge, Sverige and other Nordic names are included.
 - A change applies to a row as a whole: its own rewrite and every value it moves or fills happen only when
   each destination cell is empty or already says the same (conflicts are settled for the whole row first,
-  so one change never relies on another that is kept as written). Otherwise the whole row is left as written and
+  so one change never relies on another that is kept as written). Two changes that would fill the same empty
+  cell differently (eventRemarks `ad` beside occurrenceRemarks `juv`) are both kept as written. Otherwise the whole row is left as written and
   counted as a conflict (for example `countryCode` `Norway` beside `country` `Sweden` keeps both). Fills
   never overwrite a different supplied value. Changes whose fills all agree already change nothing and are
   not listed.
@@ -146,7 +147,8 @@ the previous plan and overrides stay.
 distinct value (space-only groups list their first 500), its rows, output fields, whether it was applied, and changed/conflict/agree row counts.
 The value-disposition ledger adds `tidied_values` (cells rewritten), `tidy_cleared_values`
 (placeholders cleared or values moved out; both from group totals, so they also cover values a report
-group does not list) and `source_nonempty_values` per source column, and marks
+group does not list), `tidy_filled_values` (cells filled from another column, empty in the source) and
+`source_nonempty_values` per source column, and marks
 added columns with `tidy_added`.
 
 ## Production archives (566–572)

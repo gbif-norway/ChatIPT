@@ -406,6 +406,18 @@ def tidy_archive(archive, overrides=None, model_changes=None):
         for i in newly:
             conflicted.add(i)
             keep_as_written(*pending[i][:7])
+    # Two changes of one row that would fill the same empty cell differently (eventRemarks 'ad' and occurrenceRemarks
+    # 'juv' both naming the life stage) are both kept as written, whatever the column order.
+    wanted_by_cell = defaultdict(set)
+    for i, (_record, _change, t, _c, r, _value, _field, other) in enumerate(pending):
+        if i not in conflicted:
+            for f, wanted in other.items():
+                if wanted and not cell(t, r, f):
+                    wanted_by_cell[t, r, f].add(wanted)
+    for i, (_record, _change, t, _c, r, _value, _field, other) in enumerate(pending):
+        if i not in conflicted and any(len(wanted_by_cell.get((t, r, f), ())) > 1 for f in other):
+            conflicted.add(i)
+            keep_as_written(*pending[i][:7])
     for i, (record, change, t, c, r, value, field, other_fields) in enumerate(pending):
         if i in conflicted:
             continue
@@ -435,6 +447,8 @@ def tidy_archive(archive, overrides=None, model_changes=None):
                     copies[t][r].append('')
                 copies[t][r][target_c] = wanted
             changed_rows.add(r)
+            filled = record.setdefault('_filled', {})
+            filled[f] = filled.get(f, 0) + 1
         if change['move']:
             if t not in copies:
                 copies[t] = [list(row) for row in archive.tables[t].rows]
@@ -487,11 +501,16 @@ def tidy_archive(archive, overrides=None, model_changes=None):
         own = [(v['fields'].get(group['field'], v['value']), v) for v in group['values'] if v['applied']]
         group['tidied_rows'] = sum(v['changed_rows'] for text, v in own if text not in ('', v['value']))
         group['cleared_rows'] = sum(v['changed_rows'] for text, v in own if text == '')
+        # Cells of other columns this group filled in (they were empty in the source).
+        filled = Counter()
+        for value in group['values']:
+            filled.update(value.get('_filled', {}))
+        group['filled_rows'] = dict(sorted(filled.items()))
         # An undone or suggested group still says what it would change.
         n = group['changed_rows'] if group['tier'] == AUTO and group['changed_rows'] else group['rows']
         group['title'] = _title(rule, group['field'], group['values'], n)
         for item in group['values']:
-            for private in ('tier', 'move', 'value_text', '_changed', '_conflicts', '_agrees'):
+            for private in ('tier', 'move', 'value_text', '_changed', '_conflicts', '_agrees', '_filled'):
                 item.pop(private, None)
     group_dicts = [group for group in group_dicts if group['values']]
     source_columns = {str(t): len(table.terms) for t, table in enumerate(archive.tables)}
