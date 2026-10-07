@@ -429,15 +429,19 @@ def tidy_archive(archive, overrides=None, model_changes=None):
     # Roll up counters and construct grouped, serialisable output.
     for group in group_dicts:
         t, c, rule = group.pop('_key')
+        # An applied value that changed no cell (its fills all agreed already) is not a change worth showing.
+        group['values'] = [v for v in group['values'] if not v['applied'] or v['changed_rows'] or v['conflict_rows']]
+        group['applied'] = any(v['applied'] for v in group['values'])
+        group['rows'] = sum(v['rows'] for v in group['values'])
         group['changed_rows'] = sum(v['changed_rows'] for v in group['values'])
         group['conflict_rows'] = sum(v['conflict_rows'] for v in group['values'])
-        applied_count = sum(v['rows'] for v in group['values'] if v['applied'])
-        # An undone group still says what it would change.
-        n = applied_count if group['tier'] == AUTO and applied_count else group['rows']
+        # An undone or suggested group still says what it would change.
+        n = group['changed_rows'] if group['tier'] == AUTO and group['changed_rows'] else group['rows']
         group['title'] = _title(rule, group['field'], group['values'], n)
         for item in group['values']:
             for private in ('tier', 'move', 'value_text', '_changed', '_conflicts', '_agrees'):
                 item.pop(private, None)
+    group_dicts = [group for group in group_dicts if group['values']]
     source_columns = {str(t): len(table.terms) for t, table in enumerate(archive.tables)}
     digest_payload = [TIDY_VERSION, [(g['id'], v['value'], v['fields'])
                      for g in group_dicts for v in g['values'] if v['applied']], added_columns]

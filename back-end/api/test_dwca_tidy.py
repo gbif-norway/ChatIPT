@@ -54,6 +54,9 @@ class DwcaTidyTests(SimpleTestCase):
         group = self.group(table, 'country-code-fill')
         self.assertEqual(group['values'][0]['conflict_rows'], 1)
         self.assertEqual(group['values'][0]['agree_rows'], 1)
+        # 568: country names beside codes that already agree change nothing, so nothing is listed.
+        agreeing = self.build('occurrenceID,country,countryCode', ['a,Norway,NO', 'b,Tanzania,TZ'])
+        self.assertEqual(tidy_archive(agreeing)[1]['groups'], [])
 
     def test_vocabulary_placeholders_and_variants(self):
         archive = self.build('occurrenceID,sex,lifeStage', [

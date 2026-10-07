@@ -47,9 +47,10 @@ def build_value_disposition_ledger(plan, report, resources=None):
         total = max(0, int(column.get('nonempty', 0) or 0))
         tidy_groups = [group for group in tidy.get('groups', [])
                        if group.get('table') == table_index and group.get('column') == column.get('column')]
+        # Rewritten cells only: a value that only filled another column keeps its own text.
         tidied_values = sum(value.get('changed_rows', 0) for group in tidy_groups if group.get('applied')
                             for value in group.get('values', []) if value.get('applied')
-                            and value.get('fields', {}).get(group.get('field', '')) != '')
+                            and value.get('fields', {}).get(group.get('field', '')) not in ('', value.get('value')))
         tidy_cleared = sum(value.get('changed_rows', 0) for group in tidy_groups if group.get('applied')
                            for value in group.get('values', []) if value.get('applied')
                            and value.get('fields', {}).get(group.get('field', '')) == '')
