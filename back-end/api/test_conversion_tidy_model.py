@@ -196,6 +196,10 @@ class TidyModelSafetyTests(SimpleTestCase):
         self.assertEqual(change['tier'], 'auto')  # sex f in the row agrees
         self.assertEqual(tidy_archive(source, model_changes=[change])[0].tables[0].rows[0][2], '')
 
+    def test_values_longer_than_the_model_sees_are_not_sent(self):
+        source = archive([['o1', '', '', '1', 'M\ufffdre og Romsdal, ' + 'x' * 200, 'Aus bus', 'present']])
+        self.assertEqual(conversion_tidy.candidates(tidy_archive(source)[0]), [])
+
     def test_model_answers_never_corroborate_each_other(self):
         # Both remarks columns propose lifeStage adult for a row whose own lifeStage is empty: nothing in the source agrees.
         source = archive([['o1', '', 'fad', '1', '', 'Aus bus', 'present', 'adult female']], extra_terms=('occurrenceRemarks',))

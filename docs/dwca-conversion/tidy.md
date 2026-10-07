@@ -25,7 +25,7 @@ The earlier per-value questions remain as a fallback for what the tidy-up leaves
 label in `countryCode` that is still not an ISO code) and `age-remark:` (an event remark of an occurrence
 row that still starts with a life-stage word, such as `1 juv.`). Values the tidy-up settled no longer
 qualify, and a value it offers as a suggestion is not asked about as well; undoing a change, or a conflict
-that keeps a value as written in some rows, brings the question back for that value. With `CONVERSION_TIDY_ENABLED=0` every such value is asked about.
+that keeps a value as written in some rows (also for an applied suggestion), brings the question back for that value. With `CONVERSION_TIDY_ENABLED=0` every such value is asked about.
 
 ## Rules (deterministic, `TIDY_VERSION` 1)
 
@@ -60,7 +60,8 @@ Details that matter:
   (pycountry) plus a curated alias list (`tidy-countries.json`): Great Britain, England, Scotland and Wales
   are GB; Svalbard and Jan Mayen is SJ; Norge, Sverige and other Nordic names are included.
 - A change applies to a row as a whole: its own rewrite and every value it moves or fills happen only when
-  each destination cell is empty or already says the same. Otherwise the whole row is left as written and
+  each destination cell is empty or already says the same (conflicts are settled for the whole row first,
+  so one change never relies on another that is kept as written). Otherwise the whole row is left as written and
   counted as a conflict (for example `countryCode` `Norway` beside `country` `Sweden` keeps both). Fills
   never overwrite a different supplied value. Changes whose fills all agree already change nothing and are
   not listed.
@@ -86,7 +87,8 @@ Values the rules cannot settle go to the model once per dataset (`conversion_tid
   value fields (lifeStage, sex, establishment vocabularies, behavior, preparations, organismQuantityType,
   …), remarks of occurrence rows, and place names only when they look damaged or misplaced (a sea or a
   country in county/stateProvince). Columns with more than 300 such values (free text such as
-  localities) are never sent, nor are protected columns or columns the tidy-up added. At most 1,500
+  localities) are never sent, nor are values longer than 200 characters, protected columns or columns the
+  tidy-up added. At most 1,500
   values per call (a value known only in another field's vocabulary, such as sex `juvenile`, is sent), each clipped to 200 characters, with counts and the most frequent values of up to six
   neighbouring columns (sex, counts, places, remarks), plus the title and description from the archive's own
   metadata (so answers depend on the source bytes alone).
@@ -98,7 +100,7 @@ Values the rules cannot settle go to the model once per dataset (`conversion_tid
   life stage, sex, count and other organism fields; a country column: countryCode, country, waterBody;
   …). sex must be GBIF Sex concepts, establishment vocabularies GBIF concepts, individualCount a whole
   number, countryCode an ISO code. Protected fields are never written.
-- **Exact words are kept**: a remark about the organism moves its exact text to `occurrenceRemarks`
+- **Exact words are kept** (after the automatic space clean-up that applies to all text): a remark about the organism moves its exact text to `occurrenceRemarks`
   (an `eventRemarks` value leaves the event); a value whose reading leaves something over (`Female?`)
   keeps its exact text in `occurrenceRemarks` beside the interpreted field. A place restated word for word
   in another field (`county` `Norway` → country) moves there. A split without anything left over (copepod

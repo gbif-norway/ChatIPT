@@ -103,7 +103,8 @@ def candidates(view, table=None):
             counts = Counter((row[c] if c < len(row) else '') for row in source.rows)
             values = []
             for value, count in counts.items():
-                if not value.strip() or (t, c, value) in settled:
+                # A value longer than the 200 characters the model would see is never sent: a repair could cut it short.
+                if not value.strip() or len(value) > 200 or (t, c, value) in settled:
                     continue
                 data = dwca_tidy._tables()
                 if name in {'sex', 'lifeStage', 'establishmentMeans', 'degreeOfEstablishment', 'pathway'}:

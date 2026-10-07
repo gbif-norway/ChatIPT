@@ -230,3 +230,20 @@ class DwcaTidyTests(SimpleTestCase):
         self.assertEqual((row['eventRemarks'], row['lifeStage'], row['occurrenceRemarks']), ('', 'adult', 'fad'))
         self.assertFalse(any(group['rule'] == 'whitespace' for group in table['groups']))
 
+    def test_review_round_seven_cases(self):
+        from api.dwca_conversion import build_plan
+        from api.dwca_tidy import value_id
+        # Two changes in one row: the life-stage reading of AF conflicts with sex male and is kept as written, so the
+        # remark 'ad' cannot rely on it and stays too.
+        row = self.build('occurrenceID,eventRemarks,lifeStage,sex', ['a,ad,AF,male'])
+        model = [{'table': 0, 'column': 2, 'value': 'AF', 'tier': 'auto', 'fields': {'lifeStage': 'adult', 'sex': 'female'}}]
+        view, table = tidy_archive(row, model_changes=model)
+        self.assertEqual(view.tables[0].rows[0][1:4], ['ad', 'AF', 'male'])
+        self.assertTrue(all(group['conflict_rows'] for group in table['groups']))
+        # An applied suggestion whose destination is occupied leaves the label unsettled, so it is still asked about.
+        label = self.build('occurrenceID,countryCode,waterBody,occurrenceStatus', ['a,"United Kingdom (English Channel)",North Sea,present'])
+        group = 'tidy:0:1:water-body-suggestion'
+        view, _ = tidy_archive(label, overrides={value_id(group, 'United Kingdom (English Channel)'): 'on'})
+        self.assertEqual(view.tables[0].rows[0][1], 'United Kingdom (English Channel)')
+        self.assertTrue(any(issue['id'].startswith('country-label:') for issue in build_plan(view)['issues']))
+
