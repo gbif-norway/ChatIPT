@@ -273,6 +273,14 @@ class TidyModelSafetyTests(SimpleTestCase):
         other = archive([['o1', 'juv', '', '1', '', 'Aus bus', 'present']])
         change = conversion_tidy.model_changes(other, {'k': {'table': 0, 'column': 1, 'value': 'juv', 'residue': '',
             'fields': {'lifeStage': 'juvenile'}, 'confidence': 'high', 'note': ''}})[0]
+        self.assertEqual((change['fields'], change['tier']), ({'lifeStage': 'juvenile', 'sex': ''}, 'suggest'))
+        applied = tidy_archive(other, overrides={'tidy:0:1:model-suggestion': 'on'}, model_changes=[change])[0].tables[0]
+        cells = dict(zip([term.rsplit('/', 1)[-1] for term in applied.terms], applied.rows[0]))
+        self.assertEqual((cells['sex'], cells['lifeStage']), ('', 'juvenile'))
+        # A place name that would only leave a code behind is a suggestion as well.
+        place = archive([['o1', '', '', '1', 'Norway', 'Aus bus', 'present']])
+        change = conversion_tidy.model_changes(place, {'k': {'table': 0, 'column': 4, 'value': 'Norway', 'residue': '',
+            'fields': {'stateProvince': '', 'countryCode': 'NO'}, 'confidence': 'high', 'note': ''}})[0]
         self.assertEqual(change['tier'], 'suggest')
 
     def test_model_answers_never_corroborate_each_other(self):

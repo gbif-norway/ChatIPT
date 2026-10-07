@@ -232,7 +232,7 @@ def _model_cache(conversion, fingerprint):
     # A failed or partial call elsewhere never hides answers another upload already paid for.
     merged, entries, verdicts = dict(records[0]), {}, {}
     def substantive(entry):
-        return entry.get('confidence') in {'high', 'medium'} and bool(entry.get('fields') or entry.get('residue'))
+        return entry.get('confidence') in {'high', 'medium'} and bool(entry.get('fields'))
     for record in records:
         for key, entry in (record.get('entries') or {}).items():
             # An answer that reads the value wins over an abstention or a missing answer stored elsewhere.
@@ -286,6 +286,9 @@ def model_changes(view_or_archive, entries, overrides=None):
             if own in PLACE_FIELDS | VOCABULARY_FIELDS | {'countryCode'} and fields[own] == original and any(
                     field != own and text.casefold() == original.casefold() for field, text in fields.items()):
                 fields[own] = ''
+            # A vocabulary value read as another vocabulary field (sex 'juv' as lifeStage juvenile) leaves its own field.
+            elif own in VOCABULARY_FIELDS and fields[own] == original and set(fields) & (VOCABULARY_FIELDS | {'individualCount'}) - {own}:
+                fields[own] = ''
         move = fields[own] == ''
         if fields.get(own) == original and len(fields) == 1:
             continue
@@ -307,8 +310,8 @@ def model_changes(view_or_archive, entries, overrides=None):
         own = view_or_archive.tables[t].terms[c].rsplit('/', 1)[-1]
         rewritten = change['fields'][own]
         others = {field: text for field, text in change['fields'].items() if field != own and text}
-        if rewritten == '' and not others:
-            tier = 'suggest'  # clearing a value is never automatic for a model answer
+        if rewritten == '' and not any(text.casefold() == original.casefold() for text in others.values()):
+            tier = 'suggest'  # a value leaves its field by itself only when its exact text lands in another one
         elif rewritten not in ('', original) and own not in VOCABULARY_FIELDS and not _damaged(original):
             tier = 'suggest'  # free text is not reworded automatically
         elif own != 'lifeStage' and others.get('lifeStage') and any(part not in concepts for part in others['lifeStage'].split(' | ')):
