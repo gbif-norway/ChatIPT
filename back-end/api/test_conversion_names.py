@@ -178,7 +178,7 @@ class CollectTests(SimpleTestCase):
                              b'f,Blank,,,\n')
         records = {record['label']: record for record in state['labels']}
         self.assertEqual(records['Consistent']['source_ids'], {'scientificNameID': 'urn:lsid:worms:1'})
-        self.assertEqual(records['Consistent']['source_qualifiers'], ['sp'])
+        self.assertEqual(records['Consistent']['source_qualifiers'], ['sp.'])
         self.assertEqual(records['Consistent']['source_qualifier_rows'], 2)
         self.assertFalse(records['Consistent']['qualifiers_truncated'])
         self.assertEqual(records['Local']['source_ids'], {})
@@ -189,7 +189,7 @@ class CollectTests(SimpleTestCase):
         rows = ''.join(f'a{i},Shared,,,{qualifier}\n' for i, qualifier in enumerate(('a', 'b', 'c', 'd', 'e', 'f')))
         state = self.collect(('occurrenceID,scientificName,scientificNameID,taxonID,identificationQualifier\n' + rows).encode())
         record = state['labels'][0]
-        self.assertEqual(record['source_qualifiers'], ['a', 'b', 'c', 'd', 'e'])
+        self.assertEqual(record['source_qualifiers'], ['a.', 'b.', 'c.', 'd.', 'e.'])
         self.assertEqual(record['source_qualifier_rows'], 6)
         self.assertTrue(record['qualifiers_truncated'])
 
@@ -199,6 +199,16 @@ class CollectTests(SimpleTestCase):
         record = names.collect_state(archive, {'id': 'plan'})['labels'][0]
         self.assertEqual(record['source_qualifiers'], ['sp.', 'spp.'])
         self.assertEqual(record['source_qualifier_rows'], 2)
+        self.assertEqual(names.qualifier_kind(record), 'uncertain')
+
+    def test_source_qualifiers_are_deduplicated_after_normalizing_case_and_periods(self):
+        values = ('sp', 'Sp', 'SP.', 'spp', 'Spp', 'indet')
+        rows = ''.join(f'a{i},Shared,{value}\n' for i, value in enumerate(values))
+        archive = read_inputs([('occurrence.csv', ('occurrenceID,scientificName,identificationQualifier\n' + rows).encode())])
+        record = names.collect_state(archive, {'id': 'plan'})['labels'][0]
+        self.assertEqual(record['source_qualifiers'], ['indet.', 'sp.', 'spp.'])
+        self.assertEqual(record['source_qualifier_counts'], {'indet.': 1, 'sp.': 3, 'spp.': 2})
+        self.assertFalse(record['qualifiers_truncated'])
         self.assertEqual(names.qualifier_kind(record), 'uncertain')
 
 
@@ -1266,6 +1276,49 @@ class GroupDecisionTests(SimpleTestCase):
         # With its taxonID COL would say Metridia longa longa; by name it is exact, so the ID is never asked.
         self.assertEqual((names.classify(metridia)['group'], metridia['match']['usage']['scientificName']),
                          ('auto', 'Metridia longa'))
+
+    def test_question_mark_labels_are_doubtful_even_when_exact_or_variant(self):
+        for label in ('Calanus ?', 'Calanus?', '? Calanus'):
+            for match_type in ('EXACT', 'VARIANT'):
+                record = {'label': label, 'qualifier': None, 'parsed': real_parse('Calanus'),
+                          'match': {'matchType': match_type, 'hintOnly': False, 'usage': {
+                              'scientificName': 'Calanus', 'taxonRank': 'genus', 'scientificNameAuthorship': None}}}
+                with self.subTest(label=label, match_type=match_type):
+                    classification = names.classify(record)
+                    self.assertEqual((classification['kind'], classification['group']), ('unconfirmed', 'unconfirmed'))
+                    self.assertEqual(names.qualifier_kind(record), 'doubt')
+                    self.assertIn('“?”', classification['reasons'][0]['text'])
+                    self.assertEqual(classification['eligible'], [])
+                    state = {'labels': [record], 'decisions': {}, 'col_release': RELEASE}
+                    self.assertEqual(names.auto_accept(state), 0)
+                    conversion = self.conversion([record])
+                    with self.assertRaises(names.NameDecisionError):
+                        names.bulk_decide(conversion, 'unconfirmed', 'mine')
+
+    def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
+        record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
+                  'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,
+                  'usage': {'scientificName': 'Anura', 'taxonRank': 'order', 'scientificNameAuthorship': None}}}
+        classification = names.classify(record)
+        self.assertEqual((classification['group'], classification['kind'], classification['reasons'][0]['code']),
+                         ('check:rank', 'check', 'rank'))
+        self.assertEqual(classification['reasons'][0]['text'], 'Your rank is genus; COL has this name as order')
+        self.assertEqual(classification['eligible'], ['col', 'mine'])
+        self.assertEqual(names.auto_accept({'labels': [record], 'decisions': {}, 'col_release': RELEASE}), 0)
+        self.assertEqual(names.groups({'labels': [record], 'decisions': {}})[0]['signature'],
+                         {'code': 'rank', 'yours': 'genus', 'col': 'order'})
+
+    def test_source_rank_does_not_conflict_with_inferred_trinomial_or_uncertain_stem(self):
+        trinomial = {'label': 'Motacilla flava thunbergi', 'rows': 1, 'source_rank': 'species', 'qualifier': None,
+                     'parsed': real_parse('Motacilla flava thunbergi', 'species'),
+                     'match': {'matchType': 'EXACT', 'hintOnly': False, 'usage': {
+                         'scientificName': 'Motacilla flava thunbergi', 'taxonRank': 'subspecies',
+                         'scientificNameAuthorship': None}}}
+        self.assertEqual(names.classify(trinomial)['kind'], 'auto')
+        uncertain = {'label': 'Larus sp.', 'rows': 1, 'source_rank': 'species', 'qualifier': 'sp.',
+                     'parsed': real_parse(), 'match': {'matchType': 'EXACT', 'hintOnly': False, 'alternatives': [],
+                     'usage': {'scientificName': 'Larus', 'taxonRank': 'genus', 'scientificNameAuthorship': None}}}
+        self.assertEqual(names.classify(uncertain)['kind'], 'uncertain')
 
     def test_variant_fuzzy_and_canonical_usage_names_share_the_spelling_group(self):
         labels = ('Trema orientalis', 'Erigeron acre', 'Circium heterophyllum', 'Albizzia zygia')

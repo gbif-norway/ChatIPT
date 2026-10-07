@@ -129,11 +129,12 @@ def collect_state(archive, plan):
                 value = normal(raw, MAX_CONTEXT_CHARS)
                 if value and len(value) <= MAX_CONTEXT_CHARS:
                     record['source_qualifier_rows'] += 1
-                    if value in record['source_qualifiers']:
-                        record['source_qualifier_counts'][_normal_qualifier(value)] += 1
+                    qualifier = _normal_qualifier(value)
+                    if qualifier in record['source_qualifiers']:
+                        record['source_qualifier_counts'][qualifier] += 1
                     elif len(record['source_qualifiers'] - {'\0overlong'}) < MAX_SOURCE_QUALIFIERS:
-                        record['source_qualifiers'].add(value)
-                        record['source_qualifier_counts'][_normal_qualifier(value)] += 1
+                        record['source_qualifiers'].add(qualifier)
+                        record['source_qualifier_counts'][qualifier] += 1
                     else:
                         record['source_qualifiers_truncated'] = True
                 elif str(raw or '').strip():
@@ -490,7 +491,9 @@ def _normal_qualifier(value):
 def qualifier_kind(record):
     """Classify the label and source-column qualifier as uncertain, doubtful, or absent."""
     qualifier = normal(record.get('qualifier'))
-    label_kind = None if not qualifier else ('uncertain' if _normal_qualifier(qualifier) in UNCERTAIN_QUALIFIERS else 'doubt')
+    label = str(record.get('label') or '')
+    label_kind = ('doubt' if '?' in label else
+                  None if not qualifier else ('uncertain' if _normal_qualifier(qualifier) in UNCERTAIN_QUALIFIERS else 'doubt'))
     values = record.get('source_qualifiers') or []
     if values:
         source_kind = ('uncertain' if not record.get('qualifiers_truncated')
@@ -566,6 +569,13 @@ def _conflicts(record):
         found = change(record, usage, 'EXACT')
         if found:
             out.append(('name', 'check:name', f"COL returned a different name: {usage.get('scientificName')} ({usage.get('taxonRank') or 'unknown rank'})"))
+        source_rank = record.get('source_rank')
+        col_rank = usage.get('taxonRank')
+        source_parts = name_parts(asserted_name(record))
+        if (qualifier_kind(record) != 'uncertain' and len(source_parts) == 1 and source_rank in RANK_ORDER
+                and RANK_ORDER.index(source_rank) <= RANK_ORDER.index('genus')
+                and col_rank in RANK_ORDER and source_rank != col_rank):
+            out.append(('rank', 'check:rank', f'Your rank is {source_rank}; COL has this name as {col_rank}'))
     idcheck = match.get('idCheck') or {}
     if idcheck.get('outcome') == 'elsewhere' or 'SCIENTIFIC_NAME_AND_ID_INCONSISTENT' in (match.get('issues') or []):
         fields = ', '.join((idcheck.get('fields') or record.get('source_ids') or {}).keys()) or 'identifier'
@@ -597,7 +607,8 @@ def _reason_for_unconfirmed(record):
             if count is None:
                 count = record.get('source_qualifier_rows') or 1
             return [{'code': 'doubt', 'text': f'{count} of {record.get("rows", count)} rows say “{qualifier}”; decide this one yourself'}]
-        return [{'code': 'doubt', 'text': f'“{record.get("qualifier") or (record.get("source_qualifiers") or ["qualifier"])[0]}” marks an uncertain identification; decide this one yourself'}]
+        qualifier = '?' if '?' in str(record.get('label') or '') else record.get('qualifier') or (record.get('source_qualifiers') or ['qualifier'])[0]
+        return [{'code': 'doubt', 'text': f'“{qualifier}” marks an uncertain identification; decide this one yourself'}]
     if qualifier_kind(record) == 'uncertain':
         candidates = [usage for usage, _ in _stem_candidates(record)]
         ranks = {usage.get('taxonRank') for usage in candidates}
@@ -769,7 +780,7 @@ def groups(state, classified=None):
                     counts[option] += 1
         signature = None
         if kind == 'check':
-            reason = next((r for r in bucket['reasons'] if r['code'] in {'mixed', 'kingdom', 'phylum', 'class', 'id'}), None)
+            reason = next((r for r in bucket['reasons'] if r['code'] in {'mixed', 'kingdom', 'phylum', 'class', 'id', 'rank'}), None)
             if reason is None:
                 reason = next((r for r in bucket['reasons'] if r['code'] == 'name'), None)
             if reason:
@@ -785,6 +796,9 @@ def groups(state, classified=None):
                     signature = {'code': code, 'yours': ', '.join((idcheck.get('fields') or {}).keys()) or None,
                                  'col': ((record.get('match') or {}).get('matchedId') or {}).get('scientificName')
                                  or (idcheck.get('usage') or {}).get('scientificName')}
+                elif code == 'rank':
+                    signature = {'code': code, 'yours': record.get('source_rank'),
+                                 'col': ((record.get('match') or {}).get('usage') or {}).get('taxonRank')}
                 else:
                     signature = {'code': code, 'yours': asserted_name(record),
                                  'col': ((record.get('match') or {}).get('usage') or {}).get('scientificName')}

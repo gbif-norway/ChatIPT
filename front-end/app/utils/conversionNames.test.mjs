@@ -130,3 +130,8 @@ test('class and mixed-classification conflicts get their own explanation', () =>
   assert.match(groupSubtitle({ kind: 'check', labels: 2, signature: { code: 'mixed', yours: 'kingdom, class', col: null } }),
     /^Rows with the same name give different kingdom, class/)
 })
+
+test('a rank conflict says which ranks disagree', () => {
+  assert.equal(groupSubtitle({ kind: 'check', labels: 1, signature: { code: 'rank', yours: 'genus', col: 'order' } }),
+    'Your rank says genus; COL has this name as order. It may be a different taxon with the same name.')
+})

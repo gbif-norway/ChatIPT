@@ -159,7 +159,7 @@ time.
 | Uncertain to genus or family | "sp.", "spp.", "indet." names whose stem COL has exactly | Accepted (`auto:uncertain`) as the stem | Publish the genus or family name, Keep as written | Other COL names, Don't publish a name |
 | Spelling differs from COL | VARIANT/FUZZY match | "Use COL spelling" pre-selected when a spelling correction exists | Use COL spelling (spelling corrections only), Keep my spelling | Other changes, with confirmation |
 | Not confirmed by COL | Homonyms COL can't pick between, higher rank only, not found, an ID not found, "cf."/"aff."/"nr."/"?" | "Keep my names" pre-selected | Keep my names (not for cf. and the like) | Pick a candidate (with kingdom › phylum › class), a coarser name with confirmation |
-| Check against your data | EXACT match but COL's name differs from the user's, the source ID points elsewhere, the label's rows disagree on kingdom/phylum/class, or the hinted kingdom/phylum/class differs from COL's | Nothing pre-selected | Use COL names (same name, agreeing authorship), Keep my names | Everything else |
+| Check against your data | EXACT match but COL's name differs from the user's, the source ID points elsewhere, the label's rows disagree on kingdom/phylum/class, the hinted kingdom/phylum/class differs from COL's, or a uninomial's supplied rank (genus or above) differs from COL's | Nothing pre-selected | Use COL names (same name, agreeing authorship), Keep my names | Everything else |
 
 "Keep my name(s)" writes the parsed name split from its authorship when the
 split rebuilds the text exactly, else the supplied text. A check group is one
@@ -180,8 +180,8 @@ names that still carry that batch; a name changed since stays as it is.
 **Uncertain names ("sp.", "spp.", "indet.").** The label's qualifier, or a
 `identificationQualifier` column whose values are all sp./spp./indet. (blank
 rows allowed), marks the name as uncertain to its genus or family. Any other
-value ("cf.", "?") on any row makes it a decision for the user, with how many
-rows say so. The stem (`stem` decision) is the COL usage of the same name:
+value ("cf.", "?") on any row, or a "?" in the name itself, makes it a decision for
+the user, with how many rows say so. The stem (`stem` decision) is the COL usage of the same name:
 the matcher's own pick, or exact alternatives that agree on one rank. COL's
 authorship is written only when the same-name usages agree on it and it agrees
 with any authorship the user supplied, so homonyms ("Viola" the plant and the

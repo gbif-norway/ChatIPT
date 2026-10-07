@@ -71,6 +71,7 @@ export const groupSubtitle = (group) => {
   }
   if (signature.code === 'name') return 'COL returned a different name for these. Keep yours unless you are sure.'
   if (signature.code === 'id') return 'Your scientificNameID or taxonID points to another name in Catalogue of Life.'
+  if (signature.code === 'rank') return `Your rank says ${signature.yours}; COL has ${group.labels === 1 ? 'this name' : 'these names'} as ${signature.col}. It may be a different taxon with the same name.`
   if (signature.code === 'mixed') return `Rows with the same name give different ${signature.yours || 'classifications'}, so they may be different taxa. Keep yours unless you are sure.`
   return ''
 }
