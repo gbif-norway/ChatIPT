@@ -90,9 +90,9 @@ def split_qualifier(label):
     return name, None
 
 
-# Bump when name comparison (name_parts, name_change, authorships_agree) changes what needs confirming: a saved
-# decision stamped with another version is checked again under the current rules.
-NAME_RULES_VERSION = 1
+# Bump when name comparison or authorship agreement changes: stored automatic and bulk COL decisions are
+# re-checked for name replacements and authorship changes under the current rules.
+NAME_RULES_VERSION = 2
 
 # Highest first. Ranks outside this list are never compared.
 RANK_ORDER = (
@@ -259,7 +259,10 @@ def coarser_replacement(asserted, usage, match_type=None, asserted_rank=None, hi
 
 
 # Standard abbreviations too short for prefix matching that name one author unambiguously.
-_AUTHOR_ABBREVIATIONS = {"l.": "linnaeus", "dc.": "candolle"}
+_AUTHOR_ABBREVIATIONS = {
+    "l.": "linnaeus", "dc.": "candolle", "lam.": "lamarck", "fabr.": "fabricius",
+    "mill.": "miller", "hook.": "hooker", "willd.": "willdenow", "pers.": "persoon",
+}
 _FILIUS = {"f.", "fil.", "filius", "jr.", "jun.", "fils"}
 _INITIAL = re.compile(r"[A-Z]\.")
 
@@ -287,11 +290,12 @@ def _author(piece):
 def _author_keys(value):
     """(authors, "et al." used) of an authorship, each author as `_author` reads it.
 
-    Years and parentheses are dropped. For "A ex B" only B, the publishing author, counts; for "A in B" only A.
+    Years (including square-bracketed years) and parentheses are dropped. For "A ex B" only B, the publishing author,
+    counts; for "A in B" only A.
     """
     text = unicodedata.normalize("NFKD", str(value or ""))
     text = "".join(character for character in text if not unicodedata.combining(character))
-    text = re.sub(r"\d{4}[a-z]?", " ", text)
+    text = re.sub(r"\[?(\d{4}[a-z]?)\]?", " ", text)
     text = re.split(r"\bex\b", text)[-1]
     # "A in B": A is the author, B's work only published it ("Fitzinger in Bonaparte").
     text = re.sub(r"\bin\b[^(),]*", " ", text)
@@ -302,8 +306,10 @@ def _author_keys(value):
 
 
 def _surname_part(left, right, compound):
-    """One surname (part) against another; an abbreviation matches a full name it begins, if its stem has 3+ letters
-    ("Lam." and "Lamarck"); within a compound any abbreviated part may ("P." in "P.-Cambridge")."""
+    """Compare a surname or compound part, allowing curated aliases and long surname abbreviations.
+
+    Outside compounds, prefix matching needs a four-letter stem. Inside compounds a one-letter part may be abbreviated.
+    """
     left, right = _AUTHOR_ABBREVIATIONS.get(left, left), _AUTHOR_ABBREVIATIONS.get(right, right)
     if left == right:
         return True
@@ -311,7 +317,7 @@ def _surname_part(left, right, compound):
         stem = short.rstrip(".")
         # Within a compound a lone letter is an abbreviation even without its full stop ("F.O.P-Cambridge").
         abbreviated = short.endswith(".") or (compound and len(stem) == 1)
-        if abbreviated and not full.endswith(".") and len(full) > len(stem) and full.startswith(stem) and (len(stem) >= 3 or (compound and stem)):
+        if abbreviated and not full.endswith(".") and len(full) > len(stem) and full.startswith(stem) and (len(stem) >= 4 or (compound and stem)):
             return True
     return False
 
@@ -350,11 +356,13 @@ def _same_form(left, right, both_dated):
 def authorships_agree(left, right):
     """Two authorships name the same authors.
 
-    Years must be equal when both give one. Each author's surname must match: exactly, by one of a few standard
-    abbreviations ("L." for Linnaeus), or as an abbreviation of 3+ letters ("Lam." and "Lamarck"). Initials given on
+    Years must be equal when both give one. Brackets around a year are ignored. Each author's surname must match: exactly,
+    by one of the curated abbreviations ("L." for Linnaeus, "Lam." for Lamarck), or as an abbreviation with a stem of
+    at least 4 letters ("Lamour." and "Lamouroux"). Initials given on
     both sides must be equal; initials on one side only are accepted for the same full surname with the same year.
-    Punctuation, spacing and parentheses do not matter. So "O.P.-Cambridge" agrees with "O. Pickard-Cambridge" and
-    "L.Koch" with "L. Koch", while "L." and "Lam.", "J.E. Gray" and "G.R. Gray", "A.Gray" and "Gray", "Blackwall" and
+    Punctuation, spacing and parentheses do not matter; square brackets around years are ignored. So
+    "O.P.-Cambridge" agrees with "O. Pickard-Cambridge" and "L.Koch" with "L. Koch", while "L." and "Lam.",
+    "J.E. Gray" and "G.R. Gray", "A.Gray" and "Gray", "Blackwall" and
     "Seo, 2017" disagree.
     """
     left_years, right_years = re.findall(r"\d{4}", str(left or "")), re.findall(r"\d{4}", str(right or ""))
@@ -486,6 +494,11 @@ def summarize_match(payload):
         "usage": usage,
         "acceptedUsage": accepted,
         "alternatives": alternatives,
+        "issues": [str(issue) for issue in diagnostics.get("issues") or []],
+        "matchedId": ({"id": (diagnostics.get("matchedID") or {}).get("id"),
+                       "scientificName": (diagnostics.get("matchedID") or {}).get("scientificName"),
+                       "datasetTitle": (diagnostics.get("matchedID") or {}).get("datasetTitle")}
+                      if diagnostics.get("matchedID") else None),
     }
 
 
@@ -494,6 +507,9 @@ def _query_params(query):
     for rank in HINT_RANKS:
         if query.get(rank):
             params[rank] = query[rank]
+    for identifier in ("scientificNameID", "taxonID"):
+        if query.get(identifier):
+            params[identifier] = query[identifier]
     return params
 
 
@@ -593,7 +609,8 @@ def review_aids(query, deadline=None):
         "GET",
         f"{CHECKLISTBANK_API}/dataset/{col_checklistbank_dataset()}/match/nameusage",
         deadline=deadline,
-        params={"q": params["scientificName"], **{k: v for k, v in params.items() if k != "scientificName"}},
+        params={"q": params["scientificName"], **{k: v for k, v in params.items()
+                                                    if k not in {"scientificName", "scientificNameID", "taxonID"}}},
     ) or {}
     clb_usage = clb.get("usage") or {}
     clb_type = str(clb.get("type") or "NONE").upper()

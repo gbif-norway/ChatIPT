@@ -23,6 +23,7 @@ from api.dwca_conversion import build_plan, convert
 from api.test_dwca_conversion import DWC, decisions_for, manifest
 
 RELEASE = {'checklistKey': 'col-key', 'alias': 'COL26.6 XR', 'checklistBankDatasetKey': '315557'}
+ID_MATCHES = json.loads((Path(__file__).parent / 'testdata' / 'col_v2_id_matches.json').read_text())
 # The converter copies each source name to verbatimIdentification itself.
 OCCURRENCE = (b'occurrenceID,scientificName,kingdom,taxonRank,scientificNameAuthorship\n'
               b'a,Aus bus L.,Animalia,,\n'
@@ -165,6 +166,107 @@ class CollectTests(SimpleTestCase):
     def test_archives_without_names_have_nothing_to_check(self):
         state = self.collect(b'occurrenceID,locality\na,Oslo\n')
         self.assertEqual((state['status'], state['labels']), ('none', []))
+
+    def test_source_ids_require_one_external_uri_and_qualifiers_are_collected_from_rows(self):
+        state = self.collect(b'occurrenceID,scientificName,scientificNameID,taxonID,identificationQualifier\n'
+                             b'a,Consistent, urn:lsid:worms:1 ,,sp\n'
+                             b'b,Consistent,urn:lsid:worms:1,,sp\n'
+                             b'c,Local,local-id,,\n'
+                             b'd,Conflict,https://example.org/one,https://example.org/taxon-a,\n'
+                             b'e,Conflict,https://example.org/two,https://example.org/taxon-b,\n'
+                             b'f,Blank,,,\n')
+        records = {record['label']: record for record in state['labels']}
+        self.assertEqual(records['Consistent']['source_ids'], {'scientificNameID': 'urn:lsid:worms:1'})
+        self.assertEqual(records['Consistent']['source_qualifiers'], ['sp'])
+        self.assertEqual(records['Consistent']['source_qualifier_rows'], 2)
+        self.assertFalse(records['Consistent']['qualifiers_truncated'])
+        self.assertEqual(records['Local']['source_ids'], {})
+        self.assertEqual(records['Conflict']['source_ids'], {})
+        self.assertEqual(records['Blank']['source_ids'], {})
+
+    def test_source_qualifier_values_are_bounded_and_report_truncation(self):
+        rows = ''.join(f'a{i},Shared,,,{qualifier}\n' for i, qualifier in enumerate(('a', 'b', 'c', 'd', 'e', 'f')))
+        state = self.collect(('occurrenceID,scientificName,scientificNameID,taxonID,identificationQualifier\n' + rows).encode())
+        record = state['labels'][0]
+        self.assertEqual(record['source_qualifiers'], ['a', 'b', 'c', 'd', 'e'])
+        self.assertEqual(record['source_qualifier_rows'], 6)
+        self.assertTrue(record['qualifiers_truncated'])
+
+
+class CheckChunkTests(SimpleTestCase):
+    def fixture_match(self, queries, deadline=None):
+        entries = {json.dumps(item['query'], sort_keys=True): item for item in ID_MATCHES}
+        return [taxon_matching.summarize_match(entries[json.dumps(query, sort_keys=True)]['response']) for query in queries]
+
+    def item(self, label, ids=None, match=False, parse=True):
+        return {'label': label, 'query': {'scientificName': label}, 'qualifier': None, 'ids': ids or {},
+                'match': match, 'parse': parse}
+
+    def test_source_ids_promote_only_matching_exact_name_results(self):
+        items = [self.item('Calanus', {'scientificNameID': 'urn:lsid:marinespecies.org:taxname:104152'}),
+                 self.item('Chaetognatha', {'scientificNameID': 'urn:lsid:marinespecies.org:taxname:2081'})]
+        with patch.object(names, 'match_col', side_effect=self.fixture_match) as matcher:
+            results, error = names.check_chunk(items, deadline=None)
+        self.assertIsNone(error)
+        for label in ('Calanus', 'Chaetognatha'):
+            result = results[label]['match']
+            self.assertEqual(result['usage']['scientificName'], label)
+            self.assertEqual(result['disambiguatedBy'], ['scientificNameID'])
+            self.assertEqual(result['nameMatch']['status'], 'higher_rank')
+        self.assertEqual(len(matcher.call_args_list), 2)
+        self.assertEqual(matcher.call_args_list[1].args[0], [
+            {'scientificName': 'Calanus', 'scientificNameID': 'urn:lsid:marinespecies.org:taxname:104152'},
+            {'scientificName': 'Chaetognatha', 'scientificNameID': 'urn:lsid:marinespecies.org:taxname:2081'}])
+
+    def test_higher_rank_match_without_source_id_stays_higher_rank(self):
+        with patch.object(names, 'match_col', side_effect=self.fixture_match):
+            results, error = names.check_chunk([self.item('Calanus'), self.item('Chaetognatha')], deadline=None)
+        self.assertIsNone(error)
+        for label in ('Calanus', 'Chaetognatha'):
+            self.assertEqual(results[label]['match']['status'], 'higher_rank')
+            self.assertNotIn('idCheck', results[label]['match'])
+
+    def test_id_not_found_stays_a_check_and_exact_names_skip_step_two(self):
+        items = [self.item('Oncaea', {'taxonID': 'urn:lsid:marinespecies.org:taxname:128690)'}),
+                 self.item('Parathemisto libellula', {'scientificNameID': 'urn:lsid:marinespecies.org:taxname:156528'}),
+                 self.item('Metridia longa', {'taxonID': 'urn:lsid:marinespecies.org:taxname:104632'})]
+        with patch.object(names, 'match_col', side_effect=self.fixture_match) as matcher:
+            results, error = names.check_chunk(items, deadline=None)
+        self.assertIsNone(error)
+        self.assertEqual(results['Oncaea']['match']['idCheck']['outcome'], 'not_found')
+        self.assertEqual(results['Oncaea']['match']['idCheck']['issues'], ['TAXON_ID_NOT_FOUND'])
+        self.assertEqual(results['Parathemisto libellula']['match']['usage']['scientificName'], 'Parathemisto libellula')
+        self.assertEqual(results['Metridia longa']['match']['usage']['scientificName'], 'Metridia longa')
+        # Only Oncaea (higher rank by name) is matched again with its ID; the exact names never are.
+        self.assertEqual(len(matcher.call_args_list), 2)
+        self.assertEqual(matcher.call_args_list[1].args[0],
+                         [{'scientificName': 'Oncaea', 'taxonID': 'urn:lsid:marinespecies.org:taxname:128690)'}])
+
+    def test_higher_rank_labels_can_be_promoted_by_source_ids(self):
+        items = [self.item('Polychaeta', {'taxonID': 'urn:lsid:marinespecies.org:taxname:883'}),
+                 self.item('Isopoda', {'taxonID': 'urn:lsid:marinespecies.org:taxname:1131'})]
+        with patch.object(names, 'match_col', side_effect=self.fixture_match):
+            results, error = names.check_chunk(items, deadline=None)
+        self.assertIsNone(error)
+        for label in ('Polychaeta', 'Isopoda'):
+            self.assertEqual(results[label]['match']['usage']['scientificName'], label)
+            self.assertEqual(results[label]['match']['disambiguatedBy'], ['taxonID'])
+
+    def test_step_two_failure_discards_matches_but_keeps_parses(self):
+        calls = 0
+        def failing_match(queries, deadline=None):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return [taxon_matching.summarize_match(ID_MATCHES[0]['response'])]
+            raise TaxonServiceError('step two is unavailable')
+        parsed = names.summarize_parse('Calanus', parser_item('Calanus', 'Calanus'))
+        with patch.object(names, 'match_col', side_effect=failing_match), patch.object(names, 'parse_names', return_value=[parsed]):
+            results, error = names.check_chunk([self.item('Calanus', {'scientificNameID': 'urn:lsid:marinespecies.org:taxname:104152'}, parse=False)],
+                                               deadline=None)
+        self.assertEqual(str(error), 'step two is unavailable')
+        self.assertNotIn('match', results.get('Calanus', {}))
+        self.assertEqual(results['Calanus']['parsed'], parsed)
 
 
 def frames(**overrides):
@@ -650,11 +752,12 @@ class NameDecisionAPITests(NamesCase):
         self.assertEqual((state['status'], [('match' in record) for record in state['labels']]), ('pending', [False, False, False]))
         # Bulk decisions are offered again under the current rules rather than carried.
         self.assertEqual(sorted(state['decisions']), ['Cus dus (Smith) Jones 1900', 'Eus sp.'])
-        self.assertEqual(state['carried'], {'decisions': 2, 'bulk_not_carried': 1})
+        self.assertEqual(state['carried'], {'decisions': 2, 'bulk_not_carried': 1, 'dropped': 0})
         self.assertEqual(state['decisions']['Eus sp.']['carriedFrom'], old_plan)
         self.run_names()
         review = self.state()['name_review']
-        self.assertEqual((review['summary']['bulk_col'], review['carried']), (1, {'decisions': 2, 'bulk_not_carried': 1}))
+        self.assertEqual((review['summary']['bulk_col'], review['carried']),
+                         (1, {'decisions': 2, 'bulk_not_carried': 1, 'dropped': 0}))
 
     def test_names_fill_a_scientific_name_column_the_converter_left_empty(self):
         self.reviewed()
@@ -1205,6 +1308,24 @@ class HeldDecisionTests(NamesCase):
         self.assertEqual(occurrence.loc[['a', 'b'], 'scientificName'].tolist(), ['Aus bus L.', 'Aus bus L.'])
         self.assertEqual(self.conversion.report['name_review']['unconfirmed_kept'], 1)
 
+    def test_stale_bulk_authorship_is_held_and_explained_as_authorship(self):
+        self.reviewed()
+        state = self.conversion.name_review
+        held = decision('col', 'Aus bus', 'Jones', 'species', source='col', usageId='COL-AUS', matchType='EXACT', by='bulk:exact_col')
+        state['decisions']['Aus bus L.'] = held
+        DwcConversion.objects.filter(pk=self.conversion.pk).update(name_review=state)
+        self.assertEqual(names.unconfirmed(self.conversion.name_review)['Aus bus L.'],
+                         {'kind': 'authorship', 'confirm': True, 'text': 'has a different authorship from yours'})
+        entry = next(item for item in self.state()['name_review']['labels'] if item['label'] == 'Aus bus L.')
+        self.assertEqual(entry['decision_held'], {'kind': 'authorship', 'text': 'has a different authorship from yours'})
+        result, section = names.apply_name_decisions(
+            frames(), {**state, 'labels': state['labels'], 'decisions': state['decisions']},
+            {'occurrence': ['Aus bus L.', 'Aus bus L.', 'Eus sp.', 'Unreviewed'], 'identification': ['', '']})
+        report_entry = next(item for item in section['entries'] if item['label'] == 'Aus bus L.')
+        self.assertIn('earlier bulk choice would have replaced your authorship', report_entry['notApplied'])
+        self.assertIsNone(report_entry['replaces'])
+        self.assertEqual(result['occurrence']['scientificName'].tolist()[:2], ['Aus bus L.', 'Aus bus L.'])
+
 
 class CarryDecisionTests(SimpleTestCase):
     def conversion(self, decisions, source='sha-1', labels=('Calanus', 'Aus bus')):
@@ -1236,7 +1357,7 @@ class CarryDecisionTests(SimpleTestCase):
         self.assertEqual(names.unconfirmed(carried), {})  # the user's explicit confirmation stands
         # A carried COL decision is checked against fresh matches, so the names are checked even with checks off.
         self.assertTrue(carried['requested'])
-        self.assertEqual(carried['carried'], {'decisions': 1, 'bulk_not_carried': 0})
+        self.assertEqual(carried['carried'], {'decisions': 1, 'bulk_not_carried': 0, 'dropped': 0})
 
     def test_with_another_source_a_decision_carries_only_where_the_names_context_is_unchanged(self):
         keep = {'Aus bus': decision('keep', None, source='verbatim'), 'Calanus': decision('keep', None, source='verbatim')}
@@ -1245,6 +1366,24 @@ class CarryDecisionTests(SimpleTestCase):
         fresh = self.fresh()
         fresh['labels'] = [{'label': 'Calanus', 'hints': {'kingdom': 'Plantae'}}, {'label': 'Aus bus', 'source_rank': 'species'}]
         self.assertEqual(list(names.carry_decisions(previous, fresh, {'source_sha256': 'sha-2'})['decisions']), ['Aus bus'])
+
+    def test_auto_decisions_are_not_carried_but_declines_and_dropped_users_are_counted(self):
+        user = decision('keep', None, source='verbatim')
+        automatic = decision('col', 'Aus bus', source='col', by='auto:exact')
+        bulk = decision('keep', None, by='bulk:unconfirmed')
+        previous = self.conversion({'Aus bus': user, 'Calanus': automatic, 'Gone': bulk}, labels=('Calanus', 'Aus bus', 'Gone'))
+        previous.name_review['auto_declined'] = ['Aus bus', 'Calanus']
+        fresh = self.fresh(('Aus bus', 'Changed'))
+        carried = names.carry_decisions(previous, fresh, {'source_sha256': 'sha-2'})
+        self.assertEqual(carried['decisions'], {})
+        self.assertEqual(carried['auto_declined'], [])
+        self.assertEqual(carried['carried'], {'decisions': 0, 'bulk_not_carried': 1, 'dropped': 1})
+
+        declined = self.conversion({}, labels=('Calanus', 'Aus bus'))
+        declined.name_review['auto_declined'] = ['Aus bus', 'Gone']
+        carried = names.carry_decisions(declined, self.fresh(), {'source_sha256': 'sha-1'})
+        self.assertEqual(carried['auto_declined'], ['Aus bus'])
+        self.assertEqual(carried['carried'], {'decisions': 0, 'bulk_not_carried': 0, 'dropped': 0})
 
     def test_decisions_checked_under_other_name_rules_are_checked_again(self):
         record = SpellingCorrectionTests().record('Circium heterophyllum', 'Cirsium heterophyllum', hints={'kingdom': 'Plantae'},

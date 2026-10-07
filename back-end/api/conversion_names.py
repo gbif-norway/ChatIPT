@@ -12,6 +12,7 @@ text and is never changed. Only names are published; COL usage ids are provenanc
 Reviewed decisions are applied to the converted frames by `apply_name_decisions`, a pure function.
 """
 import logging
+import re
 import time
 from collections import Counter, defaultdict
 
@@ -46,6 +47,8 @@ RANK_MARKERS = {'sp.': 'species', 'subsp.': 'subspecies', 'var.': 'variety', 'f.
                 'subvar.': 'subvariety', 'subf.': 'subform', 'agg.': 'species aggregate'}
 CONTEXT_RANKS = ('kingdom', 'phylum', 'class', 'family')
 MAX_AUTHORSHIPS = 5  # distinct supplied authorships kept per label; more is "too many to agree"
+MAX_SOURCE_QUALIFIERS = 5
+_OVERLONG_SOURCE_ID = '\0overlong'
 SPELLING_LIST = 200  # spelling corrections listed in the bulk confirmation
 
 
@@ -90,13 +93,33 @@ def collect_state(archive, plan):
                 continue
             if not label:
                 continue
-            record = found.setdefault(label, {'label': label, 'rows': 0, 'tables': {}, 'context': defaultdict(set)})
+            record = found.setdefault(label, {'label': label, 'rows': 0, 'tables': {}, 'context': defaultdict(set),
+                                              'source_ids': defaultdict(set), 'source_qualifiers': set(),
+                                              'source_qualifier_rows': 0, 'has_qualifier_column': False})
             record['rows'] += 1
             record['tables'][target] = record['tables'].get(target, 0) + 1
             for rank, index in context_at.items():
                 hint = normal(row[index], MAX_CONTEXT_CHARS)
                 if hint and len(hint) <= MAX_CONTEXT_CHARS:
                     record['context'][rank].add(hint)
+            for field in ('scientificNameID', 'taxonID'):
+                term = DWC + field
+                if term in table.terms:
+                    raw = row[table.terms.index(term)]
+                    value = normal(raw, 300)
+                    if len(record['source_ids'][field]) < 2:
+                        if value and len(value) <= 300:
+                            record['source_ids'][field].add(value)
+                        elif (value and len(value) > 300) or (value is None and str(raw or '').strip()):
+                            record['source_ids'][field].add(_OVERLONG_SOURCE_ID)
+            qualifier_term = DWC + 'identificationQualifier'
+            if qualifier_term in table.terms:
+                record['has_qualifier_column'] = True
+                value = normal(row[table.terms.index(qualifier_term)], MAX_CONTEXT_CHARS)
+                if value and len(value) <= MAX_CONTEXT_CHARS:
+                    record['source_qualifier_rows'] += 1
+                    if len(record['source_qualifiers']) < MAX_SOURCE_QUALIFIERS + 1:
+                        record['source_qualifiers'].add(value)
     ordered = sorted(found.values(), key=lambda record: (-record['rows'], record['label']))
     labels = []
     for record in ordered[:MAX_LABELS]:
@@ -105,10 +128,23 @@ def collect_state(archive, plan):
         qualifier = split_qualifier(record['label'])[1]
         # The supplied authorships, so that accepting COL's in bulk never silently rewrites a different one.
         authorships = sorted(record['context'].get('scientificNameAuthorship', ()))
-        labels.append({'label': record['label'], 'rows': record['rows'], 'tables': record['tables'],
+        source_ids = {}
+        for field, values in record['source_ids'].items():
+            if len(values) == 1:
+                value = next(iter(values))
+                if re.match(r'^(urn:lsid:|https?://)', value, re.IGNORECASE):
+                    source_ids[field] = value
+        item = {'label': record['label'], 'rows': record['rows'], 'tables': record['tables'],
                        'hints': {rank: value for rank, value in context.items() if rank in HINT_RANKS},
                        'source_rank': context.get('taxonRank', '').lower() or None, 'qualifier': qualifier,
-                       'source_authorships': authorships[:MAX_AUTHORSHIPS], 'authorships_truncated': len(authorships) > MAX_AUTHORSHIPS})
+                       'source_authorships': authorships[:MAX_AUTHORSHIPS], 'authorships_truncated': len(authorships) > MAX_AUTHORSHIPS,
+                       'source_ids': source_ids}
+        if record['has_qualifier_column'] and record['source_qualifiers']:
+            qualifiers = sorted(record['source_qualifiers'])
+            item.update(source_qualifiers=qualifiers[:MAX_SOURCE_QUALIFIERS],
+                        source_qualifier_rows=record['source_qualifier_rows'],
+                        qualifiers_truncated=len(qualifiers) > MAX_SOURCE_QUALIFIERS)
+        labels.append(item)
     return {'plan_id': plan['id'], 'status': 'pending' if labels else 'none', 'error': '', 'runs': 0,
             'truncated': max(len(ordered) - MAX_LABELS, 0),
             'skipped_long': {'labels': len(too_long['hashes']), 'rows': too_long['rows']}, 'col_release': {}, 'labels': labels, 'decisions': {}}
@@ -127,33 +163,42 @@ def carry_decisions(conversion, fresh, plan):
     previous = conversion.name_review or {}
     old_plan = conversion.plan or {}
     decisions = previous.get('decisions') or {}
-    if not fresh or not fresh.get('labels') or not decisions or previous.get('plan_id') != old_plan.get('id'):
+    if not fresh or not (decisions or previous.get('auto_declined')) or previous.get('plan_id') != old_plan.get('id'):
         return fresh
     records = {record['label']: record for record in fresh['labels']}
     before = {record['label']: record for record in previous.get('labels', [])}
     same_source = bool(old_plan.get('source_sha256')) and old_plan.get('source_sha256') == plan.get('source_sha256')
-    if not same_source and set(records) != set(before):
-        return fresh
+    same_labels = set(records) == set(before)
 
     def same_context(label):
         # Another source with the same labels: a decision carries only where the name's supplied context is unchanged.
-        return same_source or all(records[label].get(key) == before[label].get(key)
-                                  for key in ('hints', 'source_rank', 'source_authorships', 'qualifier'))
-    carried, bulk = {}, 0
+        return same_source or (same_labels and label in before and all(records[label].get(key) == before[label].get(key)
+                                                   for key in ('hints', 'source_rank', 'source_authorships', 'qualifier')))
+    carried, bulk, dropped = {}, 0, 0
+    auto_declined = [label for label in (previous.get('auto_declined') or [])
+                     if label in records and same_context(label)]
     for label, decision in decisions.items():
-        if label not in records or not same_context(label):
+        by = str(decision.get('by') or 'user')
+        if by.startswith('auto:'):
             continue
-        if str(decision.get('by') or '').startswith('bulk:'):
+        if by.startswith('bulk:'):
             bulk += 1
+            continue
+        if label not in records or not same_context(label):
+            if by == 'user':
+                dropped += 1
+            continue
+        if by != 'user':
             continue
         carried[label] = {**{key: value for key, value in decision.items() if key not in {'changeKind', 'nameRules'}},
                           'carriedFrom': previous['plan_id']}
-    if not carried and not bulk:
+    if not carried and not bulk and not dropped and not auto_declined:
         return fresh
     # Carried COL decisions are checked against fresh matches, so the names are checked even when checks are off.
     requested = bool(previous.get('requested') or any(decision['decision'] in {'col', 'alternative'} for decision in carried.values()))
-    return {**fresh, 'decisions': carried, 'requested': requested or fresh.get('requested', False),
-            'carried': {'decisions': len(carried), 'bulk_not_carried': bulk}}
+    return {**fresh, 'decisions': carried, 'auto_declined': auto_declined,
+            'requested': requested or fresh.get('requested', False),
+            'carried': {'decisions': len(carried), 'bulk_not_carried': bulk, 'dropped': dropped}}
 
 
 def current(conversion):
@@ -257,7 +302,68 @@ def compact_match(summary):
             'usage': compact_usage(summary.get('usage')), 'acceptedUsage': compact_usage(summary.get('acceptedUsage')),
             'alternatives': [{**compact_usage(alternative), 'matchType': alternative.get('matchType')}
                              for alternative in (summary.get('alternatives') or [])[:MAX_ALTERNATIVES]],
-            'hintOnly': bool(summary.get('hintOnly'))}
+            'hintOnly': bool(summary.get('hintOnly')), 'issues': list(summary.get('issues') or []),
+            'matchedId': summary.get('matchedId'),
+            **{key: summary[key] for key in ('idCheck', 'disambiguatedBy', 'nameMatch') if key in summary}}
+
+
+def _exact_same_name(summary, stem):
+    usage = summary.get('usage') or {}
+    return (summary.get('matchType') == 'EXACT' and bool(usage) and not summary.get('hintOnly')
+            and name_parts(usage.get('scientificName')) == name_parts(stem))
+
+
+def check_chunk(items, deadline):
+    """Run matching, ID disambiguation and parsing for one names-job chunk without database access."""
+    results = defaultdict(dict)
+    error = None
+    match_items = [item for item in items if not item.get('match')]
+    step1 = {}
+    try:
+        summaries = match_col([item['query'] for item in match_items], deadline=deadline) if match_items else []
+        step1 = {item['label']: compact_match(summary) for item, summary in zip(match_items, summaries)}
+        id_items = [item for item in match_items if item.get('ids')
+                    and not _exact_same_name(step1[item['label']], split_qualifier(item['label'])[0])]
+        step2_queries = [{**item['query'], **item['ids']} for item in id_items]
+        step2 = match_col(step2_queries, deadline=deadline) if step2_queries else []
+        for item, summary in zip(id_items, step2):
+            first = step1[item['label']]
+            second = compact_match(summary)
+            usage = second.get('usage')
+            stem = split_qualifier(item['label'])[0]
+            same_name = bool(usage and name_parts(usage.get('scientificName')) == name_parts(stem))
+            safe_promotion = (summary.get('matchType') == 'EXACT' and usage and same_name
+                              and name_change(stem, usage, 'EXACT') is None
+                              and not {'TAXON_ID_NOT_FOUND', 'SCIENTIFIC_NAME_AND_ID_INCONSISTENT'}.intersection(summary.get('issues') or []))
+            if safe_promotion:
+                promoted = dict(second)
+                promoted['disambiguatedBy'] = sorted(item['ids'])
+                promoted['nameMatch'] = {key: first.get(key) for key in ('matchType', 'status', 'usage')}
+                step1[item['label']] = promoted
+            else:
+                issues = list(summary.get('issues') or [])
+                outcome = ('not_found' if 'TAXON_ID_NOT_FOUND' in issues else
+                           'elsewhere' if ('SCIENTIFIC_NAME_AND_ID_INCONSISTENT' in issues
+                                           or (summary.get('matchType') == 'EXACT' and usage and not same_name)) else 'no_help')
+                first['idCheck'] = {'fields': item['ids'], 'outcome': outcome, 'matchType': summary.get('matchType'),
+                                    'usage': compact_usage(usage), 'issues': issues, 'matchedId': second.get('matchedId')}
+        for label, summary in step1.items():
+            results[label]['match'] = summary
+    except TaxonServiceError as exc:
+        # The first and ID matches are a unit: the next run retries them together.
+        error = exc
+    need_parse = [item for item in items if not item.get('parse')]
+    plain = [item for item in need_parse if not item.get('qualifier')]
+    for item in need_parse:
+        if item.get('qualifier'):
+            results[item['label']]['parsed'] = {'type': None, 'usable': False, 'canonical': None, 'authorship': None,
+                                                'rank': None, 'lossless': False, 'splits': False, 'reason': 'qualifier'}
+    try:
+        for item, parsed in zip(plain, parse_names([item['label'] for item in plain], deadline=deadline)):
+            results[item['label']]['parsed'] = parsed
+    except TaxonServiceError as exc:
+        error = error or exc
+    return dict(results), error
 
 
 def asserted_name(record):
@@ -545,9 +651,13 @@ def apply_name_decisions(frames, name_review, source_names):
                        'scientificName': decision.get('scientificName'), 'scientificNameAuthorship': decision.get('scientificNameAuthorship'),
                        'taxonRank': decision.get('taxonRank'), 'colUsageId': decision.get('usageId'), 'checklist': decision.get('checklist'),
                        'matchType': decision.get('matchType'), 'decidedBy': decision.get('by'), 'decidedAt': decision.get('at'),
-                       'replaces': decision.get('replaces') or (held.get(label) or {}).get('text'), 'corrects': decision.get('corrects'),
+                       'replaces': decision.get('replaces') or ((held.get(label) or {}).get('text')
+                                                                if (held.get(label) or {}).get('kind') != 'authorship' else None),
+                       'corrects': decision.get('corrects'),
                        'appliedAs': 'keep' if label in held else decision['decision'],
-                       'notApplied': ('the COL name replaces the supplied name and was never confirmed, so the supplied name was kept'
+                       'notApplied': (("the earlier bulk choice would have replaced your authorship, so your authorship was kept"
+                                       if held[label].get('kind') == 'authorship' else
+                                       'the COL name replaces the supplied name and was never confirmed, so the supplied name was kept')
                                       if label in held else None),
                        'rows': {}, 'authorshipKept': 0, 'authorshipReplaced': 0, 'ranksReplaced': {}}
                for label, decision in decisions.items()}
@@ -643,7 +753,7 @@ def _unconfirmed_replacement(record, decision):
     A decision saved by `build_decision` carries the change kind it was checked against (`changeKind`, None for the
     same name) and the name rules it was checked under (`nameRules`), and is trusted: it was confirmed when it needed
     to be. A snapshot without that stamp, or from other name rules, is checked again, against the record's stored usage
-    (with its classification) when the usage is still there.
+    (with its classification); stale automatic and bulk choices also need authorship agreement.
     """
     if decision.get('decision') not in {'col', 'alternative'} or decision.get('confirmedCoarser'):
         return None
@@ -653,6 +763,9 @@ def _unconfirmed_replacement(record, decision):
     stored = next((usage for usage in [match.get('usage') or {}, *(match.get('alternatives') or [])]
                    if decision.get('usageId') is not None and str(usage.get('id')) == str(decision['usageId'])), None)
     usage = {**(stored or {}), 'scientificName': decision.get('scientificName'), 'taxonRank': decision.get('taxonRank')}
+    if str(decision.get('by') or '').startswith(('bulk:', 'auto:')) and not authorship_agrees(
+            record, {'scientificNameAuthorship': decision.get('scientificNameAuthorship')}):
+        return {'kind': 'authorship', 'confirm': True, 'text': 'has a different authorship from yours'}
     return replacement(record, usage, decision.get('matchType'))
 
 
@@ -704,6 +817,8 @@ def _entry(record, decisions, held=()):
     return {**record, 'checked': checked(record), 'decision': decision,
             # An older decision for a coarser or different COL name: the user's name is kept until it is made again.
             'decision_unconfirmed': record['label'] in held,
+            'decision_held': ({'kind': held[record['label']]['kind'], 'text': held[record['label']]['text']}
+                              if record['label'] in held else None),
             'rank_mismatch': bool(record.get('source_rank') and usage.get('taxonRank') and record['source_rank'] != usage['taxonRank']),
             'offers': {'parsed': bool(parsed and parsed.get('usable')), 'col': bool(usage.get('scientificName'))},
             'col_choices': choices,
@@ -790,7 +905,7 @@ def _run(conversion_id, job_id, claim):
         state.update(status='running', error='', runs=state.get('runs', 0) + 1)
         conversion.save(update_fields=['name_review', 'updated_at'])
         pending = [{'label': record['label'], 'query': _query(record), 'qualifier': record.get('qualifier'),
-                    'match': 'match' in record, 'parse': 'parsed' in record}
+                    'ids': record.get('source_ids') or {}, 'match': 'match' in record, 'parse': 'parsed' in record}
                    for record in state['labels'] if not checked(record)]
         release = state.get('col_release') or {}
     deadline = time.monotonic() + budget_seconds()
@@ -804,25 +919,8 @@ def _run(conversion_id, job_id, claim):
         if error is not None:
             break
         chunk = pending[start:start + CHUNK]
-        results = defaultdict(dict)
-        try:
-            need = [item for item in chunk if not item['match']]
-            for item, summary in zip(need, match_col([item['query'] for item in need], deadline=deadline) if need else []):
-                results[item['label']]['match'] = compact_match(summary)
-        except TaxonServiceError as exc:
-            error = exc
-        try:
-            need = [item for item in chunk if not item['parse']]
-            # A qualified label ("cf.", "sp.") is not split: the parser reads qualifiers as ranks.
-            plain = [item for item in need if not item['qualifier']]
-            for item in need:
-                if item['qualifier']:
-                    results[item['label']]['parsed'] = {'type': None, 'usable': False, 'canonical': None, 'authorship': None, 'rank': None,
-                                                       'lossless': False, 'splits': False, 'reason': 'qualifier'}
-            for item, parsed in zip(plain, parse_names([item['label'] for item in plain], deadline=deadline)):
-                results[item['label']]['parsed'] = parsed
-        except TaxonServiceError as exc:
-            error = error or exc
+        results, chunk_error = check_chunk(chunk, deadline)
+        error = error or chunk_error
         with fence(conversion_id, job_id, claim, 'names', REVIEW_STATUSES) as (conversion, _):
             state = current(conversion)
             if not state or state['plan_id'] != plan_id:

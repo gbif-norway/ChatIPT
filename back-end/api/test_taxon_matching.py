@@ -79,6 +79,15 @@ class SummarizeMatchTests(SimpleTestCase):
         self.assertEqual(result["alternatives"][0]["id"], "C3DM4")
         self.assertEqual(result["alternatives"][0]["matchType"], "VARIANT")
 
+    def test_match_diagnostics_keep_issues_and_matched_id(self):
+        result = taxon_matching.summarize_match({"diagnostics": {
+            "matchType": "EXACT", "issues": ["TAXON_ID_NOT_FOUND"],
+            "matchedID": {"id": "urn:lsid:x:1", "scientificName": "Aus bus", "datasetTitle": "Example"}}})
+        self.assertEqual(result["issues"], ["TAXON_ID_NOT_FOUND"])
+        self.assertEqual(result["matchedId"], {"id": "urn:lsid:x:1", "scientificName": "Aus bus", "datasetTitle": "Example"})
+        self.assertEqual(taxon_matching.summarize_match({"diagnostics": {}})["issues"], [])
+        self.assertIsNone(taxon_matching.summarize_match({"diagnostics": {}})["matchedId"])
+
 
 REAL = json.loads((Path(__file__).parent / "testdata" / "col_v2_real_matches.json").read_text())
 
@@ -137,6 +146,13 @@ class RealNameTests(SimpleTestCase):
             ("L.", "Linnaeus, 1758"),
             ("DC.", "de Candolle"),
             ("Lam.", "Lamarck"),
+            ("Fabr.", "Fabricius"),
+            ("Mill.", "Miller"),
+            ("Hook.", "Hooker"),
+            ("Willd.", "Willdenow"),
+            ("Pers.", "Persoon"),
+            ("Lamour.", "Lamouroux"),
+            ("Lesson, [1830]", "Lesson, 1830"),
             ("Fitzinger, 1838", "Fitzinger in Bonaparte, 1838"),
             ("(Müller, 1836)", "(Müller in Van Oort & Müller, 1836)"),
             ("Welw. ex Ficalho", "Ficalho"),
@@ -159,6 +175,7 @@ class RealNameTests(SimpleTestCase):
             ("S.", "Smith"), ("Fr.", "Franch."), ("Sm.", "Smirnov"), ("L.f.", "Fabricius"), ("L.f.", "L."),
             ("A.Gray", "Gray"), ("J.E. Gray, 1831", "G.R. Gray, 1831"), ("N.E.Br.", "R.Br."), ("DC.", "A.DC."),
             ("Rich.", "A.Rich."),
+            ("Lam.", "Lamouroux"), ("Fabr.", "Fabre"), ("Lin.", "Lindley"), ("Lin.", "Linnaeus"),
             ("L. Koch, 1843", "C. L. Koch, 1843"),  # Ludwig Koch and Carl Ludwig Koch (559)
         ]
         for supplied, col in agree:
@@ -222,6 +239,27 @@ class MatchColTests(SimpleTestCase):
         self.assertEqual(len(batch_call.kwargs["json"]), 2)  # duplicate query sent once
         self.assertEqual(retry_call.kwargs["params"]["verbose"], "true")
         self.assertEqual(retry_call.kwargs["params"]["kingdom"], "Animalia")
+
+    @patch("api.taxon_matching._get_json")
+    def test_identifiers_are_sent_and_are_part_of_the_dedup_key(self, get_json):
+        get_json.side_effect = [[{"diagnostics": {"matchType": "NONE"}}, {"diagnostics": {"matchType": "NONE"}}],
+                                {"diagnostics": {"matchType": "NONE"}}, {"diagnostics": {"matchType": "NONE"}}]
+        query = {"scientificName": "Aus bus", "scientificNameID": "urn:lsid:x:1", "taxonID": "https://x/2"}
+        other = {**query, "taxonID": "https://x/3"}
+        taxon_matching.match_col([query, dict(query), other])
+        batch, *verbose = get_json.call_args_list
+        self.assertEqual(len(batch.kwargs["json"]), 2)
+        self.assertEqual({item["taxonID"] for item in batch.kwargs["json"]}, {query["taxonID"], other["taxonID"]})
+        self.assertEqual(verbose[0].kwargs["params"]["scientificNameID"], query["scientificNameID"])
+        self.assertIn(verbose[0].kwargs["params"]["taxonID"], {query["taxonID"], other["taxonID"]})
+
+    @patch("api.taxon_matching._get_json")
+    def test_review_aids_keeps_source_ids_out_of_checklistbank_query(self, get_json):
+        get_json.side_effect = [{"diagnostics": {"matchType": "NONE"}}, {}]
+        taxon_matching.review_aids({"scientificName": "Aus bus", "kingdom": "Animalia",
+                                    "scientificNameID": "urn:lsid:x:1", "taxonID": "https://x/2"})
+        clb_params = get_json.call_args_list[1].kwargs["params"]
+        self.assertEqual(clb_params, {"q": "Aus bus", "kingdom": "Animalia"})
 
     @patch("api.taxon_matching._get_json")
     def test_higher_rank_match_that_echoes_the_hint_is_no_match(self, get_json):

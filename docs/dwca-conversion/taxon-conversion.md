@@ -156,9 +156,13 @@ The server enforces these rules:
   - years must be equal when both give one;
   - each author's surname must match:
     - exactly;
-    - by one of a few standard abbreviations ("L." for Linnaeus, "DC." for
-      de Candolle);
-    - or as an abbreviation of at least 3 letters ("Lam." for Lamarck).
+    - by one of the curated abbreviations ("L." for Linnaeus, "DC." for
+      de Candolle, "Lam." for Lamarck, "Fabr." for Fabricius, "Mill." for
+      Miller, "Hook." for Hooker, "Willd." for Willdenow, and "Pers." for
+      Persoon);
+    - or as a surname abbreviation of at least 4 letters ("Lamour." for
+      Lamouroux). Shorter abbreviations match only through the curated list,
+      and each curated abbreviation maps only to its listed full surname.
   - within a compound surname, an abbreviated part may be a single letter, so
     "O.P.-Cambridge" and "F.O.P-Cambridge" match Pickard-Cambridge;
   - initials given on both sides must be equal: "J.E. Gray" is not "G.R. Gray",
@@ -166,14 +170,12 @@ The server enforces these rules:
   - initials on one side only are accepted for the same full surname with the
     same year; "A.Gray" and "Gray" without a year disagree;
   - "L.f." (filius) is a different author from "L.";
-  - punctuation, spacing and parentheses do not matter;
+  - punctuation, spacing, parentheses and square brackets around a year do not
+    matter; "Lesson, [1830]" agrees with "Lesson, 1830";
   - "A in B" counts A, and "A ex B" counts B;
   - "et al." compares the first author only;
   - when COL has no authorship, nothing is overwritten, so it agrees.
 
-  In the prod dumps, an exact comparison rejected 43 earlier bulk decisions in
-  559/572 and 36 in 568; this one rejects 19 and 11. The rest have different
-  years, different authors or initials, or differently spelt author names.
 - Every COL decision records the change kind it was checked against
   (`changeKind`, null for the same name) and the name rules it was checked
   under (`nameRules`, `taxon_matching.NAME_RULES_VERSION`). It is trusted from
