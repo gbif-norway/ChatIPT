@@ -140,38 +140,112 @@ A change is a **spelling** correction only when all of these hold:
 
 A uninomial also needs a class or family hint to qualify.
 
-The server assigns each checked label to a group and computes which bulk choices are safe. A group decision never overwrites a one-row user decision. Rows that cannot take a bulk choice remain available for per-row review.
+**Confirming a change.** Every kind except spelling needs the user's explicit
+confirmation: a single choice needs `confirm_coarser: true`, and no automatic
+or bulk path ever writes such a usage. For those names the suggested action is
+**Keep my name**.
 
-| Group | Who is in it | Default | Bulk options | Per-row only |
+### Groups and automatic acceptance
+
+The server sorts every checked name into a group (`conversion_names.classify`)
+and computes which group decisions each name can take. The browser only shows
+them, so a bulk or automatic path can never write a coarser or different taxon
+than the user's name, and never overwrites a name the user decided one at a
+time.
+
+| Group | Who is in it | What happens by default | Group decisions | One at a time |
 | --- | --- | --- | --- | --- |
-| Accepted automatically | Exact same-name COL matches without a qualifier or conflict | COL when authorship agrees; otherwise a lossless split, then keep | COL name, parsed split, keep | Alternatives, empty |
-| Uncertain to genus or family | Resolvable `sp.`, `spp.` and `indet.` labels | Publish the exact genus or family stem | Stem, keep | Candidate choice, empty |
-| Spelling differs from COL | `VARIANT`, `FUZZY` or `CANONICAL` matches with a usage, no qualifier or conflict | COL when any row is eligible; otherwise mine | COL, mine | Changes needing confirmation |
-| Not confirmed by COL | Ambiguous names, higher-rank-only matches, no match, doubtful qualifiers and unresolvable stems | Mine | Mine where eligible | Choose a candidate, confirm a replacement, empty |
-| Check against your data | Name, identifier, mixed classification, kingdom, phylum or class conflicts | No selection | COL, mine when eligible | Resolve each row where a bulk choice is unsafe |
+| Accepted automatically | EXACT match of the same name (markers kept, a subgenus ignored), no qualifier, no conflict | Accepted (`auto:exact`): COL's name and authorship when the authorships agree, else the user's name and authorship | Use COL name, Use split, Keep as written | Other COL names, Don't publish a name |
+| Uncertain to genus or family | "sp.", "spp.", "indet." names whose stem COL has exactly | Accepted (`auto:uncertain`) as the stem | Publish the genus or family name, Keep as written | Other COL names, Don't publish a name |
+| Spelling differs from COL | VARIANT/FUZZY match | "Use COL spelling" pre-selected when a spelling correction exists | Use COL spelling (spelling corrections only), Keep my spelling | Other changes, with confirmation |
+| Not confirmed by COL | Homonyms COL can't pick between, higher rank only, not found, an ID not found, "cf."/"aff."/"nr."/"?" | "Keep my names" pre-selected | Keep my names (not for cf. and the like) | Pick a candidate (with kingdom › phylum › class), a coarser name with confirmation |
+| Check against your data | EXACT match but COL's name differs from the user's, the source ID points elsewhere, the label's rows disagree on kingdom/phylum/class, or the hinted kingdom/phylum/class differs from COL's | Nothing pre-selected | Use COL names (same name, agreeing authorship), Keep my names | Everything else |
 
-`mine` uses the parsed split only when it is lossless and there is no qualifier. Otherwise it keeps the supplied text. `cf.`, `aff.`, `nr.` and other doubtful qualifiers are never accepted automatically or in bulk. The server checks eligibility again when it applies each choice.
+"Keep my name(s)" writes the parsed name split from its authorship when the
+split rebuilds the text exactly, else the supplied text. A check group is one
+card per conflict signature: in 558 every tree is tagged Animalia, and one
+decision covers the 81 names COL places in Plantae ("Sapotaceae sp" among them
+is published as its stem).
 
-**Automatic acceptance.** Same-name exact COL matches and resolvable uncertain stems are accepted automatically. `auto:exact` and `auto:uncertain` never write a coarser or different name, and never replace a user decision. Each automatic group has Undo all; a row can also be undone. Undo records `auto_declined`, so the label stays declined after a re-check.
+**Automatic decisions never override the user.** They are made after each
+chunk of the name check. Undo all (per group) or a row's Undo removes them and
+records the labels in `auto_declined`, so a re-check does not accept them
+again. When every name has a decision, automatic or not, the scientificName
+fallback question settles itself.
 
-For `sp.`, `spp.` and `indet.`, the published `scientificName` is the genus or family stem. A mix of those qualifiers in `identificationQualifier` is still uncertain when every collected value is one of them, values are not truncated, and rows without a qualifier are allowed. Any other column qualifier, including `cf.`, makes the label doubtful and prevents automatic or bulk decisions. The identification table receives a `taxonFormula` column when the DwC-DP table specification includes it. For a stem decision, each identification row uses its own `sp.`, `spp.` or `indet.` value; otherwise it uses the qualifier from the label, and a blank column-only row stays blank. Formula values fill blank cells only. DwC-DP has no `identificationQualifier` field. `verbatimIdentification` is unchanged.
+**Bulk decisions are batches.** "Apply to N names" covers the group's eligible
+names not decided one at a time and records the batch. Its Undo restores only
+names that still carry that batch; a name changed since stays as it is.
 
-A `stem` decision requires an exact COL match for the asserted stem. If homonyms disagree on authorship, or COL's authorship disagrees with any supplied authorship, the stem has no authorship. For an exact-name automatic decision, a differing supplied authorship is kept. COL authorship is written only when it agrees with the supplied authorship; when COL has no authorship, the supplied authorship survives.
+**Uncertain names ("sp.", "spp.", "indet.").** The label's qualifier, or a
+`identificationQualifier` column whose values are all sp./spp./indet. (blank
+rows allowed), marks the name as uncertain to its genus or family. Any other
+value ("cf.", "?") on any row makes it a decision for the user, with how many
+rows say so. The stem (`stem` decision) is the COL usage of the same name:
+the matcher's own pick, or exact alternatives that agree on one rank. COL's
+authorship is written only when the same-name usages agree on it and it agrees
+with any authorship the user supplied, so homonyms ("Viola" the plant and the
+moth, "Ficus" in 558) are published as the bare genus name. DwC-DP has no
+identificationQualifier, so identification rows get `taxonFormula` "A sp.",
+"A spp." or "A indet." from their own row's qualifier, else the label's (blank
+cells only). `verbatimIdentification` still holds the text as written.
 
-**Check against your data.** A conflict is grouped by its signature. Conflicts include a label whose rows disagree on kingdom, phylum or class, plus kingdom, phylum or class disagreements with an exact COL usage. Mixed classification groups say which ranks vary; COL cannot be selected for those rows. For example, in conversion 558, `kingdom Animalia` versus COL's `Plantae` groups the affected labels together; one decision can cover 81 names. `Sapotaceae sp` in that group is written as the stem. A bulk `mine` choice keeps or losslessly splits each name as above.
+**Source IDs are a second step.** A label with one consistent
+`scientificNameID` or `taxonID` (an LSID or http URI) whose name match is not
+an exact same-name match is matched again with that ID. The result is used only
+when it is the user's own name (566: Calanus, Chaetognatha, Crustacea and
+Oithona with their WoRMS IDs; 567: Polychaeta, Isopoda). An ID never overrides
+an exact name match: "Parathemisto libellula" stays Parathemisto although its
+WoRMS ID leads to Themisto, and "Metridia longa" is not narrowed to a
+subspecies. GBIF's diagnostics issues are kept; an ID that is not found
+(`TAXON_ID_NOT_FOUND`, 567's Oncaea) is a reason under "Not confirmed", and one
+that points to another name is a conflict.
 
-**Source IDs are a second matching step.** A consistent source `scientificNameID` or `taxonID` can disambiguate a non-exact first match. It never overrides an exact same-name match: `Parathemisto libellula` stays `Parathemisto libellula`. ID diagnostics remain available as issues. For example, Calanus and Chaetognatha without IDs are not confirmed; a matching WoRMS ID can confirm the same name. An ID that points elsewhere or is not found is shown as a conflict or reason.
-
-Exact COL matches are accepted automatically only when every supplied authorship agrees with COL. The supplied authorship is from the label or its `scientificNameAuthorship` column. The spelling group uses the same rule. The comparison (`taxon_matching.authorships_agree`) works as follows:
+**Authorship.** An automatic or bulk COL name is written with COL's authorship
+only when every supplied authorship (the label's own or the
+`scientificNameAuthorship` column) agrees with it; otherwise the user's is kept
+(a different authorship can mean a homonym, or an author error to look at).
+The comparison (`taxon_matching.authorships_agree`) works as follows:
 
 - years must be equal when both give one;
-- each author's surname must match exactly, by a curated abbreviation, or as a surname abbreviation of at least 4 letters;
-- initials given on both sides must be equal; initials on one side only are accepted for the same full surname with the same year;
-- punctuation, spacing, parentheses and square brackets around a year do not matter;
-- `A in B` counts A, `A ex B` counts B, and `et al.` compares the first author only;
+- each author's surname must match:
+  - exactly;
+  - by a curated abbreviation, which matches only its author ("L." Linnaeus,
+    "DC." de Candolle, "Lam." Lamarck, "Fabr." Fabricius, "Mill." Miller,
+    "Hook." Hooker, "Willd." Willdenow, "Pers." Persoon), so "Lam." is not
+    Lamouroux and "Fabr." is not Fabre;
+  - or as an abbreviation of at least 4 letters ("Lamour." for Lamouroux);
+- within a compound surname, an abbreviated part may be a single letter, so
+  "O.P.-Cambridge" and "F.O.P-Cambridge" match Pickard-Cambridge;
+- initials given on both sides must be equal: "J.E. Gray" is not "G.R. Gray",
+  and "L. Koch" is not "C. L. Koch";
+- initials on one side only are accepted for the same full surname with the
+  same year; "A.Gray" and "Gray" without a year disagree;
+- "L.f." (filius) is a different author from "L.";
+- punctuation, spacing, parentheses and brackets around a year do not matter
+  ("Lesson, [1830]" is "Lesson, 1830");
+- "A in B" counts A, and "A ex B" counts B;
+- "et al." compares the first author only;
 - when COL has no authorship, nothing is overwritten, so it agrees.
 
-Bulk actions create a batch. Undo restores only labels that still carry that batch ID; rows changed since the batch are left alone. The groups and eligible counts are recalculated by the server for each request.
+**Stamped decisions.** Every COL decision records the change kind it was
+checked against (`changeKind`, null for the same name) and the name rules it
+was checked under (`nameRules`, `taxon_matching.NAME_RULES_VERSION`, now 2). It
+is trusted from then on. A snapshot without the stamp, or with other name
+rules, is checked again against the record's stored usage; an automatic or bulk
+one is also checked for authorship agreement. A decision that fails is held:
+
+- it counts as undecided, so it never settles the scientificName fallback;
+- it is listed in its group with a banner count;
+- at conversion it is applied as **keep**, so the user's own name is published
+  and never an empty one;
+- the report counts it under `unconfirmed_kept`.
+
+The review lists same-name COL usages (homonyms) inline, with their
+kingdom › phylum › class, those from another lineage than the source's last. A
+homonym at another rank says so (for example "Anura" the order and the genus).
+A changing option names what it would do, for example "replaces your genus with
+a phylum", and asks for a second click.
 
 **Re-inspection carries name decisions** (`conversion_names.carry_decisions`).
 A new rule version makes a plan stale, and the re-inspection used to drop every
@@ -179,14 +253,16 @@ name decision.
 - **When decisions carry:** the user's own decisions carry over by label when
   the source is unchanged (same fingerprint). If the source changed but yields
   exactly the same labels, a decision carries only where that name's hints,
-  supplied rank, supplied authorships and qualifier are unchanged.
+  supplied rank, supplied authorships, qualifiers, source IDs and mixed
+  classification are unchanged.
 - **Checking again:** when a COL decision is carried, the names are checked
   again even if name checks are switched off.
-- **Notice:** the name section says how many decisions were kept.
+- **Notice:** the name section says how many decisions were kept, and how
+  many of the user's own could not be (`dropped`).
 - **What is not carried:**
   - bulk decisions, because the bulk actions are offered again under the
     current rules;
-  - automatic decisions, because they are made again from the fresh matches.
+  - automatic decisions, because they are made again from the fresh matches;
   - name results, because the names are checked again.
 - **Undo state:** an automatic decision declined with Undo all or per-row undo
   stays declined for labels carried into the re-inspection.
@@ -221,5 +297,6 @@ values.
 Replaced rank values are counted per name (`ranksReplaced`, `ranks_replaced`).
 Replaced authorships are counted as `authorshipReplaced`.
 
-Regression fixtures are trimmed real v2 responses for conversions 560–570
-(`back-end/api/testdata/col_v2_real_matches.json`).
+Regression fixtures are trimmed real v2 responses for conversions 558–570
+(`back-end/api/testdata/col_v2_real_matches.json`, `col_v2_group_matches.json`,
+and `col_v2_id_matches.json` with the name and source-ID queries).
