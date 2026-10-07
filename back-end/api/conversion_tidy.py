@@ -7,6 +7,7 @@ from django.conf import settings
 from api.dwca_tidy import TIDY_VERSION, summarize, tidy_archive as apply_tidy
 
 logger = logging.getLogger(__name__)
+REPORT_WHITESPACE_VALUES = 500
 
 
 def enabled():
@@ -80,10 +81,17 @@ def state_section(conversion, job=None):
 def report_section(conversion, view):
     if view.tidy is None:
         return {}
+    groups = []
+    for group in view.tidy['groups']:
+        if group['rule'] == 'whitespace' and len(group['values']) > REPORT_WHITESPACE_VALUES:
+            # Space-only changes in free text can be numerous and are reproducible; the rest list every value.
+            group = {**group, 'values': group['values'][:REPORT_WHITESPACE_VALUES],
+                     'more_values': len(group['values']) - REPORT_WHITESPACE_VALUES}
+        groups.append(group)
     return {'version': view.tidy['version'], 'sha256': view.tidy['sha256'],
             'overrides': (conversion.tidy or {}).get('overrides', {}),
             'policy': 'Obvious, reversible value clean-ups were applied before conversion; original files are unchanged.',
-            'groups': view.tidy['groups'], 'added_columns': view.tidy['added_columns']}
+            'groups': groups, 'added_columns': view.tidy['added_columns']}
 
 
 def commit_carry(conversion):

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { groupChange, tidyGroups, tidySummaryLine, valueChange } from '../utils/conversionTidy.mjs'
+import { groupChange, suggestionGroupChange, tidyGroups, tidySummaryLine, valueChange } from '../utils/conversionTidy.mjs'
 
 export default function ConversionTidySummary({ state, send, disabled }) {
   const { tidied, suggestions } = tidyGroups(state)
@@ -40,7 +40,13 @@ export default function ConversionTidySummary({ state, send, disabled }) {
     {suggestions.length > 0 && <>
       <h3 className="small fw-semibold mt-3">Suggestions</h3>
       {suggestions.map(group => <div key={group.id} className="border rounded p-2 mb-2">
-        <div className="small fw-semibold mb-1">{group.title}</div>
+        <div className="d-flex justify-content-between align-items-start gap-2">
+          <div className="small fw-semibold mb-1">{group.title}</div>
+          {(group.values.length > 1 || group.more_values > 0) && <button type="button" className="btn btn-sm btn-outline-secondary flex-shrink-0" disabled={disabled || pending}
+            aria-label={`${state.tidy.overrides?.[group.id] === 'on' ? 'Undo all suggestions' : 'Apply all suggestions'} for ${group.field}`}
+            onClick={() => change(group.id, suggestionGroupChange(group, state.tidy.overrides))}>{state.tidy.overrides?.[group.id] === 'on' ? 'Undo all' : `Apply all${group.more_values ? ` ${(group.values.length + group.more_values).toLocaleString('en-US')}` : ''}`}</button>}
+        </div>
+        {errors[group.id] && <p className="small text-danger mb-0" role="alert">{errors[group.id]}</p>}
         {group.values.map(value => <div key={value.id} className="border-top pt-2 mt-2">
           <div className="d-flex justify-content-between align-items-start gap-2">
             <div className="small">{valueChange(value, group.field)} <span className="text-muted">· {rows(value.rows)}</span></div>
@@ -51,6 +57,7 @@ export default function ConversionTidySummary({ state, send, disabled }) {
           {value.note && <p className="small text-muted mb-1 mt-1">{value.note}</p>}
           {errors[value.id] && <p className="small text-danger mb-0" role="alert">{errors[value.id]}</p>}
         </div>)}
+        {group.more_values > 0 && <p className="small text-muted mb-0 mt-2">{group.more_values.toLocaleString('en-US')} more like these are not listed here; “Apply all” includes them.</p>}
       </div>)}
     </>}
   </details>

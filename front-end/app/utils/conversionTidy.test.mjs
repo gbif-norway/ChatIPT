@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { groupChange, tidyGroups, tidySummaryLine, valueChange } from './conversionTidy.mjs'
+import { groupChange, suggestionGroupChange, tidyGroups, tidySummaryLine, valueChange } from './conversionTidy.mjs'
 
 const country = {
   id: 'tidy:570:countryCode:country-name', table_name: 'Occurrence', field: 'countryCode', tier: 'auto',
@@ -60,7 +60,7 @@ test('groupChange toggles whole-group defaults and individual suggestions', () =
   assert.deepEqual(groupChange(lifeStage), { [lifeStage.id]: null })
   assert.deepEqual(groupChange(pullus), { [pullus.id]: 'undo' })
   assert.deepEqual(groupChange(numeric, 'decimal'), { decimal: 'apply' })
-  assert.deepEqual(groupChange(encoding, encoding.values[0]), { busingen: null })
+  assert.deepEqual(groupChange(encoding, encoding.values[0]), { busingen: 'undo' })
 })
 
 test('tidySummaryLine formats counts and omits zero sections', () => {
@@ -68,4 +68,10 @@ test('tidySummaryLine formats counts and omits zero sections', () => {
   assert.equal(tidySummaryLine({ tidy: { enabled: true, counts: { tidied_groups: 1, tidied_rows: 1, suggestions: 1 } } }), 'We tidied 1 thing in your data (1 value). 1 suggestion to check.')
   assert.equal(tidySummaryLine({ tidy: { enabled: true, counts: { tidied_groups: 0, tidied_rows: 0, suggestions: 0 } } }), '')
   assert.equal(tidySummaryLine({ tidy: { enabled: false, counts: { tidied_groups: 2 } } }), '')
+})
+
+test('suggestionGroupChange applies every suggestion of a group and returns to the default', () => {
+  const group = { id: 'tidy:0:7:thousands-or-decimal', values: [], more_values: 31 }
+  assert.deepEqual(suggestionGroupChange(group, {}), { [group.id]: 'apply' })
+  assert.deepEqual(suggestionGroupChange(group, { [group.id]: 'on' }), { [group.id]: null })
 })

@@ -2,11 +2,13 @@
 import io
 import tarfile
 import zipfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.test import SimpleTestCase, override_settings
 
-from api import conversion_review
+from api import conversion_review, conversion_tidy
+from api.conversion_jobs import load_sources
 from api.conversion_jobs import process_next_conversion
 from api.dwca_semantic_audit import is_age_like_remark
 from api.dwca_value_ledger import build_value_disposition_ledger
@@ -160,7 +162,35 @@ class TidyFlowTests(ConversionTestCase):
         self.assertEqual(conversion.tidy['overrides'][group['id']], 'off')
 
 
+class TidyGroupApplyTests(ConversionTestCase):
+    # 31 ambiguous values: more than the page lists, all applied with the group's "Apply all".
+    files = [('occurrence.csv', b'occurrenceID,organismQuantity,organismQuantityType,occurrenceStatus\n'
+              + b''.join(f'o{n},"{n},",individuals,present\n'.encode() for n in range(1, 32)))]
+
+    def test_apply_all_reaches_values_beyond_the_summary(self):
+        with override_settings(CONVERSION_AI_REVIEW_ENABLED=False, CONVERSION_NAME_CHECKS_ENABLED=False):
+            process_next_conversion()
+        group = next(item for item in self.conversion.tidy['summary']['groups'] if item['rule'] == 'trailing-separator')
+        self.assertEqual((len(group['values']), group['more_values']), (30, 1))
+        self.assertEqual(self.post('tidy', changes={group['id']: 'apply'}).status_code, 202)
+        with override_settings(CONVERSION_AI_REVIEW_ENABLED=False, CONVERSION_NAME_CHECKS_ENABLED=False):
+            process_next_conversion()
+        column = next(item for item in self.conversion.plan['columns'] if item['term'].endswith('/organismQuantity'))
+        self.assertEqual(column['samples'], ['1', '2', '3'])
+        archive = conversion_tidy.tidied(self.conversion, load_sources(self.conversion, tidy=False))
+        self.assertEqual({row[1] for row in archive.tables[0].rows}, {str(n) for n in range(1, 32)})
+
+
 class TidyUnitTests(SimpleTestCase):
+    def test_report_lists_every_value_except_long_space_only_groups(self):
+        values = [{'value': f'a  {n}', 'fields': {'locality': f'a {n}'}} for n in range(conversion_tidy.REPORT_WHITESPACE_VALUES + 5)]
+        view = SimpleNamespace(tidy={'version': '1', 'sha256': 'x', 'added_columns': [], 'groups': [
+            {'rule': 'whitespace', 'values': values}, {'rule': 'vocabulary', 'values': values}]})
+        report = conversion_tidy.report_section(SimpleNamespace(tidy={}), view)
+        self.assertEqual((len(report['groups'][0]['values']), report['groups'][0]['more_values']),
+                         (conversion_tidy.REPORT_WHITESPACE_VALUES, 5))
+        self.assertEqual(len(report['groups'][1]['values']), len(values))
+
     def test_age_remark_vocabulary(self):
         for value in ('ad', 'juv.', '1 juv.', 'adult + egg', 'ad.m.egg'):
             self.assertTrue(is_age_like_remark(value), value)

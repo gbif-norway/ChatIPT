@@ -111,7 +111,8 @@ def _rule(name, value, data, row_type):
             if len(parts) >= 2 and all(mapped):
                 values = list(dict.fromkeys(mapped))
                 return 'vocabulary', AUTO, {name: ' | '.join(values)}, False
-    if k in _NULL and not (name == 'countryCode' and k == 'na'):
+    # countryCode NA is Namibia; a bare NA in country is ambiguous, so it stays as written.
+    if k in _NULL and not (name == 'countryCode' and k == 'na') and not (name == 'country' and w == 'NA'):
         return 'empty-placeholder', AUTO, {name: ''}, False
     if name in {'countryCode', 'country'}:
         alpha2, alpha3, names = data['alpha2'], data['alpha3'], data['country_names']
@@ -128,10 +129,14 @@ def _rule(name, value, data, row_type):
         else:
             if k in names:
                 return 'country-code-fill', AUTO, {name: w, 'countryCode': names[k]}, False
-            if len(w) == 2 and w == w.upper() and w in alpha2:
+            if len(w) == 2 and w == w.upper() and w in alpha2 and w != 'NA':
                 return 'country-code-fill', AUTO, {name: w, 'countryCode': w}, False
-        if k in data['waters'] or (_WATER_RE.search(w) and not re.match(r'other\s+', w, re.I)):
+        # Only curated sea names move by themselves ('North Atlantic Ocean (other parts)' counts); other text
+        # with a water word, such as 'United Kingdom (English Channel)', is only suggested.
+        if k in data['waters'] or re.sub(r'\s*\([^)]*\)$', '', k) in data['waters']:
             return 'water-body', AUTO, {name: '', 'waterBody': w}, True
+        if _WATER_RE.search(w) and not re.match(r'other\s+', w, re.I):
+            return 'water-body-suggestion', SUGGEST, {name: '', 'waterBody': w}, True
     if row_type == DWC + 'Occurrence' and name in {'eventRemarks', 'occurrenceRemarks'}:
         hit = data['vocab']['lifeStage'].get(k)
         if hit is not None:
@@ -176,11 +181,14 @@ def _title(rule, field, values, n):
         codes = list(dict.fromkeys(v['fields']['countryCode'] for v in values))[:4]
         return f"countryCode filled from the country names in {n:,} rows: {', '.join(codes)}."
     if rule == 'water-body': return f'{field}: sea and ocean names moved to waterBody ({sample}) in {n:,} rows.'
+    if rule == 'water-body-suggestion': return f'{field}: these may name a sea or ocean rather than a country; they could move to waterBody ({sample}).'
     if rule == 'life-stage-remark': return f'{field}: life stages moved to lifeStage ({sample}) in {n:,} rows.'
     if rule == 'decimal-comma': return f'{field}: decimal commas changed to points ({sample}) in {n:,} rows.'
     if rule in {'thousands-or-decimal', 'trailing-separator'}:
         item = sorted(values, key=lambda v: (-v['rows'], v['value']))[0]
         return f"{field}: '{item['value']}' may be a number written with a comma; suggested '{item['fields'][field]}'."
+    if rule == 'zero-placeholder' and values and values[0].get('tier') == SUGGEST:
+        return f'{field} is 0 on every row, as is another elevation or depth column. If 0 means "not recorded", it can be left empty ({n:,} rows).'
     if rule == 'zero-placeholder': return f'{field} was 0 on every row, together with the other elevation or depth columns, so it is treated as not recorded and left empty ({n:,} rows).'
     if rule == 'variant': return f'{field}: spelling variants made the same ({sample}) in {n:,} rows.'
     if rule == 'whitespace': return f'{field}: extra spaces removed in {n:,} rows.'
@@ -218,10 +226,13 @@ def tidy_archive(archive, overrides=None, model_changes=None):
                 if counts and all(_is_zero(value) for value in counts):
                     zero_cols['elev' if name in _ELEV else 'depth'].append(c)
         if zero_cols['elev'] and zero_cols['depth']:
+            # Three or four zero columns are a placeholder pattern (572); one elevation and one depth column
+            # of zeros could be a real shoreline or surface record, so that is only suggested.
+            tier = AUTO if len(zero_cols['elev']) + len(zero_cols['depth']) >= 3 else SUGGEST
             for c in zero_cols['elev'] + zero_cols['depth']:
                 name = table.terms[c].rsplit('/', 1)[-1]
                 for value, rows in column_values[t, c].items():
-                    proposed[t, c, value] = {'rule': 'zero-placeholder', 'tier': AUTO,
+                    proposed[t, c, value] = {'rule': 'zero-placeholder', 'tier': tier,
                         'fields': {name: ''}, 'move': False, 'rows': rows, 'by': 'rule'}
     # Variant rules use distinct source values and ignore values already claimed by an earlier rule.
     for (t, c), counts in column_values.items():
@@ -369,9 +380,12 @@ def tidy_archive(archive, overrides=None, model_changes=None):
                 else:
                     row_conflict = True
             if row_conflict:
+                # A change applies to a row as a whole, so a conflict keeps every source value of that row.
                 record.setdefault('_conflicts', set()).add(r)
-                if change['move']:
-                    continue
+                if not change['move'] and change['fields'].get(field, value) != value:
+                    copies[t][r][c] = value
+                    record.get('_changed', set()).discard(r)
+                continue
             if row_agree:
                 record.setdefault('_agrees', set()).add(r)
             changed_rows = record.setdefault('_changed', set())

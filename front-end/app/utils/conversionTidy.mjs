@@ -28,9 +28,15 @@ export function groupChange(group, id) {
   if (id != null) {
     const value = typeof id === 'object' ? id : (group?.values || []).find(item => item.id === id)
     if (!value) return {}
-    return value.applied ? { [value.id]: null } : { [value.id]: 'apply' }
+    // An explicit undo, so a suggestion applied with "Apply all" can still be undone one by one.
+    return value.applied ? { [value.id]: 'undo' } : { [value.id]: 'apply' }
   }
   return group?.applied ? { [group.id]: 'undo' } : { [group.id]: null }
+}
+
+// "Apply all" for a suggestion group, including values not listed on the page; applied again, it returns to the default.
+export function suggestionGroupChange(group, overrides = {}) {
+  return overrides?.[group.id] === 'on' ? { [group.id]: null } : { [group.id]: 'apply' }
 }
 
 const count = value => Number.isFinite(Number(value)) ? Number(value) : 0

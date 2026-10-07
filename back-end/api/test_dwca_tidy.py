@@ -173,3 +173,27 @@ class DwcaTidyTests(SimpleTestCase):
         view, _ = tidy_archive(archive)
         self.assertLess(time.monotonic() - started, 10)
         self.assertEqual(view.tables[0].rows[-1][1:], ['NO', 'female', 'Norway'])
+
+    def test_review_round_one_cases(self):
+        # A countryCode name beside a different supplied country keeps both source values.
+        both = self.build('occurrenceID,countryCode,country', ['a,Norway,Sweden', 'b,Norway,Norway'])
+        view, table = tidy_archive(both)
+        self.assertEqual([row[1:] for row in view.tables[0].rows], [['Norway', 'Sweden'], ['NO', 'Norway']])
+        moved = self.group(table, 'country-name')
+        self.assertEqual((moved['changed_rows'], moved['conflict_rows']), (1, 1))
+        # Only curated sea names move automatically; mixed place text is a suggestion.
+        mixed = self.build('occurrenceID,country', ['a,"United Kingdom (English Channel)"', 'b,North Atlantic Ocean (other parts)'])
+        view, table = tidy_archive(mixed)
+        self.assertEqual(view.tables[0].rows[0][1], 'United Kingdom (English Channel)')
+        self.assertEqual(view.tables[0].rows[1][1:], ['', 'North Atlantic Ocean (other parts)'])
+        self.assertFalse(self.group(table, 'water-body-suggestion')['applied'])
+        # One elevation and one depth column of zeros may be real: suggested, not applied.
+        shore = self.build('occurrenceID,minimumElevationInMeters,minimumDepthInMeters', ['a,0,0', 'b,0,0'])
+        view, table = tidy_archive(shore)
+        self.assertEqual(view.tables[0].rows[0][1:], ['0', '0'])
+        self.assertTrue(all(group['tier'] == 'suggest' for group in table['groups']))
+        # A bare NA in country is ambiguous (Namibia or not available) and stays as written.
+        namibia = self.build('occurrenceID,country,countryCode', ['a,NA,', 'b,na,'])
+        view, _ = tidy_archive(namibia)
+        self.assertEqual([row[1:] for row in view.tables[0].rows], [['NA', ''], ['', '']])
+
