@@ -13,19 +13,25 @@ from api.dwca_tidy import TIDY_VERSION, summarize, tidy_archive as apply_tidy
 
 logger = logging.getLogger(__name__)
 REPORT_WHITESPACE_VALUES = 500
-PROMPT_VERSION = '1'
+PROMPT_VERSION = '2'
 TIDY_TASK = 'DwC-A conversion tidy-up'
 VALUE_FIELDS = {'lifeStage', 'sex', 'reproductiveCondition', 'behavior', 'vitality', 'establishmentMeans',
                 'degreeOfEstablishment', 'pathway', 'preparations', 'organismQuantityType', 'countryCode', 'country',
                 'county', 'stateProvince', 'municipality', 'islandGroup', 'island', 'waterBody'}
 REMARK_FIELDS = {'eventRemarks', 'occurrenceRemarks'}
 ALLOWED_BASE = VALUE_FIELDS | {'individualCount', 'occurrenceRemarks'}
+ORGANISM_FIELDS = {'lifeStage', 'sex', 'individualCount', 'reproductiveCondition', 'behavior', 'vitality'}
 SIBLINGS = {'sex', 'lifeStage', 'individualCount', 'organismQuantity', 'organismQuantityType', 'country', 'countryCode',
             'stateProvince', 'county', 'waterBody', 'eventRemarks', 'occurrenceRemarks'}
 SEX_VALUES = dwca_tidy.sex_values()
 SYSTEM_PROMPT = (
     'Tidy values in a biodiversity dataset for Darwin Core. For each listed value give the Darwin Core fields it states, '
-    'using only the allowed fields. sex must be female, male, indeterminate, mixed, other, or a " | " list of them. '
+    'using only the allowed fields, but only when the value needs to change: it maps to one of the vocabularies below, it states '
+    'other fields (a count, a sex, a life stage), it belongs in another field, or it has damaged characters. Otherwise give no '
+    'fields: do not reword, translate, expand or re-case values that are acceptable as written, such as units, preparations or '
+    'remarks. When a remarks value describes the organism, give the fields it states and set the remarks field itself to "". '
+    'lifeStage describes the organism itself; things recorded alongside it, such as eggs or an egg sac carried by an adult, '
+    'are not its life stage: put them in residue. sex must be female, male, indeterminate, mixed, other, or a " | " list of them. '
     f"lifeStage should use a GBIF LifeStage concept when one fits: {', '.join(sorted(dwca_tidy.life_stage_values()))}; "
     "otherwise use a short plain English stage such as 'copepodite V'. individualCount is only a whole number stated in the value. "
     'countryCode must be an ISO 3166-1 alpha-2 code. For a place name with damaged characters, repair the name for the same field. '
@@ -69,7 +75,11 @@ def candidates(view, table=None):
         if table is not None and t != table:
             continue
         local_names = [term.rsplit('/', 1)[-1] for term in source.terms]
+        own_columns = int(((view.tidy or {}).get('source_columns') or {}).get(str(t), len(local_names)))
         for c, name in enumerate(local_names):
+            # Columns the tidy-up added hold its own output, never source values to interpret.
+            if c >= own_columns:
+                continue
             if name not in VALUE_FIELDS and not (name in REMARK_FIELDS and source.row_type == DWC + 'Occurrence'):
                 continue
             counts = Counter((row[c] if c < len(row) else '') for row in source.rows)
@@ -78,20 +88,17 @@ def candidates(view, table=None):
                 if not value.strip() or (t, c, value) in settled:
                     continue
                 data = dwca_tidy._tables()
-                folded = value.casefold()
                 if name in {'sex', 'lifeStage', 'establishmentMeans', 'degreeOfEstablishment', 'pathway'}:
                     if dwca_tidy.key(value) in data['vocab'].get(name, {}):
                         continue
                 if name == 'countryCode' and len(value) == 2 and value == value.upper() and value in data['alpha2']:
                     continue
                 if name in {'country', 'county', 'stateProvince', 'municipality', 'islandGroup', 'island', 'waterBody'}:
-                    eligible = ('\ufffd' in value or any('\x80' <= ch <= '\x9f' for ch in value)
-                                or bool(dwca_tidy._WATER_RE.search(value))
-                                or (name in {'county', 'stateProvince'} and folded in data['country_names']))
-                    if not eligible:
-                        continue
-                    if _known_value(value) and not (dwca_tidy._WATER_RE.search(value)
-                            or (name in {'county', 'stateProvince'} and folded in data['country_names'])):
+                    # Place names are sent only when they look damaged, or (outside waterBody) look like a sea or a country.
+                    damaged = '\ufffd' in value or any('\x80' <= ch <= '\x9f' for ch in value)
+                    misplaced = name != 'waterBody' and (bool(dwca_tidy._WATER_RE.search(value)) or (
+                        name in {'county', 'stateProvince'} and dwca_tidy.key(value) in data['country_names']))
+                    if not (damaged or misplaced):
                         continue
                 elif _known_value(value):
                     continue
@@ -198,21 +205,25 @@ def model_changes(view_or_archive, entries):
         if item.get('confidence') not in {'high', 'medium'} or (not item.get('fields') and not item.get('residue')):
             continue
         t, c, original = item['table'], item['column'], item['value']
+        if not (0 <= t < len(view_or_archive.tables) and 0 <= c < len(view_or_archive.tables[t].terms)):
+            continue
         own = view_or_archive.tables[t].terms[c].rsplit('/', 1)[-1]
+        occurrence_row = view_or_archive.tables[t].row_type == DWC + 'Occurrence'
         fields = dict(item.get('fields', {}))
-        move = fields.get(own) == ''
-        if item.get('residue'):
-            if own == 'occurrenceRemarks':
-                fields[own] = original; move = False
-            elif own == 'eventRemarks':
+        # The supplied text is never lost from the package: a remark about the organism keeps its exact words in
+        # occurrenceRemarks, and so does any value whose interpretation leaves something over.
+        if own in REMARK_FIELDS and occurrence_row and (ORGANISM_FIELDS & set(fields) or item.get('residue') or fields.get(own) == ''):
+            fields['occurrenceRemarks'] = original
+            fields[own] = '' if own == 'eventRemarks' else original
+        elif item.get('residue'):
+            if occurrence_row:
                 fields['occurrenceRemarks'] = original
-                fields[own] = ''
-                move = True
+                fields.setdefault(own, original)
             else:
                 fields[own] = original
-                move = False
-        elif own not in fields:
-            fields[own] = original
+        else:
+            fields.setdefault(own, original)
+        move = fields[own] == ''
         if fields.get(own) == original and len(fields) == 1:
             continue
         initial.append({'table': t, 'column': c, 'value': original, 'fields': fields, 'tier': 'auto',

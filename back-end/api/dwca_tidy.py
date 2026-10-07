@@ -492,11 +492,11 @@ def tidy_archive(archive, overrides=None, model_changes=None):
     return view, table
 
 
-def pending_suggestions(archive, t, c):
-    """Values of a column the tidy-up offers as suggestions that are not applied (they keep their own question-free route)."""
+def settled_values(archive, t, c):
+    """Values of a column the tidy-up has dealt with: applied changes and open suggestions. Undone changes are not settled."""
     groups = (getattr(archive, 'tidy', None) or {}).get('groups', [])
-    return {value['value'] for group in groups if group['table'] == t and group['column'] == c and group['tier'] == SUGGEST
-            for value in group['values'] if not value['applied']}
+    return {value['value'] for group in groups if group['table'] == t and group['column'] == c
+            for value in group['values'] if value['applied'] or group['tier'] == SUGGEST}
 
 
 def column_note(archive, t, c):

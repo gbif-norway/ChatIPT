@@ -68,7 +68,7 @@ class TidyModelPureTests(SimpleTestCase):
             ['o1', 'f', 'fad', '1', '', 'Aus bus', 'present'],
             ['o2', 'f', '1 juv.', '2', '', 'Aus bus', 'present'],
             ['o3', '', 'ad + egg', '1', '', 'Aus bus', 'present'],
-            ['o4', '', 'M�re og Romsdal', '1', '', 'Aus bus', 'present'],
+            ['o4', '', '', '1', 'M�re og Romsdal', 'Aus bus', 'present'],
         ])
         entries = {
             'fad': {'table': 0, 'column': 2, 'value': 'fad', 'fields': {'lifeStage': 'adult', 'sex': 'female'},
@@ -92,6 +92,29 @@ class TidyModelPureTests(SimpleTestCase):
         self.assertEqual(egg['fields']['eventRemarks'], '')
         self.assertEqual(egg['fields']['occurrenceRemarks'], 'ad + egg')
         self.assertIn('Møre og Romsdal', str(next(item for item in changes if item['value'] == 'M�re og Romsdal')))
+        # A remark about the organism keeps its exact words in occurrenceRemarks.
+        fad = next(item for item in changes if item['value'] == 'fad')
+        self.assertEqual((fad['fields']['eventRemarks'], fad['fields']['occurrenceRemarks'], fad['move']), ('', 'fad', True))
+        view = tidy_archive(source, model_changes=changes)[0]
+        row = dict(zip([term.rsplit('/', 1)[-1] for term in view.tables[0].terms], view.tables[0].rows[0]))
+        self.assertEqual((row['eventRemarks'], row['occurrenceRemarks'], row['lifeStage'], row['sex']), ('', 'fad', 'adult', 'female'))
+        self.assertEqual(view.tables[0].rows[3][4], 'Møre og Romsdal')
+
+    def test_uncertain_value_keeps_its_words_and_added_columns_are_never_sent(self):
+        # 568: 'Female?' reads as female; the question mark is left over, so the exact text goes to occurrenceRemarks.
+        source = archive([['o1', 'Female?', '', '1', '', 'Aus bus', 'present']])
+        entries = {'q': {'table': 0, 'column': 1, 'value': 'Female?', 'fields': {'sex': 'female'}, 'residue': '?',
+                         'confidence': 'medium', 'note': 'uncertain'}}
+        change = conversion_tidy.model_changes(source, entries)[0]
+        self.assertEqual((change['fields'], change['tier']), ({'sex': 'female', 'occurrenceRemarks': 'Female?'}, 'suggest'))
+        # 570: the tidy-up appends waterBody for sea names in countryCode; that added column is not a model candidate.
+        sea = SourceArchive({}, [SourceTable('occurrence', DWC + 'Occurrence', [DWC + 'occurrenceID', DWC + 'countryCode'],
+                                             [['o1', 'North Atlantic Ocean (other parts)'], ['o2', 'Norway']], [], True)], 'fp', False, {})
+        view = tidy_archive(sea)[0]
+        self.assertEqual(view.tables[0].terms[-1], DWC + 'waterBody')
+        self.assertEqual(conversion_tidy.candidates(view), [])
+        self.assertEqual(conversion_tidy.model_changes(sea, {'x': {'table': 0, 'column': 9, 'value': 'v', 'fields': {'sex': 'male'},
+                                                                   'residue': '', 'confidence': 'high', 'note': ''}}), [])
 
 
 # The AI reviewer stays out of the way (no automatic review runs), so only the tidy-up calls the model.

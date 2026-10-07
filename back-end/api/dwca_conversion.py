@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 import pandas as pd
 
 from api.dwca_import import DWC, ConversionError, ImportFailure, REGISTRY, dropped_extension_warnings
-from api.dwca_tidy import column_note, pending_suggestions
+from api.dwca_tidy import column_note, settled_values
 from api.dwca_media import MEDIA_FAMILIES, MEDIA_SUBJECT_TERMS, media_targets
 from api.dwca_references import REFERENCE_FAMILIES, NON_EXACT_TARGETS, IDENTIFIER_ROW_TYPE, REFERENCE_ROW_TYPE, DC, reference_targets, emit_reference_records
 from api.dwca_humboldt import HUMBOLDT_FAMILIES, IRI_DIRECT, DIRECT, blocked_fields, humboldt_targets, scope_review, emit_humboldt_records, valid_value
@@ -934,11 +934,11 @@ def build_plan(archive):
                         else "Darwin Core Data Packages have no field for this term, so the values stay in your original files." if term not in SCHEMA_TERMS
                         else "This converter does not map this term yet, so the values stay in your original files."),
                     options=item["options"], table=t, nonempty=len(values), samples=[value[:250] for value in item["samples"]]))
-            # Labels the tidy-up settled are no longer asked about; one it offers as a suggestion is not asked twice.
-            suggested = pending_suggestions(archive, t, c)
+            # Values the tidy-up dealt with (changed, or offered as a suggestion) are not asked about again.
+            settled = settled_values(archive, t, c)
             if table.is_core and own == 'occurrence' and term == DWC + 'countryCode' and chosen == 'event.countryCode':
                 for source_value, count in sorted(Counter(values).items()):
-                    if not semantic_target_rejection('event.countryCode', source_value) or source_value in suggested:
+                    if not semantic_target_rejection('event.countryCode', source_value) or source_value in settled:
                         continue
                     issues.append(_issue(_reviewed_value_id('country-label', t, c, source_value),
                         f'{table.name}: where does {source_value[:100]!r} belong?',
@@ -954,7 +954,7 @@ def build_plan(archive):
                              if row[table.terms.index(DWC + 'eventID')]] if DWC + 'eventID' in table.terms else []
                 if len(event_ids) == len(set(event_ids)):
                     for source_value, count in sorted(Counter(values).items()):
-                        if not is_age_like_remark(source_value) or source_value in suggested:
+                        if not is_age_like_remark(source_value) or source_value in settled:
                             continue
                         issues.append(_issue(_reviewed_value_id('age-remark', t, c, source_value),
                             f'{table.name}: does {source_value[:100]!r} describe the organism?',
