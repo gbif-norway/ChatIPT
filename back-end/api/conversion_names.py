@@ -53,7 +53,7 @@ MAX_BATCHES = 5  # bulk decisions that can still be undone; each keeps the snaps
 _OVERLONG_SOURCE_ID = '\0overlong'
 UNCERTAIN_QUALIFIERS = {'sp.', 'spp.', 'indet.'}
 # "cf.", "aff.", "nr." or "?" anywhere in a label make the identification doubtful, even beside a trailing "sp.".
-_DOUBT_MARKER = re.compile(r'\?|(?:^|\s)(?:cf|aff|nr)\.?(?=\s|$)', re.IGNORECASE)
+_DOUBT_MARKER = re.compile(r'\?|(?:^|\s)(?:cf|aff|nr)(?:\.|(?=\s|$))', re.IGNORECASE)
 GROUP_OPTIONS = {
     'auto': ['col', 'parsed', 'keep'],
     'uncertain': ['stem', 'keep'],
@@ -471,7 +471,18 @@ def authorship_agrees(record, usage):
     if record.get('authorships_truncated'):
         return False
     theirs = (usage or {}).get('scientificNameAuthorship')
-    return not normal(theirs) or all(authorships_agree(value, theirs) for value in supplied)
+    if not normal(theirs):
+        return True
+    if not parsed.get('usable') and _unread_trailing_text(record):
+        # The parser could not read the label, and text after the name may be an authorship nobody can compare.
+        return False
+    return all(authorships_agree(value, theirs) for value in supplied)
+
+
+def _unread_trailing_text(record):
+    """Words after the first in an unparsed label that look like an author or year ("Aus bus Smith, 1900")."""
+    words = split_qualifier(record.get('label'))[0].split()[1:]
+    return any(word[:1].isupper() or word[:1] in '([' or any(character.isdigit() for character in word) for word in words)
 
 
 def unconfirmed(state):

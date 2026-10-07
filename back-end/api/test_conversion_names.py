@@ -1407,6 +1407,25 @@ class GroupDecisionTests(SimpleTestCase):
         self.assertTrue(choice['authorship_differs'])
         self.assertFalse(names.col_choices({**record, 'source_authorships': ['Jones 1900']})[0]['authorship_differs'])
 
+    def test_an_unparsed_label_with_trailing_author_text_never_takes_cols_authorship_automatically(self):
+        record = {'label': 'Aus bus Smith, 1900', 'rows': 1, 'qualifier': None, 'source_authorships': [],
+                  'parsed': {'type': 'SCIENTIFIC', 'usable': False, 'canonical': None, 'authorship': None, 'rank': None,
+                             'lossless': False, 'splits': False},
+                  'match': {'matchType': 'EXACT', 'hintOnly': False, 'usage': {
+                      'id': 'X', 'scientificName': 'Aus bus', 'scientificNameAuthorship': 'Jones, 1900', 'taxonRank': 'species'}}}
+        self.assertFalse(names.authorship_agrees(record, record['match']['usage']))
+        state = {'labels': [record], 'decisions': {}, 'col_release': RELEASE}
+        names.auto_accept(state)
+        self.assertEqual(state['decisions']['Aus bus Smith, 1900']['decision'], 'keep')
+        self.assertNotIn('col', names.classify(record)['eligible'])
+        # A bare name with nothing after it still agrees.
+        self.assertTrue(names.authorship_agrees({**record, 'label': 'Aus bus'}, record['match']['usage']))
+
+    def test_doubt_markers_joined_to_the_epithet_are_seen(self):
+        for label in ('Larus cf.argentatus', 'Larus aff.argentatus', 'Larus nr.argentatus'):
+            with self.subTest(label=label):
+                self.assertEqual(names.qualifier_kind({'label': label, 'qualifier': None, 'parsed': real_parse('Larus')}), 'doubt')
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,
