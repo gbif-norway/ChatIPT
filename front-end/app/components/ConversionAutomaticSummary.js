@@ -41,9 +41,9 @@ export default function ConversionAutomaticSummary({ state, selected, hidden, di
         <details className="small"><summary>See the list</summary><p className="mt-1 mb-1">{line.names.join(', ')}</p>
           {line.overridden.length > 0 && <p className="mb-1">Changed by you: {line.overridden.join(', ')}</p>}</details>
         <p className="small text-body-secondary mb-1">{line.why}</p>
-        <button type="button" className="btn btn-link btn-sm p-0" disabled={disabled} aria-expanded={Boolean(specimenOpen[line.id])}
-          onClick={() => setSpecimenOpen(current => ({ ...current, [line.id]: !current[line.id] }))}>{specimenOpen[line.id] ? 'Close' : 'Change'}</button>
-        {specimenOpen[line.id] && <div className="automatic-summary-editor mt-2">{renderChoice(line.item)}</div>}
+        {line.editable && <button type="button" className="btn btn-link btn-sm p-0" disabled={disabled} aria-expanded={Boolean(specimenOpen[line.id])}
+          onClick={() => setSpecimenOpen(current => ({ ...current, [line.id]: !current[line.id] }))}>{specimenOpen[line.id] ? 'Close' : 'Change'}</button>}
+        {line.editable && specimenOpen[line.id] && <div className="automatic-summary-editor mt-2">{renderChoice(line.item)}</div>}
       </div></div>
     </div>)}
     {silent.length > 0 && <details className="automatic-summary-silent">

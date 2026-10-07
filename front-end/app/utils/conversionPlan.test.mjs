@@ -130,11 +130,26 @@ test('automatic summary groups glance choices, hides retained or empty entries, 
   assert.equal(unsaved.count, 0)
 
   // While a changed answer is being saved, a default that follows it says it is updating.
+  // Also when the server still lists the question as open.
   const savingState = summaryState({})
+  savingState.unresolved = ['material:0']
   savingState.plan.automatic_choices[0].default_when = [
     { value: 'material.collectedBy', when: [{ type: 'decision_in', id: 'material:0', values: ['per_row'] }] }]
   const saving = automaticSummary(savingState, makeSelector(savingState, { 'material:0': 'per_row' })).glance.find(line => line.id === 'column:0:0')
   assert.equal(saving.title, 'recordedBy → updating to follow your answer')
+
+  // An identifier column that follows where the names go updates when the names' column changes locally.
+  const followState = summaryState({ 'material:0': 'per_row' })
+  followState.plan.columns.push({ id: 'column:0:0', default: 'occurrence.recordedBy' })
+  followState.plan.automatic_choices.push({ id: 'column:0:9', table: 0, term: term('recordedByID'), family: 'agent-role', nonempty: 3,
+    default: 'occurrence.recordedByID', options: [{ value: 'occurrence.recordedByID', label: 'Recorded ID' }],
+    default_when: [{ value: 'event.eventConductedByID', when: [{ type: 'target_in', column: 'column:0:0', targets: ['event.eventConductedBy'] }] }] })
+  const follow = automaticSummary(followState, makeSelector(followState, { ...followState.decisions, 'column:0:0': 'event.eventConductedBy' }))
+  assert.equal(follow.silent.find(line => line.id === 'column:0:9').title, 'recordedByID → updating to follow your answer')
+
+  // An open specimen question is answered below, not from the specimen line.
+  const openSpecimen = automaticSummary(summaryState({}), makeSelector(summaryState({}), {}), new Set(['material:0'])).specimen[0]
+  assert.equal(openSpecimen.editable, false)
 })
 
 test('columns are summarised by how they are handled, using column.unmapped when present', () => {

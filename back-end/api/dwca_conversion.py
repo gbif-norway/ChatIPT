@@ -557,9 +557,10 @@ def _material_modes(table, material_column, comparison_term=None, recorded=False
     occurrence_col = table.terms.index(DWC + 'occurrenceID') if DWC + 'occurrenceID' in table.terms else None
     occurrence_ids = [row[occurrence_col] for row in table.rows] if occurrence_col is not None else []
     linked = bool(occurrence_ids) and all(value and not missing_reference(value, ()) for value in occurrence_ids)
-    if recorded and not linked:
+    # A repeated occurrenceID names several converted occurrences, so no specimen links to just one.
+    if recorded and (not linked or len(set(occurrence_ids)) != len(occurrence_ids)):
         return []
-    modes = ['per_row'] if not recorded or len(set(occurrence_ids)) == len(occurrence_ids) else []
+    modes = ['per_row']
     if material_column is None:
         return modes
     groups = defaultdict(list)

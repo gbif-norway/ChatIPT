@@ -123,7 +123,7 @@ function ChoiceCard({ item, state, decisions, disabled, onChoose, selected, numb
       {item.options.map(option => <option key={option.value} value={option.value}>
         {option.label}{optionState(state, item.id, option.value).available ? '' : ' (not available with your other choices)'}</option>)}
     </select>{glossaryEntry(state, value)?.gloss && <small className="d-block text-body-secondary mt-1">{glossaryEntry(state, value).gloss}</small>}</>}
-    {guided && isColumnId(item.id) && state.plan?.glossary?.copy_note && <p className="small text-body-secondary mt-2 mb-0">{state.plan.glossary.copy_note}</p>}
+    {guided && isColumnId(item.id) && item.kind !== 'name-semantics' && !String(item.term || '').endsWith('/scientificName') && state.plan?.glossary?.copy_note && <p className="small text-body-secondary mt-2 mb-0">{state.plan.glossary.copy_note}</p>}
     {guided && item.options.some(option => glossaryEntry(state, option.value)?.definition) && <details className="small mt-2"><summary>Official Darwin Core definitions</summary>
       <dl className="mt-2 mb-0">{item.options.filter(option => glossaryEntry(state, option.value)?.definition).map(option => <div key={option.value}><dt>{option.technical || option.value}</dt><dd>{glossaryEntry(state, option.value).definition}</dd></div>)}</dl></details>}
     {guided && recommendation?.rationale && <details className="small mt-2"><summary>Why ChatIPT suggests this answer</summary><p className="mt-2 mb-0">{recommendation.rationale}</p></details>}

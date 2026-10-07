@@ -188,6 +188,8 @@ class ConversionQuestionTests(SimpleTestCase):
             'r1,urn:catalog:1,PreservedSpecimen,urn:uuid:m1,Hagen,present\n'
             'r2,urn:catalog:1,PreservedSpecimen,urn:uuid:m2,Collett,present\n').encode())]))
         column_id = column_by_term_id(plan, 'recordedBy')
+        self.assertEqual([branch['value'] for branch in next(column for column in plan['columns'] if column['id'] == column_id)['default_when']],
+                         ['occurrence.recordedBy'])
         for material in ('per_row', 'by_id'):
             resolved = conditional_defaults(plan, {'material:0': material})[column_id]
             self.assertEqual(resolved['value'], 'occurrence.recordedBy')

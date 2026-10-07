@@ -35,12 +35,18 @@ export const idPrefix = id => NESTED_PREFIX.exec(String(id || ''))?.[0] || ''
 export const localId = id => String(id || '').slice(idPrefix(id).length)
 export const isColumnId = id => localId(id).startsWith('column:')
 
-const conditionIds = item => (item.default_when || []).flatMap(branch => branch.when || [])
+const flatConditions = conditions => (conditions || []).flatMap(condition =>
+  ['any', 'all'].includes(condition.type) ? flatConditions(condition.conditions) : [condition])
+const conditionIds = item => flatConditions((item.default_when || []).flatMap(branch => branch.when || []))
   .filter(condition => condition.type === 'decision_in').map(condition => condition.id)
+// Columns whose target a default follows (recordedByID follows where recordedBy goes).
+const conditionColumns = item => flatConditions((item.default_when || []).flatMap(branch => branch.when || []))
+  .filter(condition => ['target_in', 'target_not_in'].includes(condition.type)).map(condition => condition.column)
 
-// The decisions the server has saved, as the selector would read them without unsaved local changes.
-const savedValue = (state, id) => state?.decisions?.[id] ??
-  (state?.plan?.automatic_choices || []).find(choice => choice.id === id)?.default
+// A decision or column as the server last computed it, without unsaved local changes.
+const plainDefault = (state, id) => (state?.plan?.automatic_choices || []).find(choice => choice.id === id)?.default ??
+  (state?.plan?.columns || []).find(column => column.id === id)?.default
+const savedValue = (state, id) => state?.decisions?.[id] ?? state?.conditional_defaults?.[id]?.value ?? plainDefault(state, id)
 
 export function automaticSummary(state, selected, hidden = new Set()) {
   const plan = state?.plan || {}
@@ -73,10 +79,16 @@ export function automaticSummary(state, selected, hidden = new Set()) {
       ? changed ? `You chose this: ${optionLabel(item, value)}.` : (state?.conditional_defaults?.[item.id]?.reason ?? item.reason)
       : changed ? `You chose: ${optionLabel(item, value)}.` : `${optionLabel(item, value)}. ${item.reason || ''}`.trim()
     // A default that depends on a question still open says what each answer does, rather than explaining today's fallback.
-    const referenced = changed ? [] : conditionIds(item).map(id => prefix && !idPrefix(id) ? prefix + id : id)
-    const waitingFor = referenced.filter(id => (state?.unresolved || []).includes(id))
+    const withPrefix = id => prefix && !idPrefix(id) ? prefix + id : id
+    const referenced = changed ? [] : [...conditionIds(item), ...conditionColumns(item)].map(withPrefix)
+    const unsaved = referenced.some(id => selected(id, plainDefault(state, id)) !== savedValue(state, id))
+    const waitingFor = unsaved ? null : conditionIds(item).map(withPrefix).filter(id => (state?.unresolved || []).includes(id))
       .map(id => entries.find(entry => entry.id === id)).find(Boolean)
-    if (waitingFor) {
+    if (!changed && unsaved) {
+      // The server recomputes this default from an answer that is still being saved.
+      title = `${shortTerm(item.term)} → updating to follow your answer`
+      text = 'This follows the answer you just changed; it updates once your answer is saved.'
+    } else if (waitingFor) {
       const outcomes = waitingFor.options.filter(option => option.value !== 'preserve').map(option => {
         const branch = item.default_when.find(entry => (entry.when || []).some(condition =>
           condition.type === 'decision_in' && localId(condition.id) === localId(waitingFor.id) && condition.values.includes(option.value)))
@@ -84,10 +96,6 @@ export function automaticSummary(state, selected, hidden = new Set()) {
       })
       title = `${shortTerm(item.term)} → waiting for your answer`
       text = `Depends on your answer to “${waitingFor.title}”. ${outcomes.join('; ')}; otherwise ${decided(item.default)}.`
-    } else if (referenced.some(id => selected(id) !== savedValue(state, id))) {
-      // The server recomputes this default from an answer that is still being saved.
-      title = `${shortTerm(item.term)} → updating to follow your answer`
-      text = 'This follows the answer you just changed; it updates once your answer is saved.'
     }
     lines.push({ line: { id: item.id, item, family, heading, title, text, value, changed },
       glance: Boolean(item.glance || item.convention || warningIds.has(item.id)) })
@@ -122,7 +130,8 @@ export function automaticSummary(state, selected, hidden = new Set()) {
       stored: 'You chose to create specimen records.', kept: 'You chose not to create specimen records.',
       pending: 'Your choice about specimen records is still open.',
     }[specimenState]
-    specimen.push({ id, item, count, names: following.map(name), overridden, state: specimenState, title, why })
+    // While the specimen question is open below, it is answered there rather than from this line.
+    specimen.push({ id, item, count, names: following.map(name), overridden, state: specimenState, title, why, editable: !hidden.has(id) })
   }
   return { glance: glanceLines, specimen, silent, ids: new Set([...lines.map(entry => entry.line.id), ...specimen.map(line => line.id)]) }
 }
