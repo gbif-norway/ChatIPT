@@ -47,6 +47,11 @@ class TidyFlowTests(ConversionTestCase):
         # A user choice and its provenance survive a tidy-only plan change.
         choice = next(item for item in conversion.plan['columns'] if item['id'] == 'column:0:1')
         conversion_review.apply_decision_changes(conversion, {choice['id']: choice['default']}, 'user')
+        # An AI choice whose evidence packet no longer matches is not carried.
+        ai_choice = next(item for item in conversion.plan['columns'] if item['id'] == 'column:0:3')
+        conversion_review.apply_decision_changes(conversion, {ai_choice['id']: ai_choice['default']}, 'ai-reviewer', model='gpt-6-sol')
+        conversion.review['recommendations'][ai_choice['id']] = {'plan_id': conversion.plan['id'], 'outcome': 'applied',
+                                                                  'option': ai_choice['default'], 'packet_sha256': 'stale'}
         conversion.save()
         old_plan = conversion.plan['id']
         message = DwcConversionMessage.objects.create(conversion=conversion, role='user', content='Keep going', plan_id=old_plan)
@@ -59,6 +64,9 @@ class TidyFlowTests(ConversionTestCase):
         self.assertEqual(conversion.status, 'review')
         self.assertNotEqual(conversion.plan['id'], old_plan)
         self.assertEqual(conversion.decisions[choice['id']], choice['default'])
+        self.assertNotIn(ai_choice['id'], conversion.decisions)
+        self.assertNotIn(ai_choice['id'], conversion.review['recommendations'])
+        self.assertIn(ai_choice['id'], conversion.tidy['last_replan']['dropped'])
         self.assertFalse(next(item for item in conversion.tidy['summary']['groups'] if item['id'] == group['id'])['applied'])
         country_code = next(item for item in conversion.plan['columns'] if item['term'].endswith('/countryCode'))
         self.assertEqual(country_code['samples'], ['Norway', 'Great Britain', 'NO'])
@@ -89,6 +97,18 @@ class TidyFlowTests(ConversionTestCase):
         conversion.refresh_from_db()
         suggestion = next(item for item in conversion.tidy['summary']['groups'] if item['id'] == suggestion['id'])
         self.assertTrue(suggestion['values'][0]['applied'])
+
+    def test_evidence_check_accepts_an_unchanged_review_packet(self):
+        with override_settings(CONVERSION_AI_REVIEW_ENABLED=False, CONVERSION_NAME_CHECKS_ENABLED=False):
+            process_next_conversion()
+        from api import conversion_evidence
+        conversion = self.conversion
+        view = load_sources(conversion)
+        item = next(issue['id'] for issue in conversion.plan['issues'] if issue['id'].startswith('age-remark:'))
+        packet, _ = conversion_evidence.evidence_packet(conversion.plan, view, {}, item, sources={})
+        check = conversion_tidy._same_evidence(conversion.plan, view, {}, {}, {item: {'packet_sha256': conversion_evidence.digest(packet)}})
+        self.assertTrue(check(item))
+        self.assertFalse(conversion_tidy._same_evidence(conversion.plan, view, {}, {}, {item: {}})(item))
 
     def test_replan_failure_keeps_old_plan_and_drops_pending_override(self):
         with override_settings(CONVERSION_AI_REVIEW_ENABLED=False, CONVERSION_NAME_CHECKS_ENABLED=False):

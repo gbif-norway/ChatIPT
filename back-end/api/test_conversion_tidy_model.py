@@ -159,6 +159,13 @@ class TidyModelSafetyTests(SimpleTestCase):
         self.assertEqual(tiers, {'flying': 'suggest', 'ind/m3': 'suggest', 'M\ufffdre og Romsdal': 'auto', 'CV': 'auto',
                                  'seen twice': 'suggest'})
 
+    def test_a_place_restated_in_another_field_moves_there(self):
+        source = archive([['o1', '', '', '1', 'Norway', 'Aus bus', 'present']])
+        change = conversion_tidy.model_changes(source, {'n': {'table': 0, 'column': 4, 'value': 'Norway', 'residue': '',
+            'fields': {'country': 'Norway', 'countryCode': 'NO'}, 'confidence': 'high', 'note': ''}})[0]
+        self.assertEqual((change['fields'], change['move'], change['tier']),
+                         ({'country': 'Norway', 'countryCode': 'NO', 'stateProvince': ''}, True, 'auto'))
+
     def test_model_answers_never_corroborate_each_other(self):
         # Both remarks columns propose lifeStage adult for a row whose own lifeStage is empty: nothing in the source agrees.
         source = archive([['o1', '', 'fad', '1', '', 'Aus bus', 'present', 'adult female']], extra_terms=('occurrenceRemarks',))
@@ -231,6 +238,18 @@ class TidyModelFlowTests(ConversionTestCase):
         self.assertEqual(conversion_tidy._model_cache(other, fingerprint), {})
         same = DwcConversion.objects.create(dataset=Dataset.objects.create(user=conversion.dataset.user, workflow_type='dwca_conversion'))
         self.assertTrue(conversion_tidy._model_cache(same, fingerprint)['entries'])
+
+    def test_values_left_out_of_an_answer_are_not_asked_again(self):
+        def response(args, max_retries=None):
+            return SimpleNamespace(id='partial', status='completed', model='gpt-6-sol', usage={'input_tokens': 10, 'output_tokens': 5},
+                                   output_text=json.dumps({'columns': []}))
+        with patch('api.helpers.openai_helpers.query_with_flex_fallback', side_effect=response) as query:
+            process_next_conversion(); process_next_conversion()
+            self.assertTrue(all(entry['confidence'] == 'low' for entry in self.conversion.tidy['model']['entries'].values()))
+            self.assertEqual(self.post('inspect').status_code, 202)
+            process_next_conversion()
+            self.assertFalse(DwcConversionJob.objects.filter(conversion=self.conversion).exists())
+            self.assertEqual(query.call_count, 1)
 
     def test_model_failure_keeps_deterministic_plan_and_undo_does_not_call_model(self):
         with patch('api.helpers.openai_helpers.query_with_flex_fallback', side_effect=RuntimeError('offline')) as query:

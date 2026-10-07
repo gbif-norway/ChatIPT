@@ -139,7 +139,7 @@ a stable `ref` that the model must cite:
   material, catalogue, basis and preparation columns (`material-identity`); scope and
   completeness columns (Humboldt kinds); the columns with values in the item's rows
   (row kinds). Questions about one exact source value (`country-label:`,
-  `age-remark:`; asked only when the [tidy-up](tidy.md) is disabled) get the source column plus related columns: country, countryCode,
+  `age-remark:`; asked only for values the [tidy-up](tidy.md) leaves unsettled) get the source column plus related columns: country, countryCode,
   locality, waterBody, stateProvince and other named-place columns (never
   coordinates) for country labels;
   lifeStage, sex, individualCount, organismQuantity and remarks for age remarks.

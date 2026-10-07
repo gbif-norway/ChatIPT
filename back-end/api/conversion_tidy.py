@@ -252,6 +252,10 @@ def model_changes(view_or_archive, entries):
                 fields[own] = original
         else:
             fields.setdefault(own, original)
+            # A place value restated word for word in another field (county 'Norway' as country) moves there.
+            if own in PLACE_FIELDS | {'countryCode'} and fields[own] == original and any(
+                    field != own and text.casefold() == original.casefold() for field, text in fields.items()):
+                fields[own] = ''
         move = fields[own] == ''
         if fields.get(own) == original and len(fields) == 1:
             continue
@@ -395,9 +399,8 @@ def run_model(conversion, archive, claim, job_id):
         result['status'] = 'unavailable'
         return result
     metadata = publication_metadata(archive, 600)
-    args = _request_args(conversion, remaining, {'title': metadata.get('title') or conversion.dataset.title,
-        'description': metadata.get('description') or conversion.dataset.description,
-        'language': getattr(conversion.dataset, 'language', '')})
+    # Only the archive's own metadata is sent, so stored answers depend on the source bytes alone.
+    args = _request_args(conversion, remaining, {'title': metadata.get('title') or '', 'description': metadata.get('description') or ''})
     reservation = None
     with conversion_review.fence(conversion.pk, job_id, claim, 'tidy', {'inspecting'}) as (locked, _):
         reservation = conversion_review.reserve(locked, args, claim)
@@ -414,6 +417,11 @@ def run_model(conversion, archive, claim, job_id):
     if parsed is None:
         raise ValueError('The tidy model returned no usable response.')
     found, found_verdicts = parsed
+    # A value the answer left out counts as an abstention, so it is not paid for again.
+    for column in remaining:
+        for value in column['values']:
+            found.setdefault(value['key'], {'table': column['table'], 'column': column['column'], 'value': value['value'],
+                                            'fields': {}, 'residue': '', 'confidence': 'low', 'note': 'No answer.'})
     entries.update(found)
     verdicts.update(found_verdicts)
     result.update(response_id=str(getattr(response, 'id', '') or ''), entries=entries, verdicts=verdicts)
@@ -538,6 +546,24 @@ def _items(plan):
             *plan.get('automatic_choices', []), *plan.get('row_issues', [])]}
 
 
+def _same_evidence(plan, view, decisions, sources, records):
+    """A check that an item's review packet under the new plan is the one its recommendation was made from."""
+    from api import conversion_evidence as evidence
+    from api.dwca_review import effective_decisions, option_status
+    status, effective, memo = option_status(plan, decisions), effective_decisions(plan, decisions), {}
+
+    def check(item_id):
+        if item_id not in memo:
+            stored = (records.get(item_id) or {}).get('packet_sha256')
+            try:
+                packet, _ = evidence.evidence_packet(plan, view, decisions, item_id, status=status, sources=sources, effective=effective)
+                memo[item_id] = bool(stored) and evidence.digest(packet) == stored
+            except Exception:
+                memo[item_id] = False
+        return memo[item_id]
+    return check
+
+
 def carry_plan_state(conversion, old_plan, new_plan, view):
     from api.conversion_review import latest_events
     from api.dwca_conversion import validate_decisions
@@ -573,6 +599,14 @@ def carry_plan_state(conversion, old_plan, new_plan, view):
             for identifier in invalid:
                 if identifier in kept:
                     kept.pop(identifier); dropped.append(identifier)
+    # An AI choice or recommendation also needs the evidence the reviewer saw to be unchanged: tidying a neighbouring
+    # column can change the samples in its packet while the question itself stays the same.
+    old_review = conversion.review if isinstance(conversion.review, dict) else {}
+    old_records = old_review.get('recommendations', {})
+    sources = {identifier: old_events[identifier].source if identifier in old_events else 'user' for identifier in kept}
+    same_evidence = _same_evidence(new_plan, view, kept, sources, old_records)
+    for identifier in [key for key, source in sources.items() if source == 'ai-reviewer' and not same_evidence(key)]:
+        kept.pop(identifier); dropped.append(identifier)
     conversion.decisions = kept
     from api.models import DwcConversionDecisionEvent
     copies = []
@@ -587,10 +621,8 @@ def carry_plan_state(conversion, old_plan, new_plan, view):
     unchanged = {key for key in old_items if key in new_items
                  and json.dumps(old_items[key], sort_keys=True) == json.dumps(new_items[key], sort_keys=True)}
     conversion._tidy_carry = (copies, old_plan.get('id', ''), new_plan['id'], unchanged)
-    old_review = conversion.review if isinstance(conversion.review, dict) else {}
     recommendations = {key: {**record, **({'plan_id': new_plan['id']} if 'plan_id' in record else {})}
-                        for key, record in old_review.get('recommendations', {}).items()
-                        if key in old_items and key in new_items and json.dumps(old_items[key], sort_keys=True) == json.dumps(new_items[key], sort_keys=True)}
+                        for key, record in old_records.items() if key in unchanged and same_evidence(key)}
     conversion.review = {'plan_id': new_plan['id'], 'runs': old_review.get('runs', 0), 'status': 'idle',
                          'error': '', 'recommendations': recommendations}
     from api.conversion_names import collect_state, carry_decisions
