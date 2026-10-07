@@ -299,6 +299,8 @@ def model_changes(view_or_archive, entries, overrides=None):
         elif others.get('individualCount') and int(others['individualCount']) not in {
                 int(token) for token in re.findall(r'(?<![\d.,/-])\d+(?![.,/-]?\d)', original)}:
             tier = 'suggest'  # a count must be written in the value itself
+        elif own in PLACE_FIELDS and rewritten == original and any(field in {'country', 'countryCode', 'waterBody'} for field in others):
+            tier = 'suggest'  # a place read as a country or sea must move there, not stay behind as well
         change['tier'] = tier
     return initial
 
@@ -529,7 +531,8 @@ def state_section(conversion, job=None):
                 for item in group.get('values', []) if item.get('applied')), 'model': model.get('model'),
                 'verdicts': model.get('verdicts', {})} if model else {}),
             'overrides': state.get('overrides', {}),
-            'counts': {'tidied_groups': sum(bool(g.get('applied')) and g.get('tier') == 'auto' for g in groups),
+            'counts': {'tidied_groups': sum(bool(g.get('applied')) and bool(g.get('changed_rows')) and g.get('tier') == 'auto'
+                                            for g in groups),
                        'tidied_rows': sum(sum(v.get('changed_rows', 0) for v in g.get('values', []))
                                           for g in groups if g.get('applied')),
                        'suggestions': sum(1 for g in groups for v in g.get('values', [])

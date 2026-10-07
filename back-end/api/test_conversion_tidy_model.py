@@ -248,6 +248,12 @@ class TidyModelSafetyTests(SimpleTestCase):
         rest = conversion_tidy.candidates(view, answered=answered)
         self.assertEqual(sum(len(column['values']) for column in rest), 250 - conversion_tidy.MAX_VALUES)
 
+    def test_a_country_read_from_a_county_must_move_to_apply_by_itself(self):
+        source = archive([['o1', '', '', '1', 'Norway', 'Aus bus', 'present']])
+        change = conversion_tidy.model_changes(source, {'n': {'table': 0, 'column': 4, 'value': 'Norway', 'residue': '',
+            'fields': {'countryCode': 'NO'}, 'confidence': 'high', 'note': ''}})[0]
+        self.assertEqual((change['fields'], change['tier']), ({'countryCode': 'NO', 'stateProvince': 'Norway'}, 'suggest'))
+
     def test_model_answers_never_corroborate_each_other(self):
         # Both remarks columns propose lifeStage adult for a row whose own lifeStage is empty: nothing in the source agrees.
         source = archive([['o1', '', 'fad', '1', '', 'Aus bus', 'present', 'adult female']], extra_terms=('occurrenceRemarks',))

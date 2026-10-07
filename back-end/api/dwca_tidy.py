@@ -509,6 +509,10 @@ def tidy_archive(archive, overrides=None, model_changes=None):
         # An undone or suggested group still says what it would change.
         n = group['changed_rows'] if group['tier'] == AUTO and group['changed_rows'] else group['rows']
         group['title'] = _title(rule, group['field'], group['values'], n)
+        if group['applied'] and not group['changed_rows'] and group['conflict_rows']:
+            # Nothing changed: every row with these values already says something different elsewhere.
+            group['title'] = (f"{group['field']}: left as written in {group['conflict_rows']:,} rows, because another column "
+                              'already says something different.')
         for item in group['values']:
             for private in ('tier', 'move', 'value_text', '_changed', '_conflicts', '_agrees', '_filled'):
                 item.pop(private, None)

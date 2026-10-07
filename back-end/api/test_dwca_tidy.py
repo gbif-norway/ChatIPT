@@ -181,6 +181,9 @@ class DwcaTidyTests(SimpleTestCase):
         self.assertEqual([row[1:] for row in view.tables[0].rows], [['Norway', 'Sweden'], ['NO', 'Norway']])
         moved = self.group(table, 'country-name')
         self.assertEqual((moved['changed_rows'], moved['conflict_rows']), (1, 1))
+        # With every row in conflict, the notice says the values were left as written.
+        only = tidy_archive(self.build('occurrenceID,countryCode,country', ['a,Norway,Sweden']))[1]
+        self.assertIn('left as written', self.group(only, 'country-name')['title'])
         # Only curated sea names move automatically; mixed place text is a suggestion.
         mixed = self.build('occurrenceID,country', ['a,"United Kingdom (English Channel)"', 'b,North Atlantic Ocean (other parts)'])
         view, table = tidy_archive(mixed)
