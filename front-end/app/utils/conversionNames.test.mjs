@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   DECISION_LABELS, GROUPS, applyLabel, bulkBody, carriedMessage, checkMessage, choiceGroups, choiceLabel, classificationContext, decisionBody,
   decisionResult, groupOptions, groupQuery, groupSubtitle, groupTitle, isChecking, isEditable, needsRowDecision, pageCount, parseNote, previewResult,
-  progress, reasonText, replacementWarning, rowStatus, skippedMessage, stemLabel, undoAutoBody, undoBatchBody,
+  groupBatch, progress, reasonText, replacementWarning, rowStatus, skippedMessage, stemLabel, undoAutoBody, undoBatchBody,
 } from './conversionNames.mjs'
 
 test('group order, titles and option labels follow the server groups', () => {
@@ -76,7 +76,8 @@ test('row helpers label result, provenance, reasons and stem choices', () => {
   assert.deepEqual(rowStatus({ decision: { decision: 'keep', by: 'user' } }), { kind: 'user', text: 'Changed by you' })
   assert.deepEqual(rowStatus({ decision: { decision: 'col', by: 'bulk:check' } }), { kind: 'bulk', text: 'Applied to the group' })
   assert.deepEqual(rowStatus({ decision: { decision: 'stem', by: 'auto:uncertain' } }), { kind: 'auto', text: 'Accepted automatically' })
-  assert.deepEqual(rowStatus({ decision: { decision: 'col' }, decision_held: true }), { kind: 'held', text: 'Your name is kept' })
+  assert.deepEqual(rowStatus({ decision: { decision: 'col', scientificName: 'Arthropoda' }, decision_held: true }),
+    { kind: 'held', text: 'Your text as written (until you confirm)' })
   assert.deepEqual(rowStatus({}), { kind: null, text: '' })
   assert.equal(reasonText({ reasons: [{ text: 'Not found in COL' }] }), 'Not found in COL')
   assert.equal(stemLabel({ stem: { scientificName: 'Galium', taxonRank: 'genus' } }), 'Publish the genus Galium')
@@ -134,4 +135,12 @@ test('class and mixed-classification conflicts get their own explanation', () =>
 test('a rank conflict says which ranks disagree', () => {
   assert.equal(groupSubtitle({ kind: 'check', labels: 1, signature: { code: 'rank', yours: 'genus', col: 'order' } }),
     'Your rank says genus; COL has this name as order. It may be a different taxon with the same name.')
+})
+
+test('each group keeps the Undo of its own latest bulk decision', () => {
+  const summary = { batches: [{ id: 'a', group: 'spelling', count: 4 }, { id: 'b', group: 'unconfirmed', count: 3 }, { id: 'c', group: 'spelling', count: 1 }] }
+  assert.equal(groupBatch(summary, 'spelling').id, 'c')
+  assert.equal(groupBatch(summary, 'unconfirmed').id, 'b')
+  assert.equal(groupBatch(summary, 'auto'), null)
+  assert.equal(groupBatch({ last_batch: { id: 'x', group: 'auto' } }, 'auto').id, 'x')
 })

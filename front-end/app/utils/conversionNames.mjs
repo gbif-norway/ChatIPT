@@ -105,7 +105,8 @@ export const progress = (summary = {}) => {
 export const rowStatus = (entry) => {
   const decision = entry?.decision
   if (!decision) return { kind: null, text: '' }
-  if (entry.decision_unconfirmed || entry.decision_held) return { kind: 'held', text: decisionResult(decision) || 'Your name is kept' }
+  // A held choice is converted as the user's own text until it is confirmed, so that is what the row shows.
+  if (entry.decision_unconfirmed || entry.decision_held) return { kind: 'held', text: 'Your text as written (until you confirm)' }
   if (decision.by === 'user') return { kind: 'user', text: 'Changed by you' }
   if (decision.by?.startsWith('bulk:')) return { kind: 'bulk', text: 'Applied to the group' }
   if (decision.by?.startsWith('auto:')) return { kind: 'auto', text: 'Accepted automatically' }
@@ -142,6 +143,10 @@ export const decisionBody = (planId, label, kind, usageId, { confirmCoarser = fa
     [label]: kind ? { decision: kind, ...(usageId ? { usage_id: usageId } : {}), ...(confirmCoarser ? { confirm_coarser: true } : {}) } : null,
   },
 })
+
+// The latest bulk decision of a group that can still be undone; earlier groups keep their own Undo.
+export const groupBatch = (summary, groupId) => [...(summary?.batches || (summary?.last_batch ? [summary.last_batch] : []))]
+  .reverse().find(batch => batch.group === groupId) || null
 
 export const bulkBody = (planId, group, decision) => ({ action: 'names', plan_id: planId, bulk: { group, decision } })
 export const undoBatchBody = (planId, id) => ({ action: 'names', plan_id: planId, undo_batch: id })

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import config from '../config'
 import {
-  PAGE_SIZE, applyLabel, bulkBody, carriedMessage, checkMessage, choiceGroups, choiceLabel, decisionBody,
+  PAGE_SIZE, applyLabel, groupBatch, bulkBody, carriedMessage, checkMessage, choiceGroups, choiceLabel, decisionBody,
   decisionResult, groupOptions, groupQuery, groupSubtitle, groupTitle, isChecking, isEditable, needsRowDecision, pageCount,
   previewResult, progress, reasonText, replacementWarning, rowStatus, skippedMessage, stemLabel, unconfirmedMessage,
   undoAutoBody, undoBatchBody,
@@ -174,7 +174,7 @@ function NameRows({ group, expanded, updated, datasetId, url, editable, busy, se
 function GroupDecisionBar({ group, planId, busy, editable, send, summary, selected, onSelect }) {
   const options = groupOptions(group)
   const selectedOption = options.find(option => option.decision === selected)
-  const lastBatch = summary.last_batch?.group === group.id ? summary.last_batch : null
+  const lastBatch = groupBatch(summary, group.id)
   const apply = async () => {
     try { await send(bulkBody(planId, group.id, selected)) } catch (err) { return err }
   }

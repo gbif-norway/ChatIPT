@@ -52,6 +52,8 @@ MAX_SOURCE_QUALIFIERS = 5
 MAX_BATCHES = 5  # bulk decisions that can still be undone; each keeps the snapshots it replaced
 _OVERLONG_SOURCE_ID = '\0overlong'
 UNCERTAIN_QUALIFIERS = {'sp.', 'spp.', 'indet.'}
+# "cf.", "aff.", "nr." or "?" anywhere in a label make the identification doubtful, even beside a trailing "sp.".
+_DOUBT_MARKER = re.compile(r'\?|(?:^|\s)(?:cf|aff|nr)\.?(?=\s|$)', re.IGNORECASE)
 GROUP_OPTIONS = {
     'auto': ['col', 'parsed', 'keep'],
     'uncertain': ['stem', 'keep'],
@@ -502,7 +504,7 @@ def qualifier_kind(record):
     """Classify the label and source-column qualifier as uncertain, doubtful, or absent."""
     qualifier = normal(record.get('qualifier'))
     label = str(record.get('label') or '')
-    label_kind = ('doubt' if '?' in label else
+    label_kind = ('doubt' if _DOUBT_MARKER.search(label) else
                   None if not qualifier else ('uncertain' if _normal_qualifier(qualifier) in UNCERTAIN_QUALIFIERS else 'doubt'))
     values = record.get('source_qualifiers') or []
     if values:
@@ -570,6 +572,16 @@ def _hint_normal(value):
     return {'metazoa': 'animalia', 'viridiplantae': 'plantae'}.get(value, value)
 
 
+def _rank_conflict(record):
+    """A uninomial whose supplied rank (genus or above) is not its exact COL usage's rank: maybe another taxon."""
+    match = record.get('match') or {}
+    usage = match.get('usage') or {}
+    source_rank, col_rank = record.get('source_rank'), usage.get('taxonRank')
+    return (match.get('matchType') == 'EXACT' and bool(usage) and qualifier_kind(record) != 'uncertain'
+            and len(name_parts(asserted_name(record))) == 1 and source_rank in RANK_ORDER
+            and RANK_ORDER.index(source_rank) <= RANK_ORDER.index('genus') and col_rank in RANK_ORDER and source_rank != col_rank)
+
+
 def _conflicts(record):
     match = record.get('match') or {}
     usage = match.get('usage') or {}
@@ -579,13 +591,8 @@ def _conflicts(record):
         found = change(record, usage, 'EXACT')
         if found:
             out.append(('name', 'check:name', f"COL returned a different name: {usage.get('scientificName')} ({usage.get('taxonRank') or 'unknown rank'})"))
-        source_rank = record.get('source_rank')
-        col_rank = usage.get('taxonRank')
-        source_parts = name_parts(asserted_name(record))
-        if (qualifier_kind(record) != 'uncertain' and len(source_parts) == 1 and source_rank in RANK_ORDER
-                and RANK_ORDER.index(source_rank) <= RANK_ORDER.index('genus')
-                and col_rank in RANK_ORDER and source_rank != col_rank):
-            out.append(('rank', 'check:rank', f'Your rank is {source_rank}; COL has this name as {col_rank}'))
+        if _rank_conflict(record):
+            out.append(('rank', 'check:rank', f"Your rank is {record['source_rank']}; COL has this name as {usage['taxonRank']}"))
     idcheck = match.get('idCheck') or {}
     if idcheck.get('outcome') == 'elsewhere' or 'SCIENTIFIC_NAME_AND_ID_INCONSISTENT' in (match.get('issues') or []):
         fields = ', '.join((idcheck.get('fields') or record.get('source_ids') or {}).keys()) or 'identifier'
@@ -683,7 +690,8 @@ def eligible(record, option, classification, decisions=None):
     if option == 'stem':
         return kind == 'uncertain' and stem_usage(record) is not None
     if option == 'col':
-        if kind == 'check' and record.get('mixed_hints'):
+        # Rows that may be two taxa, or a rank that says another taxon: COL's usage is taken one name at a time only.
+        if kind == 'check' and (record.get('mixed_hints') or _rank_conflict(record)):
             return False
         if kind == 'check' and qkind == 'uncertain':
             stem = stem_usage(record)
@@ -835,6 +843,8 @@ def build_decision(record, spec, state, by='user', group_kind=None):
     kind = requested
     if by != 'user' and qualifier_kind(record) == 'doubt':
         raise NameDecisionError('An uncertain identification can only be decided one at a time.')
+    if by != 'user' and kind in {'col', 'alternative', 'stem'} and (record.get('mixed_hints') or _rank_conflict(record)):
+        raise NameDecisionError('A name whose rows or rank may mean another taxon takes a COL name only one at a time.')
     snapshot = {'decision': kind, 'by': by, 'at': timezone.now().isoformat(), 'scientificName': None,
                 'scientificNameAuthorship': None, 'taxonRank': None, 'source': 'verbatim' if kind == 'keep' else 'none'}
     parsed, match = record.get('parsed') or {}, record.get('match') or {}
@@ -1363,7 +1373,9 @@ def state_section(conversion, offset=0, limit=PAGE_SIZE, view='all', group=None,
                'skipped_long': state.get('skipped_long') or {'labels': 0, 'rows': 0}, 'max_label_chars': MAX_LABEL_CHARS, 'match_status': dict(statuses),
                'groups': group_summaries, 'unchecked': sum(1 for record in labels if not checked(record)),
                'auto_declined': len(state.get('auto_declined') or []),
-               'last_batch': ({key: value for key, value in state['batches'][-1].items() if key != 'changes'} if state.get('batches') else None)}
+               'last_batch': ({key: value for key, value in state['batches'][-1].items() if key != 'changes'} if state.get('batches') else None),
+               # Every bulk decision that can still be undone, oldest first.
+               'batches': [{key: value for key, value in batch.items() if key != 'changes'} for batch in state.get('batches') or []]}
     shown = [record for record in labels if (view != 'pending' or record['label'] not in decisions or record['label'] in held)
              and (view != 'group' or classified[record['label']]['group'] == group)
              and (not q or q.casefold() in record['label'].casefold())]

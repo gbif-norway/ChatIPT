@@ -693,8 +693,13 @@ class NameDecisionAPITests(NamesCase):
         undone = self.post('names', undo_batch=batch_id)
         self.assertEqual(undone.status_code, 200)
         self.assertIsNone(undone.data['name_review']['summary']['last_batch'])
+        self.assertEqual(undone.data['name_review']['summary']['batches'], [])
         self.assertEqual(self.post('names', undo_auto='auto').status_code, 200)
         self.assertGreater(self.conversion.name_review['auto_declined'].__len__(), 0)
+        # Each batch that can still be undone is listed, so an earlier one keeps its Undo.
+        first = self.post('names', bulk={'group': 'auto', 'decision': 'parsed'}).data['name_review']['summary']
+        self.assertEqual([batch['group'] for batch in first['batches']], ['auto'])
+        self.assertNotIn('changes', first['batches'][0])
 
     def test_a_fully_automatic_check_settles_the_fallback_and_declines_survive_a_recheck(self):
         def all_exact(queries, deadline=None):
@@ -1334,6 +1339,19 @@ class GroupDecisionTests(SimpleTestCase):
         signature = names.groups({'labels': [record], 'decisions': {}})[0]['signature']
         self.assertEqual((signature['code'], signature['col']), ('name', 'Amphibia'))
 
+    def test_doubt_markers_anywhere_in_the_label_win_over_a_trailing_sp(self):
+        for label in ('Calanus cf. sp.', 'Calanus aff. sp.', 'Calanus nr sp.', 'cf. Calanus', 'Calanus cf.'):
+            record = {'label': label, 'rows': 1, 'qualifier': taxon_matching.split_qualifier(label)[1], 'parsed': real_parse(),
+                      'match': {'matchType': 'EXACT', 'hintOnly': False, 'alternatives': [],
+                                'usage': {'scientificName': 'Calanus', 'taxonRank': 'genus', 'scientificNameAuthorship': None}}}
+            with self.subTest(label=label):
+                self.assertEqual(names.qualifier_kind(record), 'doubt')
+                self.assertEqual(names.classify(record)['eligible'], [])
+                self.assertEqual(names.auto_accept({'labels': [record], 'decisions': {}, 'col_release': RELEASE}), 0)
+        # A genus that merely starts with those letters is not a marker.
+        plain = {'label': 'Nrella sp.', 'qualifier': 'sp.', 'parsed': real_parse()}
+        self.assertEqual(names.qualifier_kind(plain), 'uncertain')
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,
@@ -1342,7 +1360,11 @@ class GroupDecisionTests(SimpleTestCase):
         self.assertEqual((classification['group'], classification['kind'], classification['reasons'][0]['code']),
                          ('check:rank', 'check', 'rank'))
         self.assertEqual(classification['reasons'][0]['text'], 'Your rank is genus; COL has this name as order')
-        self.assertEqual(classification['eligible'], ['col', 'mine'])
+        # COL's order is never applied to the group; it stays a per-name choice.
+        self.assertEqual(classification['eligible'], ['mine'])
+        with self.assertRaises(names.NameDecisionError):
+            names.build_decision(record, {'decision': 'col'}, {'col_release': RELEASE}, by='bulk:check', group_kind='check')
+        self.assertEqual(names.build_decision(record, {'decision': 'col'}, {'col_release': RELEASE})['taxonRank'], 'order')
         self.assertEqual(names.auto_accept({'labels': [record], 'decisions': {}, 'col_release': RELEASE}), 0)
         self.assertEqual(names.groups({'labels': [record], 'decisions': {}})[0]['signature'],
                          {'code': 'rank', 'yours': 'genus', 'col': 'order'})
