@@ -214,23 +214,37 @@ def failed_model_state(conversion, archive, status):
 
 
 def _model_cache(conversion, fingerprint):
+    """This conversion's stored answers merged with those of the same owner's byte-identical uploads (own answers first)."""
     from api.models import DwcConversion
+
+    def compatible(item):
+        return (item.get('version') == TIDY_VERSION and item.get('prompt') == PROMPT_VERSION
+                and item.get('source_sha256') == fingerprint)
     state = conversion.tidy if isinstance(conversion.tidy, dict) else {}
-    current = state.get('model', {})
-    if (current.get('version') == TIDY_VERSION and current.get('prompt') == PROMPT_VERSION
-            and current.get('source_sha256') == fingerprint):
-        return current
-    # Answers are reused only for the same owner's byte-identical upload (the prompt also carries their title and description).
+    records = [state['model']] if compatible(state.get('model') or {}) else []
     owner = conversion.dataset.user_id
-    if owner is None:
+    if owner is not None:
+        cached = (DwcConversion.objects.exclude(pk=conversion.pk).order_by('pk')
+                  .filter(dataset__user_id=owner, tidy__model__source_sha256=fingerprint).values_list('tidy', flat=True))
+        records.extend(item for item in ((tidy or {}).get('model') or {} for tidy in cached) if compatible(item))
+    if not records:
         return {}
-    cached = (DwcConversion.objects.exclude(pk=conversion.pk)
-              .filter(dataset__user_id=owner, tidy__model__source_sha256=fingerprint).values_list('tidy', flat=True))
-    for tidy in cached:
-        item = (tidy or {}).get('model', {})
-        if item.get('version') == TIDY_VERSION and item.get('prompt') == PROMPT_VERSION:
-            return item
-    return {}
+    # A failed or partial call elsewhere never hides answers another upload already paid for.
+    merged, entries, verdicts = dict(records[0]), {}, {}
+    for record in records:
+        for key, entry in (record.get('entries') or {}).items():
+            entries.setdefault(key, entry)
+        for key, verdict in (record.get('verdicts') or {}).items():
+            verdicts.setdefault(key, verdict)
+    merged.update(entries=entries, verdicts=verdicts)
+    return merged
+
+
+def refresh_cache(conversion, archive):
+    """Before an inspection builds its view: take in answers stored meanwhile for the same source."""
+    model = _model_cache(conversion, archive.fingerprint) if enabled() else {}
+    if model:
+        conversion.tidy = {**(conversion.tidy if isinstance(conversion.tidy, dict) else {}), 'model': model}
 
 
 def model_changes(view_or_archive, entries, overrides=None):
@@ -297,7 +311,7 @@ def model_changes(view_or_archive, entries, overrides=None):
         elif any(field not in CHECKED_FILLS and text != original for field, text in others.items()):
             tier = 'suggest'  # free text written into another field must be the exact source text to apply by itself
         elif others.get('individualCount') and int(others['individualCount']) not in {
-                int(token) for token in re.findall(r'(?<![\d.,/-])\d+(?![.,/-]?\d)', original)}:
+                int(token.rstrip('.')) for token in re.split(r'[\s,;:()]+', original) if re.fullmatch(r'\d+\.?', token)}:
             tier = 'suggest'  # a count must be written in the value itself
         elif own in PLACE_FIELDS and rewritten == original and any(field in {'country', 'countryCode', 'waterBody'} for field in others):
             tier = 'suggest'  # a place read as a country or sea must move there, not stay behind as well

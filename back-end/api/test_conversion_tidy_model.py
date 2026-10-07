@@ -254,6 +254,12 @@ class TidyModelSafetyTests(SimpleTestCase):
             'fields': {'countryCode': 'NO'}, 'confidence': 'high', 'note': ''}})[0]
         self.assertEqual((change['fields'], change['tier']), ({'countryCode': 'NO', 'stateProvince': 'Norway'}, 'suggest'))
 
+    def test_counts_inside_stage_codes_are_not_written_counts(self):
+        source = archive([['o1', '', 'L3 larva', '', '', 'Aus bus', 'present']])
+        change = conversion_tidy.model_changes(source, {'k': {'table': 0, 'column': 2, 'value': 'L3 larva', 'residue': '',
+            'fields': {'lifeStage': 'larva', 'individualCount': '3'}, 'confidence': 'high', 'note': ''}})[0]
+        self.assertEqual(change['tier'], 'suggest')
+
     def test_model_answers_never_corroborate_each_other(self):
         # Both remarks columns propose lifeStage adult for a row whose own lifeStage is empty: nothing in the source agrees.
         source = archive([['o1', '', 'fad', '1', '', 'Aus bus', 'present', 'adult female']], extra_terms=('occurrenceRemarks',))
@@ -326,6 +332,12 @@ class TidyModelFlowTests(ConversionTestCase):
         self.assertEqual(conversion_tidy._model_cache(other, fingerprint), {})
         same = DwcConversion.objects.create(dataset=Dataset.objects.create(user=conversion.dataset.user, workflow_type='dwca_conversion'))
         self.assertTrue(conversion_tidy._model_cache(same, fingerprint)['entries'])
+        # A failed earlier upload of the same bytes does not hide the answers: they are merged.
+        failed = conversion_tidy.failed_model_state(same, SimpleNamespace(fingerprint=fingerprint), 'error')
+        same.tidy = {'model': {**failed, 'entries': {}}}
+        same.save()
+        third = DwcConversion.objects.create(dataset=Dataset.objects.create(user=conversion.dataset.user, workflow_type='dwca_conversion'))
+        self.assertEqual(conversion_tidy._model_cache(third, fingerprint)['entries'], conversion.tidy['model']['entries'])
 
     def test_values_left_out_of_an_answer_are_not_asked_again(self):
         def response(args, max_retries=None):
