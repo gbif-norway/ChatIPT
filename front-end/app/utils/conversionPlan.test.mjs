@@ -147,6 +147,12 @@ test('automatic summary groups glance choices, hides retained or empty entries, 
   const follow = automaticSummary(followState, makeSelector(followState, { ...followState.decisions, 'column:0:0': 'event.eventConductedBy' }))
   assert.equal(follow.silent.find(line => line.id === 'column:0:9').title, 'recordedByID → updating to follow your answer')
 
+  // A specimen target without specimen records says the values stay in the originals.
+  const declined = summaryState({ 'material:0': 'preserve', 'column:0:0': 'material.collectedBy' })
+  const declinedLine = automaticSummary(declined, makeSelector(declined, declined.decisions)).glance.find(line => line.id === 'column:0:0')
+  assert.equal(declinedLine.title, 'recordedBy → kept in your original files')
+  assert.match(declinedLine.text, /no specimen records are created/)
+
   // An open specimen question is answered below, not from the specimen line.
   const openSpecimen = automaticSummary(summaryState({}), makeSelector(summaryState({}), {}), new Set(['material:0'])).specimen[0]
   assert.equal(openSpecimen.editable, false)

@@ -84,7 +84,14 @@ export function automaticSummary(state, selected, hidden = new Set()) {
     const unsaved = referenced.some(id => selected(id, plainDefault(state, id)) !== savedValue(state, id))
     const waitingFor = unsaved ? null : conditionIds(item).map(withPrefix).filter(id => (state?.unresolved || []).includes(id))
       .map(id => entries.find(entry => entry.id === id)).find(Boolean)
-    if (!changed && unsaved) {
+    // A specimen field only receives values when specimen records are created; otherwise they stay in the originals.
+    const materialId = prefix ? `${prefix}material:0` : `material:${item.table}`
+    const noSpecimens = isColumn && String(value).startsWith('material.') &&
+      entries.some(entry => entry.id === materialId) && !['per_row', 'by_id'].includes(selected(materialId))
+    if (noSpecimens) {
+      title = `${shortTerm(item.term)} → kept in your original files`
+      text = `${changed ? `You chose “${optionLabel(item, value)}”, but` : 'This goes to the specimen record, but'} no specimen records are created, so the values stay in your original files. Choose another option, or create specimen records.`
+    } else if (!changed && unsaved) {
       // The server recomputes this default from an answer that is still being saved.
       title = `${shortTerm(item.term)} → updating to follow your answer`
       text = 'This follows the answer you just changed; it updates once your answer is saved.'
