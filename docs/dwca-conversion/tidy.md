@@ -152,11 +152,11 @@ Questions: production at the time → current rules without the tidy-up → with
 | Archive | Questions | Notable tidy-up |
 |---|---|---|
 | 566 | 1 → 1 → 1 | 7,529 `NA` measurementRemarks cleared; the model left the remarks as written |
-| 567 | 2 → 2 → 2 | model: copepod `AF`/`AM` → adult + female/male, `CI`–`CV` → copepodite I–V; two larva readings suggested |
+| 567 | 2 → 2 → 2 | model: copepod `AF`/`AM` → adult + female/male, `CI`–`CV` → copepodite I–V; `larva pluteus` and similar → larva with the exact text in occurrenceRemarks; two readings suggested |
 | 568 | 19 → 18 → 18 | sex/lifeStage terms, 34 decimal-comma elevations, `Female + Male` → `female \| male`; `Female?`/`Male?` and umlaut repairs suggested |
 | 569 | 3 → 3 → 3 | countryCode NO filled for 14,776 rows; model repaired `M�re og Romsdal` → `Møre og Romsdal` |
-| 570 | 17 → 17 → 2 | all 15 country-label questions gone; ISO codes for 70,951 rows; sea names → waterBody (model: `North Sea` from county); sex `Unknown` ×63,677 empty; Pullus → nestling |
+| 570 | 17 → 17 → 2 | all 15 country-label questions gone; ISO codes for 70,951 rows; sea names → waterBody (model: sea names and `Antarctica`/`Chile` moved out of county); sex `Unknown` ×63,677 empty; Pullus → nestling |
 | 571 | 2 → 2 → 2 | countryCode UG filled; nothing for the model |
 | 572 | 16 → 14 → 3 | all life-stage remark questions gone: 1,525 rows by rule, `fad` and `ad + egg` by the model (exact text kept in occurrenceRemarks), `1 juv.` and `ad.m.egg` suggested; f/m → female/male; all-zero elevation/depth cleared |
 
-Every package validated. The six model calls cost $0.027 in total ($0.001–0.007 each, 2–9 s on Flex).
+Every package validated. The six model calls cost about $0.03 in total ($0.002–0.009 each, 2–13 s on Flex).
