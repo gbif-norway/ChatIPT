@@ -532,7 +532,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
             # Lock order: conversion, then job (docs/dwca-conversion/ai-review-and-chat.md §5.9).
             conversion = DwcConversion.objects.select_for_update().get(dataset=dataset)
             job = DwcConversionJob.objects.select_for_update().filter(conversion=conversion).first()
-            ai_job = job is not None and job.action in {'review', 'chat', 'names'}
+            ai_job = job is not None and job.action in {'review', 'chat', 'names', 'tidy'}
             if job is not None and not ai_job:
                 return Response({'detail': 'Conversion work is already queued or running.'}, status=409)
             if operation == 'inspect':
@@ -561,7 +561,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 return Response({'detail': 'The plan changed. Reload before submitting decisions.'}, status=409)
             if operation == 'chat':
                 return self._conversion_chat(request, conversion, job)
-            if conversion.status not in {'review', 'reviewing'}:
+            if conversion.status not in {'review', 'reviewing'} and not (operation == 'tidy' and job is not None and job.action == 'tidy'):
                 # A completed, blocked or failed conversion's choices must stay those of its result.
                 return Response({'detail': 'Choices can only be changed while the conversion is in review.'}, status=409)
             if operation == 'tidy':

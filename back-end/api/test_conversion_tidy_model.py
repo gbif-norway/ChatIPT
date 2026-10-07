@@ -1,0 +1,162 @@
+"""The conversion value interpreter is exercised with mocked model responses only."""
+import json
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from django.test import SimpleTestCase, override_settings
+
+from api import conversion_tidy
+from api.conversion_jobs import process_next_conversion
+from api.dwca_import import DWC, SourceArchive, SourceTable
+from api.dwca_tidy import tidy_archive
+from api.models import DwcConversionJob, OpenAIUsage
+from api.test_conversion_review import AI, ConversionTestCase
+
+
+def archive(rows, extra_terms=()):
+    terms = [DWC + name for name in ('occurrenceID', 'sex', 'eventRemarks', 'individualCount', 'stateProvince',
+                                      'scientificName', 'occurrenceStatus', *extra_terms)]
+    return SourceArchive({}, [SourceTable('occurrence', DWC + 'Occurrence', terms, rows, [], True)],
+                         'fingerprint', False, {})
+
+
+class TidyModelPureTests(SimpleTestCase):
+    def test_candidates_bound_unresolved_values_and_filter_places(self):
+        source = archive([
+            ['o1', 'f', 'ad', '1', '', 'Aus bus', 'present'],
+            ['o2', 'f', 'fad', '2', 'M�re og Romsdal', 'Aus bus', 'present'],
+            ['o3', '', 'North Sea', '1', 'Norway', 'Aus bus', 'present'],
+            ['o4', '', '1 juv.', '2', '', 'Aus bus', 'present'],
+        ])
+        view = tidy_archive(source)[0]
+        found = conversion_tidy.candidates(view)
+        by_field = {item['field']: item for item in found}
+        self.assertNotIn('ad', [v['value'] for v in by_field['eventRemarks']['values']])
+        remark_values = [v['value'] for v in by_field['eventRemarks']['values']]
+        self.assertIn('fad', remark_values)
+        self.assertIn('1 juv.', remark_values)
+        self.assertNotIn('ad', remark_values)
+        self.assertEqual([v['value'] for v in by_field['stateProvince']['values']], ['M�re og Romsdal', 'Norway'])
+        self.assertIn('sex', [item['term'] for item in by_field['eventRemarks']['context']['siblings']])
+        self.assertNotIn('scientificName', by_field)
+
+        many = archive([[f'o{i}', '', f'free {i}', '1', '', 'Aus bus', 'present'] for i in range(400)])
+        many_view = tidy_archive(many)[0]
+        self.assertNotIn('eventRemarks', {item['field'] for item in conversion_tidy.candidates(many_view)})
+
+    def test_parse_response_drops_invalid_values_and_keeps_abstentions(self):
+        source = archive([['o1', '', 'fad', '2', '', 'Aus bus', 'present']])
+        columns = conversion_tidy.candidates(tidy_archive(source)[0])
+        remarks = next(item for item in columns if item['field'] == 'eventRemarks')
+        key = remarks['key']
+        payload = {'columns': [{'key': key, 'verdict': 'remarks describe organism', 'values': [
+            {'i': 0, 'fields': [{'field': 'sex', 'value': 'woman'}, {'field': 'individualCount', 'value': '1.5'},
+                                {'field': 'countryCode', 'value': 'Norway'}, {'field': 'scientificName', 'value': 'Aus bus'}],
+             'residue': '', 'confidence': 'high', 'note': ''},
+            {'i': 0, 'fields': [], 'residue': '', 'confidence': 'low', 'note': 'unclear'},
+            {'i': 99, 'fields': [], 'residue': '', 'confidence': 'low', 'note': ''},
+        ]}, {'key': 'unknown', 'verdict': 'ignore', 'values': []}]}
+        response = SimpleNamespace(status='completed', output_text=json.dumps(payload))
+        entries, verdicts = conversion_tidy.parse_response(response, columns)
+        self.assertEqual(list(entries), [remarks['values'][0]['key']])
+        self.assertEqual(entries[remarks['values'][0]['key']]['fields'], {})
+        self.assertEqual(entries[remarks['values'][0]['key']]['confidence'], 'high')
+        self.assertEqual(verdicts[key], 'remarks describe organism')
+
+    def test_model_change_tiers_and_verbatim_residue(self):
+        source = archive([
+            ['o1', 'f', 'fad', '1', '', 'Aus bus', 'present'],
+            ['o2', 'f', '1 juv.', '2', '', 'Aus bus', 'present'],
+            ['o3', '', 'ad + egg', '1', '', 'Aus bus', 'present'],
+            ['o4', '', 'M�re og Romsdal', '1', '', 'Aus bus', 'present'],
+        ])
+        entries = {
+            'fad': {'table': 0, 'column': 2, 'value': 'fad', 'fields': {'lifeStage': 'adult', 'sex': 'female'},
+                    'residue': '', 'confidence': 'medium', 'note': 'abbreviation'},
+            'juv': {'table': 0, 'column': 2, 'value': '1 juv.', 'fields': {'lifeStage': 'juvenile', 'individualCount': '1'},
+                    'residue': '', 'confidence': 'high', 'note': ''},
+            'egg': {'table': 0, 'column': 2, 'value': 'ad + egg', 'fields': {'lifeStage': 'adult'},
+                    'residue': 'egg', 'confidence': 'high', 'note': ''},
+            'place': {'table': 0, 'column': 4, 'value': 'M�re og Romsdal', 'fields': {'stateProvince': 'Møre og Romsdal'},
+                      'residue': '', 'confidence': 'high', 'note': ''},
+            'low': {'table': 0, 'column': 2, 'value': 'never', 'fields': {'lifeStage': 'adult'},
+                    'residue': '', 'confidence': 'low', 'note': ''},
+        }
+        changes = conversion_tidy.model_changes(source, entries)
+        tiers = {item['value']: item['tier'] for item in changes}
+        self.assertEqual(tiers['fad'], 'auto')
+        self.assertEqual(tiers['1 juv.'], 'suggest')
+        self.assertNotIn('never', tiers)
+        egg = next(item for item in changes if item['value'] == 'ad + egg')
+        self.assertTrue(egg['move'])
+        self.assertEqual(egg['fields']['eventRemarks'], '')
+        self.assertEqual(egg['fields']['occurrenceRemarks'], 'ad + egg')
+        self.assertIn('Møre og Romsdal', str(next(item for item in changes if item['value'] == 'M�re og Romsdal')))
+
+
+# The AI reviewer stays out of the way (no automatic review runs), so only the tidy-up calls the model.
+@override_settings(**AI, CONVERSION_NAME_CHECKS_ENABLED=False, CONVERSION_REVIEW_MAX_RUNS_PER_PLAN=0)
+class TidyModelFlowTests(ConversionTestCase):
+    files = [('occurrence.csv', b'occurrenceID,sex,eventRemarks,individualCount,lifeStage,scientificName,occurrenceStatus\n'
+              b'o1,f,ad,1,,Aus bus,present\n'
+              b'o2,f,fad,1,,Aus bus,present\n'
+              b'o3,,1 juv.,2,,Aus bus,present\n')]
+
+    def test_inspect_chains_tidy_once_and_stores_model_usage(self):
+        def response(args, max_retries=None):
+            payload = json.loads(args['input'][1]['content'])
+            self.assertIn('columns', payload)
+            col = next(item for item in payload['columns'] if item['term'].endswith('/eventRemarks'))
+            answers = []
+            for value in col['values']:
+                answer = {'i': value['i'], 'fields': [], 'residue': '', 'confidence': 'low', 'note': 'unclear'}
+                if value['text'] == 'fad':
+                    answer = {'i': value['i'], 'fields': [{'field': 'lifeStage', 'value': 'adult'},
+                        {'field': 'sex', 'value': 'female'}], 'residue': '', 'confidence': 'medium',
+                        'note': 'supported by sex'}
+                answers.append(answer)
+            output = {'columns': [{'key': col['key'], 'verdict': 'remarks describe organism', 'values': answers}]}
+            return SimpleNamespace(id='tidy-response', status='completed', model='gpt-6-sol',
+                usage={'input_tokens': 100, 'output_tokens': 50}, output_text=json.dumps(output))
+
+        with patch('api.helpers.openai_helpers.query_with_flex_fallback', side_effect=response) as query:
+            process_next_conversion()
+            self.assertEqual(DwcConversionJob.objects.get(conversion=self.conversion).action, 'tidy')
+            self.assertEqual(self.conversion.status, 'inspecting')
+            process_next_conversion()
+            self.assertEqual(self.conversion.status, 'review')
+            self.assertTrue(any(group['by'] == 'model' for group in self.conversion.tidy['summary']['groups']))
+            self.assertTrue(OpenAIUsage.objects.filter(response_id='tidy-response', task_name=conversion_tidy.TIDY_TASK).exists())
+            self.post('inspect')
+            process_next_conversion()
+            process_next_conversion()
+            self.assertEqual(query.call_count, 1)
+
+    def test_model_failure_keeps_deterministic_plan_and_undo_does_not_call_model(self):
+        with patch('api.helpers.openai_helpers.query_with_flex_fallback', side_effect=RuntimeError('offline')) as query:
+            process_next_conversion(); process_next_conversion()
+            self.assertEqual(self.conversion.status, 'review')
+            self.assertEqual(self.conversion.tidy['model']['status'], 'error')
+            self.assertFalse(self.conversion.conflicts)
+            group = next(group for group in self.conversion.tidy['summary']['groups'] if group['rule'] == 'vocabulary')
+            self.post('tidy', changes={group['id']: 'undo'})
+            process_next_conversion()
+            query.assert_called_once()
+
+    def test_cost_limit_and_disabled_ai_never_block_deterministic_inspection(self):
+        with override_settings(OPENAI_DATASET_COST_LIMIT_USD='0.000001'), \
+                patch('api.helpers.openai_helpers.query_with_flex_fallback') as query:
+            process_next_conversion()
+            self.assertEqual(DwcConversionJob.objects.get(conversion=self.conversion).action, 'tidy')
+            process_next_conversion()
+            self.assertEqual(self.conversion.status, 'review')
+            self.assertEqual(self.conversion.tidy['model']['status'], 'cost-limit')
+            query.assert_not_called()
+
+        with override_settings(CONVERSION_AI_REVIEW_ENABLED=False), \
+                patch('api.helpers.openai_helpers.query_with_flex_fallback') as query:
+            self.assertEqual(self.post('inspect').status_code, 202)
+            process_next_conversion()
+            self.assertFalse(DwcConversionJob.objects.filter(conversion=self.conversion).exists())
+            self.assertEqual(self.conversion.status, 'review')
+            query.assert_not_called()

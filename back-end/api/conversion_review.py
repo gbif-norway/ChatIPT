@@ -454,9 +454,11 @@ def supersede_job(conversion):
     job = DwcConversionJob.objects.select_for_update().filter(conversion=conversion).first()
     if job is None:
         return True
-    if job.action not in {'review', 'chat', 'names'}:
+    if job.action not in {'review', 'chat', 'names', 'tidy'}:
         return False
     job.delete()
+    if job.action == 'tidy':
+        return True
     if job.action == 'names':
         from api.conversion_names import current
         names = current(conversion)

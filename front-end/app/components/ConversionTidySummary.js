@@ -32,8 +32,9 @@ export default function ConversionTidySummary({ state, send, disabled }) {
       </div>
       {!group.applied && <p className="small mb-1">Undone — your original values are used.</p>}
       <ul className="small mb-1 ps-3">
-        {group.values.slice(0, 5).map(value => <li key={value.id}>{valueChange(value, group.field)} <span className="text-muted">· {rows(value.rows)}</span></li>)}
+        {group.values.slice(0, 5).map(value => <li key={value.id}>{valueChange(value, group.field)} <span className="text-muted">· {rows(value.rows)}{value.note ? ` · ${value.note}` : ''}</span></li>)}
       </ul>
+      {group.by === 'model' && <p className="small text-muted mb-1">Read by AI from the values and their neighbouring columns.</p>}
       {group.conflict_rows > 0 && <p className="small text-muted mb-1">{rows(group.conflict_rows)} kept as written because another column already says something different.</p>}
       {errors[group.id] && <p className="small text-danger mb-0" role="alert">{errors[group.id]}</p>}
     </div>)}
@@ -54,7 +55,7 @@ export default function ConversionTidySummary({ state, send, disabled }) {
               aria-label={`${value.applied ? 'Undo applied suggestion' : 'Apply suggestion'} for ${group.field}`}
               onClick={() => change(value.id, groupChange(group, value.id))}>{value.applied ? 'Applied · Undo' : 'Apply'}</button>
           </div>
-          {value.note && <p className="small text-muted mb-1 mt-1">{value.note}</p>}
+          {value.note && <p className="small text-muted mb-1 mt-1">{value.confidence ? `AI (${value.confidence} confidence): ` : ''}{value.note}</p>}
           {errors[value.id] && <p className="small text-danger mb-0" role="alert">{errors[value.id]}</p>}
         </div>)}
         {group.more_values > 0 && <p className="small text-muted mb-0 mt-2">{group.more_values.toLocaleString('en-US')} more like these are not listed here; “Apply all” includes them.</p>}

@@ -301,7 +301,7 @@ export default function DwcConversion() {
         : <>The conversion stopped: {conflict.reason} The highlighted choices below can fix this.</>}
     </div>)}
     {!state && <p>Loading conversion…</p>}
-    {working && <p role="status"><span className="spinner-border spinner-border-sm me-2" />{state.status === 'converting' ? 'Converting and checking your data…' : state.tidy?.pending ? 'Applying your tidy-up change…' : 'Inspecting your files…'} You can leave and return while this runs.</p>}
+    {working && <p role="status"><span className="spinner-border spinner-border-sm me-2" />{state.status === 'converting' ? 'Converting and checking your data…' : state.tidy?.model?.status === 'running' ? 'Reading through your values to tidy them up…' : state.tidy?.pending ? 'Applying your tidy-up change…' : 'Inspecting your files…'} You can leave and return while this runs.</p>}
     {state?.status === 'reviewing' && <p role="status"><span className="spinner-border spinner-border-sm me-2" />The AI reviewer is checking the remaining choices against your files. You can keep answering meanwhile.</p>}
     {inReview && state.review?.error && <div className="alert alert-info small" role="status">{state.review.error}</div>}
     {state?.plan?.tables && <div className="conversion-layout">

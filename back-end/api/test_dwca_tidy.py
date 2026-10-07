@@ -155,13 +155,13 @@ class DwcaTidyTests(SimpleTestCase):
             {'table': 0, 'column': 2, 'value': ' A  place', 'fields': {'bad/name': 'x'}, 'tier': 'auto'},
         ])
         self.assertEqual(model.tables[0].rows[1][2], 'Other')
-        suggestion = self.group(model_table, 'model')
+        suggestion = self.group(model_table, 'model-suggestion')
         self.assertEqual((suggestion['values'][0]['confidence'], suggestion['values'][0]['note']), ('high', 'case'))
         self.assertEqual(model.tables[0].rows[0][1], 'female')  # the rule wins over the model entry for 'F'
         applied, _ = tidy_archive(archive, overrides={suggestion['values'][0]['id']: 'on'}, model_changes=[
             {'table': 0, 'column': 2, 'value': 'Other', 'fields': {'locality': 'Other Place'}, 'tier': 'suggest'}])
         self.assertEqual(applied.tables[0].rows[1][2], 'Other Place')
-        self.assertTrue(any(g['rule'] == 'model' for g in model_table['groups']))
+        self.assertTrue(any(g['rule'] == 'model-suggestion' for g in model_table['groups']))
         self.assertEqual(archive.tables[0].rows, before_rows)
         self.assertEqual(archive.files, before_files)
         self.assertIsNot(view, archive)

@@ -62,6 +62,14 @@ def life_stage_word(word):
     return key(word) in _tables()['vocab'].get('lifeStage', {})
 
 
+def life_stage_values():
+    return set(_tables()['vocab'].get('lifeStage', {}).values())
+
+
+def sex_values():
+    return set(_tables()['vocab'].get('sex', {}).values())
+
+
 def value_id(group_id, value):
     return f'{group_id}:{hashlib.sha256(value.encode()).hexdigest()[:16]}'
 
@@ -182,6 +190,7 @@ def _title(rule, field, values, n):
         return f"countryCode filled from the country names in {n:,} rows: {', '.join(codes)}."
     if rule == 'water-body': return f'{field}: sea and ocean names moved to waterBody ({sample}) in {n:,} rows.'
     if rule == 'water-body-suggestion': return f'{field}: these may name a sea or ocean rather than a country; they could move to waterBody ({sample}).'
+    if rule == 'model-suggestion': return f'{field}: possible readings to check ({sample}).'
     if rule == 'life-stage-remark': return f'{field}: life stages moved to lifeStage ({sample}) in {n:,} rows.'
     if rule == 'decimal-comma': return f'{field}: decimal commas changed to points ({sample}) in {n:,} rows.'
     if rule in {'thousands-or-decimal', 'trailing-separator'}:
@@ -292,7 +301,10 @@ def tidy_archive(archive, overrides=None, model_changes=None):
 
     grouped = defaultdict(list)
     for (t, c, value), change in proposed.items():
-        grouped[t, c, change['rule']].append((value, change))
+        group_rule = change['rule']
+        if change['by'] == 'model':
+            group_rule = 'model' if change['tier'] == AUTO else 'model-suggestion'
+        grouped[t, c, group_rule].append((value, change))
     records, group_dicts = {}, []
     for (t, c, rule), changes in sorted(grouped.items()):
         table = archive.tables[t]
@@ -394,7 +406,10 @@ def tidy_archive(archive, overrides=None, model_changes=None):
                     continue
                 if target_c is None:
                     additions[t, target_term]['cells'][r] = wanted
-                    additions[t, target_term]['groups'].add(f'tidy:{t}:{c}:{change["rule"]}')
+                    group_rule = change['rule']
+                    if change['by'] == 'model':
+                        group_rule = 'model' if change['tier'] == AUTO else 'model-suggestion'
+                    additions[t, target_term]['groups'].add(f'tidy:{t}:{c}:{group_rule}')
                 else:
                     if t not in copies:
                         copies[t] = [list(row) for row in archive.tables[t].rows]
