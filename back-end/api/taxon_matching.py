@@ -513,7 +513,7 @@ def _query_params(query):
     return params
 
 
-def match_col(queries, deadline=None, verbose_uninomials=False):
+def match_col(queries, deadline=None, verbose_exact=False):
     """Match many names against COL XR through GBIF; returns one summary per query, in order.
 
     Names go through the batch endpoint first. The batch response omits alternatives, and it has
@@ -541,10 +541,10 @@ def match_col(queries, deadline=None, verbose_uninomials=False):
             )
         for key, item in zip(chunk, payload):
             results[key] = summarize_match(item)
-    # With verbose_uninomials, exact one-word names are fetched again for their alternatives: a genus or higher name is
-    # where homonyms live, and the batch response leaves them out.
+    # With verbose_exact, exact names are fetched again for their alternatives: the batch response leaves out the
+    # homonyms an automatic decision must see.
     retry = [key for key, summary in results.items() if summary["status"] not in {"exact", "variant"}
-             or (verbose_uninomials and len(unique[key]["scientificName"].split()) == 1)]
+             or (verbose_exact and summary["status"] == "exact")]
 
     def verbose_match(key):
         return _get_json(
@@ -556,7 +556,12 @@ def match_col(queries, deadline=None, verbose_uninomials=False):
 
     with ThreadPoolExecutor(max_workers=CONCURRENT_REQUESTS) as pool:
         for key, single in zip(retry, pool.map(verbose_match, retry)):
-            if single is not None:
+            if single is None:
+                continue
+            if results[key]["status"] == "exact":
+                # The batch's exact match stands (the verbose answer can differ); only its homonyms are added.
+                results[key] = {**results[key], "alternatives": summarize_match(single)["alternatives"]}
+            else:
                 results[key] = summarize_match(single)
     return [
         _without_hint_echo(results[json.dumps(_query_params(query), sort_keys=True)], query)

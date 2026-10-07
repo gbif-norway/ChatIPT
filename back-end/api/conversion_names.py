@@ -379,12 +379,12 @@ def check_chunk(items, deadline):
     match_items = [item for item in items if not item.get('match')]
     step1 = {}
     try:
-        summaries = match_col([item['query'] for item in match_items], deadline=deadline, verbose_uninomials=True) if match_items else []
+        summaries = match_col([item['query'] for item in match_items], deadline=deadline, verbose_exact=True) if match_items else []
         step1 = {item['label']: compact_match(summary) for item, summary in zip(match_items, summaries)}
         id_items = [item for item in match_items if item.get('ids')
                     and not _exact_same_name(step1[item['label']], split_qualifier(item['label'])[0])]
         step2_queries = [{**item['query'], **item['ids']} for item in id_items]
-        step2 = match_col(step2_queries, deadline=deadline, verbose_uninomials=True) if step2_queries else []
+        step2 = match_col(step2_queries, deadline=deadline, verbose_exact=True) if step2_queries else []
         for item, summary in zip(id_items, step2):
             first = step1[item['label']]
             second = compact_match(summary)
@@ -578,6 +578,9 @@ def stem_usage(record):
     ranks = {'genus' if usage.get('taxonRank') == 'subgenus' else usage.get('taxonRank') for usage, _ in candidates}
     if candidates[0][1] and len(ranks) > 1 and record.get('source_rank') != candidates[0][0].get('taxonRank'):
         return None
+    # Without a rank COL cannot say what the stem is ("Larus" could be written with the source's "species").
+    if candidates[0][1] and candidates[0][0].get('taxonRank') not in RANK_ORDER:
+        return None
     if candidates[0][1]:
         usage = candidates[0][0]
         authorship = usage.get('scientificNameAuthorship')
@@ -589,7 +592,7 @@ def stem_usage(record):
         return {'scientificName': usage.get('scientificName'), 'scientificNameAuthorship': authorship,
                 'taxonRank': usage.get('taxonRank'), 'usageId': str(usage['id']) if usage.get('id') is not None else None,
                 'candidates': len(candidates)}
-    if len(ranks) != 1 or None in ranks:
+    if len(ranks) != 1 or not ranks <= set(RANK_ORDER):
         return None
     usage = candidates[0][0]
     return {'scientificName': usage.get('scientificName'), 'scientificNameAuthorship': None,
@@ -687,7 +690,7 @@ def _conflicts(record):
             out.append(('name', 'check:name', f"COL returned a different name: {usage.get('scientificName')} ({usage.get('taxonRank') or 'unknown rank'})"))
     col_rank = _rank_conflict(record)
     if col_rank:
-        out.append(('rank', 'check:rank', f"Your rank is {record['source_rank']}; COL has this name as {col_rank}"))
+        out.append(('rank', f"check:rank:{record['source_rank']}:{col_rank}", f"Your rank is {record['source_rank']}; COL has this name as {col_rank}"))
     idcheck = match.get('idCheck') or {}
     if idcheck.get('outcome') == 'elsewhere' or 'SCIENTIFIC_NAME_AND_ID_INCONSISTENT' in (match.get('issues') or []):
         fields = ', '.join((idcheck.get('fields') or record.get('source_ids') or {}).keys()) or 'identifier'
@@ -695,7 +698,7 @@ def _conflicts(record):
         out.append(('id', 'check:id', f'Your {fields} points to {target}'))
     mixed = record.get('mixed_hints') or []
     if mixed:
-        out.append(('mixed', 'check:mixed', f"Your rows give this name different {', '.join(mixed)}"))
+        out.append(('mixed', f"check:mixed:{','.join(mixed)}", f"Your rows give this name different {', '.join(mixed)}"))
     # The source's lineage is compared with COL's pick whenever that pick is the same name, whatever the match type, or
     # for a "sp." stem with the lineage all its same-name candidates share.
     lineage = _lineage(record)

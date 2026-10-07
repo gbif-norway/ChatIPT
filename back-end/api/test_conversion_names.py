@@ -1378,7 +1378,7 @@ class GroupDecisionTests(SimpleTestCase):
                   'match': {'matchType': 'EXACT', 'hintOnly': False, 'alternatives': [],
                             'usage': {'scientificName': 'Anura', 'taxonRank': 'genus', 'scientificNameAuthorship': None}}}
         classification = names.classify(record)
-        self.assertEqual((classification['group'], classification['eligible']), ('check:rank', ['mine']))
+        self.assertEqual((classification['group'], classification['eligible']), ('check:rank:order:genus', ['mine']))
         self.assertEqual(names.auto_accept({'labels': [record], 'decisions': {}, 'col_release': RELEASE}), 0)
         record['source_rank'] = 'species'
         self.assertEqual(names.classify(record)['kind'], 'uncertain')
@@ -1390,7 +1390,7 @@ class GroupDecisionTests(SimpleTestCase):
                         'scientificName': 'Anura', 'taxonRank': 'order', 'scientificNameAuthorship': None,
                         'classification': {'kingdom': 'Animalia', 'class': 'Amphibia'}}}}
         ranked = names.classify(record(source_rank='genus'))
-        self.assertEqual((ranked['group'], ranked['eligible']), ('check:rank', ['mine']))
+        self.assertEqual((ranked['group'], ranked['eligible']), ('check:rank:genus:order', ['mine']))
         with self.assertRaises(names.NameDecisionError):
             names.build_decision(record(source_rank='genus'), {'decision': 'col'}, {'col_release': RELEASE},
                                  by='bulk:spelling', group_kind='spelling')
@@ -1505,13 +1505,26 @@ class GroupDecisionTests(SimpleTestCase):
         self.assertEqual((classification['group'], classification['eligible']), ('check:kingdom:Animalia:Plantae', ['col', 'mine']))
         self.assertEqual(names.auto_accept({'labels': [record], 'decisions': {}, 'col_release': RELEASE}), 0)
 
+    def test_conflict_groups_keep_names_with_different_values_apart(self):
+        def ranked(source, col):
+            return {'label': f'Aus {source}', 'rows': 1, 'qualifier': None, 'source_rank': source, 'parsed': real_parse('Aus'),
+                    'match': {'matchType': 'EXACT', 'hintOnly': False, 'usage': {'scientificName': 'Aus', 'taxonRank': col}}}
+        self.assertNotEqual(names.classify(ranked('genus', 'order'))['group'], names.classify(ranked('family', 'genus'))['group'])
+
+    def test_a_stem_without_a_cols_rank_is_not_accepted(self):
+        record = {'label': 'Larus sp.', 'rows': 1, 'qualifier': 'sp.', 'source_rank': 'species', 'parsed': real_parse(),
+                  'match': {'matchType': 'EXACT', 'hintOnly': False, 'alternatives': [],
+                            'usage': {'scientificName': 'Larus', 'taxonRank': None, 'scientificNameAuthorship': None}}}
+        self.assertIsNone(names.stem_usage(record))
+        self.assertEqual(names.auto_accept({'labels': [record], 'decisions': {}, 'col_release': RELEASE}), 0)
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,
                   'usage': {'scientificName': 'Anura', 'taxonRank': 'order', 'scientificNameAuthorship': None}}}
         classification = names.classify(record)
         self.assertEqual((classification['group'], classification['kind'], classification['reasons'][0]['code']),
-                         ('check:rank', 'check', 'rank'))
+                         ('check:rank:genus:order', 'check', 'rank'))
         self.assertEqual(classification['reasons'][0]['text'], 'Your rank is genus; COL has this name as order')
         # COL's order is never applied to the group; it stays a per-name choice.
         self.assertEqual(classification['eligible'], ['mine'])
@@ -1660,7 +1673,7 @@ class GroupDecisionTests(SimpleTestCase):
             'matchType': 'EXACT', 'hintOnly': False, 'usage': {'scientificName': 'Anura', 'taxonRank': 'order',
                 'scientificNameAuthorship': None, 'classification': {'kingdom': 'Animalia', 'phylum': 'Chordata', 'class': 'Amphibia'}}})
         classified = names.classify(mixed)
-        self.assertEqual((classified['group'], classified['reasons'][0]['code']), ('check:mixed', 'mixed'))
+        self.assertEqual((classified['group'], classified['reasons'][0]['code']), ('check:mixed:class,phylum', 'mixed'))
         self.assertNotIn('col', classified['eligible'])
         self.assertIn('mine', classified['eligible'])
         self.assertEqual(names.groups({'labels': [mixed], 'decisions': {}})[0]['signature'],

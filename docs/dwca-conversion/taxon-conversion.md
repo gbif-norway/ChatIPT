@@ -193,9 +193,11 @@ higher rank ("Anura sp.", the order) is decided one name at a time; "indet." may
 stop at any rank. When the same-name candidates sit at different ranks ("Anura" the order and
 the genus), only the source's own rank settles which one is meant; a genus and
 its subgenus of the same name count as one. The stem's lineage is checked
-against the source's kingdom, phylum and class like any other name. Exact
-one-word names are fetched with GBIF's verbose output, because the batch
-response leaves out the homonyms a genus or higher name may have. DwC-DP has no
+against the source's kingdom, phylum and class like any other name. Every
+exact match is also fetched with GBIF's verbose output, because the batch
+response leaves out homonyms; the batch's pick stands and only the homonyms are
+added. An exact name with a homonym (another authorship, a missing one, or
+another lineage down to family) keeps the user's authorship. DwC-DP has no
 identificationQualifier, so identification rows get `taxonFormula` "A sp.",
 "A spp." or "A indet." from their own row's qualifier, else the label's (blank
 cells only). `verbatimIdentification` still holds the text as written.

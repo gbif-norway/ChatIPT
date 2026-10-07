@@ -241,12 +241,22 @@ class MatchColTests(SimpleTestCase):
         self.assertEqual(retry_call.kwargs["params"]["kingdom"], "Animalia")
 
     @patch("api.taxon_matching._get_json")
-    def test_exact_uninomials_can_be_fetched_again_for_their_homonyms(self, get_json):
+    def test_exact_names_can_be_fetched_again_for_their_homonyms(self, get_json):
         exact = {"diagnostics": {"matchType": "EXACT"}, "usage": {"key": "1", "name": "Sterna", "rank": "GENUS"}}
         get_json.side_effect = [[exact, {**exact, "usage": {"key": "2", "name": "Sterna hirundo", "rank": "SPECIES"}}], exact]
-        taxon_matching.match_col([{"scientificName": "Sterna"}, {"scientificName": "Sterna hirundo"}], verbose_uninomials=True)
+        get_json.side_effect = [[exact, {**exact, "usage": {"key": "2", "name": "Sterna hirundo", "rank": "SPECIES"}}], exact, exact]
+        taxon_matching.match_col([{"scientificName": "Sterna"}, {"scientificName": "Sterna hirundo"}], verbose_exact=True)
         verbose = get_json.call_args_list[1:]
-        self.assertEqual([call.kwargs["params"]["scientificName"] for call in verbose], ["Sterna"])
+        self.assertEqual(sorted(call.kwargs["params"]["scientificName"] for call in verbose), ["Sterna", "Sterna hirundo"])
+        get_json.reset_mock(side_effect=True)
+        # The batch's exact pick stands even when the verbose answer differs; only the homonyms are taken from it.
+        verbose_answer = {"diagnostics": {"matchType": "HIGHERRANK", "alternatives": [
+            {"usage": {"key": "9", "name": "Sterna Albers, 1850", "authorship": "Albers, 1850", "rank": "GENUS"},
+             "diagnostics": {"matchType": "EXACT"}}]}, "usage": {"key": "A", "name": "Animalia", "rank": "KINGDOM"}}
+        get_json.side_effect = [[exact], verbose_answer]
+        summary = taxon_matching.match_col([{"scientificName": "Sterna"}], verbose_exact=True)[0]
+        self.assertEqual((summary["matchType"], summary["usage"]["id"]), ("EXACT", "1"))
+        self.assertEqual([alternative["id"] for alternative in summary["alternatives"]], ["9"])
         self.assertEqual(verbose[0].kwargs["params"]["verbose"], "true")
         get_json.reset_mock(side_effect=True)
         get_json.side_effect = [[exact]]
