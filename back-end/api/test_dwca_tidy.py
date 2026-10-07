@@ -181,6 +181,9 @@ class DwcaTidyTests(SimpleTestCase):
         self.assertEqual([row[1:] for row in view.tables[0].rows], [['Norway', 'Sweden'], ['NO', 'Norway']])
         moved = self.group(table, 'country-name')
         self.assertEqual((moved['changed_rows'], moved['conflict_rows']), (1, 1))
+        # With every row in conflict, the notice says the values were left as written.
+        only = tidy_archive(self.build('occurrenceID,countryCode,country', ['a,Norway,Sweden']))[1]
+        self.assertIn('left as written', self.group(only, 'country-name')['title'])
         # Only curated sea names move automatically; mixed place text is a suggestion.
         mixed = self.build('occurrenceID,country', ['a,"United Kingdom (English Channel)"', 'b,North Atlantic Ocean (other parts)'])
         view, table = tidy_archive(mixed)
@@ -211,4 +214,58 @@ class DwcaTidyTests(SimpleTestCase):
         sex = self.build('occurrenceID,sex', ['a,f', 'b,Unknown', 'c,F'])
         table = tidy_archive(sex)[1]
         self.assertEqual((self.group(table, 'vocabulary')['tidied_rows'], self.group(table, 'empty-placeholder')['cleared_rows']), (2, 1))
+
+    def test_review_round_six_cases(self):
+        from api.dwca_conversion import build_plan
+        # A value some rows keep as written because of a conflict still gets its fallback question.
+        both = self.build('occurrenceID,countryCode,country,eventRemarks,lifeStage,occurrenceStatus',
+                          ['a,Norway,Sweden,juv.,adult,present', 'b,Norway,Norway,ad,,present'])
+        view, _ = tidy_archive(both)
+        asked = {issue['source_value'] for issue in build_plan(view)['issues']
+                 if issue['id'].startswith(('country-label:', 'age-remark:'))}
+        self.assertEqual(asked, {'Norway', 'juv.'})
+        # A model answer about a value after the space clean-up applies to the source spelling with spaces too.
+        spaced = self.build('occurrenceID,eventRemarks,sex', ['a,"fad ",f'])
+        model = [{'table': 0, 'column': 1, 'value': 'fad', 'tier': 'auto', 'move': True,
+                  'fields': {'eventRemarks': '', 'lifeStage': 'adult', 'occurrenceRemarks': 'fad'}}]
+        view, table = tidy_archive(spaced, model_changes=model)
+        row = dict(zip([term.rsplit('/', 1)[-1] for term in view.tables[0].terms], view.tables[0].rows[0]))
+        self.assertEqual((row['eventRemarks'], row['lifeStage'], row['occurrenceRemarks']), ('', 'adult', 'fad'))
+        self.assertFalse(any(group['rule'] == 'whitespace' for group in table['groups']))
+
+    def test_review_round_seven_cases(self):
+        from api.dwca_conversion import build_plan
+        from api.dwca_tidy import value_id
+        # Two changes in one row: the life-stage reading of AF conflicts with sex male and is kept as written, so the
+        # remark 'ad' cannot rely on it and stays too.
+        row = self.build('occurrenceID,eventRemarks,lifeStage,sex', ['a,ad,AF,male'])
+        model = [{'table': 0, 'column': 2, 'value': 'AF', 'tier': 'auto', 'fields': {'lifeStage': 'adult', 'sex': 'female'}}]
+        view, table = tidy_archive(row, model_changes=model)
+        self.assertEqual(view.tables[0].rows[0][1:4], ['ad', 'AF', 'male'])
+        self.assertTrue(all(group['conflict_rows'] for group in table['groups']))
+        # An applied suggestion whose destination is occupied leaves the label unsettled, so it is still asked about.
+        label = self.build('occurrenceID,countryCode,waterBody,occurrenceStatus', ['a,"United Kingdom (English Channel)",North Sea,present'])
+        group = 'tidy:0:1:water-body-suggestion'
+        view, _ = tidy_archive(label, overrides={value_id(group, 'United Kingdom (English Channel)'): 'on'})
+        self.assertEqual(view.tables[0].rows[0][1], 'United Kingdom (English Channel)')
+        self.assertTrue(any(issue['id'].startswith('country-label:') for issue in build_plan(view)['issues']))
+
+    def test_review_round_eight_cases(self):
+        from api.dwca_conversion import build_plan
+        from api.dwca_value_ledger import build_value_disposition_ledger
+        # Two remarks naming different life stages for one row: both stay, whatever the column order.
+        for header, row in (('occurrenceID,eventRemarks,occurrenceRemarks', 'a,ad,juv'),
+                            ('occurrenceID,occurrenceRemarks,eventRemarks', 'a,juv,ad')):
+            view, _ = tidy_archive(self.build(header, [row]))
+            self.assertEqual(view.tables[0].rows[0][1:3], row.split(',')[1:], header)
+            self.assertNotIn(DWC + 'lifeStage', view.tables[0].terms)
+        # Cells filled from another column were empty in the source: an existing empty column and an added one.
+        for header, rows in (('occurrenceID,country,countryCode,occurrenceStatus', ['a,Norway,,present', 'b,Sweden,SE,present']),
+                             ('occurrenceID,country,occurrenceStatus', ['a,Norway,present', 'b,Sweden,present'])):
+            view, table = tidy_archive(self.build(header, rows))
+            plan = build_plan(view)
+            ledger = build_value_disposition_ledger(plan, {'columns': [], 'tidy': {'groups': table['groups']}})
+            entry = next(item for item in ledger['source_terms'] if item['source_term'] == DWC + 'countryCode')
+            self.assertEqual((entry['nonempty_values'], entry['tidy_filled_values'], entry['source_nonempty_values']),
+                             (2, 2 if 'countryCode' not in header else 1, 0 if 'countryCode' not in header else 1), header)
 

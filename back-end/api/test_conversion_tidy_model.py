@@ -186,6 +186,103 @@ class TidyModelSafetyTests(SimpleTestCase):
         changes = conversion_tidy.model_changes(twice, {'a': entry(2, 'fad', {'lifeStage': 'adult', 'sex': 'female'}, 'medium')})
         self.assertEqual(changes[0]['tier'], 'suggest')
 
+    def test_answers_about_spaced_values_are_corroborated_and_applied(self):
+        source = archive([['o1', 'f', 'fad ', '1', '', 'Aus bus', 'present']])
+        view = tidy_archive(source)[0]
+        remarks = next(column for column in conversion_tidy.candidates(view) if column['field'] == 'eventRemarks')
+        self.assertEqual([value['value'] for value in remarks['values']], ['fad'])
+        change = conversion_tidy.model_changes(source, {'k': {'table': 0, 'column': 2, 'value': 'fad', 'residue': '',
+            'fields': {'lifeStage': 'adult', 'sex': 'female'}, 'confidence': 'medium', 'note': ''}})[0]
+        self.assertEqual(change['tier'], 'auto')  # sex f in the row agrees
+        self.assertEqual(tidy_archive(source, model_changes=[change])[0].tables[0].rows[0][2], '')
+
+    def test_values_longer_than_the_model_sees_are_not_sent(self):
+        source = archive([['o1', '', '', '1', 'M\ufffdre og Romsdal, ' + 'x' * 200, 'Aus bus', 'present']])
+        self.assertEqual(conversion_tidy.candidates(tidy_archive(source)[0]), [])
+
+    def test_review_round_nine_cases(self):
+        # An event remark the model does not read as describing the organism stays where it is.
+        source = archive([['o1', '', 'Sampling failed', '1', '', 'Aus bus', 'present']])
+        self.assertEqual(conversion_tidy.model_changes(source, {'k': {'table': 0, 'column': 2, 'value': 'Sampling failed',
+            'fields': {}, 'residue': 'Sampling failed', 'confidence': 'high', 'note': ''}}), [])
+        # Neighbouring values are clipped, and a column too large for one call is left out.
+        long = archive([['o1', 'Female?', '', '1', '', 'Aus bus', 'present', 'x' * 5000]], extra_terms=('occurrenceRemarks',))
+        column = next(item for item in conversion_tidy.candidates(tidy_archive(long)[0]) if item['field'] == 'sex')
+        remarks = next(item for item in column['context']['siblings'] if item['term'] == 'occurrenceRemarks')
+        self.assertEqual(len(remarks['values'][0]['value']), conversion_tidy.SIBLING_CHARS)
+        with patch.object(conversion_tidy, 'REQUEST_CHARS', 50):
+            self.assertEqual(conversion_tidy.candidates(tidy_archive(long)[0]), [])
+
+    def test_review_round_ten_cases(self):
+        def entry(value, fields, confidence):
+            return {'k': {'table': 0, 'column': 2, 'value': value, 'fields': fields, 'residue': '', 'confidence': confidence, 'note': ''}}
+        # One row with sex f does not vouch for the other rows with the same remark and no sex.
+        mixed = archive([['o1', 'f', 'fad', '1', '', 'Aus bus', 'present'], ['o2', '', 'fad', '1', '', 'Aus bus', 'present']])
+        self.assertEqual(conversion_tidy.model_changes(mixed, entry('fad', {'lifeStage': 'adult', 'sex': 'female'}, 'medium'))[0]['tier'],
+                         'suggest')
+        # A count must be written in the value: '1 juv.' read as 2 individuals is only a suggestion.
+        count = archive([['o1', '', '1 juv.', '', '', 'Aus bus', 'present']])
+        tiers = [conversion_tidy.model_changes(count, entry('1 juv.', {'lifeStage': 'juvenile', 'individualCount': n}, 'high'))[0]['tier']
+                 for n in ('2', '1')]
+        self.assertEqual(tiers, ['suggest', 'auto'])
+
+    def test_review_round_eleven_cases(self):
+        def entry(value, fields, confidence):
+            return {'k': {'table': 0, 'column': 2, 'value': value, 'fields': fields, 'residue': '', 'confidence': confidence, 'note': ''}}
+        # A number inside a decimal or a range is not a count written in the value.
+        for value in ('1.5 juv.', '2-3 juv.'):
+            source = archive([['o1', '', value, '', '', 'Aus bus', 'present']])
+            change = conversion_tidy.model_changes(source, entry(value, {'lifeStage': 'juvenile', 'individualCount': value[0]}, 'high'))[0]
+            self.assertEqual(change['tier'], 'suggest', value)
+        # Corroboration follows the rules as the user has them: with the sex terms undone, 'f' no longer vouches for female.
+        source = archive([['o1', 'f', 'fad', '1', '', 'Aus bus', 'present']])
+        fad = entry('fad', {'lifeStage': 'adult', 'sex': 'female'}, 'medium')
+        self.assertEqual(conversion_tidy.model_changes(source, fad)[0]['tier'], 'auto')
+        self.assertEqual(conversion_tidy.model_changes(source, fad, {'tidy:0:1:vocabulary': 'off'})[0]['tier'], 'suggest')
+        # At most MAX_VALUES values go into one call; answered values make room for the rest.
+        many = archive([[f'o{n}', '', f'note {n}', '1', '', 'Aus bus', 'present'] for n in range(250)])
+        view = tidy_archive(many)[0]
+        first = conversion_tidy.candidates(view)
+        self.assertEqual(sum(len(column['values']) for column in first), conversion_tidy.MAX_VALUES)
+        answered = {value['key'] for column in first for value in column['values']}
+        rest = conversion_tidy.candidates(view, answered=answered)
+        self.assertEqual(sum(len(column['values']) for column in rest), 250 - conversion_tidy.MAX_VALUES)
+
+    def test_a_country_read_from_a_county_must_move_to_apply_by_itself(self):
+        source = archive([['o1', '', '', '1', 'Norway', 'Aus bus', 'present']])
+        change = conversion_tidy.model_changes(source, {'n': {'table': 0, 'column': 4, 'value': 'Norway', 'residue': '',
+            'fields': {'countryCode': 'NO'}, 'confidence': 'high', 'note': ''}})[0]
+        self.assertEqual((change['fields'], change['tier']), ({'countryCode': 'NO', 'stateProvince': 'Norway'}, 'suggest'))
+
+    def test_counts_inside_stage_codes_are_not_written_counts(self):
+        for value in ('L3 larva', 'instar 3'):
+            source = archive([['o1', '', value, '', '', 'Aus bus', 'present']])
+            change = conversion_tidy.model_changes(source, {'k': {'table': 0, 'column': 2, 'value': value, 'residue': '',
+                'fields': {'lifeStage': 'larva', 'individualCount': '3'}, 'confidence': 'high', 'note': ''}})[0]
+            self.assertEqual(change['tier'], 'suggest', value)
+
+    def test_a_misplaced_vocabulary_value_moves(self):
+        source = archive([['o1', 'juvenile', '', '1', '', 'Aus bus', 'present']])
+        change = conversion_tidy.model_changes(source, {'k': {'table': 0, 'column': 1, 'value': 'juvenile', 'residue': '',
+            'fields': {'lifeStage': 'juvenile'}, 'confidence': 'high', 'note': ''}})[0]
+        self.assertEqual((change['fields'], change['move'], change['tier']), ({'lifeStage': 'juvenile', 'sex': ''}, True, 'auto'))
+        row = tidy_archive(source, model_changes=[change])[0].tables[0]
+        cells = dict(zip([term.rsplit('/', 1)[-1] for term in row.terms], row.rows[0]))
+        self.assertEqual((cells['sex'], cells['lifeStage']), ('', 'juvenile'))
+        # A different reading of it ('juv' as juvenile) is only suggested.
+        other = archive([['o1', 'juv', '', '1', '', 'Aus bus', 'present']])
+        change = conversion_tidy.model_changes(other, {'k': {'table': 0, 'column': 1, 'value': 'juv', 'residue': '',
+            'fields': {'lifeStage': 'juvenile'}, 'confidence': 'high', 'note': ''}})[0]
+        self.assertEqual((change['fields'], change['tier']), ({'lifeStage': 'juvenile', 'sex': ''}, 'suggest'))
+        applied = tidy_archive(other, overrides={'tidy:0:1:model-suggestion': 'on'}, model_changes=[change])[0].tables[0]
+        cells = dict(zip([term.rsplit('/', 1)[-1] for term in applied.terms], applied.rows[0]))
+        self.assertEqual((cells['sex'], cells['lifeStage']), ('', 'juvenile'))
+        # A place name that would only leave a code behind is a suggestion as well.
+        place = archive([['o1', '', '', '1', 'Norway', 'Aus bus', 'present']])
+        change = conversion_tidy.model_changes(place, {'k': {'table': 0, 'column': 4, 'value': 'Norway', 'residue': '',
+            'fields': {'stateProvince': '', 'countryCode': 'NO'}, 'confidence': 'high', 'note': ''}})[0]
+        self.assertEqual(change['tier'], 'suggest')
+
     def test_model_answers_never_corroborate_each_other(self):
         # Both remarks columns propose lifeStage adult for a row whose own lifeStage is empty: nothing in the source agrees.
         source = archive([['o1', '', 'fad', '1', '', 'Aus bus', 'present', 'adult female']], extra_terms=('occurrenceRemarks',))
@@ -258,6 +355,17 @@ class TidyModelFlowTests(ConversionTestCase):
         self.assertEqual(conversion_tidy._model_cache(other, fingerprint), {})
         same = DwcConversion.objects.create(dataset=Dataset.objects.create(user=conversion.dataset.user, workflow_type='dwca_conversion'))
         self.assertTrue(conversion_tidy._model_cache(same, fingerprint)['entries'])
+        # A failed earlier upload of the same bytes does not hide the answers: they are merged.
+        failed = conversion_tidy.failed_model_state(same, SimpleNamespace(fingerprint=fingerprint), 'error')
+        same.tidy = {'model': {**failed, 'entries': {}}}
+        same.save()
+        third = DwcConversion.objects.create(dataset=Dataset.objects.create(user=conversion.dataset.user, workflow_type='dwca_conversion'))
+        self.assertEqual(conversion_tidy._model_cache(third, fingerprint)['entries'], conversion.tidy['model']['entries'])
+        # An abstention stored by the third (own answers first) never hides a reading paid for elsewhere.
+        third.tidy = {'model': {**failed, 'entries': {key: {**entry, 'fields': {}, 'confidence': 'low', 'note': 'No answer.'}
+                                                  for key, entry in conversion.tidy['model']['entries'].items()}}}
+        merged = conversion_tidy._model_cache(third, fingerprint)['entries']
+        self.assertTrue(any(entry['fields'] for entry in merged.values()))
 
     def test_values_left_out_of_an_answer_are_not_asked_again(self):
         def response(args, max_retries=None):
@@ -270,6 +378,25 @@ class TidyModelFlowTests(ConversionTestCase):
             process_next_conversion()
             self.assertFalse(DwcConversionJob.objects.filter(conversion=self.conversion).exists())
             self.assertEqual(query.call_count, 1)
+
+    def test_a_superseded_tidy_call_is_paid_for_but_changes_nothing(self):
+        conversion_id = self.conversion.pk
+
+        def response(args, max_retries=None):
+            # Meanwhile the user asks for a new inspection, which replaces the running tidy job.
+            DwcConversionJob.objects.filter(conversion_id=conversion_id).delete()
+            DwcConversionJob.objects.create(conversion_id=conversion_id, action='inspect')
+            return SimpleNamespace(id='superseded', status='completed', model='gpt-6-sol', usage={'input_tokens': 10, 'output_tokens': 5},
+                                   output_text=json.dumps({'columns': []}))
+        with patch('api.helpers.openai_helpers.query_with_flex_fallback', side_effect=response):
+            process_next_conversion()
+            plan_id = self.conversion.plan['id']
+            process_next_conversion()
+        self.assertTrue(OpenAIUsage.objects.filter(response_id='superseded').exists())
+        conversion = self.conversion
+        self.assertEqual(conversion.plan['id'], plan_id)
+        self.assertEqual(conversion.tidy['model']['status'], 'running')
+        self.assertEqual(DwcConversionJob.objects.get(conversion=conversion).action, 'inspect')
 
     def test_model_failure_keeps_deterministic_plan_and_undo_does_not_call_model(self):
         with patch('api.helpers.openai_helpers.query_with_flex_fallback', side_effect=RuntimeError('offline')) as query:
@@ -299,3 +426,24 @@ class TidyModelFlowTests(ConversionTestCase):
             self.assertFalse(DwcConversionJob.objects.filter(conversion=self.conversion).exists())
             self.assertEqual(self.conversion.status, 'review')
             query.assert_not_called()
+
+
+@override_settings(**AI, CONVERSION_NAME_CHECKS_ENABLED=False, CONVERSION_REVIEW_MAX_RUNS_PER_PLAN=0)
+class TidyModelBatchTests(ConversionTestCase):
+    # 250 distinct remarks: more than one call takes, so the job makes a second call for the rest.
+    files = [('occurrence.csv', b'occurrenceID,eventRemarks,occurrenceStatus\n'
+              + b''.join(f'o{n},note {n},present\n'.encode() for n in range(250)))]
+
+    def test_values_beyond_one_call_go_into_further_calls(self):
+        sizes = []
+
+        def response(args, max_retries=None):
+            sizes.append(sum(len(column['values']) for column in json.loads(args['input'][1]['content'])['columns']))
+            return SimpleNamespace(id=f'batch-{len(sizes)}', status='completed', model='gpt-6-sol',
+                                   usage={'input_tokens': 10, 'output_tokens': 5}, output_text=json.dumps({'columns': []}))
+        with patch('api.helpers.openai_helpers.query_with_flex_fallback', side_effect=response):
+            process_next_conversion(); process_next_conversion()
+        self.assertEqual(sizes, [conversion_tidy.MAX_VALUES, 250 - conversion_tidy.MAX_VALUES])
+        self.assertEqual(len(self.conversion.tidy['model']['entries']), 250)
+        self.assertEqual(self.conversion.tidy['model']['status'], 'complete')
+

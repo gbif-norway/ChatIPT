@@ -285,19 +285,24 @@ def tidy_archive(archive, overrides=None, model_changes=None):
                     or not isinstance(value, str)):
                 continue
             name = archive.tables[t].terms[c].rsplit('/', 1)[-1]
-            if (_protected(archive.tables[t].terms[c], name) or (t, c, value) in proposed
-                    or value not in column_values.get((t, c), {})):
+            if _protected(archive.tables[t].terms[c], name):
                 continue
         except (IndexError, TypeError):
             continue
+        # The model read the value after the space clean-up, so its answer also covers source spellings that differ
+        # only in spacing ('fad ' read as 'fad'); it replaces that clean-up, never another rule.
+        sources = [raw for raw in column_values.get((t, c), {})
+                   if raw == value and (t, c, raw) not in proposed
+                   or normalize_space(raw) == value and proposed.get((t, c, raw), {}).get('rule') == 'whitespace']
         fields = dict(item['fields'])
         if name not in fields:
             fields[name] = value
-        if fields[name] == value and len(fields) == 1:
-            continue
-        proposed[t, c, value] = {'rule': 'model', 'tier': item['tier'], 'fields': fields,
-            'move': bool(item.get('move')), 'rows': column_values.get((t, c), Counter()).get(value, 0),
-            'by': 'model', 'confidence': str(item.get('confidence', '')), 'note': str(item.get('note', ''))}
+        for raw in sources:
+            if fields[name] == raw and len(fields) == 1:
+                continue
+            proposed[t, c, raw] = {'rule': 'model', 'tier': item['tier'], 'fields': fields,
+                'move': bool(item.get('move')), 'rows': column_values[t, c][raw],
+                'by': 'model', 'confidence': str(item.get('confidence', '')), 'note': str(item.get('note', ''))}
 
     grouped = defaultdict(list)
     for (t, c, value), change in proposed.items():
@@ -363,65 +368,93 @@ def tidy_archive(archive, overrides=None, model_changes=None):
         for c, term in enumerate(table.terms):
             mapping.setdefault(term, c)
         terms_to_columns.append(mapping)
+    def cell(t, r, f):
+        target_c = terms_to_columns[t].get(DWC + f)
+        if target_c is None:
+            return additions[t, DWC + f]['cells'].get(r, '')
+        row = copies.get(t, archive.tables[t].rows)[r]
+        return row[target_c] if target_c < len(row) else ''
+
+    def keep_as_written(record, change, t, c, r, value, field):
+        # A change applies to a row as a whole, so a conflict keeps every source value of that row.
+        record.setdefault('_conflicts', set()).add(r)
+        if not change['move'] and change['fields'].get(field, value) != value:
+            copies[t][r][c] = value
+            record.get('_changed', set()).discard(r)
+
+    # Pass two. Rows that conflict are settled first, against each row as the rewrites leave it. Keeping one change
+    # as written can bring a conflict to another change of the same row, so this repeats until nothing changes;
+    # only then are values filled in and moved.
+    pending = []
     for (t, c), value_records in by_column.items():
         field = archive.tables[t].terms[c].rsplit('/', 1)[-1]
         for r, original_row in enumerate(archive.tables[t].rows):
             value = original_row[c] if c < len(original_row) else ''
             pair = value_records.get(value)
-            if pair is None:
+            if pair is None or not pair[0]['applied']:
                 continue
             record, change = pair
-            if not record['applied']:
-                continue
             other_fields = {f: v for f, v in change['fields'].items() if f != field}
-            if not change['move'] and not other_fields:
+            if change['move'] or other_fields:
+                pending.append((record, change, t, c, r, value, field, other_fields))
+    conflicted = set()
+    while True:
+        newly = [i for i, (_record, _change, t, _c, r, _value, _field, other) in enumerate(pending)
+                 if i not in conflicted and any(cell(t, r, f) not in ('', wanted) for f, wanted in other.items())]
+        if not newly:
+            break
+        for i in newly:
+            conflicted.add(i)
+            keep_as_written(*pending[i][:7])
+    # Two changes of one row that would fill the same empty cell differently (eventRemarks 'ad' and occurrenceRemarks
+    # 'juv' both naming the life stage) are both kept as written, whatever the column order.
+    wanted_by_cell = defaultdict(set)
+    for i, (_record, _change, t, _c, r, _value, _field, other) in enumerate(pending):
+        if i not in conflicted:
+            for f, wanted in other.items():
+                if wanted and not cell(t, r, f):
+                    wanted_by_cell[t, r, f].add(wanted)
+    for i, (_record, _change, t, _c, r, _value, _field, other) in enumerate(pending):
+        if i not in conflicted and any(len(wanted_by_cell.get((t, r, f), ())) > 1 for f in other):
+            conflicted.add(i)
+            keep_as_written(*pending[i][:7])
+    for i, (record, change, t, c, r, value, field, other_fields) in enumerate(pending):
+        if i in conflicted:
+            continue
+        current = {f: cell(t, r, f) for f in other_fields}
+        if any(current[f] not in ('', wanted) for f, wanted in other_fields.items()):
+            # Another change of this row has just filled the same empty cell differently.
+            keep_as_written(record, change, t, c, r, value, field)
+            continue
+        if any(current[f] and current[f] == wanted for f, wanted in other_fields.items()):
+            record.setdefault('_agrees', set()).add(r)
+        changed_rows = record.setdefault('_changed', set())
+        for f, wanted in other_fields.items():
+            if not wanted or current[f]:
                 continue
-            plans, row_conflict, row_agree = [], False, False
-            for f, wanted in other_fields.items():
-                target_term = DWC + f
-                target_c = terms_to_columns[t].get(target_term)
-                if target_c is None:
-                    current = additions[t, target_term]['cells'].get(r, '')
-                else:
-                    row = copies.get(t, archive.tables[t].rows)[r]
-                    current = row[target_c] if target_c < len(row) else ''
-                if current == '':
-                    plans.append((f, target_term, target_c, wanted))
-                elif current == wanted:
-                    row_agree = True
-                else:
-                    row_conflict = True
-            if row_conflict:
-                # A change applies to a row as a whole, so a conflict keeps every source value of that row.
-                record.setdefault('_conflicts', set()).add(r)
-                if not change['move'] and change['fields'].get(field, value) != value:
-                    copies[t][r][c] = value
-                    record.get('_changed', set()).discard(r)
-                continue
-            if row_agree:
-                record.setdefault('_agrees', set()).add(r)
-            changed_rows = record.setdefault('_changed', set())
-            for f, target_term, target_c, wanted in plans:
-                if not wanted:
-                    continue
-                if target_c is None:
-                    additions[t, target_term]['cells'][r] = wanted
-                    group_rule = change['rule']
-                    if change['by'] == 'model':
-                        group_rule = 'model' if change['tier'] == AUTO else 'model-suggestion'
-                    additions[t, target_term]['groups'].add(f'tidy:{t}:{c}:{group_rule}')
-                else:
-                    if t not in copies:
-                        copies[t] = [list(row) for row in archive.tables[t].rows]
-                    while len(copies[t][r]) <= target_c:
-                        copies[t][r].append('')
-                    copies[t][r][target_c] = wanted
-                changed_rows.add(r)
-            if change['move'] and not row_conflict:
+            target_term = DWC + f
+            target_c = terms_to_columns[t].get(target_term)
+            if target_c is None:
+                additions[t, target_term]['cells'][r] = wanted
+                group_rule = change['rule']
+                if change['by'] == 'model':
+                    group_rule = 'model' if change['tier'] == AUTO else 'model-suggestion'
+                additions[t, target_term]['groups'].add(f'tidy:{t}:{c}:{group_rule}')
+            else:
                 if t not in copies:
                     copies[t] = [list(row) for row in archive.tables[t].rows]
-                copies[t][r][c] = ''
-                if value != '': changed_rows.add(r)
+                while len(copies[t][r]) <= target_c:
+                    copies[t][r].append('')
+                copies[t][r][target_c] = wanted
+            changed_rows.add(r)
+            filled = record.setdefault('_filled', {})
+            filled[f] = filled.get(f, 0) + 1
+        if change['move']:
+            if t not in copies:
+                copies[t] = [list(row) for row in archive.tables[t].rows]
+            copies[t][r][c] = ''
+            if value != '':
+                changed_rows.add(r)
     for record, _change in records.values():
         record['changed_rows'] = len(record.get('_changed', set()))
         record['conflict_rows'] = len(record.get('_conflicts', set()))
@@ -468,11 +501,21 @@ def tidy_archive(archive, overrides=None, model_changes=None):
         own = [(v['fields'].get(group['field'], v['value']), v) for v in group['values'] if v['applied']]
         group['tidied_rows'] = sum(v['changed_rows'] for text, v in own if text not in ('', v['value']))
         group['cleared_rows'] = sum(v['changed_rows'] for text, v in own if text == '')
+        # Cells of other columns this group filled in (they were empty in the source).
+        filled = Counter()
+        for value in group['values']:
+            filled.update(value.get('_filled', {}))
+        group['filled_rows'] = dict(sorted(filled.items()))
+        group['open_values'] = sum(not value['applied'] for value in group['values'])
         # An undone or suggested group still says what it would change.
         n = group['changed_rows'] if group['tier'] == AUTO and group['changed_rows'] else group['rows']
         group['title'] = _title(rule, group['field'], group['values'], n)
+        if group['applied'] and not group['changed_rows'] and group['conflict_rows']:
+            # Nothing changed: every row with these values already says something different elsewhere.
+            group['title'] = (f"{group['field']}: left as written in {group['conflict_rows']:,} rows, because another column "
+                              'already says something different.')
         for item in group['values']:
-            for private in ('tier', 'move', 'value_text', '_changed', '_conflicts', '_agrees'):
+            for private in ('tier', 'move', 'value_text', '_changed', '_conflicts', '_agrees', '_filled'):
                 item.pop(private, None)
     group_dicts = [group for group in group_dicts if group['values']]
     source_columns = {str(t): len(table.terms) for t, table in enumerate(archive.tables)}
@@ -493,10 +536,13 @@ def tidy_archive(archive, overrides=None, model_changes=None):
 
 
 def settled_values(archive, t, c):
-    """Values of a column the tidy-up has dealt with: applied changes and open suggestions. Undone changes are not settled."""
+    """Values of a column the tidy-up has dealt with: applied changes and open suggestions.
+
+    Undone changes are not settled, nor are values some rows kept as written because of a conflict.
+    """
     groups = (getattr(archive, 'tidy', None) or {}).get('groups', [])
     return {value['value'] for group in groups if group['table'] == t and group['column'] == c
-            for value in group['values'] if value['applied'] or group['tier'] == SUGGEST}
+            for value in group['values'] if not value['conflict_rows'] and (value['applied'] or group['tier'] == SUGGEST)}
 
 
 def column_note(archive, t, c):

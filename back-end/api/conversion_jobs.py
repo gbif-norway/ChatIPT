@@ -146,6 +146,7 @@ def process_next_conversion():
         if job.action == 'inspect':
             # Everything is built first, so a failure leaves the previous plan and its choices intact.
             raw = load_sources(conversion, tidy=False)
+            conversion_tidy.refresh_cache(conversion, raw)
             tidy_overrides = conversion_tidy.overrides(conversion, raw)
             archive = conversion_tidy.tidied(conversion, raw, tidy_overrides)
             plan = build_plan(archive)

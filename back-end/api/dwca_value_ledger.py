@@ -50,6 +50,10 @@ def build_value_disposition_ledger(plan, report, resources=None):
         # Group totals cover every value, also where the report lists only some of them.
         tidied_values = sum(group.get('tidied_rows', 0) for group in tidy_groups)
         tidy_cleared = sum(group.get('cleared_rows', 0) for group in tidy_groups)
+        # Cells the tidy-up filled into this column from another one were empty in the source.
+        local = str(column.get('term', '')).rsplit('/', 1)[-1]
+        tidy_filled = sum(group.get('filled_rows', {}).get(local, 0) for group in tidy.get('groups', [])
+                          if group.get('table') == table_index)
         withheld_count = min(total, withheld[(table_index, column.get('term'))])
         decision = report.get('effective_decisions', {}).get(column.get('id'), column.get('default', 'preserve'))
         disposition = summary.get('disposition', '')
@@ -133,11 +137,12 @@ def build_value_disposition_ledger(plan, report, resources=None):
             'count_basis': 'source nonempty cells; mapped row counts where reported; withheld values counted individually; warning flags annotate emitted values and overlap mapped/derived counts',
         }
         if tidy:
-            entry.update(tidied_values=tidied_values, tidy_cleared_values=tidy_cleared,
-                         source_nonempty_values=total + tidy_cleared)
+            entry.update(tidied_values=tidied_values, tidy_cleared_values=tidy_cleared, tidy_filled_values=tidy_filled,
+                         source_nonempty_values=max(total + tidy_cleared - tidy_filled, 0))
             if column.get('tidy_added'):
                 entry['tidy_added'] = True
-            entry['count_basis'] += '; tidy counts are changed source cells, with cleared values added back to source nonempty counts'
+            entry['count_basis'] += ('; tidy counts are changed source cells; source nonempty counts add cleared values back '
+                                     'and leave out cells the tidy-up filled from another column')
         result.append(entry)
 
     ledger = {'source_terms': result, 'output_fields': [

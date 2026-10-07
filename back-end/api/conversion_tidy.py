@@ -14,6 +14,11 @@ from api.dwca_tidy import TIDY_VERSION, summarize, tidy_archive as apply_tidy
 logger = logging.getLogger(__name__)
 REPORT_WHITESPACE_VALUES = 500
 PROMPT_VERSION = '2'
+SIBLING_CHARS = 100  # neighbouring-column values sent as context are clipped to this
+REQUEST_CHARS = 120000  # values and context of one call
+# Values per call: about 50 output tokens each (with reasoning) fit the 16,000-token answer; the rest go to a later call.
+MAX_VALUES = 200
+MAX_CALLS = 3  # calls per tidy job; values beyond that wait for a later inspection
 TIDY_TASK = 'DwC-A conversion tidy-up'
 VALUE_FIELDS = {'lifeStage', 'sex', 'reproductiveCondition', 'behavior', 'vitality', 'establishmentMeans',
                 'degreeOfEstablishment', 'pathway', 'preparations', 'organismQuantityType', 'countryCode', 'country',
@@ -81,8 +86,8 @@ def _value_key(t, c, value):
     return f'{t}:{c}:{hashlib.sha256(value.encode()).hexdigest()}'
 
 
-def candidates(view, table=None):
-    """Build bounded, deterministic model inputs from values left unresolved by rules."""
+def candidates(view, table=None, answered=()):
+    """Build bounded, deterministic model inputs from values left unresolved by rules and not answered yet."""
     settled = set()
     if view.tidy:
         for group in view.tidy.get('groups', []):
@@ -103,7 +108,8 @@ def candidates(view, table=None):
             counts = Counter((row[c] if c < len(row) else '') for row in source.rows)
             values = []
             for value, count in counts.items():
-                if not value.strip() or (t, c, value) in settled:
+                # A value longer than the 200 characters the model would see is never sent: a repair could cut it short.
+                if not value.strip() or len(value) > 200 or (t, c, value) in settled or _value_key(t, c, value) in answered:
                     continue
                 data = dwca_tidy._tables()
                 if name in {'sex', 'lifeStage', 'establishmentMeans', 'degreeOfEstablishment', 'pathway'}:
@@ -132,17 +138,24 @@ def candidates(view, table=None):
                 if sibling not in SIBLINGS or sibling == name or len(siblings) >= 6:
                     continue
                 sibling_counts = Counter(row[sc] if sc < len(row) else '' for row in source.rows)
-                siblings.append({'term': sibling, 'values': [{'value': val, 'rows': n} for val, n in
+                siblings.append({'term': sibling, 'values': [{'value': val[:SIBLING_CHARS], 'rows': n} for val, n in
                                   sorted(sibling_counts.items(), key=lambda pair: (-pair[1], pair[0])) if val.strip()][:8]})
             raw_columns.append({'key': _column_key(t, c), 'table': t, 'table_name': source.name,
                 'row_type': source.row_type, 'column': c, 'term': source.terms[c], 'field': name,
                 'values': values, 'context': {'table': source.name, 'row_type': source.row_type,
                 'term': source.terms[c], 'siblings': siblings}})
     # Largest columns are retained first; ties preserve archive order.
-    kept, remaining = [], 1500
+    # Bounded by values and by characters, so one call always fits; the largest columns are kept first.
+    kept, remaining, characters = [], MAX_VALUES, REQUEST_CHARS
     for column in sorted(raw_columns, key=lambda item: (-len(item['values']), item['table'], item['column'])):
-        if len(column['values']) <= remaining:
-            kept.append(column); remaining -= len(column['values'])
+        if remaining <= 0:
+            break
+        # A column's most frequent values come first; the rest wait for a later call.
+        column = {**column, 'values': column['values'][:remaining]}
+        size = len(json.dumps({'values': [value['text'] for value in column['values']], 'context': column['context']},
+                              ensure_ascii=False))
+        if size <= characters:
+            kept.append(column); remaining -= len(column['values']); characters -= size
     return sorted(kept, key=lambda item: (item['table'], item['column']))
 
 
@@ -201,26 +214,44 @@ def failed_model_state(conversion, archive, status):
 
 
 def _model_cache(conversion, fingerprint):
+    """This conversion's stored answers merged with those of the same owner's byte-identical uploads (own answers first)."""
     from api.models import DwcConversion
+
+    def compatible(item):
+        return (item.get('version') == TIDY_VERSION and item.get('prompt') == PROMPT_VERSION
+                and item.get('source_sha256') == fingerprint)
     state = conversion.tidy if isinstance(conversion.tidy, dict) else {}
-    current = state.get('model', {})
-    if (current.get('version') == TIDY_VERSION and current.get('prompt') == PROMPT_VERSION
-            and current.get('source_sha256') == fingerprint):
-        return current
-    # Answers are reused only for the same owner's byte-identical upload (the prompt also carries their title and description).
+    records = [state['model']] if compatible(state.get('model') or {}) else []
     owner = conversion.dataset.user_id
-    if owner is None:
+    if owner is not None:
+        cached = (DwcConversion.objects.exclude(pk=conversion.pk).order_by('pk')
+                  .filter(dataset__user_id=owner, tidy__model__source_sha256=fingerprint).values_list('tidy', flat=True))
+        records.extend(item for item in ((tidy or {}).get('model') or {} for tidy in cached) if compatible(item))
+    if not records:
         return {}
-    cached = (DwcConversion.objects.exclude(pk=conversion.pk)
-              .filter(dataset__user_id=owner, tidy__model__source_sha256=fingerprint).values_list('tidy', flat=True))
-    for tidy in cached:
-        item = (tidy or {}).get('model', {})
-        if item.get('version') == TIDY_VERSION and item.get('prompt') == PROMPT_VERSION:
-            return item
-    return {}
+    # A failed or partial call elsewhere never hides answers another upload already paid for.
+    merged, entries, verdicts = dict(records[0]), {}, {}
+    def substantive(entry):
+        return entry.get('confidence') in {'high', 'medium'} and bool(entry.get('fields'))
+    for record in records:
+        for key, entry in (record.get('entries') or {}).items():
+            # An answer that reads the value wins over an abstention or a missing answer stored elsewhere.
+            if key not in entries or (substantive(entry) and not substantive(entries[key])):
+                entries[key] = entry
+        for key, verdict in (record.get('verdicts') or {}).items():
+            verdicts.setdefault(key, verdict)
+    merged.update(entries=entries, verdicts=verdicts)
+    return merged
 
 
-def model_changes(view_or_archive, entries):
+def refresh_cache(conversion, archive):
+    """Before an inspection builds its view: take in answers stored meanwhile for the same source."""
+    model = _model_cache(conversion, archive.fingerprint) if enabled() else {}
+    if model:
+        conversion.tidy = {**(conversion.tidy if isinstance(conversion.tidy, dict) else {}), 'model': model}
+
+
+def model_changes(view_or_archive, entries, overrides=None):
     """Return stable candidate model changes, with tiers set by row-level corroboration."""
     initial = []
     for item in (entries or {}).values():
@@ -237,7 +268,9 @@ def model_changes(view_or_archive, entries):
             fields.pop('occurrenceRemarks')
         # The supplied text is never lost from the package: a remark about the organism keeps its exact words in
         # occurrenceRemarks, and so does any value whose interpretation leaves something over.
-        if own in REMARK_FIELDS and occurrence_row and (ORGANISM_FIELDS & set(fields) or item.get('residue') or fields.get(own) == ''):
+        if own in REMARK_FIELDS and not ORGANISM_FIELDS & set(fields):
+            continue  # a remark only changes when it is read as describing the organism
+        if own in REMARK_FIELDS and occurrence_row:
             fields['occurrenceRemarks'] = original
             fields[own] = '' if own == 'eventRemarks' else original
         elif item.get('residue'):
@@ -248,9 +281,13 @@ def model_changes(view_or_archive, entries):
                 fields[own] = original
         else:
             fields.setdefault(own, original)
-            # A place value restated word for word in another field (county 'Norway' as country) moves there.
-            if own in PLACE_FIELDS | {'countryCode'} and fields[own] == original and any(
+            # A value restated word for word in another field moves there (county 'Norway' as country, sex 'juvenile'
+            # as lifeStage) rather than staying behind as well.
+            if own in PLACE_FIELDS | VOCABULARY_FIELDS | {'countryCode'} and fields[own] == original and any(
                     field != own and text.casefold() == original.casefold() for field, text in fields.items()):
+                fields[own] = ''
+            # A vocabulary value read as another vocabulary field (sex 'juv' as lifeStage juvenile) leaves its own field.
+            elif own in VOCABULARY_FIELDS and fields[own] == original and set(fields) & (VOCABULARY_FIELDS | {'individualCount'}) - {own}:
                 fields[own] = ''
         move = fields[own] == ''
         if fields.get(own) == original and len(fields) == 1:
@@ -259,30 +296,43 @@ def model_changes(view_or_archive, entries):
                         'confidence': item['confidence'], 'note': item.get('note', ''), 'move': move})
     if not initial:
         return []
-    stats = _corroboration(view_or_archive, apply_tidy(view_or_archive)[0], initial)
+    # Corroboration is read from the rules as the user has them (an undone rule vouches for nothing); the user's
+    # choices about model answers themselves play no part.
+    rule_overrides = {key: value for key, value in (overrides or {}).items() if ':model' not in key}
+    stats = _corroboration(view_or_archive, apply_tidy(view_or_archive, overrides=rule_overrides)[0], initial)
     concepts = dwca_tidy.life_stage_values()
     for change in initial:
-        agree, conflict = stats.get(id(change), (0, 0))
+        agree, conflict, rows = stats.get(id(change), (0, 0, 0))
         confidence = change['confidence']
-        tier = 'auto' if conflict == 0 and (confidence == 'high' or (confidence == 'medium' and agree > 0)) else 'suggest'
+        # A medium reading applies by itself only where every row with the value already agrees with it.
+        tier = 'auto' if conflict == 0 and (confidence == 'high' or (confidence == 'medium' and rows and agree == rows)) else 'suggest'
         t, c, original = change['table'], change['column'], change['value']
         own = view_or_archive.tables[t].terms[c].rsplit('/', 1)[-1]
         rewritten = change['fields'][own]
         others = {field: text for field, text in change['fields'].items() if field != own and text}
-        if rewritten == '' and not others:
-            tier = 'suggest'  # clearing a value is never automatic for a model answer
+        if rewritten == '' and not any(text.casefold() == original.casefold() for text in others.values()):
+            tier = 'suggest'  # a value leaves its field by itself only when its exact text lands in another one
         elif rewritten not in ('', original) and own not in VOCABULARY_FIELDS and not _damaged(original):
             tier = 'suggest'  # free text is not reworded automatically
         elif own != 'lifeStage' and others.get('lifeStage') and any(part not in concepts for part in others['lifeStage'].split(' | ')):
             tier = 'suggest'  # a life stage read from another field must be a GBIF concept to apply by itself
         elif any(field not in CHECKED_FILLS and text != original for field, text in others.items()):
             tier = 'suggest'  # free text written into another field must be the exact source text to apply by itself
+        elif others.get('individualCount') and not (
+                (count := re.match(r'\s*(\d+)\.?(?:\s|$)', original)) and int(count.group(1)) == int(others['individualCount'])):
+            # A count applies by itself only when the value leads with it ('1 juv.', '2 females'); a number elsewhere
+            # may be a stage ('instar 3', 'L3').
+            tier = 'suggest'
+        elif own in VOCABULARY_FIELDS and rewritten == original and others:
+            tier = 'suggest'  # a vocabulary value read as another field must move there, not stay behind as well
+        elif own in PLACE_FIELDS and rewritten == original and any(field in {'country', 'countryCode', 'waterBody'} for field in others):
+            tier = 'suggest'  # a place read as a country or sea must move there, not stay behind as well
         change['tier'] = tier
     return initial
 
 
 def _corroboration(raw, rules_view, changes):
-    """{id(change): (agree rows, conflict rows)} against the source after the deterministic rules only.
+    """{id(change): (agree rows, conflict rows, rows)} against the source after the deterministic rules only.
 
     A row agrees when another field the answer fills already holds the same text, and conflicts when it holds a
     different one. Cells filled by other model answers never count, so answers cannot corroborate each other.
@@ -297,7 +347,8 @@ def _corroboration(raw, rules_view, changes):
         for position, term in enumerate(tidied.terms):
             index.setdefault(term, position)
         for r, row in enumerate(source.rows):
-            change = values.get(row[c] if c < len(row) else '')
+            # Answers are about the value after the rules (spacing cleaned), as the model saw it.
+            change = values.get(tidied.rows[r][c] if c < len(tidied.rows[r]) else '')
             if change is None:
                 continue
             agree = conflict = False
@@ -309,9 +360,10 @@ def _corroboration(raw, rules_view, changes):
                 if current:
                     # The source text copied word for word (kept in occurrenceRemarks, a moved place) is no evidence.
                     agree, conflict = agree or (current == wanted and wanted != change['value']), conflict or current != wanted
-            counts = stats.setdefault(id(change), [0, 0])
+            counts = stats.setdefault(id(change), [0, 0, 0])
             counts[0] += bool(agree and not conflict)
             counts[1] += bool(conflict)
+            counts[2] += 1
     return {key: tuple(value) for key, value in stats.items()}
 
 
@@ -329,7 +381,7 @@ def tidied(conversion, archive, overrides=None):
         return archive
     override_values = _stored_overrides(conversion, archive) if overrides is None else overrides
     entries = _entries_for_view(conversion, archive)
-    changes = model_changes(archive, entries)
+    changes = model_changes(archive, entries, override_values)
     return apply_tidy(archive, overrides=override_values, model_changes=changes)[0]
 
 
@@ -353,7 +405,7 @@ def _request_args(conversion, candidates_list, dataset_info):
                                 'field': {'type': 'string', 'enum': allowed_fields}, 'value': {'type': 'string'}}}},
                         'residue': {'type': 'string'}, 'confidence': {'type': 'string', 'enum': ['high', 'medium', 'low']},
                         'note': {'type': 'string'}}}}}}}}}
-    return {'model': model, 'store': False, 'reasoning': {'effort': effort}, 'max_output_tokens': 12000,
+    return {'model': model, 'store': False, 'reasoning': {'effort': effort}, 'max_output_tokens': 16000,
             'service_tier': conversion_review.service_tier(model, getattr(settings, 'OPENAI_SOL_SERVICE_TIER', 'flex')),
             'input': [{'role': 'system', 'content': SYSTEM_PROMPT},
                       {'role': 'user', 'content': conversion_review.evidence.canonical(payload)}],
@@ -367,63 +419,70 @@ def should_run(conversion, archive):
     model = _model_cache(conversion, archive.fingerprint)
     answered = model.get('entries', {})
     rule_view = apply_tidy(archive, overrides=_stored_overrides(conversion, archive))[0]
-    return any(value['key'] not in answered for col in candidates(rule_view) for value in col['values'])
+    return bool(candidates(rule_view, answered=answered))
 
 
 def run_model(conversion, archive, claim, job_id):
-    """Call once for unanswered values and return a complete, cacheable model state."""
+    """Call for unanswered values, MAX_VALUES per call and at most MAX_CALLS calls; return a complete, cacheable state.
+
+    A failure after an answered call keeps the answers so far (status error or cost-limit); a failure before any
+    answer raises, and the caller keeps the deterministic tidy-up.
+    """
+    import time
     from api import conversion_review
     from api.conversion_evidence import publication_metadata
     from api.helpers.openai_helpers import query_with_flex_fallback
     base = _model_cache(conversion, archive.fingerprint)
     entries, verdicts = dict(base.get('entries', {})), dict(base.get('verdicts', {}))
     rule_view = apply_tidy(archive, overrides=_stored_overrides(conversion, archive))[0]
-    cols = candidates(rule_view)
-    remaining = []
-    asked = []
-    for col in cols:
-        vals = [value for value in col['values'] if value['key'] not in entries]
-        if vals:
-            vals = [{**value, 'i': index} for index, value in enumerate(vals)]
-            remaining.append({**col, 'values': vals})
-            asked.extend(value['key'] for value in vals)
     model_name, effort = model_settings()
     result = {'version': TIDY_VERSION, 'prompt': PROMPT_VERSION, 'source_sha256': archive.fingerprint,
-              'status': 'complete', 'model': model_name, 'effort': effort,
-              'response_id': base.get('response_id', ''), 'asked': list(base.get('asked', [])) + asked,
-              'entries': entries, 'verdicts': verdicts}
-    if not remaining:
+              'status': 'complete', 'model': model_name, 'effort': effort, 'response_id': base.get('response_id', ''),
+              'asked': list(base.get('asked', [])), 'entries': entries, 'verdicts': verdicts}
+    if not candidates(rule_view, answered=entries):
         return result
     if not conversion_review.ai_available():
         result['status'] = 'unavailable'
         return result
     metadata = publication_metadata(archive, 600)
-    # Only the archive's own metadata is sent, so stored answers depend on the source bytes alone.
-    args = _request_args(conversion, remaining, {'title': metadata.get('title') or '', 'description': metadata.get('description') or ''})
-    reservation = None
-    with conversion_review.fence(conversion.pk, job_id, claim, 'tidy', {'inspecting'}) as (locked, _):
-        reservation = conversion_review.reserve(locked, args, claim)
-    import time
-    started = time.monotonic()
-    try:
-        response = query_with_flex_fallback(args, max_retries=0)
-    except Exception as exc:
-        conversion_review.release_on_error(reservation, exc)
-        raise
-    conversion_review.record_usage(conversion.pk, conversion.dataset_id, response, reservation, model_name, effort,
-                                   TIDY_TASK, int((time.monotonic() - started) * 1000))
-    parsed = parse_response(response, remaining)
-    if parsed is None:
-        raise ValueError('The tidy model returned no usable response.')
-    found, found_verdicts = parsed
-    # A value the answer left out counts as an abstention, so it is not paid for again.
-    for column in remaining:
-        for value in column['values']:
-            found.setdefault(value['key'], {'table': column['table'], 'column': column['column'], 'value': value['value'],
-                                            'fields': {}, 'residue': '', 'confidence': 'low', 'note': 'No answer.'})
-    entries.update(found)
-    verdicts.update(found_verdicts)
-    result.update(response_id=str(getattr(response, 'id', '') or ''), entries=entries, verdicts=verdicts)
+    for call in range(MAX_CALLS):
+        remaining = candidates(rule_view, answered=entries)
+        if not remaining:
+            break
+        # Only the archive's own metadata is sent, so stored answers depend on the source bytes alone.
+        args = _request_args(conversion, remaining, {'title': metadata.get('title') or '', 'description': metadata.get('description') or ''})
+        try:
+            with conversion_review.fence(conversion.pk, job_id, claim, 'tidy', {'inspecting'}) as (locked, _):
+                reservation = conversion_review.reserve(locked, args, claim)
+            started = time.monotonic()
+            try:
+                response = query_with_flex_fallback(args, max_retries=0)
+            except Exception as exc:
+                conversion_review.release_on_error(reservation, exc)
+                raise
+            conversion_review.record_usage(conversion.pk, conversion.dataset_id, response, reservation, model_name, effort,
+                                           TIDY_TASK, int((time.monotonic() - started) * 1000))
+            parsed = parse_response(response, remaining)
+            if parsed is None:
+                raise ValueError('The tidy model returned no usable response.')
+        except conversion_review.Fenced:
+            raise
+        except Exception as exc:
+            if not call:
+                raise
+            logger.exception('Conversion %s AI tidy call %s failed', conversion.pk, call + 1)
+            result['status'] = 'cost-limit' if isinstance(exc, conversion_review.CostRefused) else 'error'
+            break
+        found, found_verdicts = parsed
+        # A value the answer left out counts as an abstention, so it is not paid for again.
+        for column in remaining:
+            for value in column['values']:
+                found.setdefault(value['key'], {'table': column['table'], 'column': column['column'], 'value': value['value'],
+                                                'fields': {}, 'residue': '', 'confidence': 'low', 'note': 'No answer.'})
+        entries.update(found)
+        verdicts.update(found_verdicts)
+        result['asked'].extend(value['key'] for column in remaining for value in column['values'])
+        result['response_id'] = str(getattr(response, 'id', '') or '')
     return result
 
 
@@ -498,11 +557,11 @@ def state_section(conversion, job=None):
                 for item in group.get('values', []) if item.get('applied')), 'model': model.get('model'),
                 'verdicts': model.get('verdicts', {})} if model else {}),
             'overrides': state.get('overrides', {}),
-            'counts': {'tidied_groups': sum(bool(g.get('applied')) and g.get('tier') == 'auto' for g in groups),
-                       'tidied_rows': sum(sum(v.get('changed_rows', 0) for v in g.get('values', []))
-                                          for g in groups if g.get('applied')),
-                       'suggestions': sum(1 for g in groups for v in g.get('values', [])
-                                          if g.get('tier') == 'suggest' and not v.get('applied'))}}
+            'counts': {'tidied_groups': sum(bool(g.get('applied')) and bool(g.get('changed_rows')) and g.get('tier') == 'auto'
+                                            for g in groups),
+                       # Group totals, which also cover values beyond those listed.
+                       'tidied_rows': sum(g.get('changed_rows', 0) for g in groups if g.get('applied')),
+                       'suggestions': sum(g.get('open_values', 0) for g in groups if g.get('tier') == 'suggest')}}
 
 
 def report_section(conversion, view):
@@ -585,27 +644,32 @@ def carry_plan_state(conversion, old_plan, new_plan, view):
         if event and event.source == 'ai-reviewer' and json.dumps(item, sort_keys=True) != json.dumps(fresh, sort_keys=True):
             dropped.append(identifier); continue
         kept[identifier] = value
-    for _ in range(20):
-        try:
-            validate_decisions(new_plan, kept, require_complete=False)
-            break
-        except ConversionError as exc:
-            invalid = exc.decision_ids
-            if not invalid:
-                dropped.extend(kept)
-                kept = {}
-                break
-            for identifier in invalid:
-                if identifier in kept:
-                    kept.pop(identifier); dropped.append(identifier)
     # An AI choice or recommendation also needs the evidence the reviewer saw to be unchanged: tidying a neighbouring
-    # column can change the samples in its packet while the question itself stays the same.
+    # column can change the samples in its packet while the question itself stays the same. Dropping one choice can
+    # change the evidence or validity of another, so both checks repeat until nothing more is dropped.
     old_review = conversion.review if isinstance(conversion.review, dict) else {}
     old_records = old_review.get('recommendations', {})
-    sources = {identifier: old_events[identifier].source if identifier in old_events else 'user' for identifier in kept}
-    same_evidence = _same_evidence(new_plan, view, kept, sources, old_records)
-    for identifier in [key for key, source in sources.items() if source == 'ai-reviewer' and not same_evidence(key)]:
-        kept.pop(identifier); dropped.append(identifier)
+    for _ in range(20):
+        for _ in range(20):
+            try:
+                validate_decisions(new_plan, kept, require_complete=False)
+                break
+            except ConversionError as exc:
+                invalid = exc.decision_ids
+                if not invalid:
+                    dropped.extend(kept)
+                    kept = {}
+                    break
+                for identifier in invalid:
+                    if identifier in kept:
+                        kept.pop(identifier); dropped.append(identifier)
+        sources = {identifier: old_events[identifier].source if identifier in old_events else 'user' for identifier in kept}
+        same_evidence = _same_evidence(new_plan, view, kept, sources, old_records)
+        stale = [key for key, source in sources.items() if source == 'ai-reviewer' and not same_evidence(key)]
+        if not stale:
+            break
+        for identifier in stale:
+            kept.pop(identifier); dropped.append(identifier)
     conversion.decisions = kept
     from api.models import DwcConversionDecisionEvent
     copies = []
