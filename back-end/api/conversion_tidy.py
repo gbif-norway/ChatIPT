@@ -25,6 +25,8 @@ PLACE_FIELDS = {'country', 'county', 'stateProvince', 'municipality', 'islandGro
 CONCEPT_FIELDS = {'establishmentMeans', 'degreeOfEstablishment', 'pathway'}
 # Own-field rewrites that may apply automatically: vocabulary fields. Other text changes only by itself when damaged.
 VOCABULARY_FIELDS = {'sex', 'lifeStage'} | CONCEPT_FIELDS
+# Fills whose values are checked against a vocabulary or format, so they need not repeat the source text.
+CHECKED_FILLS = {'sex', 'lifeStage', 'individualCount', 'countryCode'} | CONCEPT_FIELDS
 
 
 def _targets(field):
@@ -79,13 +81,6 @@ def _value_key(t, c, value):
     return f'{t}:{c}:{hashlib.sha256(value.encode()).hexdigest()}'
 
 
-def _known_value(value):
-    data = dwca_tidy._tables()
-    normalized = dwca_tidy.key(value)
-    return (any(normalized in lookup for lookup in data['vocab'].values())
-            or normalized in data['country_names'] or normalized in data['waters'])
-
-
 def candidates(view, table=None):
     """Build bounded, deterministic model inputs from values left unresolved by rules."""
     settled = set()
@@ -101,7 +96,7 @@ def candidates(view, table=None):
         own_columns = int(((view.tidy or {}).get('source_columns') or {}).get(str(t), len(local_names)))
         for c, name in enumerate(local_names):
             # Columns the tidy-up added hold its own output, never source values to interpret.
-            if c >= own_columns:
+            if c >= own_columns or dwca_tidy._protected(source.terms[c], name):
                 continue
             if name not in VALUE_FIELDS and not (name in REMARK_FIELDS and source.row_type == DWC + 'Occurrence'):
                 continue
@@ -123,8 +118,6 @@ def candidates(view, table=None):
                         name in {'county', 'stateProvince'} and dwca_tidy.key(value) in data['country_names']))
                     if not (damaged or misplaced):
                         continue
-                elif _known_value(value):
-                    continue
                 values.append({'i': len(values), 'text': value[:200], 'rows': count, 'value': value,
                                'key': _value_key(t, c, value)})
             if len(values) > 300:
@@ -239,6 +232,9 @@ def model_changes(view_or_archive, entries):
         own = view_or_archive.tables[t].terms[c].rsplit('/', 1)[-1]
         occurrence_row = view_or_archive.tables[t].row_type == DWC + 'Occurrence'
         fields = dict(item.get('fields', {}))
+        if own != 'occurrenceRemarks' and fields.get('occurrenceRemarks', original) != original:
+            # occurrenceRemarks only ever receives the exact source text, never wording of the model's own.
+            fields.pop('occurrenceRemarks')
         # The supplied text is never lost from the package: a remark about the organism keeps its exact words in
         # occurrenceRemarks, and so does any value whose interpretation leaves something over.
         if own in REMARK_FIELDS and occurrence_row and (ORGANISM_FIELDS & set(fields) or item.get('residue') or fields.get(own) == ''):
@@ -279,6 +275,8 @@ def model_changes(view_or_archive, entries):
             tier = 'suggest'  # free text is not reworded automatically
         elif own != 'lifeStage' and others.get('lifeStage') and any(part not in concepts for part in others['lifeStage'].split(' | ')):
             tier = 'suggest'  # a life stage read from another field must be a GBIF concept to apply by itself
+        elif any(field not in CHECKED_FILLS and text != original for field, text in others.items()):
+            tier = 'suggest'  # free text written into another field must be the exact source text to apply by itself
         change['tier'] = tier
     return initial
 
@@ -309,7 +307,8 @@ def _corroboration(raw, rules_view, changes):
                     continue
                 current = tidied.rows[r][position] if position < len(tidied.rows[r]) else ''
                 if current:
-                    agree, conflict = agree or current == wanted, conflict or current != wanted
+                    # The source text copied word for word (kept in occurrenceRemarks, a moved place) is no evidence.
+                    agree, conflict = agree or (current == wanted and wanted != change['value']), conflict or current != wanted
             counts = stats.setdefault(id(change), [0, 0])
             counts[0] += bool(agree and not conflict)
             counts[1] += bool(conflict)

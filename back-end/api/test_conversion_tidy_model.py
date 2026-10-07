@@ -166,6 +166,26 @@ class TidyModelSafetyTests(SimpleTestCase):
         self.assertEqual((change['fields'], change['move'], change['tier']),
                          ({'country': 'Norway', 'countryCode': 'NO', 'stateProvince': ''}, True, 'auto'))
 
+    def test_review_round_five_cases(self):
+        # A life stage in the sex column is sent, a custom (non-Darwin Core) sex column is not.
+        source = archive([['o1', 'juvenile', '', '1', '', 'Aus bus', 'present', 'f']], extra_terms=())
+        source.tables[0].terms.append('http://example.org/terms/sex')
+        sent = {column['field']: [value['value'] for value in column['values']] for column in self.columns(source)}
+        self.assertEqual(sent, {'sex': ['juvenile']})
+
+        def entry(column, value, fields, confidence='high'):
+            return {'table': 0, 'column': column, 'value': value, 'fields': fields, 'residue': '', 'confidence': confidence, 'note': ''}
+        # occurrenceRemarks only ever receives the exact source text; other free text written elsewhere is a suggestion.
+        behaviour = archive([['o1', '', '', '1', '', 'Aus bus', 'present', 'foraging']], extra_terms=('behavior',))
+        changes = conversion_tidy.model_changes(behaviour, {
+            'a': entry(7, 'foraging', {'occurrenceRemarks': 'nocturnal', 'reproductiveCondition': 'breeding'})})
+        self.assertEqual((changes[0]['fields'], changes[0]['tier']),
+                         ({'reproductiveCondition': 'breeding', 'behavior': 'foraging'}, 'suggest'))
+        # The same remark copied into occurrenceRemarks is no evidence for a medium reading.
+        twice = archive([['o1', '', 'fad', '1', '', 'Aus bus', 'present', 'fad']], extra_terms=('occurrenceRemarks',))
+        changes = conversion_tidy.model_changes(twice, {'a': entry(2, 'fad', {'lifeStage': 'adult', 'sex': 'female'}, 'medium')})
+        self.assertEqual(changes[0]['tier'], 'suggest')
+
     def test_model_answers_never_corroborate_each_other(self):
         # Both remarks columns propose lifeStage adult for a row whose own lifeStage is empty: nothing in the source agrees.
         source = archive([['o1', '', 'fad', '1', '', 'Aus bus', 'present', 'adult female']], extra_terms=('occurrenceRemarks',))

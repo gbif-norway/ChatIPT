@@ -87,7 +87,7 @@ Values the rules cannot settle go to the model once per dataset (`conversion_tid
   …), remarks of occurrence rows, and place names only when they look damaged or misplaced (a sea or a
   country in county/stateProvince). Columns with more than 300 such values (free text such as
   localities) are never sent, nor are protected columns or columns the tidy-up added. At most 1,500
-  values per call, each clipped to 200 characters, with counts and the most frequent values of up to six
+  values per call (a value known only in another field's vocabulary, such as sex `juvenile`, is sent), each clipped to 200 characters, with counts and the most frequent values of up to six
   neighbouring columns (sex, counts, places, remarks), plus the title and description from the archive's own
   metadata (so answers depend on the source bytes alone).
 - **Call**: `gpt-6-sol` at medium effort on Flex (`OPENAI_CONVERSION_TIDY_MODEL`,
@@ -106,8 +106,10 @@ Values the rules cannot settle go to the model once per dataset (`conversion_tid
 - **Tiers**: high confidence applies automatically; medium only when another column of the same row
   already agrees (`fad` with sex `f`); a conflict with the row (`1 juv.` where individualCount is 2)
   makes a suggestion. Agreement is counted against the source after the rules only, so answers never
-  corroborate each other. Clearing a value, rewording free text that is not damaged (`ind/m3`), and a
-  non-GBIF life stage read from another field are always suggestions. Low confidence changes nothing.
+  corroborate each other, and a copy of the source text itself (kept in occurrenceRemarks) is no evidence. Clearing a value, rewording free text that is not damaged (`ind/m3`), and a
+  non-GBIF life stage read from another field are always suggestions, as is any other free text written
+  into another field unless it is the exact source text. occurrenceRemarks only ever receives the exact
+  source text. Low confidence changes nothing.
 - **Cache**: answers are stored in `conversion.tidy.model` with the source fingerprint and prompt
   version, so inspect, replan and convert produce the same view and plan id without calling again.
   A byte-identical re-upload by the same owner reuses them (571/572 were re-uploads of 558/559). Values an
