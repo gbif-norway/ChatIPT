@@ -72,6 +72,7 @@ class SourceArchive:
     has_meta: bool
     uploaded_files: dict[str, bytes]
     dropped_extension_rows: list[dict] = field(default_factory=list)
+    tidy: dict | None = None  # Reviewable tidy-up changes for the archive view.
 
 
 def safe_path(name):
