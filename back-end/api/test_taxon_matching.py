@@ -275,6 +275,12 @@ class MatchColTests(SimpleTestCase):
         taxon_matching.match_col([{"scientificName": "Sterna"}])
         self.assertEqual(get_json.call_count, 1)
 
+    def test_same_name_alternatives_of_any_match_type_are_kept(self):
+        others = [{"usage": {"key": str(i), "name": f"Bus {i}", "rank": "GENUS"}, "diagnostics": {"matchType": "VARIANT"}} for i in range(8)]
+        same = {"usage": {"key": "S", "name": "Aus Jones", "authorship": "Jones", "rank": "GENUS"}, "diagnostics": {"matchType": "VARIANT"}}
+        summary = taxon_matching.summarize_match({"diagnostics": {"matchType": "EXACT", "alternatives": others + [same]}}, "Aus")
+        self.assertIn("S", [item["id"] for item in summary["alternatives"]])
+
     def test_exact_alternatives_are_kept_beyond_the_display_limit_and_overflow_is_flagged(self):
         def alternative(key, match_type):
             return {"usage": {"key": key, "name": f"Aus {key}", "rank": "GENUS"}, "diagnostics": {"matchType": match_type}}

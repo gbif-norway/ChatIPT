@@ -1665,6 +1665,22 @@ class GroupDecisionTests(SimpleTestCase):
         with self.assertRaisesRegex(names.NameDecisionError, 'now suggests another name'):
             names.build_decision(record, {'decision': 'col', 'usage_id': 'RT', 'confirm_coarser': True}, {'col_release': RELEASE})
 
+    def test_the_labels_own_authorship_survives_a_col_name_without_one(self):
+        state = {'labels': [{'label': 'Aus bus Smith, 1900', 'parsed': real_parse('Aus bus', authorship='Smith, 1900')}],
+                 'decisions': {'Aus bus Smith, 1900': {'decision': 'col', 'source': 'col', 'scientificName': 'Aus bus',
+                                                       'scientificNameAuthorship': None, 'taxonRank': 'species', 'changeKind': None,
+                                                       'nameRules': names.NAME_RULES_VERSION, 'by': 'auto:exact'}}}
+        frame = pd.DataFrame([{'occurrence_pk': 'o1', 'scientificName': 'Aus bus Smith, 1900', 'scientificNameAuthorship': '', 'taxonRank': ''}])
+        result, _ = names.apply_name_decisions({'occurrence': frame}, state, {'occurrence': [{'name': 'Aus bus Smith, 1900', 'authorship': None, 'rank': None}]})
+        self.assertEqual(result['occurrence'].loc[0, ['scientificName', 'scientificNameAuthorship']].tolist(), ['Aus bus', 'Smith, 1900'])
+
+    def test_a_variant_same_name_usage_at_another_rank_makes_a_stem_ambiguous(self):
+        record = {'label': 'Anura indet.', 'rows': 1, 'qualifier': 'indet.', 'parsed': real_parse(),
+                  'match': {'matchType': 'EXACT', 'hintOnly': False, 'usage': {'id': '1', 'scientificName': 'Anura', 'taxonRank': 'genus'},
+                            'alternatives': [{'id': '2', 'scientificName': 'Anura', 'taxonRank': 'order', 'matchType': 'VARIANT'}]}}
+        self.assertIsNone(names.stem_usage(record))
+        self.assertEqual(names.stem_usage({**record, 'source_rank': 'genus'})['taxonRank'], 'genus')
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,

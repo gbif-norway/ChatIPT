@@ -39,7 +39,8 @@ function RowChoices({ entry, busy, onDecide }) {
     setRowError(failure || '')
     return !failure
   }
-  const usageIdOf = choice => choice.decision === 'alternative' ? choice.usage.id : undefined
+  // The usage shown is the one confirmed: the server refuses it if COL's pick has changed meanwhile.
+  const usageIdOf = choice => ['alternative', 'col'].includes(choice.decision) ? choice.usage?.id : undefined
   const choose = choice => {
     if (!needsConfirmation(choice)) return submit(choice.decision, usageIdOf(choice))
     openerRef.current = typeof document !== 'undefined' ? document.activeElement : null

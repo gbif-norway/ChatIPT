@@ -600,7 +600,9 @@ def stem_usage(record):
         return None
     # A genus and its subgenus of the same name are one assertion; any other rank difference ("Anura" the order and the
     # genus) is resolved only when the source's own rank is the pick's.
-    ranks = {'genus' if usage.get('taxonRank') == 'subgenus' else usage.get('taxonRank') for usage, _ in candidates}
+    same_name_usages = [usage for usage, _ in candidates] + [usage for usage in _same_name_others(record, candidates[0][0])
+                                                             if usage not in [item for item, _ in candidates]]
+    ranks = {'genus' if usage.get('taxonRank') == 'subgenus' else usage.get('taxonRank') for usage in same_name_usages}
     if candidates[0][1] and len(ranks) > 1 and record.get('source_rank') != candidates[0][0].get('taxonRank'):
         return None
     # Without a rank COL cannot say what the stem is ("Larus" could be written with the source's "species").
@@ -1419,7 +1421,9 @@ def apply_name_decisions(frames, name_review, source_names):
                         entry['authorshipKept'] += 1
                     new_rank = decision.get('taxonRank') or supplied_rank
                 else:
-                    new_authorship = decided_authorship or (supplied_authorship if keeps_name else '')
+                    label_authorship = normal(((records.get(label) or {}).get('parsed') or {}).get('authorship')) \
+                        if ((records.get(label) or {}).get('parsed') or {}).get('usable') else ''
+                    new_authorship = decided_authorship or ((supplied_authorship or label_authorship) if keeps_name else '')
                     if supplied_authorship and supplied_authorship != normal(new_authorship):
                         entry['authorshipReplaced'] += 1
                     new_rank = decision.get('taxonRank') or (supplied_rank if keeps_name else '')

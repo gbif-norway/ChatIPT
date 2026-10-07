@@ -490,8 +490,9 @@ def _usage(usage, classification=None):
     }
 
 
-def summarize_match(payload):
-    """Reduce a GBIF v2 match response to what review and write-back need."""
+def summarize_match(payload, name=None):
+    """Reduce a GBIF v2 match response to what review and write-back need; `name` is the queried name, whose same-name
+    alternatives (possible homonyms) are all kept."""
     payload = payload or {}
     diagnostics = payload.get("diagnostics") or {}
     usage = _usage(payload.get("usage"), payload.get("classification"))
@@ -510,7 +511,7 @@ def summarize_match(payload):
             "matchType": str(alt_diagnostics.get("matchType") or "").upper() or None,
             "confidence": alt_diagnostics.get("confidence"),
         })
-    alternatives, exact_dropped = bounded_alternatives(alternatives)
+    alternatives, exact_dropped = bounded_alternatives(alternatives, name)
     return {
         "matchType": match_type,
         "status": MATCH_STATUS.get(match_type, "ambiguous"),
@@ -528,12 +529,13 @@ def summarize_match(payload):
     }
 
 
-def bounded_alternatives(alternatives):
-    """(alternatives kept in their order, whether exact ones were dropped): every exact one up to MAX_EXACT_ALTERNATIVES,
-    other ones up to MAX_ALTERNATIVES."""
+def bounded_alternatives(alternatives, name=None):
+    """(alternatives kept in their order, whether possible homonyms were dropped): every exact one, and every one with the
+    queried name's parts whatever its match type, up to MAX_EXACT_ALTERNATIVES; other ones up to MAX_ALTERNATIVES."""
     kept, exact, other, dropped = [], 0, 0, False
+    parts = name_parts(name) if name else None
     for alternative in alternatives:
-        if alternative.get("matchType") == "EXACT":
+        if alternative.get("matchType") == "EXACT" or (parts and name_parts(alternative.get("scientificName")) == parts):
             if exact >= MAX_EXACT_ALTERNATIVES:
                 dropped = True
                 continue
@@ -584,7 +586,7 @@ def match_col(queries, deadline=None, verbose_exact=False):
                 f"GBIF batch matcher returned {len(payload)} results for {len(chunk)} names."
             )
         for key, item in zip(chunk, payload):
-            results[key] = summarize_match(item)
+            results[key] = summarize_match(item, unique[key]["scientificName"])
     # With verbose_exact, exact names are fetched again for their alternatives: the batch response leaves out the
     # homonyms an automatic decision must see.
     retry = [key for key, summary in results.items() if summary["status"] not in {"exact", "variant"}
@@ -605,15 +607,15 @@ def match_col(queries, deadline=None, verbose_exact=False):
             if results[key]["status"] in {"exact", "variant"}:
                 # The batch's exact match stands (the verbose answer can differ); its homonyms are added, and so is the
                 # verbose pick when it is another usage.
-                verbose = summarize_match(single)
+                verbose = summarize_match(single, unique[key]["scientificName"])
                 alternatives = list(verbose["alternatives"])
                 if verbose["usage"] and str(verbose["usage"].get("id")) != str((results[key]["usage"] or {}).get("id")):
                     alternatives.insert(0, {**verbose["usage"], "matchType": verbose["matchType"], "confidence": verbose["confidence"]})
-                kept, dropped = bounded_alternatives(alternatives)
+                kept, dropped = bounded_alternatives(alternatives, unique[key]["scientificName"])
                 results[key] = {**results[key], "alternatives": kept,
                                 "exactAlternativesDropped": dropped or verbose.get("exactAlternativesDropped", False)}
             else:
-                results[key] = summarize_match(single)
+                results[key] = summarize_match(single, unique[key]["scientificName"])
     return [
         _without_hint_echo(results[json.dumps(_query_params(query), sort_keys=True)], query)
         for query in queries
