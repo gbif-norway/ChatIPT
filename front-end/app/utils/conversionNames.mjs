@@ -43,10 +43,17 @@ export const choiceLabel = (choice) => {
 }
 
 export const replacementWarning = (choice, rows) => {
-  if (!choice?.replaces) return ''
+  if (!choice?.replaces && !choice?.authorship_differs) return ''
   const count = rows ? ` on ${rows.toLocaleString()} ${rows === 1 ? 'row' : 'rows'}` : ''
+  if (!choice.replaces) {
+    return `Catalogue of Life writes the authorship of “${choice.usage.scientificName}” as “${choice.usage.scientificNameAuthorship}”, `
+      + `which is not the authorship in your data; it would replace yours${count}. It may be a different taxon with the same name.`
+  }
   return `“${choice.usage.scientificName}” ${choice.replaces.text}${count}. Your text stays in verbatimIdentification.`
 }
+
+// A COL choice that replaces the user's name, or their authorship, waits for a second click.
+export const needsConfirmation = (choice) => Boolean(choice?.replaces || choice?.authorship_differs)
 
 export const decisionResult = (decision) => {
   if (!decision) return ''

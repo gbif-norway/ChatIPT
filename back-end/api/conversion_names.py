@@ -220,7 +220,7 @@ def carry_decisions(conversion, fresh, plan):
     def same_context(label):
         # Another source with the same labels: a decision carries only where the name's supplied context is unchanged.
         return same_source or (same_labels and label in before and all(records[label].get(key) == before[label].get(key)
-                                                   for key in ('hints', 'source_rank', 'source_authorships', 'qualifier',
+                                                   for key in ('hints', 'source_rank', 'source_authorships', 'authorships_truncated', 'qualifier',
                                                                'source_qualifiers', 'source_ids', 'mixed_hints')))
     carried, bulk, dropped = {}, 0, 0
     auto_declined = [label for label in (previous.get('auto_declined') or [])
@@ -582,6 +582,17 @@ def _hint_normal(value):
     return {'metazoa': 'animalia', 'viridiplantae': 'plantae'}.get(value, value)
 
 
+def _same_name_match(record):
+    """COL's pick when it is the user's own name: an EXACT match, or a variant (authorship, case) of the same name parts."""
+    match = record.get('match') or {}
+    usage = match.get('usage') or {}
+    if not usage or match.get('hintOnly'):
+        return None
+    if match.get('matchType') == 'EXACT' or (match.get('matchType') in {'VARIANT', 'FUZZY', 'CANONICAL'} and same_name(record, usage)):
+        return usage
+    return None
+
+
 def _rank_conflict(record):
     """COL's rank when a uninomial's supplied rank (genus or above) differs from it, else None: maybe another taxon.
 
@@ -596,9 +607,7 @@ def _rank_conflict(record):
     if qualifier_kind(record) == 'uncertain':
         col_rank = (stem_usage(record) or {}).get('taxonRank')
     else:
-        match = record.get('match') or {}
-        usage = match.get('usage') or {}
-        col_rank = usage.get('taxonRank') if match.get('matchType') == 'EXACT' and usage and not match.get('hintOnly') else None
+        col_rank = (_same_name_match(record) or {}).get('taxonRank')
     return col_rank if col_rank in RANK_ORDER and col_rank != source_rank else None
 
 
@@ -622,7 +631,8 @@ def _conflicts(record):
     mixed = record.get('mixed_hints') or []
     if mixed:
         out.append(('mixed', 'check:mixed', f"Your rows give this name different {', '.join(mixed)}"))
-    for rank in ('kingdom', 'phylum', 'class') if match.get('matchType') == 'EXACT' else ():
+    # The source's lineage is compared with COL's pick whenever that pick is the same name, whatever the match type.
+    for rank in ('kingdom', 'phylum', 'class') if _same_name_match(record) else ():
         hint = (record.get('hints') or {}).get(rank)
         theirs = ((usage.get('classification') or {}).get(rank))
         if hint and theirs and _hint_normal(hint) != _hint_normal(theirs):
@@ -1324,7 +1334,9 @@ def col_choices(record):
         found = change(record, usage, match_type)
         choices.append({'decision': kind, 'usage': usage, 'matchType': match_type, 'same_name': same_name(record, usage),
                         'replaces': found if found and found['confirm'] else None,
-                        'corrects': found['text'] if found and found['kind'] == 'spelling' else None, 'rank_note': None})
+                        'corrects': found['text'] if found and found['kind'] == 'spelling' else None, 'rank_note': None,
+                        # COL's authorship is not the user's: the review asks before writing it over theirs.
+                        'authorship_differs': bool(normal(usage.get('scientificNameAuthorship'))) and not authorship_agrees(record, usage)})
     # Homonyms of the user's name at another rank ("Anura" the order and the genus) say so.
     mine = asserted_rank(record)
     ranks = {choice['usage'].get('taxonRank') for choice in choices if choice['same_name']}

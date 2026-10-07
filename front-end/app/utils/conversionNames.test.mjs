@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   DECISION_LABELS, GROUPS, applyLabel, bulkBody, carriedMessage, checkMessage, choiceGroups, choiceLabel, classificationContext, decisionBody,
   decisionResult, groupOptions, groupQuery, groupSubtitle, groupTitle, isChecking, isEditable, needsRowDecision, pageCount, parseNote, previewResult,
-  groupBatch, progress, reasonText, replacementWarning, rowStatus, skippedMessage, stemLabel, undoAutoBody, undoBatchBody,
+  groupBatch, needsConfirmation, progress, reasonText, replacementWarning, rowStatus, skippedMessage, stemLabel, undoAutoBody, undoBatchBody,
 } from './conversionNames.mjs'
 
 test('group order, titles and option labels follow the server groups', () => {
@@ -143,4 +143,12 @@ test('each group keeps the Undo of its own latest bulk decision', () => {
   assert.equal(groupBatch(summary, 'unconfirmed').id, 'b')
   assert.equal(groupBatch(summary, 'auto'), null)
   assert.equal(groupBatch({ last_batch: { id: 'x', group: 'auto' } }, 'auto').id, 'x')
+})
+
+test('a COL name with another authorship than the user\'s asks before replacing it', () => {
+  const jones = { decision: 'col', same_name: true, replaces: null, authorship_differs: true,
+    usage: { scientificName: 'Aus bus', scientificNameAuthorship: 'Jones, 1900' } }
+  assert.equal(needsConfirmation(jones), true)
+  assert.equal(needsConfirmation({ ...jones, authorship_differs: false }), false)
+  assert.match(replacementWarning(jones, 3), /writes the authorship of “Aus bus” as “Jones, 1900”.*on 3 rows/)
 })

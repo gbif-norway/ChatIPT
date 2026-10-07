@@ -248,7 +248,9 @@ The review lists same-name COL usages (homonyms) inline, with their
 kingdom › phylum › class, those from another lineage than the source's last. A
 homonym at another rank says so (for example "Anura" the order and the genus).
 A changing option names what it would do, for example "replaces your genus with
-a phylum", and asks for a second click.
+a phylum", and asks for a second click; so does a same-name COL usage whose
+authorship is not the one in the data. Rank and lineage conflicts are checked
+for any match that is the user's own name, EXACT or a variant of it.
 
 **Re-inspection carries name decisions** (`conversion_names.carry_decisions`).
 A new rule version makes a plan stale, and the re-inspection used to drop every

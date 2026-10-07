@@ -1383,6 +1383,30 @@ class GroupDecisionTests(SimpleTestCase):
         record['source_rank'] = 'species'
         self.assertEqual(names.classify(record)['kind'], 'uncertain')
 
+    def test_same_name_variants_are_checked_for_rank_and_lineage_like_exact_matches(self):
+        def record(**extra):
+            return {'label': 'Anura', 'rows': 1, 'qualifier': None, 'parsed': real_parse('Anura'), **extra,
+                    'match': {'matchType': 'VARIANT', 'hintOnly': False, 'usage': {
+                        'scientificName': 'Anura', 'taxonRank': 'order', 'scientificNameAuthorship': None,
+                        'classification': {'kingdom': 'Animalia', 'class': 'Amphibia'}}}}
+        ranked = names.classify(record(source_rank='genus'))
+        self.assertEqual((ranked['group'], ranked['eligible']), ('check:rank', ['mine']))
+        with self.assertRaises(names.NameDecisionError):
+            names.build_decision(record(source_rank='genus'), {'decision': 'col'}, {'col_release': RELEASE},
+                                 by='bulk:spelling', group_kind='spelling')
+        self.assertEqual(names.classify(record(hints={'class': 'Insecta'}))['group'], 'check:class:Insecta:Amphibia')
+        self.assertEqual(names.classify(record())['kind'], 'spelling')
+
+    def test_a_row_choice_says_when_cols_authorship_is_not_the_users(self):
+        record = {'label': 'Aus bus', 'rows': 1, 'qualifier': None, 'parsed': real_parse('Aus bus'),
+                  'source_authorships': ['Smith, 1900'], 'hints': {'kingdom': 'Plantae'},
+                  'match': {'matchType': 'EXACT', 'hintOnly': False, 'usage': {
+                      'id': 'X', 'scientificName': 'Aus bus', 'scientificNameAuthorship': 'Jones, 1900', 'taxonRank': 'species',
+                      'classification': {'kingdom': 'Animalia'}}}}
+        choice = names.col_choices(record)[0]
+        self.assertTrue(choice['authorship_differs'])
+        self.assertFalse(names.col_choices({**record, 'source_authorships': ['Jones 1900']})[0]['authorship_differs'])
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,
@@ -1877,6 +1901,14 @@ class CarryDecisionTests(SimpleTestCase):
         carried = names.carry_decisions(previous, fresh, {'source_sha256': 'sha-2'})
         self.assertEqual(carried['decisions'], {})
         self.assertEqual(carried['carried']['dropped'], 1)
+
+    def test_a_newly_overlong_authorship_drops_a_carried_decision(self):
+        previous = self.conversion({'Aus bus': decision('col', 'Aus bus')})
+        previous.name_review['labels'] = [{'label': 'Calanus'}, {'label': 'Aus bus', 'source_authorships': [], 'authorships_truncated': False}]
+        fresh = self.fresh()
+        fresh['labels'] = [{'label': 'Calanus'}, {'label': 'Aus bus', 'source_authorships': [], 'authorships_truncated': True}]
+        carried = names.carry_decisions(previous, fresh, {'source_sha256': 'sha-2'})
+        self.assertEqual((carried['decisions'], carried['carried']['dropped']), ({}, 1))
 
     def test_auto_decisions_are_not_carried_but_declines_and_dropped_users_are_counted(self):
         user = decision('keep', None, source='verbatim')

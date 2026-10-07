@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import config from '../config'
+import { formatName } from '../utils/taxonReview.mjs'
 import {
-  PAGE_SIZE, applyLabel, groupBatch, bulkBody, carriedMessage, checkMessage, choiceGroups, choiceLabel, decisionBody,
+  PAGE_SIZE, applyLabel, groupBatch, needsConfirmation, bulkBody, carriedMessage, checkMessage, choiceGroups, choiceLabel, decisionBody,
   decisionResult, groupOptions, groupQuery, groupSubtitle, groupTitle, isChecking, isEditable, needsRowDecision, pageCount,
   previewResult, progress, reasonText, replacementWarning, rowStatus, skippedMessage, stemLabel, unconfirmedMessage,
   undoAutoBody, undoBatchBody,
@@ -40,7 +41,7 @@ function RowChoices({ entry, busy, onDecide }) {
   }
   const usageIdOf = choice => choice.decision === 'alternative' ? choice.usage.id : undefined
   const choose = choice => {
-    if (!choice.replaces) return submit(choice.decision, usageIdOf(choice))
+    if (!needsConfirmation(choice)) return submit(choice.decision, usageIdOf(choice))
     openerRef.current = typeof document !== 'undefined' ? document.activeElement : null
     setConfirming(choice)
   }
@@ -52,7 +53,7 @@ function RowChoices({ entry, busy, onDecide }) {
       <button type="button" className="btn btn-sm btn-outline-secondary" disabled={busy} onClick={() => submit('mine')}>Keep my name</button>
       {entry.offers?.parsed && <button type="button" className="btn btn-sm btn-outline-secondary" disabled={busy} onClick={() => submit('parsed')}>Use split</button>}
       {main && <button type="button" className="btn btn-sm btn-outline-primary" disabled={busy} onClick={() => choose(main)}>
-        {main.replaces ? `Use ${main.usage.scientificName}…` : 'Use COL name'}
+        {needsConfirmation(main) ? `Use ${formatName(main.usage)}…` : `Use ${formatName(main.usage)}`}
       </button>}
       {(entry.kind === 'uncertain' || entry.stem) && entry.stem?.scientificName && <button type="button" className="btn btn-sm btn-outline-primary" disabled={busy} onClick={() => submit('stem')}>
         {stemLabel(entry)}
@@ -69,7 +70,7 @@ function RowChoices({ entry, busy, onDecide }) {
       {replacementWarning(confirming, entry.rows)}
       <div className="d-flex flex-wrap gap-1 mt-1">
         <button ref={confirmRef} type="button" className="btn btn-sm btn-warning" disabled={busy}
-          onClick={async () => { if (await submit(confirming.decision, usageIdOf(confirming), { confirmCoarser: true })) setConfirming(null) }}>Replace with {confirming.usage.scientificName}</button>
+          onClick={async () => { if (await submit(confirming.decision, usageIdOf(confirming), { confirmCoarser: Boolean(confirming.replaces) })) setConfirming(null) }}>Replace with {formatName(confirming.usage)}</button>
         <button type="button" className="btn btn-sm btn-link" onClick={cancel}>Cancel</button>
       </div>
     </div>}
