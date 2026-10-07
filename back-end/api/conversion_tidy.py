@@ -16,6 +16,9 @@ REPORT_WHITESPACE_VALUES = 500
 PROMPT_VERSION = '2'
 SIBLING_CHARS = 100  # neighbouring-column values sent as context are clipped to this
 REQUEST_CHARS = 120000  # values and context of one call
+# Values per call: about 50 output tokens each (with reasoning) fit the 16,000-token answer; the rest go to a later call.
+MAX_VALUES = 200
+MAX_CALLS = 3  # calls per tidy job; values beyond that wait for a later inspection
 TIDY_TASK = 'DwC-A conversion tidy-up'
 VALUE_FIELDS = {'lifeStage', 'sex', 'reproductiveCondition', 'behavior', 'vitality', 'establishmentMeans',
                 'degreeOfEstablishment', 'pathway', 'preparations', 'organismQuantityType', 'countryCode', 'country',
@@ -83,8 +86,8 @@ def _value_key(t, c, value):
     return f'{t}:{c}:{hashlib.sha256(value.encode()).hexdigest()}'
 
 
-def candidates(view, table=None):
-    """Build bounded, deterministic model inputs from values left unresolved by rules."""
+def candidates(view, table=None, answered=()):
+    """Build bounded, deterministic model inputs from values left unresolved by rules and not answered yet."""
     settled = set()
     if view.tidy:
         for group in view.tidy.get('groups', []):
@@ -106,7 +109,7 @@ def candidates(view, table=None):
             values = []
             for value, count in counts.items():
                 # A value longer than the 200 characters the model would see is never sent: a repair could cut it short.
-                if not value.strip() or len(value) > 200 or (t, c, value) in settled:
+                if not value.strip() or len(value) > 200 or (t, c, value) in settled or _value_key(t, c, value) in answered:
                     continue
                 data = dwca_tidy._tables()
                 if name in {'sex', 'lifeStage', 'establishmentMeans', 'degreeOfEstablishment', 'pathway'}:
@@ -143,11 +146,15 @@ def candidates(view, table=None):
                 'term': source.terms[c], 'siblings': siblings}})
     # Largest columns are retained first; ties preserve archive order.
     # Bounded by values and by characters, so one call always fits; the largest columns are kept first.
-    kept, remaining, characters = [], 1500, REQUEST_CHARS
+    kept, remaining, characters = [], MAX_VALUES, REQUEST_CHARS
     for column in sorted(raw_columns, key=lambda item: (-len(item['values']), item['table'], item['column'])):
+        if remaining <= 0:
+            break
+        # A column's most frequent values come first; the rest wait for a later call.
+        column = {**column, 'values': column['values'][:remaining]}
         size = len(json.dumps({'values': [value['text'] for value in column['values']], 'context': column['context']},
                               ensure_ascii=False))
-        if len(column['values']) <= remaining and size <= characters:
+        if size <= characters:
             kept.append(column); remaining -= len(column['values']); characters -= size
     return sorted(kept, key=lambda item: (item['table'], item['column']))
 
@@ -226,7 +233,7 @@ def _model_cache(conversion, fingerprint):
     return {}
 
 
-def model_changes(view_or_archive, entries):
+def model_changes(view_or_archive, entries, overrides=None):
     """Return stable candidate model changes, with tiers set by row-level corroboration."""
     initial = []
     for item in (entries or {}).values():
@@ -267,7 +274,10 @@ def model_changes(view_or_archive, entries):
                         'confidence': item['confidence'], 'note': item.get('note', ''), 'move': move})
     if not initial:
         return []
-    stats = _corroboration(view_or_archive, apply_tidy(view_or_archive)[0], initial)
+    # Corroboration is read from the rules as the user has them (an undone rule vouches for nothing); the user's
+    # choices about model answers themselves play no part.
+    rule_overrides = {key: value for key, value in (overrides or {}).items() if ':model' not in key}
+    stats = _corroboration(view_or_archive, apply_tidy(view_or_archive, overrides=rule_overrides)[0], initial)
     concepts = dwca_tidy.life_stage_values()
     for change in initial:
         agree, conflict, rows = stats.get(id(change), (0, 0, 0))
@@ -286,7 +296,8 @@ def model_changes(view_or_archive, entries):
             tier = 'suggest'  # a life stage read from another field must be a GBIF concept to apply by itself
         elif any(field not in CHECKED_FILLS and text != original for field, text in others.items()):
             tier = 'suggest'  # free text written into another field must be the exact source text to apply by itself
-        elif others.get('individualCount') and not re.search(r'(?<!\d)0*' + others['individualCount'] + r'(?!\d)', original):
+        elif others.get('individualCount') and int(others['individualCount']) not in {
+                int(token) for token in re.findall(r'(?<![\d.,/-])\d+(?![.,/-]?\d)', original)}:
             tier = 'suggest'  # a count must be written in the value itself
         change['tier'] = tier
     return initial
@@ -342,7 +353,7 @@ def tidied(conversion, archive, overrides=None):
         return archive
     override_values = _stored_overrides(conversion, archive) if overrides is None else overrides
     entries = _entries_for_view(conversion, archive)
-    changes = model_changes(archive, entries)
+    changes = model_changes(archive, entries, override_values)
     return apply_tidy(archive, overrides=override_values, model_changes=changes)[0]
 
 
@@ -366,7 +377,7 @@ def _request_args(conversion, candidates_list, dataset_info):
                                 'field': {'type': 'string', 'enum': allowed_fields}, 'value': {'type': 'string'}}}},
                         'residue': {'type': 'string'}, 'confidence': {'type': 'string', 'enum': ['high', 'medium', 'low']},
                         'note': {'type': 'string'}}}}}}}}}
-    return {'model': model, 'store': False, 'reasoning': {'effort': effort}, 'max_output_tokens': 12000,
+    return {'model': model, 'store': False, 'reasoning': {'effort': effort}, 'max_output_tokens': 16000,
             'service_tier': conversion_review.service_tier(model, getattr(settings, 'OPENAI_SOL_SERVICE_TIER', 'flex')),
             'input': [{'role': 'system', 'content': SYSTEM_PROMPT},
                       {'role': 'user', 'content': conversion_review.evidence.canonical(payload)}],
@@ -380,63 +391,70 @@ def should_run(conversion, archive):
     model = _model_cache(conversion, archive.fingerprint)
     answered = model.get('entries', {})
     rule_view = apply_tidy(archive, overrides=_stored_overrides(conversion, archive))[0]
-    return any(value['key'] not in answered for col in candidates(rule_view) for value in col['values'])
+    return bool(candidates(rule_view, answered=answered))
 
 
 def run_model(conversion, archive, claim, job_id):
-    """Call once for unanswered values and return a complete, cacheable model state."""
+    """Call for unanswered values, MAX_VALUES per call and at most MAX_CALLS calls; return a complete, cacheable state.
+
+    A failure after an answered call keeps the answers so far (status error or cost-limit); a failure before any
+    answer raises, and the caller keeps the deterministic tidy-up.
+    """
+    import time
     from api import conversion_review
     from api.conversion_evidence import publication_metadata
     from api.helpers.openai_helpers import query_with_flex_fallback
     base = _model_cache(conversion, archive.fingerprint)
     entries, verdicts = dict(base.get('entries', {})), dict(base.get('verdicts', {}))
     rule_view = apply_tidy(archive, overrides=_stored_overrides(conversion, archive))[0]
-    cols = candidates(rule_view)
-    remaining = []
-    asked = []
-    for col in cols:
-        vals = [value for value in col['values'] if value['key'] not in entries]
-        if vals:
-            vals = [{**value, 'i': index} for index, value in enumerate(vals)]
-            remaining.append({**col, 'values': vals})
-            asked.extend(value['key'] for value in vals)
     model_name, effort = model_settings()
     result = {'version': TIDY_VERSION, 'prompt': PROMPT_VERSION, 'source_sha256': archive.fingerprint,
-              'status': 'complete', 'model': model_name, 'effort': effort,
-              'response_id': base.get('response_id', ''), 'asked': list(base.get('asked', [])) + asked,
-              'entries': entries, 'verdicts': verdicts}
-    if not remaining:
+              'status': 'complete', 'model': model_name, 'effort': effort, 'response_id': base.get('response_id', ''),
+              'asked': list(base.get('asked', [])), 'entries': entries, 'verdicts': verdicts}
+    if not candidates(rule_view, answered=entries):
         return result
     if not conversion_review.ai_available():
         result['status'] = 'unavailable'
         return result
     metadata = publication_metadata(archive, 600)
-    # Only the archive's own metadata is sent, so stored answers depend on the source bytes alone.
-    args = _request_args(conversion, remaining, {'title': metadata.get('title') or '', 'description': metadata.get('description') or ''})
-    reservation = None
-    with conversion_review.fence(conversion.pk, job_id, claim, 'tidy', {'inspecting'}) as (locked, _):
-        reservation = conversion_review.reserve(locked, args, claim)
-    import time
-    started = time.monotonic()
-    try:
-        response = query_with_flex_fallback(args, max_retries=0)
-    except Exception as exc:
-        conversion_review.release_on_error(reservation, exc)
-        raise
-    conversion_review.record_usage(conversion.pk, conversion.dataset_id, response, reservation, model_name, effort,
-                                   TIDY_TASK, int((time.monotonic() - started) * 1000))
-    parsed = parse_response(response, remaining)
-    if parsed is None:
-        raise ValueError('The tidy model returned no usable response.')
-    found, found_verdicts = parsed
-    # A value the answer left out counts as an abstention, so it is not paid for again.
-    for column in remaining:
-        for value in column['values']:
-            found.setdefault(value['key'], {'table': column['table'], 'column': column['column'], 'value': value['value'],
-                                            'fields': {}, 'residue': '', 'confidence': 'low', 'note': 'No answer.'})
-    entries.update(found)
-    verdicts.update(found_verdicts)
-    result.update(response_id=str(getattr(response, 'id', '') or ''), entries=entries, verdicts=verdicts)
+    for call in range(MAX_CALLS):
+        remaining = candidates(rule_view, answered=entries)
+        if not remaining:
+            break
+        # Only the archive's own metadata is sent, so stored answers depend on the source bytes alone.
+        args = _request_args(conversion, remaining, {'title': metadata.get('title') or '', 'description': metadata.get('description') or ''})
+        try:
+            with conversion_review.fence(conversion.pk, job_id, claim, 'tidy', {'inspecting'}) as (locked, _):
+                reservation = conversion_review.reserve(locked, args, claim)
+            started = time.monotonic()
+            try:
+                response = query_with_flex_fallback(args, max_retries=0)
+            except Exception as exc:
+                conversion_review.release_on_error(reservation, exc)
+                raise
+            conversion_review.record_usage(conversion.pk, conversion.dataset_id, response, reservation, model_name, effort,
+                                           TIDY_TASK, int((time.monotonic() - started) * 1000))
+            parsed = parse_response(response, remaining)
+            if parsed is None:
+                raise ValueError('The tidy model returned no usable response.')
+        except conversion_review.Fenced:
+            raise
+        except Exception as exc:
+            if not call:
+                raise
+            logger.exception('Conversion %s AI tidy call %s failed', conversion.pk, call + 1)
+            result['status'] = 'cost-limit' if isinstance(exc, conversion_review.CostRefused) else 'error'
+            break
+        found, found_verdicts = parsed
+        # A value the answer left out counts as an abstention, so it is not paid for again.
+        for column in remaining:
+            for value in column['values']:
+                found.setdefault(value['key'], {'table': column['table'], 'column': column['column'], 'value': value['value'],
+                                                'fields': {}, 'residue': '', 'confidence': 'low', 'note': 'No answer.'})
+        entries.update(found)
+        verdicts.update(found_verdicts)
+        result['asked'].extend(value['key'] for column in remaining for value in column['values'])
+        result['response_id'] = str(getattr(response, 'id', '') or '')
     return result
 
 

@@ -89,8 +89,9 @@ Values the rules cannot settle go to the model once per dataset (`conversion_tid
   …), remarks of occurrence rows, and place names only when they look damaged or misplaced (a sea or a
   country in county/stateProvince). Columns with more than 300 such values (free text such as
   localities) are never sent, nor are values longer than 200 characters, protected columns or columns the
-  tidy-up added. At most 1,500
-  values and 120,000 characters per call (a value known only in another field's vocabulary, such as sex `juvenile`, is sent), each clipped to 200 characters, with counts and the most frequent values of up to six
+  tidy-up added. At most 200
+  values and 120,000 characters per call, up to three calls per job (further values wait for a later
+  inspection) (a value known only in another field's vocabulary, such as sex `juvenile`, is sent), each clipped to 200 characters, with counts and the most frequent values of up to six
   neighbouring columns (sex, counts, places, remarks; clipped to 100 characters), plus the title and description from the archive's own
   metadata (so answers depend on the source bytes alone).
 - **Call**: `gpt-6-sol` at medium effort on Flex (`OPENAI_CONVERSION_TIDY_MODEL`,
@@ -109,7 +110,8 @@ Values the rules cannot settle go to the model once per dataset (`conversion_tid
   `AF` → adult + female) keeps the exact text in the originals and the report only.
 - **Tiers**: high confidence applies automatically; medium only when, in every row with the value, another
   column already agrees (`fad` with sex `f`); a count applies by itself only when the number is written in
-  the value; a conflict with the row (`1 juv.` where individualCount is 2)
+  the value as a whole number (not part of a decimal or range); agreement is read from the rules as the user
+  has them, so undoing a rule can turn a model answer back into a suggestion; a conflict with the row (`1 juv.` where individualCount is 2)
   makes a suggestion. Agreement is counted against the source after the rules only, so answers never
   corroborate each other, and a copy of the source text itself (kept in occurrenceRemarks) is no evidence. Clearing a value, rewording free text that is not damaged (`ind/m3`), and a
   non-GBIF life stage read from another field are always suggestions, as is any other free text written

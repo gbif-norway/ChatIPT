@@ -226,6 +226,28 @@ class TidyModelSafetyTests(SimpleTestCase):
                  for n in ('2', '1')]
         self.assertEqual(tiers, ['suggest', 'auto'])
 
+    def test_review_round_eleven_cases(self):
+        def entry(value, fields, confidence):
+            return {'k': {'table': 0, 'column': 2, 'value': value, 'fields': fields, 'residue': '', 'confidence': confidence, 'note': ''}}
+        # A number inside a decimal or a range is not a count written in the value.
+        for value in ('1.5 juv.', '2-3 juv.'):
+            source = archive([['o1', '', value, '', '', 'Aus bus', 'present']])
+            change = conversion_tidy.model_changes(source, entry(value, {'lifeStage': 'juvenile', 'individualCount': value[0]}, 'high'))[0]
+            self.assertEqual(change['tier'], 'suggest', value)
+        # Corroboration follows the rules as the user has them: with the sex terms undone, 'f' no longer vouches for female.
+        source = archive([['o1', 'f', 'fad', '1', '', 'Aus bus', 'present']])
+        fad = entry('fad', {'lifeStage': 'adult', 'sex': 'female'}, 'medium')
+        self.assertEqual(conversion_tidy.model_changes(source, fad)[0]['tier'], 'auto')
+        self.assertEqual(conversion_tidy.model_changes(source, fad, {'tidy:0:1:vocabulary': 'off'})[0]['tier'], 'suggest')
+        # At most MAX_VALUES values go into one call; answered values make room for the rest.
+        many = archive([[f'o{n}', '', f'note {n}', '1', '', 'Aus bus', 'present'] for n in range(250)])
+        view = tidy_archive(many)[0]
+        first = conversion_tidy.candidates(view)
+        self.assertEqual(sum(len(column['values']) for column in first), conversion_tidy.MAX_VALUES)
+        answered = {value['key'] for column in first for value in column['values']}
+        rest = conversion_tidy.candidates(view, answered=answered)
+        self.assertEqual(sum(len(column['values']) for column in rest), 250 - conversion_tidy.MAX_VALUES)
+
     def test_model_answers_never_corroborate_each_other(self):
         # Both remarks columns propose lifeStage adult for a row whose own lifeStage is empty: nothing in the source agrees.
         source = archive([['o1', '', 'fad', '1', '', 'Aus bus', 'present', 'adult female']], extra_terms=('occurrenceRemarks',))
@@ -358,3 +380,24 @@ class TidyModelFlowTests(ConversionTestCase):
             self.assertFalse(DwcConversionJob.objects.filter(conversion=self.conversion).exists())
             self.assertEqual(self.conversion.status, 'review')
             query.assert_not_called()
+
+
+@override_settings(**AI, CONVERSION_NAME_CHECKS_ENABLED=False, CONVERSION_REVIEW_MAX_RUNS_PER_PLAN=0)
+class TidyModelBatchTests(ConversionTestCase):
+    # 250 distinct remarks: more than one call takes, so the job makes a second call for the rest.
+    files = [('occurrence.csv', b'occurrenceID,eventRemarks,occurrenceStatus\n'
+              + b''.join(f'o{n},note {n},present\n'.encode() for n in range(250)))]
+
+    def test_values_beyond_one_call_go_into_further_calls(self):
+        sizes = []
+
+        def response(args, max_retries=None):
+            sizes.append(sum(len(column['values']) for column in json.loads(args['input'][1]['content'])['columns']))
+            return SimpleNamespace(id=f'batch-{len(sizes)}', status='completed', model='gpt-6-sol',
+                                   usage={'input_tokens': 10, 'output_tokens': 5}, output_text=json.dumps({'columns': []}))
+        with patch('api.helpers.openai_helpers.query_with_flex_fallback', side_effect=response):
+            process_next_conversion(); process_next_conversion()
+        self.assertEqual(sizes, [conversion_tidy.MAX_VALUES, 250 - conversion_tidy.MAX_VALUES])
+        self.assertEqual(len(self.conversion.tidy['model']['entries']), 250)
+        self.assertEqual(self.conversion.tidy['model']['status'], 'complete')
+
