@@ -1573,6 +1573,11 @@ class GroupDecisionTests(SimpleTestCase):
         # "ssp." and "subsp." are one marker.
         same = {**record['match']['usage'], 'scientificName': 'Carex nigra ssp. juncea', 'taxonRank': 'subspecies'}
         self.assertIsNone(names.change(record, same, 'EXACT'))
+        for asserted, theirs in (('Carex nigra nothosubsp. juncea', 'Carex nigra subsp. juncea'),
+                                 ('Carex nigra juncea', 'Carex nigra var. juncea'), ('Carex nigra var. juncea', 'Carex nigra juncea')):
+            with self.subTest(asserted=asserted):
+                found = names.change({**record, 'label': asserted, 'parsed': real_parse(asserted)}, {**record['match']['usage'], 'scientificName': theirs}, 'EXACT')
+                self.assertEqual(found['kind'], 'marker')
 
     def test_another_family_keeps_the_users_authorship_and_mixed_families_are_a_check(self):
         record = {'label': 'Aus bus', 'rows': 1, 'qualifier': None, 'parsed': real_parse('Aus bus'), 'hints': {'family': 'Bidae'},

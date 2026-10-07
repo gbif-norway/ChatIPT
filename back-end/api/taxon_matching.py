@@ -211,7 +211,7 @@ def _is_spelling(mine, theirs, match_type, asserted_rank, rank, usage, hints):
 
 # Infraspecific rank markers and their usual variants; "ssp." is "subsp.", "fo."/"forma" is "f.".
 _MARKER_FORMS = {"subsp.": "subsp.", "ssp.": "subsp.", "var.": "var.", "subvar.": "subvar.", "f.": "f.", "fo.": "f.",
-                 "forma": "f.", "subf.": "subf."}
+                 "forma": "f.", "subf.": "subf.", "nothosubsp.": "nothosubsp.", "nothovar.": "nothovar."}
 
 
 def _explicit_markers(name):
@@ -242,8 +242,9 @@ def name_change(asserted, usage, match_type=None, asserted_rank=None, hints=None
     change = {"from": asserted_rank, "to": rank, "confirm": True}
     # The same parts with another explicit rank marker ("subsp. juncea" and "var. juncea") are another name.
     my_markers, their_markers = _explicit_markers(asserted), _explicit_markers(usage.get("scientificName"))
-    if mine == theirs and my_markers and their_markers and my_markers != their_markers:
-        return {**change, "kind": "marker", "text": f"writes your {' '.join(my_markers)} as {' '.join(their_markers)}"}
+    if mine == theirs and my_markers != their_markers:
+        mine_text = " ".join(my_markers) or "name without a rank marker"
+        return {**change, "kind": "marker", "text": f"writes your {mine_text} as {' '.join(their_markers) or 'a name without one'}"}
     if mine == theirs:
         # Only an infrageneric name carries its rank in its parts; any other same name is the user's assertion.
         if any("." in part for part in mine) and asserted_rank and rank and asserted_rank != rank:
