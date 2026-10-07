@@ -72,10 +72,47 @@ Details that matter:
   coordinates, `verbatim*` fields, measurement terms other than remarks, relationship terms other than
   remarks, `dynamicProperties` and all terms outside the Darwin Core namespace.
 
+## Model layer (one call per dataset)
+
+Values the rules cannot settle go to the model once per dataset (`conversion_tidy.py`): `eventRemarks`
+`fad` (adult female in an arachnid archive), `1 juv.`, copepod life stages `AF`/`CV`, a stateProvince
+`M�re og Romsdal` with a lost character, a sea name in `county`.
+
+- **When**: after inspection a `tidy` job runs when AI is available (`CONVERSION_AI_REVIEW_ENABLED` and an
+  API key) and some value has no stored answer. The page shows *Reading through your values to tidy them
+  up…*; the job then rebuilds the plan like a replan and hands over to the AI review and name checks.
+  Any failure, timeout, missing key or cost refusal keeps the deterministic plan and never blocks.
+- **What is sent**: per column, distinct values that no rule changed and that are not already valid —
+  value fields (lifeStage, sex, establishment vocabularies, behavior, preparations, organismQuantityType,
+  …), remarks of occurrence rows, and place names only when they look damaged or misplaced (a sea or a
+  country in county/stateProvince). Columns with more than 300 such values (free text such as
+  localities) are never sent, nor are protected columns or columns the tidy-up added. At most 1,500
+  values per call, each clipped to 200 characters, with counts and the most frequent values of up to six
+  neighbouring columns (sex, counts, places, remarks), plus the dataset title and description.
+- **Call**: `gpt-6-sol` at medium effort on Flex (`OPENAI_CONVERSION_TIDY_MODEL`,
+  `OPENAI_CONVERSION_TIDY_EFFORT`), reserved and recorded under the dataset cost limit with task
+  *DwC-A conversion tidy-up*. The answer is strict JSON: per value, `fields` from a closed set,
+  `residue` (what the fields do not capture), `confidence` and a short `note`. Values are untrusted data.
+- **Validation**: an answer may only fill fields a value of that column can plausibly state (a remark:
+  life stage, sex, count and other organism fields; a country column: countryCode, country, waterBody;
+  …). sex must be GBIF Sex concepts, establishment vocabularies GBIF concepts, individualCount a whole
+  number, countryCode an ISO code. Protected fields are never written.
+- **Exact words are kept**: a remark about the organism moves its exact text to `occurrenceRemarks`
+  (an `eventRemarks` value leaves the event); a value whose reading leaves something over (`Female?`)
+  keeps its exact text in `occurrenceRemarks` beside the interpreted field.
+- **Tiers**: high confidence applies automatically; medium only when another column of the same row
+  already agrees (`fad` with sex `f`); a conflict with the row (`1 juv.` where individualCount is 2)
+  makes a suggestion. Agreement is counted against the source after the rules only, so answers never
+  corroborate each other. Clearing a value, rewording free text that is not damaged (`ind/m3`), and a
+  non-GBIF life stage read from another field are always suggestions. Low confidence changes nothing.
+- **Cache**: answers are stored in `conversion.tidy.model` with the source fingerprint and prompt
+  version, so inspect, replan and convert produce the same view and plan id without calling again.
+  A byte-identical re-upload by the same owner reuses them (571/572 were re-uploads of 558/559).
+
 ## Seeing and undoing changes
 
 `conversion.tidy` (JSON) holds the overrides for the current source and a bounded summary of the last
-result. The API state has `tidy: {enabled, pending, groups, overrides, counts}`. Each group is one rule
+result. The API state has `tidy: {enabled, pending, model, groups, overrides, counts}`. Each group is one rule
 applied to one column with a plain-language title, for example *"countryCode held country names in
 70,951 rows. The names now go to country and countryCode gets ISO codes: NO, SJ, SE, SH."*
 
@@ -85,7 +122,8 @@ group, including any beyond the 30 listed). Undo/Apply posts
 `{action: 'tidy', plan_id, changes: {id: 'undo'|'apply'|null}}`; ids are group ids
 (`tidy:t:c:rule`) or value ids. Overrides survive a re-inspection of the same source.
 
-An Undo or Apply queues a `replan` job. It rebuilds the plan from the tidied view and carries
+A group action replaces the choices made for its single values. An Undo or Apply queues a `replan` job,
+which never calls the model (stored answers are reused). It rebuilds the plan from the tidied view and carries
 the user's state to the new plan id: decisions whose id, column term and option still exist
 (AI-reviewer decisions only when their question is unchanged), their provenance events (copied with
 `transcript.carried_from_plan`), AI review records for unchanged questions and the name review (names
@@ -102,16 +140,19 @@ The value-disposition ledger adds `tidied_values` (cells rewritten), `tidy_clear
 group does not list) and `source_nonempty_values` per source column, and marks
 added columns with `tidy_added`.
 
-## Production archives (566–572, deterministic rules only)
+## Production archives (566–572)
 
-| Archive | Questions before → after | Notable tidy-up |
+Questions: production at the time → current rules without the tidy-up → with the tidy-up (rules and one
+`gpt-6-sol` Flex call; prod decisions where still valid, otherwise first options).
+
+| Archive | Questions | Notable tidy-up |
 |---|---|---|
-| 566 | 1 → 1 | 7,529 `NA` measurementRemarks cleared |
-| 567 | 2 → 2 | copepod stages left for the model layer |
-| 568 | 18 → 18 | sex/lifeStage terms, 34 decimal-comma elevations, `Female + Male` → `female \| male`, umlaut repairs suggested |
-| 569 | 3 → 3 | countryCode NO filled for 14,776 rows |
-| 570 | 17 → 2 | all 15 country-label questions gone; ISO codes for 70,951 rows; 3 sea names → waterBody; sex `Unknown` ×63,677 empty; Pullus → nestling |
-| 571 | 2 → 2 | countryCode UG filled |
-| 572 | 14 → 6 | 8 of 11 life-stage remark questions gone (1,525 rows → lifeStage); `1 juv.`, `ad + egg`, `ad.m.egg` left for the model layer; f/m → female/male; all-zero elevation/depth cleared |
+| 566 | 1 → 1 → 1 | 7,529 `NA` measurementRemarks cleared; the model left the remarks as written |
+| 567 | 2 → 2 → 2 | model: copepod `AF`/`AM` → adult + female/male, `CI`–`CV` → copepodite I–V; two larva readings suggested |
+| 568 | 19 → 18 → 18 | sex/lifeStage terms, 34 decimal-comma elevations, `Female + Male` → `female \| male`; `Female?`/`Male?` and umlaut repairs suggested |
+| 569 | 3 → 3 → 3 | countryCode NO filled for 14,776 rows; model repaired `M�re og Romsdal` → `Møre og Romsdal` |
+| 570 | 17 → 17 → 2 | all 15 country-label questions gone; ISO codes for 70,951 rows; sea names → waterBody (model: `North Sea` from county); sex `Unknown` ×63,677 empty; Pullus → nestling |
+| 571 | 2 → 2 → 2 | countryCode UG filled; nothing for the model |
+| 572 | 16 → 14 → 3 | all life-stage remark questions gone: 1,525 rows by rule, `fad` and `ad + egg` by the model (exact text kept in occurrenceRemarks), `1 juv.` and `ad.m.egg` suggested; f/m → female/male; all-zero elevation/depth cleared |
 
-Every package validated.
+Every package validated. The six model calls cost $0.027 in total ($0.001–0.007 each, 2–9 s on Flex).
