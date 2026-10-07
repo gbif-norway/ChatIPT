@@ -184,8 +184,8 @@ function GroupDecisionBar({ group, planId, busy, editable, send, summary, select
   }
   return <>
     {showOptions && options.length > 0 && <fieldset className="name-review-decision-bar mb-2">
+      <legend className="small fw-semibold mb-1">Your decision<span className="visually-hidden"> for {groupTitle(group)}</span></legend>
       <div className="d-flex flex-wrap align-items-center gap-2">
-        <legend className="small fw-semibold mb-0 me-1">Your decision</legend>
         {options.map(option => <label key={option.decision} className="form-check form-check-inline mb-0">
           <input className="form-check-input" type="radio" name={`name-group-${group.id}`} value={option.decision} checked={selected === option.decision} disabled={!editable || busy || !option.eligible} onChange={() => onSelect(option.decision)} />
           <span className={`form-check-label small${option.eligible ? '' : ' text-muted'}`}>{option.label}{option.eligible ? '' : ' (decide each name below)'}</span>

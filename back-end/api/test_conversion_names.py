@@ -1428,6 +1428,36 @@ class GroupDecisionTests(SimpleTestCase):
             with self.subTest(label=label):
                 self.assertEqual(names.qualifier_kind({'label': label, 'qualifier': None, 'parsed': real_parse('Larus')}), 'doubt')
 
+    def test_an_exact_name_with_homonyms_is_kept_without_choosing_one(self):
+        # The captured verbose "Sterna" response lists other exact Sterna usages (a mollusc, another authorship).
+        record = copy.deepcopy(FIXTURE_RECORDS['Sterna sp.'])
+        record.update(label='Sterna', qualifier=None, parsed=real_parse('Sterna'))
+        classification = names.classify(record)
+        self.assertEqual(classification['kind'], 'auto')
+        self.assertIn('homonym', [reason['code'] for reason in classification['reasons']])
+        self.assertNotIn('col', classification['eligible'])
+        state = {'labels': [record], 'decisions': {}, 'col_release': RELEASE}
+        names.auto_accept(state)
+        self.assertEqual((state['decisions']['Sterna']['decision'], state['decisions']['Sterna']['scientificNameAuthorship']), ('parsed', None))
+        with self.assertRaises(names.NameDecisionError):
+            names.build_decision(record, {'decision': 'col'}, state, by='bulk:auto', group_kind='auto')
+
+    def test_sp_after_a_name_cols_has_above_family_is_decided_one_at_a_time(self):
+        record = copy.deepcopy(FIXTURE_RECORDS['Anura indet.'])
+        self.assertEqual(names.classify(record)['kind'], 'uncertain')  # "indet." may stop at an order
+        record.update(label='Anura sp.', qualifier='sp.')
+        classification = names.classify(record)
+        self.assertEqual((classification['kind'], classification['reasons'][0]['code'], classification['eligible']),
+                         ('unconfirmed', 'rank', ['mine']))
+        self.assertEqual(names.auto_accept({'labels': [record], 'decisions': {}, 'col_release': RELEASE}), 0)
+
+    def test_any_unread_word_in_an_unparsed_label_keeps_the_users_authorship(self):
+        unparsed = {'type': None, 'usable': False, 'canonical': None, 'authorship': None, 'rank': None, 'lossless': False, 'splits': False}
+        usage = {'scientificName': 'Larus argentatus', 'scientificNameAuthorship': 'Pontoppidan, 1763'}
+        for label, agrees in (('Larus argentatus s.', False), ('Larus argentatus', True), ('Betula pubescens subsp. tortuosa', True)):
+            with self.subTest(label=label):
+                self.assertEqual(names.authorship_agrees({'label': label, 'parsed': unparsed}, usage), agrees)
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,

@@ -155,7 +155,7 @@ time.
 
 | Group | Who is in it | What happens by default | Group decisions | One at a time |
 | --- | --- | --- | --- | --- |
-| Accepted automatically | EXACT match of the same name (markers kept, a subgenus ignored), no qualifier, no conflict | Accepted (`auto:exact`): COL's name and authorship when the authorships agree, else the user's name and authorship | Use COL name, Use split, Keep as written | Other COL names, Don't publish a name |
+| Accepted automatically | EXACT match of the same name (markers kept, a subgenus ignored), no qualifier, no conflict | Accepted (`auto:exact`): COL's name and authorship when the authorships agree and COL has no other taxon written the same way, else the user's name and authorship | Use COL name, Use split, Keep as written | Other COL names, Don't publish a name |
 | Uncertain to genus or family | "sp.", "spp.", "indet." names whose stem COL has exactly | Accepted (`auto:uncertain`) as the stem | Publish the genus or family name, Keep as written | Other COL names, Don't publish a name |
 | Spelling differs from COL | VARIANT/FUZZY match | "Use COL spelling" pre-selected when a spelling correction exists | Use COL spelling (spelling corrections only), Keep my spelling | Other changes, with confirmation |
 | Not confirmed by COL | Homonyms COL can't pick between, higher rank only, not found, an ID not found, "cf."/"aff."/"nr."/"?" | "Keep my names" pre-selected | Keep my names (not for cf. and the like) | Pick a candidate (with kingdom › phylum › class), a coarser name with confirmation |
@@ -188,7 +188,9 @@ the user, with how many rows say so. The stem (`stem` decision) is the COL usage
 the matcher's own pick, or exact alternatives that agree on one rank. COL's
 authorship is written only when the same-name usages agree on it and it agrees
 with any authorship the user supplied, so homonyms ("Viola" the plant and the
-moth, "Ficus" in 558) are published as the bare genus name. DwC-DP has no
+moth, "Ficus" in 558) are published as the bare genus name. "sp." and "spp." follow a genus or family, so a stem COL has at a
+higher rank ("Anura sp.", the order) is decided one name at a time; "indet." may
+stop at any rank. DwC-DP has no
 identificationQualifier, so identification rows get `taxonFormula` "A sp.",
 "A spp." or "A indet." from their own row's qualifier, else the label's (blank
 cells only). `verbatimIdentification` still holds the text as written.

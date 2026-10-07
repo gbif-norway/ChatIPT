@@ -52,6 +52,8 @@ MAX_SOURCE_QUALIFIERS = 5
 MAX_BATCHES = 5  # bulk decisions that can still be undone; each keeps the snapshots it replaced
 _OVERLONG_SOURCE_ID = '\0overlong'
 UNCERTAIN_QUALIFIERS = {'sp.', 'spp.', 'indet.'}
+# Rank markers inside a name; any other word after the genus in an unparsed label may be an authorship.
+RANK_MARKER_WORDS = {'subsp.', 'ssp.', 'var.', 'subvar.', 'f.', 'fo.', 'forma', 'subf.', 'agg.', 'nothosubsp.', 'nothovar.', '×', 'x'}
 # "cf.", "aff.", "nr." or "?" anywhere in a label make the identification doubtful, even beside a trailing "sp.".
 _DOUBT_MARKER = re.compile(r'\?|(?:^|\s)(?:cf|aff|nr)(?:\.|(?=\s|$))', re.IGNORECASE)
 GROUP_OPTIONS = {
@@ -479,9 +481,10 @@ def authorship_agrees(record, usage):
 
 
 def _unread_trailing_text(record):
-    """Words after the first in an unparsed label that look like an author or year ("Aus bus Smith, 1900")."""
+    """An unparsed label has words after the first that are not plain epithets or rank markers ("Aus bus Smith, 1900",
+    "Larus argentatus s."): they may be an authorship nobody can compare."""
     words = split_qualifier(record.get('label'))[0].split()[1:]
-    return any(word[:1].isupper() or word[:1] in '([' or any(character.isdigit() for character in word) for word in words)
+    return any(not (word.casefold() in RANK_MARKER_WORDS or (word.islower() and word.replace('-', '').isalpha())) for word in words)
 
 
 def unconfirmed(state):
@@ -603,6 +606,34 @@ def _same_name_match(record):
     return None
 
 
+def _homonyms(record):
+    """Other exact usages of the user's own name that COL could also mean: another authorship or another lineage."""
+    pick = _same_name_match(record)
+    if not pick:
+        return []
+    lineage = {rank: _hint_normal((pick.get('classification') or {}).get(rank)) for rank in ('kingdom', 'phylum', 'class')}
+    found = []
+    for usage in (record.get('match') or {}).get('alternatives') or []:
+        if usage.get('matchType') != 'EXACT' or name_parts(usage.get('scientificName')) != name_parts(pick.get('scientificName')):
+            continue
+        if str(usage.get('id')) == str(pick.get('id')):
+            continue
+        theirs = {rank: _hint_normal((usage.get('classification') or {}).get(rank)) for rank in lineage}
+        other_lineage = any(lineage[rank] and theirs[rank] and lineage[rank] != theirs[rank] for rank in lineage)
+        other_author = (normal(usage.get('scientificNameAuthorship')) and normal(pick.get('scientificNameAuthorship'))
+                        and not authorships_agree(usage.get('scientificNameAuthorship'), pick.get('scientificNameAuthorship')))
+        if other_lineage or other_author:
+            found.append(usage)
+    return found
+
+
+def _stem_rank_too_high(record, stem):
+    """'sp.'/'spp.' follow a genus or family: a stem COL has at a higher rank ("Anura sp.", the order) is not what was meant."""
+    qualifiers = {_normal_qualifier(value) for value in [record.get('qualifier'), *(record.get('source_qualifiers') or [])] if value}
+    rank = (stem or {}).get('taxonRank')
+    return bool(qualifiers & {'sp.', 'spp.'}) and rank in RANK_ORDER and RANK_ORDER.index(rank) < RANK_ORDER.index('family')
+
+
 def _rank_conflict(record):
     """COL's rank when a uninomial's supplied rank (genus or above) differs from it, else None: maybe another taxon.
 
@@ -702,7 +733,8 @@ def row_default(record, classification):
     if kind == 'auto':
         usage = (record.get('match') or {}).get('usage') or {}
         parsed = record.get('parsed') or {}
-        return 'col' if authorship_agrees(record, usage) else ('parsed' if parsed.get('usable') and parsed.get('lossless') else 'keep')
+        mine = 'parsed' if parsed.get('usable') and parsed.get('lossless') else 'keep'
+        return 'col' if authorship_agrees(record, usage) and not _homonyms(record) else mine
     if kind == 'uncertain':
         return 'stem'
     if kind == 'spelling':
@@ -729,7 +761,7 @@ def eligible(record, option, classification, decisions=None):
         parsed = record.get('parsed') or {}
         return qkind is None and parsed.get('usable') and parsed.get('lossless')
     if option == 'stem':
-        return kind == 'uncertain' and stem_usage(record) is not None
+        return kind == 'uncertain' and stem_usage(record) is not None and not _stem_rank_too_high(record, stem_usage(record))
     if option == 'col':
         # Rows that may be two taxa, or a rank that says another taxon: COL's usage is taken one name at a time only.
         if kind == 'check' and (record.get('mixed_hints') or _rank_conflict(record)):
@@ -740,7 +772,7 @@ def eligible(record, option, classification, decisions=None):
         found = change(record, usage, match.get('matchType')) if usage else None
         return (kind in {'auto', 'spelling', 'check'} and qkind is None and bool(usage) and not match.get('hintOnly')
                 and (found is None or (kind == 'spelling' and found.get('kind') == 'spelling'))
-                and authorship_agrees(record, usage))
+                and authorship_agrees(record, usage) and not _homonyms(record))
     return False
 
 
@@ -756,7 +788,11 @@ def classify(record):
     elif qualifier_kind(record) == 'doubt':
         group, kind, reasons = 'unconfirmed', 'unconfirmed', _reason_for_unconfirmed(record)
     elif qualifier_kind(record) == 'uncertain':
-        if stem_usage(record):
+        stem = stem_usage(record)
+        if stem and _stem_rank_too_high(record, stem):
+            group, kind = 'unconfirmed', 'unconfirmed'
+            reasons = [{'code': 'rank', 'text': f"“sp.” follows a genus or family; COL has {stem['scientificName']} as {_article(stem['taxonRank'])} {stem['taxonRank']}"}]
+        elif stem:
             group, kind, reasons = 'uncertain', 'uncertain', []
         else:
             group, kind, reasons = 'unconfirmed', 'unconfirmed', _reason_for_unconfirmed(record)
@@ -770,6 +806,9 @@ def classify(record):
                 reasons.append({'code': 'disambiguated', 'text': f"Matched with your {', '.join(match['disambiguatedBy'])}"})
             if not authorship_agrees(record, usage):
                 reasons.append({'code': 'authorship', 'text': f"COL's authorship {usage.get('scientificNameAuthorship') or '(none)'} differs; yours is kept"})
+            homonyms = _homonyms(record)
+            if homonyms:
+                reasons.append({'code': 'homonym', 'text': f"COL has {len(homonyms) + 1} taxa written this way; your name is kept without choosing one"})
         elif (match.get('matchType') in {'VARIANT', 'FUZZY', 'CANONICAL'} and usage
               and not match.get('hintOnly')):
             group, kind = 'spelling', 'spelling'
@@ -885,6 +924,10 @@ def build_decision(record, spec, state, by='user', group_kind=None):
         raise NameDecisionError('An uncertain identification can only be decided one at a time.')
     if by != 'user' and kind in {'col', 'alternative', 'stem'} and (record.get('mixed_hints') or _rank_conflict(record)):
         raise NameDecisionError('A name whose rows or rank may mean another taxon takes a COL name only one at a time.')
+    if by != 'user' and kind in {'col', 'alternative'} and _homonyms(record):
+        raise NameDecisionError('COL has more than one taxon with this name; choose one name at a time.')
+    if by != 'user' and kind == 'stem' and _stem_rank_too_high(record, stem_usage(record)):
+        raise NameDecisionError('"sp." follows a genus or family; this stem is decided one name at a time.')
     snapshot = {'decision': kind, 'by': by, 'at': timezone.now().isoformat(), 'scientificName': None,
                 'scientificNameAuthorship': None, 'taxonRank': None, 'source': 'verbatim' if kind == 'keep' else 'none'}
     parsed, match = record.get('parsed') or {}, record.get('match') or {}
