@@ -9,7 +9,7 @@ from api import conversion_tidy
 from api.conversion_jobs import process_next_conversion
 from api.dwca_import import DWC, SourceArchive, SourceTable
 from api.dwca_tidy import tidy_archive
-from api.models import DwcConversionJob, OpenAIUsage
+from api.models import CustomUser, Dataset, DwcConversion, DwcConversionJob, OpenAIUsage
 from api.test_conversion_review import AI, ConversionTestCase
 
 
@@ -118,6 +118,58 @@ class TidyModelPureTests(SimpleTestCase):
 
 
 # The AI reviewer stays out of the way (no automatic review runs), so only the tidy-up calls the model.
+class TidyModelSafetyTests(SimpleTestCase):
+    def columns(self, source):
+        return conversion_tidy.candidates(tidy_archive(source)[0])
+
+    def answer(self, columns, field, text, fields, confidence='high', residue=''):
+        column = next(item for item in columns if item['field'] == field)
+        value = next(item for item in column['values'] if item['value'] == text)
+        return {'key': column['key'], 'verdict': '', 'values': [{'i': value['i'], 'fields': [
+            {'field': name, 'value': wanted} for name, wanted in fields.items()], 'residue': residue,
+            'confidence': confidence, 'note': ''}]}
+
+    def parse(self, columns, *answers):
+        return conversion_tidy.parse_response(SimpleNamespace(status='completed', output_text=json.dumps({'columns': list(answers)})),
+                                              columns)[0]
+
+    def test_answers_are_limited_to_plausible_fields_and_vocabulary_concepts(self):
+        source = archive([['o1', '', '', '1', '', 'Aus bus', 'present', 'foraging', 'nativeish']],
+                         extra_terms=('behavior', 'establishmentMeans'))
+        columns = self.columns(source)
+        entries = self.parse(columns, self.answer(columns, 'behavior', 'foraging', {'countryCode': 'NO', 'behavior': 'feeding'}),
+                             self.answer(columns, 'establishmentMeans', 'nativeish', {'establishmentMeans': 'nativeish'}))
+        fields = {entry['value']: entry['fields'] for entry in entries.values()}
+        self.assertEqual(fields, {'foraging': {'behavior': 'feeding'}, 'nativeish': {}})
+
+    def test_risky_model_changes_are_only_suggested(self):
+        source = archive([['o1', '', 'seen twice', '1', 'M\ufffdre og Romsdal', 'Aus bus', 'present', 'ind/m3', 'CV', 'flying']],
+                         extra_terms=('organismQuantityType', 'lifeStage', 'behavior'))
+
+        def entry(column, value, fields, confidence='high'):
+            return {'table': 0, 'column': column, 'value': value, 'fields': fields, 'residue': '', 'confidence': confidence, 'note': ''}
+        changes = conversion_tidy.model_changes(source, {
+            'clear': entry(9, 'flying', {'behavior': ''}),
+            'unit': entry(7, 'ind/m3', {'organismQuantityType': 'individuals per cubic metre'}),
+            'place': entry(4, 'M\ufffdre og Romsdal', {'stateProvince': 'Møre og Romsdal'}),
+            'stage': entry(8, 'CV', {'lifeStage': 'copepodite V'}),
+            'remark': entry(2, 'seen twice', {'lifeStage': 'copepodite V'}),
+        })
+        tiers = {change['value']: change['tier'] for change in changes}
+        self.assertEqual(tiers, {'flying': 'suggest', 'ind/m3': 'suggest', 'M\ufffdre og Romsdal': 'auto', 'CV': 'auto',
+                                 'seen twice': 'suggest'})
+
+    def test_model_answers_never_corroborate_each_other(self):
+        # Both remarks columns propose lifeStage adult for a row whose own lifeStage is empty: nothing in the source agrees.
+        source = archive([['o1', '', 'fad', '1', '', 'Aus bus', 'present', 'adult female']], extra_terms=('occurrenceRemarks',))
+
+        def entry(column, value):
+            return {'table': 0, 'column': column, 'value': value, 'fields': {'lifeStage': 'adult'}, 'residue': '',
+                    'confidence': 'medium', 'note': ''}
+        changes = conversion_tidy.model_changes(source, {'a': entry(2, 'fad'), 'b': entry(7, 'adult female')})
+        self.assertEqual({change['tier'] for change in changes}, {'suggest'})
+
+
 @override_settings(**AI, CONVERSION_NAME_CHECKS_ENABLED=False, CONVERSION_REVIEW_MAX_RUNS_PER_PLAN=0)
 class TidyModelFlowTests(ConversionTestCase):
     files = [('occurrence.csv', b'occurrenceID,sex,eventRemarks,individualCount,lifeStage,scientificName,occurrenceStatus\n'
@@ -154,6 +206,31 @@ class TidyModelFlowTests(ConversionTestCase):
             process_next_conversion()
             process_next_conversion()
             self.assertEqual(query.call_count, 1)
+
+    def test_model_answers_survive_convert_and_are_reused_only_for_the_same_owner(self):
+        def response(args, max_retries=None):
+            col = next(item for item in json.loads(args['input'][1]['content'])['columns'] if item['term'].endswith('/eventRemarks'))
+            answers = [{'i': value['i'], 'fields': [{'field': 'lifeStage', 'value': 'adult'}, {'field': 'sex', 'value': 'female'}]
+                        if value['text'] == 'fad' else [], 'residue': '', 'confidence': 'high' if value['text'] == 'fad' else 'low',
+                        'note': ''} for value in col['values']]
+            return SimpleNamespace(id='tidy-response', status='completed', model='gpt-6-sol',
+                                   usage={'input_tokens': 100, 'output_tokens': 50},
+                                   output_text=json.dumps({'columns': [{'key': col['key'], 'verdict': '', 'values': answers}]}))
+        with patch('api.helpers.openai_helpers.query_with_flex_fallback', side_effect=response):
+            process_next_conversion(); process_next_conversion()
+        conversion = self.conversion
+        decisions = {item['id']: item['options'][0]['value'] for item in conversion.plan['issues'] if item.get('options')}
+        self.assertEqual(self.post('convert', decisions=decisions).status_code, 202)
+        process_next_conversion()
+        conversion = self.conversion
+        self.assertEqual(conversion.status, 'complete', conversion.error)
+        self.assertTrue(any(group['by'] == 'model' for group in conversion.report['tidy']['groups']))
+        fingerprint = conversion.plan['source_sha256']
+        other = DwcConversion.objects.create(dataset=Dataset.objects.create(
+            user=CustomUser.objects.create_user(username='someone-else'), workflow_type='dwca_conversion'))
+        self.assertEqual(conversion_tidy._model_cache(other, fingerprint), {})
+        same = DwcConversion.objects.create(dataset=Dataset.objects.create(user=conversion.dataset.user, workflow_type='dwca_conversion'))
+        self.assertTrue(conversion_tidy._model_cache(same, fingerprint)['entries'])
 
     def test_model_failure_keeps_deterministic_plan_and_undo_does_not_call_model(self):
         with patch('api.helpers.openai_helpers.query_with_flex_fallback', side_effect=RuntimeError('offline')) as query:

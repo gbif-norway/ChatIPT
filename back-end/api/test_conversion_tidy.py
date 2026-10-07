@@ -196,6 +196,12 @@ class TidyGroupApplyTests(ConversionTestCase):
 
 
 class TidyUnitTests(SimpleTestCase):
+    def test_group_actions_replace_single_value_choices(self):
+        group = 'tidy:0:7:thousands-or-decimal'
+        conversion = SimpleNamespace(tidy={'overrides': {group + ':aaaa': 'on', 'tidy:0:8:vocabulary': 'off'},
+                                           'summary': {'groups': [{'id': group, 'values': [{'id': group + ':aaaa'}]}]}})
+        self.assertEqual(conversion_tidy.request_changes(conversion, {group: 'undo'}), {group: 'off', 'tidy:0:8:vocabulary': 'off'})
+
     def test_report_lists_every_value_except_long_space_only_groups(self):
         values = [{'value': f'a  {n}', 'fields': {'locality': f'a {n}'}} for n in range(conversion_tidy.REPORT_WHITESPACE_VALUES + 5)]
         view = SimpleNamespace(tidy={'version': '1', 'sha256': 'x', 'added_columns': [], 'groups': [

@@ -21,6 +21,29 @@ VALUE_FIELDS = {'lifeStage', 'sex', 'reproductiveCondition', 'behavior', 'vitali
 REMARK_FIELDS = {'eventRemarks', 'occurrenceRemarks'}
 ALLOWED_BASE = VALUE_FIELDS | {'individualCount', 'occurrenceRemarks'}
 ORGANISM_FIELDS = {'lifeStage', 'sex', 'individualCount', 'reproductiveCondition', 'behavior', 'vitality'}
+PLACE_FIELDS = {'country', 'county', 'stateProvince', 'municipality', 'islandGroup', 'island', 'waterBody'}
+CONCEPT_FIELDS = {'establishmentMeans', 'degreeOfEstablishment', 'pathway'}
+# Own-field rewrites that may apply automatically: vocabulary fields. Other text changes only by itself when damaged.
+VOCABULARY_FIELDS = {'sex', 'lifeStage'} | CONCEPT_FIELDS
+
+
+def _targets(field):
+    """The fields a value of this field may plausibly state; anything else in an answer is dropped."""
+    if field in REMARK_FIELDS:
+        return ORGANISM_FIELDS | {'occurrenceRemarks', field}
+    if field in {'lifeStage', 'sex'}:
+        return {'lifeStage', 'sex', 'individualCount', 'occurrenceRemarks'}
+    if field in {'behavior', 'vitality', 'reproductiveCondition', 'preparations'}:
+        return ORGANISM_FIELDS | {'occurrenceRemarks', field}
+    if field in {'countryCode', 'country'}:
+        return {'countryCode', 'country', 'waterBody'}
+    if field in PLACE_FIELDS - {'waterBody'}:
+        return {field, 'waterBody', 'country', 'countryCode', 'stateProvince', 'county'}
+    return {field}
+
+
+def _damaged(value):
+    return '\ufffd' in value or any('\x80' <= ch <= '\x9f' for ch in value)
 SIBLINGS = {'sex', 'lifeStage', 'individualCount', 'organismQuantity', 'organismQuantityType', 'country', 'countryCode',
             'stateProvince', 'county', 'waterBody', 'eventRemarks', 'occurrenceRemarks'}
 SEX_VALUES = dwca_tidy.sex_values()
@@ -152,7 +175,7 @@ def parse_response(response, columns):
             if not isinstance(answer, dict) or isinstance(answer.get('i'), bool) or not isinstance(answer.get('i'), int): continue
             if answer['i'] < 0 or answer['i'] >= len(column['values']): continue
             value_item = column['values'][answer['i']]
-            fields, seen, allowed = {}, set(), ALLOWED_BASE | {column['field']}
+            fields, seen, allowed = {}, set(), (ALLOWED_BASE | {column['field']}) & _targets(column['field'])
             for pair in answer.get('fields', []) if isinstance(answer.get('fields'), list) else []:
                 if not isinstance(pair, dict): continue
                 field, text = pair.get('field'), pair.get('value')
@@ -162,6 +185,7 @@ def parse_response(response, columns):
                 if field == 'sex' and (not text or any(part not in SEX_VALUES for part in text.split(' | '))): continue
                 if field == 'individualCount' and not re.fullmatch(r'\d+', text): continue
                 if field == 'countryCode' and (len(text) != 2 or text != text.upper() or text not in data['alpha2']): continue
+                if field in CONCEPT_FIELDS and text not in set(data['vocab'].get(field, {}).values()): continue
                 fields[field] = text
             residue = answer.get('residue', '')
             confidence = answer.get('confidence')
@@ -190,7 +214,12 @@ def _model_cache(conversion, fingerprint):
     if (current.get('version') == TIDY_VERSION and current.get('prompt') == PROMPT_VERSION
             and current.get('source_sha256') == fingerprint):
         return current
-    cached = DwcConversion.objects.exclude(pk=conversion.pk).filter(tidy__model__source_sha256=fingerprint).values_list('tidy', flat=True)
+    # Answers are reused only for the same owner's byte-identical upload (the prompt also carries their title and description).
+    owner = conversion.dataset.user_id
+    if owner is None:
+        return {}
+    cached = (DwcConversion.objects.exclude(pk=conversion.pk)
+              .filter(dataset__user_id=owner, tidy__model__source_sha256=fingerprint).values_list('tidy', flat=True))
     for tidy in cached:
         item = (tidy or {}).get('model', {})
         if item.get('version') == TIDY_VERSION and item.get('prompt') == PROMPT_VERSION:
@@ -230,20 +259,57 @@ def model_changes(view_or_archive, entries):
                         'confidence': item['confidence'], 'note': item.get('note', ''), 'move': move})
     if not initial:
         return []
-    # Strip any old model proposals before corroborating the stored answer set.
-    base_overrides = {}
-    _view, table = apply_tidy(view_or_archive, overrides=base_overrides, model_changes=initial)
-    stats = {}
-    for group in table.get('groups', []):
-        if group.get('by') != 'model': continue
-        for value in group.get('values', []):
-            stats[group['table'], group['column'], value['value']] = (value.get('agree_rows', 0), value.get('conflict_rows', 0))
+    stats = _corroboration(view_or_archive, apply_tidy(view_or_archive)[0], initial)
+    concepts = dwca_tidy.life_stage_values()
     for change in initial:
-        agree, conflict = stats.get((change['table'], change['column'], change['value']), (0, 0))
+        agree, conflict = stats.get(id(change), (0, 0))
         confidence = change['confidence']
-        change['tier'] = 'auto' if confidence == 'high' and conflict == 0 else (
-            'auto' if confidence == 'medium' and agree > 0 and conflict == 0 else 'suggest')
+        tier = 'auto' if conflict == 0 and (confidence == 'high' or (confidence == 'medium' and agree > 0)) else 'suggest'
+        t, c, original = change['table'], change['column'], change['value']
+        own = view_or_archive.tables[t].terms[c].rsplit('/', 1)[-1]
+        rewritten = change['fields'][own]
+        others = {field: text for field, text in change['fields'].items() if field != own and text}
+        if rewritten == '' and not others:
+            tier = 'suggest'  # clearing a value is never automatic for a model answer
+        elif rewritten not in ('', original) and own not in VOCABULARY_FIELDS and not _damaged(original):
+            tier = 'suggest'  # free text is not reworded automatically
+        elif own != 'lifeStage' and others.get('lifeStage') and any(part not in concepts for part in others['lifeStage'].split(' | ')):
+            tier = 'suggest'  # a life stage read from another field must be a GBIF concept to apply by itself
+        change['tier'] = tier
     return initial
+
+
+def _corroboration(raw, rules_view, changes):
+    """{id(change): (agree rows, conflict rows)} against the source after the deterministic rules only.
+
+    A row agrees when another field the answer fills already holds the same text, and conflicts when it holds a
+    different one. Cells filled by other model answers never count, so answers cannot corroborate each other.
+    """
+    stats, by_column = {}, {}
+    for change in changes:
+        by_column.setdefault((change['table'], change['column']), {})[change['value']] = change
+    for (t, c), values in by_column.items():
+        source, tidied = raw.tables[t], rules_view.tables[t]
+        own = source.terms[c].rsplit('/', 1)[-1]
+        index = {}
+        for position, term in enumerate(tidied.terms):
+            index.setdefault(term, position)
+        for r, row in enumerate(source.rows):
+            change = values.get(row[c] if c < len(row) else '')
+            if change is None:
+                continue
+            agree = conflict = False
+            for field, wanted in change['fields'].items():
+                position = index.get(DWC + field)
+                if field == own or not wanted or position is None:
+                    continue
+                current = tidied.rows[r][position] if position < len(tidied.rows[r]) else ''
+                if current:
+                    agree, conflict = agree or current == wanted, conflict or current != wanted
+            counts = stats.setdefault(id(change), [0, 0])
+            counts[0] += bool(agree and not conflict)
+            counts[1] += bool(conflict)
+    return {key: tuple(value) for key, value in stats.items()}
 
 
 def _entries_for_view(conversion, archive):
@@ -402,6 +468,9 @@ def request_changes(conversion, changes):
         raise ValueError('Tidy changes must be undo, apply, or null.')
     result = dict((conversion.tidy or {}).get('overrides', {}))
     for identifier, action in changes.items():
+        if identifier.count(':') == 3:
+            # A whole-group action replaces the choices made for its single values.
+            result = {key: value for key, value in result.items() if not key.startswith(identifier + ':')}
         if action is None:
             result.pop(identifier, None)
         else:
