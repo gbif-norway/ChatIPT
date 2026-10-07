@@ -43,8 +43,8 @@ PRESERVE = {
     'choose_when': 'Choose this if none of the other options describes the column.',
 }
 
-# Said under every option list whose options copy values: no option changes the text.
-COPY_NOTE = 'Every option copies the values exactly as written.'
+# Said under column choices: choosing a record never changes the text.
+COPY_NOTE = 'Nothing is reworded: whichever record you choose receives the values exactly as written.'
 
 # Plain names for fields, used in labels and summaries. Fields not listed are named from their
 # technical name ("organismQuantityType" -> "organism quantity type").

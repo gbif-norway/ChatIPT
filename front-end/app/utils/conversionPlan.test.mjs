@@ -125,6 +125,9 @@ test('automatic summary groups glance choices, hides retained or empty entries, 
   assert.equal(overridden.count, 1)
   assert.deepEqual(overridden.names, ['institution'])
   assert.deepEqual(overridden.overridden, ['catalogue number (Keep in original files only)'])
+  // An unsaved local change counts at once.
+  const unsaved = automaticSummary(overriddenState, makeSelector(overriddenState, { ...overriddenState.decisions, 'column:0:3': 'preserve' })).specimen[0]
+  assert.equal(unsaved.count, 0)
 
   // While a changed answer is being saved, a default that follows it says it is updating.
   const savingState = summaryState({})

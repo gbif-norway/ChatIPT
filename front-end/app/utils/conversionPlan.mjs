@@ -109,7 +109,7 @@ export function automaticSummary(state, selected, hidden = new Set()) {
     const specimenState = ['per_row', 'by_id'].includes(value) ? 'stored' : value == null || value === '' ? 'pending' : 'kept'
     const name = column => glossaryEntry(state, column.default)?.field_label || shortTerm(column.term)
     // A detail the user moved elsewhere (or kept in the originals) is listed apart, not counted as stored.
-    const following = followers.filter(column => !Object.hasOwn(state?.decisions || {}, column.id) || selected(column.id, column.default) === column.default)
+    const following = followers.filter(column => selected(column.id, column.default) === column.default)
     const overridden = followers.filter(column => !following.includes(column)).map(column => `${name(column)} (${optionLabel(column, selected(column.id, column.default))})`)
     const count = following.length
     if (!count && !overridden.length) continue

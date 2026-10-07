@@ -109,8 +109,8 @@ function ChoiceCard({ item, state, decisions, disabled, onChoose, selected, numb
           <input type="radio" name={item.id} value={option.value} checked={value === option.value} disabled={disabled || !availability.available}
             onChange={() => onChoose(item.id, option.value, suggested ? { accepted_recommendations: [item.id] } : {})} aria-describedby={!availability.available ? `reason-${item.id}-${index}` : undefined} />
           <span>{option.label}{suggested && <small className="suggested-label"><i className="bi bi-stars me-1" aria-hidden="true" />Suggested by ChatIPT</small>}
-            {(option.value !== 'preserve' || isColumnId(item.id)) && glossaryEntry(state, option.value)?.gloss && <small className="d-block text-body-secondary">{glossaryEntry(state, option.value).gloss}</small>}
-            {(option.value !== 'preserve' || isColumnId(item.id)) && glossaryEntry(state, option.value)?.consequence && <small className="d-block text-body-secondary">{glossaryEntry(state, option.value).consequence}</small>}
+            {(option.value !== 'preserve' || (isColumnId(item.id) && option.label === 'Keep in original files only')) && glossaryEntry(state, option.value)?.gloss && <small className="d-block text-body-secondary">{glossaryEntry(state, option.value).gloss}</small>}
+            {(option.value !== 'preserve' || (isColumnId(item.id) && option.label === 'Keep in original files only')) && glossaryEntry(state, option.value)?.consequence && <small className="d-block text-body-secondary">{glossaryEntry(state, option.value).consequence}</small>}
             {item.option_notes?.[option.value] && <small className="d-block"><em>{item.option_notes[option.value]}</em></small>}
             {option.technical && <small className="d-block text-body-secondary">{option.technical}</small>}
             {automatic && option.value === (state.conditional_defaults?.[item.id]?.value ?? item.default) && <small className="d-block text-body-secondary">Our choice</small>}

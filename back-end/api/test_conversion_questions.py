@@ -7,6 +7,7 @@ from pathlib import Path
 from django.test import SimpleTestCase
 from unittest.mock import patch
 
+from api import dwca_glossary
 from api.conversion_evidence import dependencies
 from api.dwca_conversion import (DWC, _candidates, _qualified_name, build_plan, convert,
                                 validate_decisions)
@@ -99,7 +100,7 @@ class ConversionQuestionTests(SimpleTestCase):
         issue = next(issue for issue in plan['issues'] if issue.get('term') == DWC + 'associatedReferences')
         self.assertEqual(issue['title'], 'What does associatedReferences describe?')
         self.assertIn('Choose the record it is about.', issue['reason'])
-        self.assertTrue(issue['reason'].endswith('Every option copies the values exactly as written.'))
+        self.assertTrue(issue['reason'].endswith(dwca_glossary.COPY_NOTE))
         self.assertEqual(issue['family'], 'record-metadata')
         column = next(column for column in plan['columns'] if column.get('term') == DWC + 'associatedReferences')
         self.assertEqual(column['family'], 'record-metadata')
@@ -228,6 +229,9 @@ class ConversionQuestionTests(SimpleTestCase):
         self.assertEqual(conditional_defaults(plan, decisions)[identifier]['value'], 'material.collectedByID')
         self.assertNotIn('default_when', next(column for column in plan['columns'] if column['id'] == recorded))
         self.assertIn('material.collectedBy', plan['glossary']['targets'])
+        # The automatic choice keeps its conditions, prefixed, so the interface can explain an open specimen question.
+        choice = next(choice for choice in plan['automatic_choices'] if choice['id'] == recorded)
+        self.assertEqual(choice['default_when'][0]['when'][0]['id'], prefix + 'material:0')
         answers = {issue['id']: issue['options'][0]['value'] for issue in plan['issues']}
         frames, report = convert(source, plan, {**answers, **decisions, 'table:1': 'convert'})
         self.assertEqual(frames['material']['collectedBy'].tolist(), ['Yngvar Hagen', 'Robert Collett'])

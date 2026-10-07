@@ -127,14 +127,18 @@ def _prefixed_condition(condition, prefix):
     return {**condition, **{key: prefix + condition[key] for key in ('id', 'column') if key in condition}}
 
 
-def _outer(entry, prefix, **changes):
+def _outer(entry, prefix, keep_conditions=False, **changes):
     """A nested plan entry as the outer plan lists it, with its references to nested decisions prefixed.
 
     Conditional defaults stay with the nested plan, which resolves them against its own tables
-    (dwca_review.conditional_defaults handles nested plans); the outer copy keeps the plain default.
+    (dwca_review.conditional_defaults handles nested plans); an outer column keeps the plain default.
+    Automatic choices keep prefixed conditions only to explain them (they are never evaluated there).
     """
     found = {key: value for key, value in entry.items() if key != 'default_when'}
     found.update(id=prefix + entry['id'], **changes)
+    if keep_conditions and entry.get('default_when'):
+        found['default_when'] = [{**branch, 'when': [_prefixed_condition(condition, prefix) for condition in branch['when']]}
+                                 for branch in entry['default_when']]
     if entry.get('ask_when'):
         found['ask_when'] = [_prefixed_condition(condition, prefix) for condition in entry['ask_when']]
     if entry.get('follows'):
@@ -196,7 +200,7 @@ def build_taxon_plan(archive):
                       for issue in inner['issues'])
         row_issues.extend({**member, 'id': prefix + member['id'], 'group': prefix + member['group'], 'table': t}
                           for member in inner.get('row_issues', []))
-        automatic.extend({**_outer(choice, prefix, table=t),
+        automatic.extend({**_outer(choice, prefix, keep_conditions=True, table=t),
                           'options': [taxonomy_preserve if option['value'] == 'preserve' else option for option in choice['options']],
                           **({'members': [prefix + member for member in choice['members']]} if choice.get('members') else {})}
                          for choice in inner.get('automatic_choices', []))
