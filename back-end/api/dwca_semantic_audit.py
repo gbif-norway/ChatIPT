@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 import re
 
 from api.dwca_import import DWC
+from api.dwca_tidy import life_stage_word
 from api.publication_validation import _ISO_ALPHA_2_COUNTRY_CODES
 
 
@@ -39,7 +40,8 @@ def _is_zero(value: str) -> bool:
 
 
 def is_age_like_remark(value: str) -> bool:
-    return bool(re.match(r'^(?:\d+\s+)?(?:ad|subad|juv|fad|adult|subadult|juvenile)\b', value.strip(), re.I))
+    match = re.match(r'^(?:\d+\s+)?([^\W\d_]+)', value.strip())
+    return bool(match and life_stage_word(match.group(1).casefold()))
 
 
 def audit_semantic_values(archive, *, example_limit: int = 5) -> dict:
@@ -105,6 +107,7 @@ def audit_semantic_values(archive, *, example_limit: int = 5) -> dict:
 
     return {
         'version': 1,
-        'policy': 'The audit preserves source values. Invalid country codes can be routed as reviewed labels or withheld from mapped fields; the exact 0-0-0 identification-date placeholder is withheld. Age-like event remarks require value review; zeros in elevation and depth require contextual review.',
+        'policy': ('Values were tidied first. ' if getattr(archive, 'tidy', None) else '') +
+                  'The audit preserves source values. Invalid country codes can be routed as reviewed labels or withheld from mapped fields; the exact 0-0-0 identification-date placeholder is withheld. Age-like event remarks require value review; zeros in elevation and depth require contextual review.',
         'findings': [findings[term] for term in specs if term in findings and findings[term]['count']],
     }

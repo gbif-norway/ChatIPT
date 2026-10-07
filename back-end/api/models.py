@@ -473,6 +473,8 @@ class DwcConversion(models.Model):
     retryable = models.BooleanField(default=False)
     # Where the dataset title and description came from at inspection: user, eml or none.
     metadata_sources = models.JSONField(default=dict)
+    # Automatic value tidy-up for the current source: user overrides and the last result summary (api/conversion_tidy.py).
+    tidy = models.JSONField(default=dict, blank=True)
     drop_unlinked_extension_rows = models.BooleanField(default=False)
     output_file = models.FileField(upload_to='user_files/conversions', blank=True)
     updated_at = models.DateTimeField(auto_now=True)

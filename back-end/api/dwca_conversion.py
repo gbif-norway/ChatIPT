@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 import pandas as pd
 
 from api.dwca_import import DWC, ConversionError, ImportFailure, REGISTRY, dropped_extension_warnings
+from api.dwca_tidy import column_note, settled_values
 from api.dwca_media import MEDIA_FAMILIES, MEDIA_SUBJECT_TERMS, media_targets
 from api.dwca_references import REFERENCE_FAMILIES, NON_EXACT_TARGETS, IDENTIFIER_ROW_TYPE, REFERENCE_ROW_TYPE, DC, reference_targets, emit_reference_records
 from api.dwca_humboldt import HUMBOLDT_FAMILIES, IRI_DIRECT, DIRECT, blocked_fields, humboldt_targets, scope_review, emit_humboldt_records, valid_value
@@ -757,7 +758,13 @@ def build_plan(archive):
     core = next(table for table in archive.tables if table.is_core)
     if core.row_type == DWC + 'Taxon':
         from api.dwca_taxon import build_taxon_plan
-        return build_taxon_plan(archive)
+        plan = build_taxon_plan(archive)
+        if getattr(archive, 'tidy', None):
+            for column in plan['columns']:
+                column.update(column_note(archive, column['table'], column['column']) or {})
+            plan['tidy'] = {'version': archive.tidy['version'], 'sha256': archive.tidy['sha256']}
+            plan['id'] = hashlib.sha256(json.dumps({key: value for key, value in plan.items() if key != 'id'}, sort_keys=True).encode()).hexdigest()
+        return plan
     material_context = core.row_type == DWC + 'Occurrence' and any(
         term in core.terms and any(row[core.terms.index(term)] for row in core.rows)
         for term in (DWC + 'materialSampleID', DWC + 'materialEntityID'))
@@ -1143,6 +1150,7 @@ def build_plan(archive):
                             verbatim_role='qualifier')
                 if VERBATIM_NAME in table.terms:
                     item['verbatim_source'] = _column_id(t, table.terms.index(VERBATIM_NAME))
+            item.update(column_note(archive, t, c) or {})
             columns.append(item); profile["columns"].append({key: item[key] for key in ("term", "nonempty", "distinct", "samples")})
             if typed_reason or date_reason:
                 warnings.append({'id': item['id'], 'title': term.rsplit('/', 1)[-1],
@@ -1181,9 +1189,11 @@ def build_plan(archive):
                     'table': t, 'term': term, 'family': automatic_family, 'glance': glance,
                     **({'option_notes': option_notes} if option_notes else {}),
                     'nonempty': len(values), 'distinct': len(set(values)), 'samples': item['samples']})
+            # Values the tidy-up dealt with (changed, or offered as a suggestion) are not asked about again.
+            settled = settled_values(archive, t, c)
             if table.is_core and own == 'occurrence' and term == DWC + 'countryCode' and chosen == 'event.countryCode':
                 for source_value, count in sorted(Counter(values).items()):
-                    if not semantic_target_rejection('event.countryCode', source_value):
+                    if not semantic_target_rejection('event.countryCode', source_value) or source_value in settled:
                         continue
                     issues.append(_issue(_reviewed_value_id('country-label', t, c, source_value),
                         f'{table.name}: where does {source_value[:100]!r} belong?',
@@ -1199,7 +1209,7 @@ def build_plan(archive):
                              if row[table.terms.index(DWC + 'eventID')]] if DWC + 'eventID' in table.terms else []
                 if len(event_ids) == len(set(event_ids)):
                     for source_value, count in sorted(Counter(values).items()):
-                        if not is_age_like_remark(source_value):
+                        if not is_age_like_remark(source_value) or source_value in settled:
                             continue
                         issues.append(_issue(_reviewed_value_id('age-remark', t, c, source_value),
                             f'{table.name}: does {source_value[:100]!r} describe the organism?',
@@ -1367,6 +1377,8 @@ def build_plan(archive):
     plan = {"version": RULE_VERSION, "source_sha256": archive.fingerprint, "schema": dwc_dp_schema_snapshot(),
             "tables": profiles, "columns": columns, "issues": issues,
             "files": [{"name": name, "sha256": hashlib.sha256(content).hexdigest(), "bytes": len(content)} for name, content in sorted(archive.files.items())]}
+    if getattr(archive, 'tidy', None):
+        plan['tidy'] = {'version': archive.tidy['version'], 'sha256': archive.tidy['sha256']}
     plan['uploads'] = [{'name': name, 'sha256': hashlib.sha256(content).hexdigest(), 'bytes': len(content)} for name, content in sorted(archive.uploaded_files.items())]
     if hierarchy_unsupported or hierarchy:
         plan['event_hierarchy'] = {'identifier': DWC + 'eventID', 'parent_identifier': PARENT,

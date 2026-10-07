@@ -12,6 +12,7 @@ import ConversionAutomaticSummary from './ConversionAutomaticSummary'
 import ConversionChat from './ConversionChat'
 import ConversionColumnSummary from './ConversionColumnSummary'
 import ConversionNameReview from './ConversionNameReview'
+import ConversionTidySummary from './ConversionTidySummary'
 import ConversionPlanDiagram from './ConversionPlanDiagram'
 import ConversionSteps from './ConversionSteps'
 import PackageExplorer, { openPackageExplorer } from './PackageExplorer'
@@ -317,7 +318,7 @@ export default function DwcConversion() {
         : <>The conversion stopped: {conflict.reason} The highlighted choices below can fix this.</>}
     </div>)}
     {!state && <p>Loading conversion…</p>}
-    {working && <p role="status"><span className="spinner-border spinner-border-sm me-2" />{state.status === 'converting' ? 'Converting and checking your data…' : 'Inspecting your files…'} You can leave and return while this runs.</p>}
+    {working && <p role="status"><span className="spinner-border spinner-border-sm me-2" />{state.status === 'converting' ? 'Converting and checking your data…' : state.tidy?.model?.status === 'running' ? 'Reading through your values to tidy them up…' : state.tidy?.pending ? 'Applying your tidy-up change…' : 'Inspecting your files…'} You can leave and return while this runs.</p>}
     {state?.status === 'reviewing' && <p role="status"><span className="spinner-border spinner-border-sm me-2" />The AI reviewer is checking the remaining choices against your files. You can keep answering meanwhile.</p>}
     {inReview && state.review?.error && <div className="alert alert-info small" role="status">{state.review.error}</div>}
     {state?.plan?.tables && <div className="conversion-layout">
@@ -337,6 +338,7 @@ export default function DwcConversion() {
         setAnsweredHere(ids => ids.includes(item.id) ? ids : [...ids, item.id])
         choose(...args)
       }} />)}
+      <ConversionTidySummary state={state} send={send} disabled={disabled} />
       <ConversionNameReview state={state} send={send} disabled={disabled} datasetId={datasetId} onRefresh={load}
         questions={nameQuestions} decisions={decisions} onChoose={choose} />
       <ConversionAiDecisions state={state} disabled={disabled} onChoose={choose} onKeep={keep} />
