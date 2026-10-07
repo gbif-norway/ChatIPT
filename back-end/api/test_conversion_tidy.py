@@ -226,6 +226,7 @@ class TidyGroupApplyTests(ConversionTestCase):
             process_next_conversion()
         group = next(item for item in self.conversion.tidy['summary']['groups'] if item['rule'] == 'trailing-separator')
         self.assertEqual((len(group['values']), group['more_values']), (30, 1))
+        self.assertEqual(self.client.get(self.url).data['tidy']['counts']['suggestions'], 31)
         self.assertEqual(self.post('tidy', changes={group['id']: 'apply'}).status_code, 202)
         with override_settings(CONVERSION_AI_REVIEW_ENABLED=False, CONVERSION_NAME_CHECKS_ENABLED=False):
             process_next_conversion()

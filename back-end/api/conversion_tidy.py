@@ -281,8 +281,9 @@ def model_changes(view_or_archive, entries, overrides=None):
                 fields[own] = original
         else:
             fields.setdefault(own, original)
-            # A place value restated word for word in another field (county 'Norway' as country) moves there.
-            if own in PLACE_FIELDS | {'countryCode'} and fields[own] == original and any(
+            # A value restated word for word in another field moves there (county 'Norway' as country, sex 'juvenile'
+            # as lifeStage) rather than staying behind as well.
+            if own in PLACE_FIELDS | VOCABULARY_FIELDS | {'countryCode'} and fields[own] == original and any(
                     field != own and text.casefold() == original.casefold() for field, text in fields.items()):
                 fields[own] = ''
         move = fields[own] == ''
@@ -319,6 +320,8 @@ def model_changes(view_or_archive, entries, overrides=None):
             # A count applies by itself only when the value leads with it ('1 juv.', '2 females'); a number elsewhere
             # may be a stage ('instar 3', 'L3').
             tier = 'suggest'
+        elif own in VOCABULARY_FIELDS and rewritten == original and others:
+            tier = 'suggest'  # a vocabulary value read as another field must move there, not stay behind as well
         elif own in PLACE_FIELDS and rewritten == original and any(field in {'country', 'countryCode', 'waterBody'} for field in others):
             tier = 'suggest'  # a place read as a country or sea must move there, not stay behind as well
         change['tier'] = tier
@@ -553,10 +556,9 @@ def state_section(conversion, job=None):
             'overrides': state.get('overrides', {}),
             'counts': {'tidied_groups': sum(bool(g.get('applied')) and bool(g.get('changed_rows')) and g.get('tier') == 'auto'
                                             for g in groups),
-                       'tidied_rows': sum(sum(v.get('changed_rows', 0) for v in g.get('values', []))
-                                          for g in groups if g.get('applied')),
-                       'suggestions': sum(1 for g in groups for v in g.get('values', [])
-                                          if g.get('tier') == 'suggest' and not v.get('applied'))}}
+                       # Group totals, which also cover values beyond those listed.
+                       'tidied_rows': sum(g.get('changed_rows', 0) for g in groups if g.get('applied')),
+                       'suggestions': sum(g.get('open_values', 0) for g in groups if g.get('tier') == 'suggest')}}
 
 
 def report_section(conversion, view):

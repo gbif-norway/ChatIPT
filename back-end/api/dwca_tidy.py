@@ -506,6 +506,7 @@ def tidy_archive(archive, overrides=None, model_changes=None):
         for value in group['values']:
             filled.update(value.get('_filled', {}))
         group['filled_rows'] = dict(sorted(filled.items()))
+        group['open_values'] = sum(not value['applied'] for value in group['values'])
         # An undone or suggested group still says what it would change.
         n = group['changed_rows'] if group['tier'] == AUTO and group['changed_rows'] else group['rows']
         group['title'] = _title(rule, group['field'], group['values'], n)

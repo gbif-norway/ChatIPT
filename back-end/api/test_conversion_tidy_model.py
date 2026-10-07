@@ -261,6 +261,20 @@ class TidyModelSafetyTests(SimpleTestCase):
                 'fields': {'lifeStage': 'larva', 'individualCount': '3'}, 'confidence': 'high', 'note': ''}})[0]
             self.assertEqual(change['tier'], 'suggest', value)
 
+    def test_a_misplaced_vocabulary_value_moves(self):
+        source = archive([['o1', 'juvenile', '', '1', '', 'Aus bus', 'present']])
+        change = conversion_tidy.model_changes(source, {'k': {'table': 0, 'column': 1, 'value': 'juvenile', 'residue': '',
+            'fields': {'lifeStage': 'juvenile'}, 'confidence': 'high', 'note': ''}})[0]
+        self.assertEqual((change['fields'], change['move'], change['tier']), ({'lifeStage': 'juvenile', 'sex': ''}, True, 'auto'))
+        row = tidy_archive(source, model_changes=[change])[0].tables[0]
+        cells = dict(zip([term.rsplit('/', 1)[-1] for term in row.terms], row.rows[0]))
+        self.assertEqual((cells['sex'], cells['lifeStage']), ('', 'juvenile'))
+        # A different reading of it ('juv' as juvenile) is only suggested.
+        other = archive([['o1', 'juv', '', '1', '', 'Aus bus', 'present']])
+        change = conversion_tidy.model_changes(other, {'k': {'table': 0, 'column': 1, 'value': 'juv', 'residue': '',
+            'fields': {'lifeStage': 'juvenile'}, 'confidence': 'high', 'note': ''}})[0]
+        self.assertEqual(change['tier'], 'suggest')
+
     def test_model_answers_never_corroborate_each_other(self):
         # Both remarks columns propose lifeStage adult for a row whose own lifeStage is empty: nothing in the source agrees.
         source = archive([['o1', '', 'fad', '1', '', 'Aus bus', 'present', 'adult female']], extra_terms=('occurrenceRemarks',))
