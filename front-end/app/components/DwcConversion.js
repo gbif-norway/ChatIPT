@@ -334,11 +334,11 @@ export default function DwcConversion() {
         </button>}
       </div>
       <ConversionAutomaticSummary state={state} selected={selected} hidden={guidedIds} disabled={disabled} renderChoice={item => <ChoiceCard item={item} asRadios {...cardProps} />} />
+      <ConversionTidySummary state={state} send={send} disabled={disabled} />
       {guidedItems.map((item, index) => <ChoiceCard key={item.id} item={item} number={index + 1} {...cardProps} onChoose={(...args) => {
         setAnsweredHere(ids => ids.includes(item.id) ? ids : [...ids, item.id])
         choose(...args)
       }} />)}
-      <ConversionTidySummary state={state} send={send} disabled={disabled} />
       <ConversionNameReview state={state} send={send} disabled={disabled} datasetId={datasetId} onRefresh={load}
         questions={nameQuestions} decisions={decisions} onChoose={choose} />
       <ConversionAiDecisions state={state} disabled={disabled} onChoose={choose} onKeep={keep} />
