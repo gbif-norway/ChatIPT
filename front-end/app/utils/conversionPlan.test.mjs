@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  columnDetails, conversionStep, conversionTitle, dedupeNotices, makeSelector, planDiagram, statusLine, stepStates,
+  automaticSummary, columnDetails, conversionStep, conversionTitle, dedupeNotices, makeSelector, planDiagram, statusLine, stepStates,
   summariseColumns, summaryLines, targetTable, unmappedReason,
 } from './conversionPlan.mjs'
 
@@ -34,6 +34,85 @@ test('the selector prefers saved choices, then automatic defaults, then the fall
   assert.equal(selected('table:1'), 'occurrence-assertion')
   assert.equal(selected('table:2'), 'preserve')
   assert.equal(selected('unknown', 'x'), 'x')
+})
+
+test('the selector prefers saved decisions, conditional defaults, automatic defaults, then fallback', () => {
+  const conditional = { ...state, conditional_defaults: { conditional: { value: 'conditional-value' } },
+    plan: { ...plan, automatic_choices: [...plan.automatic_choices, { id: 'conditional', default: 'automatic-value' }, { id: 'automatic', default: 'automatic-value' }] } }
+  const selected = makeSelector(conditional, { conditional: 'saved-value' })
+  assert.equal(selected('conditional'), 'saved-value')
+  assert.equal(makeSelector(conditional, {})('conditional'), 'conditional-value')
+  assert.equal(makeSelector(conditional, {})('automatic'), 'automatic-value')
+  assert.equal(makeSelector(conditional, {})('unknown', 'fallback'), 'fallback')
+})
+
+const summaryState = decisions => {
+  const options = (values) => values.map(([value, label]) => ({ value, label }))
+  const recordedBy = { id: 'column:0:0', table: 0, term: term('recordedBy'), kind: 'column-mapping', family: 'agent-role',
+    title: 'Who are the people in recordedBy?', default: 'occurrence.recordedBy', nonempty: 2725, glance: true,
+    reason: 'Rows are museum specimens.', options: options([['material.collectedBy', 'Who collected the specimen'], ['occurrence.recordedBy', 'Who saw or recorded the organism']]) }
+  const typeStatus = { id: 'column:0:1', table: 0, term: term('typeStatus'), family: 'type-status', title: 'Type status', default: 'identification.typeStatus',
+    nonempty: 12, glance: true, reason: 'Type status describes an identification.', options: options([['identification.typeStatus', 'Identification']]) }
+  const material = { id: 'material:0', title: 'Create specimen records?', options: options([['per_row', 'Yes'], ['preserve', 'No']]) }
+  const keptColumn = { id: 'column:0:2', table: 0, term: term('catalogNumber'), follows: 'material:0', default: 'material.catalogNumber', nonempty: 5 }
+  const institution = { id: 'column:0:3', table: 0, term: term('institutionCode'), follows: 'material:0', default: 'material.institutionCode', nonempty: 5 }
+  const state = { decisions, conditional_defaults: { 'column:0:0': { value: 'material.collectedBy', reason: 'Each row has its own specimen.' } }, plan: {
+    tables: [{ core: true }, { core: false }, { core: false }], automatic_choices: [
+      recordedBy, typeStatus,
+      { id: 'agent-names', title: 'Link people', family: 'agent-role', default: 'shared', kind: 'agent-identity', options: options([['shared', 'Link'], ['text', 'Keep as text']]), reason: 'Names can be linked.' },
+      { id: 'table:2', title: 'Keep media table?', table: 2, default: 'preserve', kind: 'extension-role', options: options([['preserve', 'Keep'], ['media-event', 'Media']]), reason: 'This table is unrecognised.' },
+      { id: 'column:2:0', table: 2, term: term('identifier'), default: 'media.identifier', nonempty: 4, options: options([['media.identifier', 'Identifier']]) },
+      { id: 'dependent:0', title: 'Dependent choice', table: 0, source_column: 5, default: 'yes', options: options([['yes', 'Yes']]) },
+      { id: 'agent-share:1', title: 'Share agent?', default: 'shared', options: options([['shared', 'Shared']]) },
+      { id: 'column:0:4', table: 0, term: term('empty'), default: 'preserve', nonempty: 0, options: options([['preserve', 'Keep']]) },
+    ], issues: [material], columns: [keptColumn, institution], warnings: [{ id: 'agent-names', title: 'People can be linked', reason: 'Names found.' }],
+    glossary: { families: { 'agent-role': 'People' }, targets: {
+      'material.collectedBy': { decided: 'saved as who collected the specimen, on each specimen record', field_label: 'collector' },
+      'material.catalogNumber': { field_label: 'catalogue number' }, 'material.institutionCode': { field_label: 'institution' },
+    }, specimen_details: { stored: '{count} specimen details stored', stored_why: 'You chose to create specimen records.',
+      kept: '{count} specimen details kept', kept_why: 'You chose not to create specimen records.',
+      pending: '{count} specimen details pending', pending_why: 'Your choice is still open.' } },
+  } }
+  return state
+}
+
+test('automatic summary groups glance choices, hides retained or empty entries, and describes specimen details', () => {
+  const state = summaryState({ 'agent-names': 'text', 'column:0:5': 'preserve', 'material:0': 'per_row' })
+  const selected = makeSelector(state, state.decisions)
+  const summary = automaticSummary(state, selected)
+  assert.deepEqual(summary.glance.map(line => line.id), ['column:0:0', 'agent-names', 'column:0:1'])
+  assert.equal(summary.glance[0].title, 'recordedBy → saved as who collected the specimen, on each specimen record')
+  assert.equal(summary.glance[0].text, 'Each row has its own specimen.')
+  assert.equal(summary.glance[1].changed, true)
+  assert.equal(summary.glance[1].text, 'You chose: Keep as text.')
+  assert.equal(summary.specimen[0].state, 'stored')
+  assert.equal(summary.specimen[0].title, '2 specimen details stored')
+  assert.deepEqual(summary.specimen[0].names, ['catalogue number', 'institution'])
+  assert.ok(!summary.ids.has('column:2:0'))
+  assert.ok(!summary.ids.has('agent-share:1'))
+  assert.ok(!summary.ids.has('dependent:0'))
+  assert.ok(!summary.ids.has('column:0:4'))
+  assert.ok(summary.ids.has('agent-names'))
+  assert.ok(summary.silent.some(line => line.id === 'table:2'))
+  assert.ok(!summary.silent.some(line => line.id === 'column:2:0'))
+
+  const kept = automaticSummary(summaryState({ 'material:0': 'preserve' }), makeSelector(summaryState({ 'material:0': 'preserve' }), { 'material:0': 'preserve' }))
+  assert.equal(kept.specimen[0].state, 'kept')
+  const pendingState = summaryState({})
+  pendingState.plan.automatic_choices = pendingState.plan.automatic_choices.filter(item => item.id !== 'column:0:0')
+  const pending = automaticSummary(pendingState, makeSelector(pendingState, {}))
+  assert.equal(pending.specimen[0].state, 'pending')
+
+  // While the specimen question is open, a default that follows it says what each answer does.
+  const waitingState = summaryState({})
+  waitingState.unresolved = ['material:0']
+  waitingState.conditional_defaults = {}
+  waitingState.plan.automatic_choices[0].default_when = [
+    { value: 'material.collectedBy', when: [{ type: 'decision_in', id: 'material:0', values: ['per_row'] }] }]
+  waitingState.plan.glossary.targets['occurrence.recordedBy'] = { decided: 'saved as who saw or recorded the organism, on each observation record' }
+  const waiting = automaticSummary(waitingState, makeSelector(waitingState, {})).glance.find(line => line.id === 'column:0:0')
+  assert.equal(waiting.title, 'recordedBy → waiting for your answer')
+  assert.equal(waiting.text, 'Depends on your answer to “Create specimen records?”: saved as who collected the specimen, on each specimen record if yes; otherwise saved as who saw or recorded the organism, on each observation record.')
 })
 
 test('columns are summarised by how they are handled, using column.unmapped when present', () => {
@@ -84,6 +163,7 @@ test('notices that repeat automatic keep-in-originals choices are dropped, as ar
     { title: 'Free text', reason: 'once' }, { title: 'Free text', reason: 'once' },
   ]
   assert.deepEqual(dedupeNotices(state, notices, selected).map(notice => notice.title), ['country', 'Free text'])
+  assert.deepEqual(dedupeNotices(state, notices, selected, new Set(['column:0:2'])).map(notice => notice.title), ['Free text'])
   // Once the user keeps the table's content mapped, its notice is not an automatic keep-in-originals any more.
   assert.equal(dedupeNotices(state, notices.slice(0, 1), makeSelector(state, { 'table:2': 'media' })).length, 1)
   assert.deepEqual(dedupeNotices(state, undefined, selected), [])

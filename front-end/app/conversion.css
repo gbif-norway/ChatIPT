@@ -220,6 +220,31 @@
     padding-left: 0.6rem;
 }
 
+.automatic-summary-line {
+    margin: 0.65rem 0;
+}
+
+.automatic-summary-group .automatic-summary-line {
+    border-left: 2px solid var(--bs-primary-border-subtle);
+    padding-left: 0.65rem;
+}
+
+.automatic-summary-editor {
+    border-left: 2px solid var(--bs-border-color);
+    padding-left: 0.75rem;
+}
+
+.automatic-summary-silent {
+    border-top: 1px solid var(--bs-border-color);
+    margin-top: 0.75rem;
+    padding-top: 0.65rem;
+}
+
+.automatic-summary-silent > summary,
+.automatic-summary-line details > summary {
+    cursor: pointer;
+}
+
 .conversion-choices > summary {
     cursor: pointer;
 }

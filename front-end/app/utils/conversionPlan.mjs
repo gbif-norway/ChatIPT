@@ -8,7 +8,92 @@ const plural = (count, singular, pluralForm = `${singular}s`) => `${count.toLoca
 // The effective value of a decision: the user's or AI's saved choice, else the automatic default, else the fallback.
 export function makeSelector(state, decisions) {
   const defaults = Object.fromEntries((state?.plan?.automatic_choices || []).map(choice => [choice.id, choice.default]))
-  return (id, fallback) => decisions?.[id] ?? defaults[id] ?? fallback
+  return (id, fallback) => decisions?.[id] ?? state?.conditional_defaults?.[id]?.value ?? defaults[id] ?? fallback
+}
+
+export function glossaryEntry(state, value) {
+  if (value === 'preserve') return state?.plan?.glossary?.preserve || null
+  return state?.plan?.glossary?.targets?.[value] || null
+}
+
+const KIND_FAMILY = {
+  'agent-identity': 'agent-role', 'material-identity': 'specimens', 'occurrence-status': 'status',
+  'event-grain': 'events', 'occurrence-events': 'events', 'extension-role': 'tables',
+  'survey-classification': 'surveys', 'column-mapping': 'columns',
+}
+const FAMILY_HEADINGS = {
+  'agent-role': 'People', specimens: 'Specimens', status: 'Present or absent', events: 'Events', tables: 'Linked tables',
+  surveys: 'Surveys', media: 'Media', columns: 'Columns', other: 'Other choices',
+}
+const FAMILY_ORDER = ['agent-role', 'specimens', 'type-status', 'status', 'media', 'events', 'tables', 'surveys', 'columns', 'other']
+const optionLabel = (item, value) => item?.options?.find(option => option.value === value)?.label || value
+const formatTemplate = (text, count) => String(text || '').replaceAll('{count}', count.toLocaleString())
+
+export function automaticSummary(state, selected) {
+  const plan = state?.plan || {}
+  const automatic = plan.automatic_choices || []
+  const issues = plan.issues || []
+  const columns = plan.columns || []
+  const warningIds = new Set((plan.warnings || []).map(warning => warning.id).filter(Boolean))
+  const lines = []
+  for (const item of automatic) {
+    const tablePreserved = item.table !== undefined && !plan.tables?.[item.table]?.core && selected(`table:${item.table}`) === 'preserve'
+    if (tablePreserved && item.id !== `table:${item.table}`) continue
+    if (item.source_column != null && selected(`column:${item.table}:${item.source_column}`) === 'preserve') continue
+    if (item.id.startsWith('agent-share:') && selected('agent-names', 'shared') === 'text') continue
+    if (item.id.startsWith('column:') && item.nonempty === 0) continue
+    const value = selected(item.id, item.default)
+    const changed = Object.hasOwn(state?.decisions || {}, item.id)
+    const family = item.family || KIND_FAMILY[item.kind] || 'other'
+    const heading = plan.glossary?.families?.[family] || FAMILY_HEADINGS[family] || FAMILY_HEADINGS.other
+    const isColumn = item.id.startsWith('column:')
+    const target = glossaryEntry(state, value)
+    const decided = option => glossaryEntry(state, option)?.decided ?? optionLabel(item, option)
+    // A default that depends on a question still open says so, rather than explaining today's fallback.
+    const waitingFor = changed ? null : (item.default_when || []).flatMap(branch => branch.when || [])
+      .filter(condition => condition.type === 'decision_in' && (state?.unresolved || []).includes(condition.id))
+      .map(condition => [...issues, ...automatic].find(entry => entry.id === condition.id))[0]
+    let title = isColumn ? `${shortTerm(item.term)} → ${target?.decided ?? optionLabel(item, value)}` : item.title
+    let text = isColumn
+      ? changed ? `You chose this: ${optionLabel(item, value)}.` : (state?.conditional_defaults?.[item.id]?.reason ?? item.reason)
+      : changed ? `You chose: ${optionLabel(item, value)}.` : `${optionLabel(item, value)}. ${item.reason || ''}`.trim()
+    if (waitingFor) {
+      const branch = item.default_when.find(entry => entry.value !== item.default)
+      title = `${shortTerm(item.term)} → waiting for your answer`
+      text = `Depends on your answer to “${waitingFor.title}”: ${branch ? `${decided(branch.value)} if yes; otherwise ` : ''}${decided(item.default)}.`
+    }
+    lines.push({ line: { id: item.id, item, family, heading, title, text, value, changed },
+      glance: Boolean(item.glance || item.convention || warningIds.has(item.id)) })
+  }
+  const rank = family => {
+    const index = FAMILY_ORDER.indexOf(family)
+    return index < 0 ? FAMILY_ORDER.length : index
+  }
+  const glanceLines = lines.filter(entry => entry.glance)
+    .map((entry, index) => ({ entry, index })).sort((a, b) => rank(a.entry.line.family) - rank(b.entry.line.family) || a.index - b.index).map(entry => entry.entry.line)
+  const silent = lines.filter(entry => !entry.glance).map(entry => entry.line)
+  const specimen = []
+  const materialEntries = new Map([...issues, ...automatic].filter(item => item.id.startsWith('material:')).map(item => [item.id, item]))
+  const details = plan.glossary?.specimen_details || {}
+  for (const [id, item] of materialEntries) {
+    const followers = columns.filter(column => column.follows === id && column.nonempty > 0)
+    if (!followers.length) continue
+    const value = selected(id)
+    const specimenState = ['per_row', 'by_id'].includes(value) ? 'stored' : value == null || value === '' ? 'pending' : 'kept'
+    const names = followers.map(column => glossaryEntry(state, column.default)?.field_label || shortTerm(column.term))
+    const count = followers.length
+    const title = formatTemplate(details[specimenState], count) || {
+      stored: `${count} specimen ${count === 1 ? 'detail' : 'details'} stored on specimen records`,
+      kept: `${count} specimen ${count === 1 ? 'detail' : 'details'} kept in your original files`,
+      pending: `${count} specimen ${count === 1 ? 'detail' : 'details'} waiting for your choice`,
+    }[specimenState]
+    const why = formatTemplate(details[`${specimenState}_why`], count) || {
+      stored: 'You chose to create specimen records.', kept: 'You chose not to create specimen records.',
+      pending: 'Your choice about specimen records is still open.',
+    }[specimenState]
+    specimen.push({ id, item, count, names, state: specimenState, title, why })
+  }
+  return { glance: glanceLines, specimen, silent, ids: new Set([...lines.map(entry => entry.line.id), ...specimen.map(line => line.id)]) }
 }
 
 const retainedTable = (state, selected, index) => !state.plan.tables[index]?.core && selected(`table:${index}`) === 'preserve'
@@ -140,10 +225,11 @@ export const AGENT_NAMES_ID = 'agent-names'
 
 // Warnings the backend raises for automatic keep-in-originals choices repeat what the summary already says.
 // The agent-names notice describes linking names to agents, so it goes once every name is kept as text only.
-export function dedupeNotices(state, notices, selected) {
+export function dedupeNotices(state, notices, selected, panelIds = new Set()) {
   const automatic = new Set((state?.plan?.automatic_choices || []).filter(choice => selected(choice.id, choice.default) === 'preserve').map(choice => choice.id))
   const seen = new Set()
   return (notices || []).filter(notice => {
+    if (notice.id && panelIds.has(notice.id)) return false
     if (notice.id && automatic.has(notice.id)) return false
     if (notice.id === AGENT_NAMES_ID && selected(AGENT_NAMES_ID, 'shared') === 'text') return false
     const key = notice.id ? `id:${notice.id}` : `text:${notice.title}:${notice.reason}`

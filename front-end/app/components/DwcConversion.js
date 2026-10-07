@@ -5,9 +5,10 @@ import config from '../config'
 import { getCsrfToken } from '../utils/csrf'
 import { useDataset } from '../contexts/DatasetContext'
 import { attentionItems, chatVisible, conflictsFor, optionState, shownRecommendation, unresolvedIssues } from '../utils/conversionReview.mjs'
-import { AGENT_NAMES_ID, conversionTitle, dedupeNotices, makeSelector } from '../utils/conversionPlan.mjs'
+import { AGENT_NAMES_ID, automaticSummary, conversionTitle, dedupeNotices, glossaryEntry, makeSelector } from '../utils/conversionPlan.mjs'
 import { focusDecision } from '../utils/focusDecision'
 import ConversionAiDecisions from './ConversionAiDecisions'
+import ConversionAutomaticSummary from './ConversionAutomaticSummary'
 import ConversionChat from './ConversionChat'
 import ConversionColumnSummary from './ConversionColumnSummary'
 import ConversionNameReview from './ConversionNameReview'
@@ -77,20 +78,26 @@ function GroupExceptions({ item, decisions, disabled, onChoose }) {
   </details>
 }
 
-function ChoiceCard({ item, state, decisions, disabled, onChoose, selected, number }) {
+function ChoiceCard({ item, state, decisions, disabled, onChoose, selected, number, asRadios = false }) {
   const recommendation = shownRecommendation(state, item.id)
   const deferred = state.review?.deferred?.[item.id]
   const value = selected(item.id, item.default)
   const current = optionState(state, item.id, value)
   const conflicts = conflictsFor(state, item.id)
-  const guided = number !== undefined
+  const guided = number !== undefined || asRadios
   const eventLinks = guided && item.id.startsWith('occurrence-events:')
+  const automatic = (state.plan?.automatic_choices || []).some(choice => choice.id === item.id)
+  // A default that follows another answer explains itself with the reason for that answer. In the
+  // "What we decided" panel the line above the card already shows it.
+  const reason = asRadios && automatic ? '' : state.conditional_defaults?.[item.id]?.reason ?? item.reason
   return <div data-decision-id={item.id} className={`card card-body choice-card mb-3 ${conflicts.length || !current.available ? 'border-warning' : ''}`}>
-    {guided && <div className="d-flex align-items-center justify-content-between mb-2"><span className="choice-number mb-0">Question {number}</span>{!state.unresolved?.includes(item.id) && decisions[item.id] && <span className="answer-saved"><i className="bi bi-check-circle me-1" aria-hidden="true" />Answer saved</span>}</div>}
+    {number !== undefined && <div className="d-flex align-items-center justify-content-between mb-2"><span className="choice-number mb-0">Question {number}</span>{!state.unresolved?.includes(item.id) && decisions[item.id] && <span className="answer-saved"><i className="bi bi-check-circle me-1" aria-hidden="true" />Answer saved</span>}</div>}
     {item.table !== undefined && <small className="text-muted mb-1">{state.plan.tables[item.table]?.name}</small>}
     {guided ? <h3 id={`title-${item.id}`} className="choice-title fw-semibold">{eventLinks ? 'How should these records link to events?' : item.title || item.term?.split('/').pop()}</h3>
       : <label id={`title-${item.id}`} htmlFor={item.id} className="choice-title fw-semibold">{item.title || item.term?.split('/').pop()}</label>}
-    {eventLinks ? <><p className="small mb-2">In a Data Package, dates and locations belong to events. Choose how to keep the details recorded on these occurrence rows.</p><details className="small mb-2"><summary>See what we found in your files</summary><p className="mt-2 mb-0">{item.reason}</p></details></> : item.reason && <p className="small mb-2">{item.reason}</p>}
+    {eventLinks ? <><p className="small mb-2">In a Data Package, dates and locations belong to events. Choose how to keep the details recorded on these occurrence rows.</p><details className="small mb-2"><summary>See what we found in your files</summary><p className="mt-2 mb-0">{reason}</p></details></> : recommendation?.user_question
+      ? <><p className="small mb-2">{recommendation.user_question}</p>{reason && <details className="small mb-2"><summary>More about this question</summary><p className="mt-2 mb-0">{reason}</p></details>}</>
+      : reason && <p className="small mb-2">{reason}</p>}
     {item.members && <p className="small mb-2">Applies to {item.count.toLocaleString()} rows that raise the same question (rows {item.sample_rows.join(', ')}{item.count > item.sample_rows.length ? ', …' : ''}).</p>}
     {item.samples?.length > 0 && <div className="small text-muted mb-2" style={{ overflowWrap: 'anywhere' }}>Examples: {item.samples.join(' · ')}</div>}
     {guided ? <fieldset id={item.id} className="choice-options" aria-labelledby={`title-${item.id}`}>
@@ -101,15 +108,24 @@ function ChoiceCard({ item, state, decisions, disabled, onChoose, selected, numb
         return <div key={option.value}><label className={`choice-option${value === option.value ? ' is-selected' : ''}${suggested ? ' is-suggested' : ''}${!availability.available ? ' is-unavailable' : ''}`}>
           <input type="radio" name={item.id} value={option.value} checked={value === option.value} disabled={disabled || !availability.available}
             onChange={() => onChoose(item.id, option.value, suggested ? { accepted_recommendations: [item.id] } : {})} aria-describedby={!availability.available ? `reason-${item.id}-${index}` : undefined} />
-          <span>{option.label}{suggested && <small className="suggested-label"><i className="bi bi-stars me-1" aria-hidden="true" />Suggested by ChatIPT</small>}{!availability.available && <small id={`reason-${item.id}-${index}`} className="d-block text-body-secondary mt-1">Not available with your current data and choices.</small>}</span>
+          <span>{option.label}{suggested && <small className="suggested-label"><i className="bi bi-stars me-1" aria-hidden="true" />Suggested by ChatIPT</small>}
+            {(option.value !== 'preserve' || item.id.startsWith('column:')) && glossaryEntry(state, option.value)?.gloss && <small className="d-block text-body-secondary">{glossaryEntry(state, option.value).gloss}</small>}
+            {(option.value !== 'preserve' || item.id.startsWith('column:')) && glossaryEntry(state, option.value)?.consequence && <small className="d-block text-body-secondary">{glossaryEntry(state, option.value).consequence}</small>}
+            {item.option_notes?.[option.value] && <small className="d-block"><em>{item.option_notes[option.value]}</em></small>}
+            {option.technical && <small className="d-block text-body-secondary">{option.technical}</small>}
+            {automatic && option.value === (state.conditional_defaults?.[item.id]?.value ?? item.default) && <small className="d-block text-body-secondary">Our choice</small>}
+            {!availability.available && <small id={`reason-${item.id}-${index}`} className="d-block text-body-secondary mt-1">Not available with your current data and choices.</small>}</span>
           {value === option.value && <i className="bi bi-check2 ms-auto" aria-hidden="true" />}
         </label>{!availability.available && availability.reasons?.length > 0 && <details className="small unavailable-reason"><summary>Why this option isn&apos;t available</summary><p className="mt-2 mb-0">{availability.reasons.join(' ')}</p></details>}</div>
       })}
-    </fieldset> : <select id={item.id} className="form-select" value={decisions[item.id] ?? (item.default || '')} disabled={disabled} onChange={event => onChoose(item.id, event.target.value)}>
+    </fieldset> : <><select id={item.id} className="form-select" value={selected(item.id, item.default) || ''} disabled={disabled} onChange={event => onChoose(item.id, event.target.value)}>
       {!item.default && <option value="">Choose…</option>}
       {item.options.map(option => <option key={option.value} value={option.value}>
         {option.label}{optionState(state, item.id, option.value).available ? '' : ' (not available with your other choices)'}</option>)}
-    </select>}
+    </select>{glossaryEntry(state, value)?.gloss && <small className="d-block text-body-secondary mt-1">{glossaryEntry(state, value).gloss}</small>}</>}
+    {guided && item.id.startsWith('column:') && state.plan?.glossary?.copy_note && <p className="small text-body-secondary mt-2 mb-0">{state.plan.glossary.copy_note}</p>}
+    {guided && item.options.some(option => glossaryEntry(state, option.value)?.definition) && <details className="small mt-2"><summary>Official Darwin Core definitions</summary>
+      <dl className="mt-2 mb-0">{item.options.filter(option => glossaryEntry(state, option.value)?.definition).map(option => <div key={option.value}><dt>{option.technical || option.value}</dt><dd>{glossaryEntry(state, option.value).definition}</dd></div>)}</dl></details>}
     {guided && recommendation?.rationale && <details className="small mt-2"><summary>Why ChatIPT suggests this answer</summary><p className="mt-2 mb-0">{recommendation.rationale}</p></details>}
     {guided && (item.authority === 'user-assertion' || item.options.some(option => option.assertion)) && <p className="choice-confirmation small text-body-secondary mb-0 mt-2"><i className="bi bi-info-circle me-1" aria-hidden="true" />Some answers add information the files don&apos;t provide. Choose them only if they describe your data.</p>}
     {!current.available && <div className="small text-warning-emphasis mt-2">{current.reasons.join(' ')}</div>}
@@ -225,9 +241,8 @@ export default function DwcConversion() {
     ? Object.entries(state.report?.taxonomy?.event_hierarchies || {}).map(([index, hierarchy]) => [index, hierarchy.scientific_consistency])
     : Object.entries(state?.plan?.taxonomy?.scientific_hierarchies || {})
   const scientificAudits = [...(scientific ? [['core', scientific]] : []), ...nestedScientific].filter(([, audit]) => audit)
-  // Per-name agent choices have no effect while every name is kept as text only.
-  const agentNamesOverridden = choice => choice.id.startsWith('agent-share:') && selected(AGENT_NAMES_ID, 'shared') === 'text'
-  const notices = dedupeNotices(state, state?.status === 'complete' ? state.report?.warnings || [] : state?.plan?.warnings || [], selected)
+  const panelIds = inReview ? automaticSummary(state, selected).ids : new Set()
+  const notices = dedupeNotices(state, state?.status === 'complete' ? state.report?.warnings || [] : state?.plan?.warnings || [], selected, panelIds)
   const valueLedger = state?.report?.value_disposition?.source_terms || []
   const semanticFindings = state?.report?.semantic_value_audit?.findings || []
   const reviewedValueRoutes = state?.report?.reviewed_value_routes || []
@@ -315,6 +330,7 @@ export default function DwcConversion() {
           <i className="bi bi-stars me-1" aria-hidden="true" />Review {reviewable} {reviewable === 1 ? 'choice' : 'choices'} with AI
         </button>}
       </div>
+      <ConversionAutomaticSummary state={state} selected={selected} disabled={disabled} renderChoice={item => <ChoiceCard item={item} asRadios {...cardProps} />} />
       {guidedItems.map((item, index) => <ChoiceCard key={item.id} item={item} number={index + 1} {...cardProps} onChoose={(...args) => {
         setAnsweredHere(ids => ids.includes(item.id) ? ids : [...ids, item.id])
         choose(...args)
@@ -331,7 +347,6 @@ export default function DwcConversion() {
         <p className="small text-body-secondary mt-3">Review or change the choices already made for your data. Values kept in the original files remain in your download.</p>
         {(state.plan.issues || []).filter(issue => !needsInput.has(issue.id) && !guidedItems.some(item => item.id === issue.id) && !nameQuestionIds.has(issue.id) && (!retainedIssue(issue) || issue.id === `table:${issue.table}`) && !(state.review?.applied || []).includes(issue.id))
           .map(issue => <ChoiceCard key={issue.id} item={issue} {...cardProps} />)}
-        {automaticChoices.filter(choice => !state.plan.columns.some(column => column.id === choice.id) && !guidedItems.some(item => item.id === choice.id) && (!retainedIssue(choice) || choice.id === `table:${choice.table}`)).map(choice => <div className="my-3" key={choice.id} data-decision-id={choice.id}><label htmlFor={choice.id} className="small fw-semibold">{choice.title}</label><p className="small mb-1">{choice.reason}</p>{agentNamesOverridden(choice) && <p className="small text-body-secondary mb-1">Overridden by the setting for all names without identifiers, which keeps them as text only.</p>}<select id={choice.id} className="form-select form-select-sm" disabled={disabled || agentNamesOverridden(choice)} value={selected(choice.id)} onChange={event => choose(choice.id, event.target.value)}>{choice.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>)}
         {state.plan.columns.filter(column => !column.review && !guidedItems.some(item => item.id === column.id) && selected(`table:${column.table}`) !== 'preserve').map(column => <div className="row align-items-center my-3" key={column.id} data-decision-id={column.id}><label htmlFor={column.id} className="col-md-6 small">{state.plan.tables[column.table].name} · {column.term.split('/').pop()}</label><div className="col-md-6"><select id={column.id} className="form-select form-select-sm" disabled={disabled} value={selected(column.id, column.default)} onChange={event => choose(column.id, event.target.value)}>{column.options.map(option => <option key={option.value} value={option.value}>{option.label}{optionState(state, column.id, option.value).available ? '' : ' (not available with your other choices)'}</option>)}</select></div></div>)}
       </details>
       <div className="conversion-action-bar">
