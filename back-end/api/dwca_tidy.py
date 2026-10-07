@@ -57,6 +57,11 @@ def compact(value):
     return re.sub(r'[\s_-]+', '', key(value))
 
 
+def life_stage_word(word):
+    """Whether a word is a vendored life-stage concept name, value, or alias."""
+    return key(word) in _tables()['vocab'].get('lifeStage', {})
+
+
 def value_id(group_id, value):
     return f'{group_id}:{hashlib.sha256(value.encode()).hexdigest()[:16]}'
 

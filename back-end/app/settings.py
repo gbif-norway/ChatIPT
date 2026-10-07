@@ -299,6 +299,7 @@ CONVERSION_AI_REVIEW_ENABLED = os.environ.get("CONVERSION_AI_REVIEW_ENABLED", "1
 # Scientific-name checks (GBIF name parser and Catalogue of Life matching) after inspection; off under the test runner
 # so that tests never reach the network.
 CONVERSION_NAME_CHECKS_ENABLED = os.environ.get("CONVERSION_NAME_CHECKS_ENABLED", "1") == "1" and not TESTING
+CONVERSION_TIDY_ENABLED = os.environ.get("CONVERSION_TIDY_ENABLED", "1") == "1"
 # Soft, ignorable nudge only -- shown to the model in state_update.txt once a task
 # stage has made this many tool calls. Not an enforced limit.
 AGENT_CALL_COUNT_NUDGE_THRESHOLD = int(os.environ.get("AGENT_CALL_COUNT_NUDGE_THRESHOLD", "20"))

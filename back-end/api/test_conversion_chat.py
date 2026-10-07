@@ -230,6 +230,8 @@ COUNTRY_LABELS = (b'occurrenceID,eventID,countryCode,locality,scientificName\n'
 
 
 @override_settings(**AI)
+# Many country-label questions need the untidied archive: the tidy-up turns these names into ISO codes.
+@override_settings(CONVERSION_TIDY_ENABLED=False)
 class OpenerTests(ConversionTestCase):
     files = [('occurrence.csv', COUNTRY_LABELS)]
 

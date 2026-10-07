@@ -480,6 +480,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
 
     @staticmethod
     def _conversion_state(conversion, names_page=None):
+        from api import conversion_tidy
         from api import conversion_names
         from api.conversion_review import state_section
         from api.dwca_conversion import option_status, validate_decisions
@@ -492,6 +493,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 'report': {key: value for key, value in conversion_names.public_report(conversion.report).items() if key != 'row_crosswalk'},
                 'updated_at': conversion.updated_at, 'download_ready': conversion.status == 'complete' and bool(conversion.output_file),
                 'name_review': conversion_names.state_section(conversion, **(names_page or {})),
+                'tidy': conversion_tidy.state_section(conversion),
                 **state_section(conversion)}
 
     @staticmethod
@@ -508,7 +510,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get', 'post'], url_path='conversion',
             throttle_classes=[ConversionReviewRateThrottle, ConversionChatRateThrottle])
     def conversion(self, request, *args, **kwargs):
-        from api import conversion_names, conversion_review
+        from api import conversion_names, conversion_review, conversion_tidy
         from api.models import DwcConversion, DwcConversionJob
         from api.dwca_conversion import validate_decisions
         from api.dwca_import import ConversionError, ImportFailure
@@ -523,7 +525,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
                           'view': 'pending' if query.get('names_view') == 'pending' else 'all'}
             return Response(self._conversion_state(dataset.conversion, names_page))
         operation = request.data.get('action', 'convert')
-        if operation not in {'convert', 'review', 'inspect', 'save', 'chat', 'names', 'check_names',
+        if operation not in {'convert', 'review', 'inspect', 'save', 'chat', 'names', 'check_names', 'tidy',
                              'drop_unlinked_extension_rows'}:
             raise ValidationError('Unknown conversion action.')
         with transaction.atomic():
@@ -562,6 +564,18 @@ class DatasetViewSet(viewsets.ModelViewSet):
             if conversion.status not in {'review', 'reviewing'}:
                 # A completed, blocked or failed conversion's choices must stay those of its result.
                 return Response({'detail': 'Choices can only be changed while the conversion is in review.'}, status=409)
+            if operation == 'tidy':
+                try:
+                    conversion_tidy.request_changes(conversion, request.data.get('changes'))
+                except ValueError as exc:
+                    raise ValidationError(str(exc))
+                if ai_job:
+                    conversion_review.supersede_job(conversion)
+                conversion.status = 'queued'
+                conversion.error = ''
+                conversion.save()
+                DwcConversionJob.objects.create(conversion=conversion, action='replan')
+                return Response(self._conversion_state(conversion), status=202)
             if operation == 'names':
                 try:
                     with transaction.atomic():

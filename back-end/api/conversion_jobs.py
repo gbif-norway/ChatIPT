@@ -12,6 +12,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from api.dwca_import import ConversionError, ImportFailure, read_inputs, source_zip
+from api import conversion_tidy
 from api.dwca_conversion import RULE_VERSION, build_plan, convert
 from api.conversion_evidence import publication_metadata, source_eml_content
 from api.dwca_eml_descriptor import extract_eml_descriptor_metadata
@@ -76,19 +77,20 @@ def apply_failure(conversion, record, action='convert'):
     conversion.retryable = record['category'] == 'transient' or (record['category'] == 'internal' and not repeated)
     remedy = record['category'] in {'conflict', 'decision'} and record['decision_ids']
     internal_convert = record['category'] == 'internal' and action == 'convert'
-    if conversion.plan and (remedy or internal_convert or record['category'] in {'stale-plan', 'transient'}):
+    if conversion.plan and (remedy or internal_convert or action == 'replan' or record['category'] in {'stale-plan', 'transient'}):
         conversion.status = 'review'
     elif record['category'] in {'source', 'conflict', 'decision'}:
         conversion.status = 'blocked'
     else:
         conversion.status = 'failed'
 
-def load_sources(conversion):
+def load_sources(conversion, overrides=None, tidy=True):
     sources = []
     for source in conversion.dataset.user_files.order_by('id'):
         with source.file.open('rb') as stream:
             sources.append((source.source_manifest['original_name'], stream.read()))
-    return read_inputs(sources, drop_unlinked_extension_rows=conversion.drop_unlinked_extension_rows)
+    archive = read_inputs(sources, drop_unlinked_extension_rows=conversion.drop_unlinked_extension_rows)
+    return conversion_tidy.tidied(conversion, archive, overrides) if tidy else archive
 
 def _claim(now):
     """Lock a conversion with a due job, then its job (one lock order: conversion, then job; §5.9)."""
@@ -96,7 +98,7 @@ def _claim(now):
     from api.conversion_review import lease_seconds
     review_stale = now - timedelta(seconds=lease_seconds())
     due = (Q(job__claimed_at__isnull=True)
-           | Q(job__action__in=['inspect', 'convert'], job__claimed_at__lt=now - timedelta(hours=1))
+           | Q(job__action__in=['inspect', 'convert', 'replan'], job__claimed_at__lt=now - timedelta(hours=1))
            | Q(job__action__in=['review', 'chat'], job_seen__lt=review_stale)
            | Q(job__action='names', job_seen__lt=now - timedelta(seconds=LEASE_SECONDS)))
     conversion = (DwcConversion.objects.select_for_update(skip_locked=True, of=('self',))
@@ -120,7 +122,7 @@ def process_next_conversion():
             conversion.status = 'reviewing'
             conversion.save(update_fields=['status', 'updated_at'])
         elif job.action not in {'chat', 'names'}:
-            conversion.status = {'inspect': 'inspecting', 'convert': 'converting'}.get(job.action, conversion.status)
+            conversion.status = {'inspect': 'inspecting', 'replan': 'inspecting', 'convert': 'converting'}.get(job.action, conversion.status)
             conversion.error = ''; conversion.save(update_fields=['status', 'error', 'updated_at'])
     if job.action in {'review', 'chat'}:
         # AI review and conversation have their own fenced runner and finisher.
@@ -138,7 +140,9 @@ def process_next_conversion():
     try:
         if job.action == 'inspect':
             # Everything is built first, so a failure leaves the previous plan and its choices intact.
-            archive = load_sources(conversion)
+            raw = load_sources(conversion, tidy=False)
+            tidy_overrides = conversion_tidy.overrides(conversion, raw)
+            archive = conversion_tidy.tidied(conversion, raw, tidy_overrides)
             plan = build_plan(archive)
             eml_metadata = _eml_dataset_metadata(archive)
             sources, filled = {}, {}
@@ -155,11 +159,24 @@ def process_next_conversion():
             for field, value in filled.items():
                 setattr(conversion.dataset, field, value)
             conversion.plan = plan
+            conversion_tidy.record(conversion, archive, tidy_overrides)
             conversion.metadata_sources = {**sources, **({'truncated_from_eml': sorted(eml_metadata['truncated'])}
                                                          if eml_metadata['truncated'] else {})}
             conversion.decisions = {}; conversion.review = {}; conversion.report = {}
             conversion.conflicts = []; conversion.retryable = False
             conversion.name_review = name_review
+            conversion.status = 'review'
+        elif job.action == 'replan':
+            # Database side effects of carrying the plan state wait for the fenced store below.
+            pending = conversion.tidy.get('pending_overrides', {})
+            archive = load_sources(conversion, overrides=pending)
+            plan = build_plan(archive)
+            carry = conversion_tidy.carry_plan_state(conversion, conversion.plan, plan, archive)
+            conversion.plan = plan
+            conversion_tidy.record(conversion, archive, pending)
+            conversion.tidy['last_replan'] = carry
+            conversion.conflicts = []; conversion.retryable = False
+            conversion.error = ''; conversion.report = {}
             conversion.status = 'review'
         elif job.action == 'convert':
             archive = load_sources(conversion)
@@ -196,6 +213,9 @@ def process_next_conversion():
                 'source_only': source_metadata,
                 'warnings': metadata_warnings,
             }
+            tidy_report = conversion_tidy.report_section(conversion, archive)
+            if tidy_report:
+                report['tidy'] = tidy_report
             report['value_disposition'] = build_value_disposition_ledger(conversion.plan, report, resources)
             report['semantic_value_audit'] = audit_semantic_values(archive)
             from api.conversion_review import report_section
@@ -221,6 +241,11 @@ def process_next_conversion():
             raise ImportFailure('Unknown conversion job action.')
     except Exception as exc:
         logger.exception('Conversion %s failed', conversion.pk)
+        if job.action == 'replan':
+            # The previous plan and its tidy-up, choices and reviews stay together.
+            conversion.refresh_from_db(fields=['plan', 'decisions', 'review', 'name_review', 'tidy'])
+            conversion.__dict__.pop('_tidy_carry', None)
+            conversion.tidy.pop('pending_overrides', None)
         apply_failure(conversion, classify_failure(exc), job.action)
     old_output = conversion.output_file.name
     try:
@@ -241,6 +266,8 @@ def process_next_conversion():
                     transaction.on_commit(lambda: conversion.output_file.storage.delete(old_output), robust=True)
             elif job.action == 'inspect' and conversion.status == 'review':
                 conversion.dataset.save(update_fields=['title', 'description'])
+            if job.action == 'replan':
+                conversion_tidy.commit_carry(conversion)
             conversion.save()
             if _chain_review(conversion, claimed_job, job.action) or _chain_names(conversion, claimed_job, job.action):
                 return True
@@ -287,7 +314,7 @@ def _apply_names(conversion, archive, resources, report):
 def _chain_names(conversion, job, action):
     """After a successful inspect (and any automatic AI review, which goes first), keep the job as a name check."""
     from api.conversion_names import pending
-    if action != 'inspect' or conversion.status != 'review' or not pending(conversion):
+    if action not in {'inspect', 'replan'} or conversion.status != 'review' or not pending(conversion):
         return False
     job.action = 'names'; job.claimed_at = None; job.heartbeat_at = None
     job.save(update_fields=['action', 'claimed_at', 'heartbeat_at'])
@@ -296,7 +323,7 @@ def _chain_names(conversion, job, action):
 def _chain_review(conversion, job, action):
     """After a successful inspect, keep the job as an automatic AI review when there is work for it."""
     from api.conversion_review import should_auto_review
-    if action != 'inspect' or conversion.status != 'review' or not should_auto_review(conversion):
+    if action not in {'inspect', 'replan'} or conversion.status != 'review' or not should_auto_review(conversion):
         return False
     job.action = 'review'; job.claimed_at = None; job.heartbeat_at = None
     job.save(update_fields=['action', 'claimed_at', 'heartbeat_at'])

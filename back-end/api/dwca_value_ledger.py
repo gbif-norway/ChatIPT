@@ -22,6 +22,7 @@ def build_value_disposition_ledger(plan, report, resources=None):
     """
     plan_columns = plan.get('columns', [])
     report_columns = report.get('columns', [])
+    tidy = report.get('tidy') or {}
     warnings = {item.get('id') for item in [*plan.get('warnings', []), *report.get('warnings', [])]}
     withheld = Counter()
     for item in report.get('withheld_values', []):
@@ -44,6 +45,14 @@ def build_value_disposition_ledger(plan, report, resources=None):
             table_name = plan['tables'][table_index].get('name')
         summary = summaries.get((table_name, column.get('term')), {})
         total = max(0, int(column.get('nonempty', 0) or 0))
+        tidy_groups = [group for group in tidy.get('groups', [])
+                       if group.get('table') == table_index and group.get('column') == column.get('column')]
+        tidied_values = sum(value.get('changed_rows', 0) for group in tidy_groups if group.get('applied')
+                            for value in group.get('values', []) if value.get('applied')
+                            and value.get('fields', {}).get(group.get('field', '')) != '')
+        tidy_cleared = sum(value.get('changed_rows', 0) for group in tidy_groups if group.get('applied')
+                           for value in group.get('values', []) if value.get('applied')
+                           and value.get('fields', {}).get(group.get('field', '')) == '')
         withheld_count = min(total, withheld[(table_index, column.get('term'))])
         decision = report.get('effective_decisions', {}).get(column.get('id'), column.get('default', 'preserve'))
         disposition = summary.get('disposition', '')
@@ -83,7 +92,7 @@ def build_value_disposition_ledger(plan, report, resources=None):
                   'needs-review' if review else
                   'originals-only' if originals_count == total and total else
                   'unverified' if unknown_count else
-                  'transformed/derived' if derived_count else
+                  'transformed/derived' if derived_count or (column.get('tidy_added') and mapped_count) else
                   'mapped' if mapped_count else 'mixed')
         targets = []
         target_counts = summary.get('target_counts') or {}
@@ -106,7 +115,7 @@ def build_value_disposition_ledger(plan, report, resources=None):
         for candidate in targets:
             output_fields[candidate] += target_counts.get(candidate, emitted_count)
         output_resource_names = sorted(traced_resources.get(table_index, ()))
-        result.append({
+        entry = {
             'source_table_index': table_index,
             'source_table': table_name,
             'source_term': column.get('term'),
@@ -125,7 +134,14 @@ def build_value_disposition_ledger(plan, report, resources=None):
             'output_fields': targets,
             'source_table_output_resources': output_resource_names,
             'count_basis': 'source nonempty cells; mapped row counts where reported; withheld values counted individually; warning flags annotate emitted values and overlap mapped/derived counts',
-        })
+        }
+        if tidy:
+            entry.update(tidied_values=tidied_values, tidy_cleared_values=tidy_cleared,
+                         source_nonempty_values=total + tidy_cleared)
+            if column.get('tidy_added'):
+                entry['tidy_added'] = True
+            entry['count_basis'] += '; tidy counts are changed source cells, with cleared values added back to source nonempty counts'
+        result.append(entry)
 
     ledger = {'source_terms': result, 'output_fields': [
         {'field': field, 'source_term_count': count}
