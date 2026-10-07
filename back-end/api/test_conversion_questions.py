@@ -209,6 +209,7 @@ class ConversionQuestionTests(SimpleTestCase):
         self.assertEqual(effective_decisions(plan, decisions)[recorded], 'material.collectedBy')
         self.assertEqual(conditional_defaults(plan, decisions)[identifier]['value'], 'material.collectedByID')
         self.assertNotIn('default_when', next(column for column in plan['columns'] if column['id'] == recorded))
+        self.assertIn('material.collectedBy', plan['glossary']['targets'])
         answers = {issue['id']: issue['options'][0]['value'] for issue in plan['issues']}
         frames, report = convert(source, plan, {**answers, **decisions, 'table:1': 'convert'})
         self.assertEqual(frames['material']['collectedBy'].tolist(), ['Yngvar Hagen', 'Robert Collett'])

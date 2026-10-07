@@ -214,6 +214,14 @@ def build_taxon_plan(archive):
                       for name, content in sorted(archive.files.items())],
             'uploads': [{'name': name, 'sha256': hashlib.sha256(content).hexdigest(), 'bytes': len(content)}
                         for name, content in sorted(archive.uploaded_files.items())]}
+    if nested:
+        # Plain-language explanations of the nested occurrence choices (see api/dwca_glossary.py).
+        glossary = dict(next(iter(nested.values()))['glossary'])
+        for inner in nested.values():
+            glossary['tables'] = {**glossary['tables'], **inner['glossary']['tables']}
+            glossary['targets'] = {**glossary['targets'], **inner['glossary']['targets']}
+        plan['glossary'] = {**glossary, 'tables': dict(sorted(glossary['tables'].items())),
+                            'targets': dict(sorted(glossary['targets'].items()))}
     plan['id'] = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
     return plan
 

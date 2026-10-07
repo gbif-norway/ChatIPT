@@ -284,7 +284,9 @@ def _fill_collectors(core, tables):
     joined from an ambiguous link.
     """
     def blank():
-        return _blank(core['recordedBy']) if 'recordedBy' in core else pd.Series(True, index=core.index)
+        # Only rows with neither names nor identifiers are filled, so a name never sits beside another person's identifier.
+        names = _blank(core['recordedBy']) if 'recordedBy' in core else pd.Series(True, index=core.index)
+        return names & (_blank(core['recordedByID']) if 'recordedByID' in core else True)
 
     material = tables.get('material')
     linked = pd.Series(pd.NA, index=core.index, dtype='object')
@@ -307,9 +309,7 @@ def _fill_collectors(core, tables):
                 if 'collectedByID' in by_occurrence:
                     identifiers = ids.where(unique).map(by_occurrence['collectedByID'])
                     fill = filled & identifiers.notna() & ~_blank(identifiers)
-                    if 'recordedByID' in core:
-                        fill &= _blank(core['recordedByID'])
-                    else:
+                    if 'recordedByID' not in core:
                         core['recordedByID'] = pd.NA
                     core['recordedByID'] = core['recordedByID'].astype('object').where(~fill, identifiers)
 

@@ -156,6 +156,8 @@ class ProvisionalCoreTests(TestCase):
             {"occurrence_pk": "o3", "occurrenceID": "urn:3", "recordedBy": ""},
             {"occurrence_pk": "o4", "occurrenceID": "urn:4", "recordedBy": ""},
             {"occurrence_pk": "o5", "occurrenceID": "urn:5", "recordedBy": ""},
+            # An identifier without names: the specimen's collector would not match it, so nothing is filled.
+            {"occurrence_pk": "o6", "occurrenceID": "urn:6", "recordedBy": "", "recordedByID": "https://orcid.org/A"},
         ]))
         Table.objects.create(dataset=dataset, title="material", df=pd.DataFrame([
             {"materialEntity_pk": "m1", "evidenceForOccurrenceID": "urn:1", "collectedBy": "Hagen, Yngvar", "collectedByID": "https://orcid.org/0000-0001"},
@@ -165,6 +167,7 @@ class ProvisionalCoreTests(TestCase):
             {"materialEntity_pk": "m3a", "evidenceForOccurrenceID": "urn:3", "collectedBy": "A", "collectedByID": ""},
             {"materialEntity_pk": "m3b", "evidenceForOccurrenceID": "urn:3", "collectedBy": "B", "collectedByID": ""},
             {"materialEntity_pk": "m4", "evidenceForOccurrenceID": "urn:4", "collectedBy": "", "collectedByID": ""},
+            {"materialEntity_pk": "m6", "evidenceForOccurrenceID": "urn:6", "collectedBy": "Somebody, Else", "collectedByID": ""},
         ]))
         Table.objects.create(dataset=dataset, title="agent", df=pd.DataFrame([
             {"agent_pk": "a1", "preferredAgentName": "Kjernslie, O.L."},
@@ -179,9 +182,9 @@ class ProvisionalCoreTests(TestCase):
         core = provisional_core(dataset)
 
         self.assertEqual(core["recordedBy"].fillna("").tolist(),
-                         ["Hagen, Yngvar", "Own, Name", "", "Kjernslie, O.L. | Second, Person", ""])
-        self.assertEqual(core["recordedByID"].fillna("").tolist(), ["https://orcid.org/0000-0001", "", "", "", ""])
-        self.assertEqual(core["occurrenceID"].tolist(), ["o1", "o2", "o3", "o4", "o5"])
+                         ["Hagen, Yngvar", "Own, Name", "", "Kjernslie, O.L. | Second, Person", "", ""])
+        self.assertEqual(core["recordedByID"].fillna("").tolist(), ["https://orcid.org/0000-0001", "", "", "", "", "https://orcid.org/A"])
+        self.assertEqual(core["occurrenceID"].tolist(), ["o1", "o2", "o3", "o4", "o5", "o6"])
 
     def test_no_record_resources_means_no_projection(self):
         import pandas as pd

@@ -123,14 +123,14 @@ TARGETS = {
     },
     'material.typeStatus': {
         'label': 'Type status of the specimen',
-        'gloss': 'Whether this physical specimen is a name-bearing type, such as a holotype or paratype, and for which name.',
+        'gloss': 'Whether this physical specimen is a type specimen for a scientific name, such as a holotype or paratype, and for which name.',
         'consequence': 'Stored on the specimen record.',
         'choose_when': 'Best when specimen records are created: a type status describes a specimen.',
         'decided': 'saved as the type status of each specimen record',
     },
     'identification.typeStatus': {
         'label': 'Type status, with the identification',
-        'gloss': 'Whether the organism is a name-bearing type, such as a holotype, recorded together with its identification.',
+        'gloss': 'Whether the organism is a type specimen for a scientific name, such as a holotype or paratype, recorded together with its identification.',
         'consequence': 'Stored on the identification record linked to the observation.',
         'choose_when': 'Use when no specimen records are created, so there is no specimen record to hold it.',
         'decided': 'saved with the identification of each observation',
@@ -250,7 +250,8 @@ FAMILIES = {
     'type-status': {
         'fields': {'typeStatus', 'typeDesignationType'},
         'question': 'Where should {column} go?',
-        'reason': ('Type status says whether a specimen is a name-bearing type, such as a holotype. It can be stored on '
+        'reason': ('Type status says whether a specimen is a type specimen for a scientific name, such as a holotype or '
+                   'paratype. It can be stored on '
                    'the specimen record or with the identification.'),
         'summary': 'Type status',
     },
