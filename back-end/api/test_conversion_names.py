@@ -1592,6 +1592,22 @@ class GroupDecisionTests(SimpleTestCase):
         mixed = names.collect_state(read_inputs([('occurrence.csv', content)]), {'id': 'plan'})['labels'][0]
         self.assertEqual(mixed['mixed_hints'], ['family'])
 
+    def test_an_unmarked_trinomial_supplied_as_a_variety_is_not_cols_subspecies(self):
+        record = {'label': 'Aus bus cus', 'rows': 1, 'qualifier': None, 'source_rank': 'variety', 'parsed': real_parse('Aus bus cus'),
+                  'match': {'matchType': 'EXACT', 'hintOnly': False, 'usage': {'scientificName': 'Aus bus cus', 'taxonRank': 'subspecies'}}}
+        self.assertEqual(names.classify(record)['group'], 'check:rank:variety:subspecies')
+        self.assertEqual(names.classify({**record, 'source_rank': 'species'})['kind'], 'auto')
+
+    def test_same_author_homonyms_in_other_lineages_publish_a_stem_without_authorship(self):
+        def usage(key, family):
+            return {'id': key, 'scientificName': 'Aus', 'scientificNameAuthorship': 'Smith', 'taxonRank': 'genus', 'matchType': 'EXACT',
+                    'classification': {'kingdom': 'Animalia', 'family': family}}
+        record = {'label': 'Aus sp.', 'rows': 1, 'qualifier': 'sp.', 'parsed': real_parse(),
+                  'match': {'matchType': 'EXACT', 'hintOnly': False, 'usage': usage('1', 'Aidae'), 'alternatives': [usage('2', 'Bidae')]}}
+        self.assertIsNone(names.stem_usage(record)['scientificNameAuthorship'])
+        record['match']['alternatives'] = [usage('2', 'Aidae')]
+        self.assertEqual(names.stem_usage(record)['scientificNameAuthorship'], 'Smith')
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,

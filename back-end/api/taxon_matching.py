@@ -576,8 +576,13 @@ def match_col(queries, deadline=None, verbose_exact=False):
             if single is None:
                 continue
             if results[key]["status"] == "exact":
-                # The batch's exact match stands (the verbose answer can differ); only its homonyms are added.
-                results[key] = {**results[key], "alternatives": summarize_match(single)["alternatives"]}
+                # The batch's exact match stands (the verbose answer can differ); its homonyms are added, and so is the
+                # verbose pick when it is another usage.
+                verbose = summarize_match(single)
+                alternatives = list(verbose["alternatives"])
+                if verbose["usage"] and str(verbose["usage"].get("id")) != str((results[key]["usage"] or {}).get("id")):
+                    alternatives.insert(0, {**verbose["usage"], "matchType": verbose["matchType"], "confidence": verbose["confidence"]})
+                results[key] = {**results[key], "alternatives": alternatives[:MAX_ALTERNATIVES]}
             else:
                 results[key] = summarize_match(single)
     return [

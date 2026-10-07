@@ -256,7 +256,13 @@ class MatchColTests(SimpleTestCase):
         get_json.side_effect = [[exact], verbose_answer]
         summary = taxon_matching.match_col([{"scientificName": "Sterna"}], verbose_exact=True)[0]
         self.assertEqual((summary["matchType"], summary["usage"]["id"]), ("EXACT", "1"))
-        self.assertEqual([alternative["id"] for alternative in summary["alternatives"]], ["9"])
+        self.assertEqual([alternative["id"] for alternative in summary["alternatives"]], ["A", "9"])
+        get_json.reset_mock(side_effect=True)
+        # A verbose pick of another exact usage of the same name joins the homonyms.
+        jones = {"diagnostics": {"matchType": "EXACT"}, "usage": {"key": "J", "name": "Sterna Jones", "authorship": "Jones", "rank": "GENUS"}}
+        get_json.side_effect = [[exact], jones]
+        summary = taxon_matching.match_col([{"scientificName": "Sterna"}], verbose_exact=True)[0]
+        self.assertEqual((summary["usage"]["id"], [(item["id"], item["matchType"]) for item in summary["alternatives"]]), ("1", [("J", "EXACT")]))
         self.assertEqual(verbose[0].kwargs["params"]["verbose"], "true")
         get_json.reset_mock(side_effect=True)
         get_json.side_effect = [[exact]]
