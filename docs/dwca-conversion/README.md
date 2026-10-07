@@ -150,7 +150,7 @@ source, internal, transient, stale plan) with the choices that can remedy them.
 The [streamlined review policy](streamlined-review.md) separates required choices
 from conversion notices. Direct numeric, integer and boolean mappings copy
 compatible cells automatically and record every withheld value; `NA` is never
-silently recoded. Float-shaped years and unknown date tokens copy unchanged with
+silently recoded (the [tidy-up](tidy.md) clears placeholders visibly, with undo). Float-shaped years and unknown date tokens copy unchanged with
 notices. Preserve-only outcomes, known extension roles and supported exact copies
 no longer require redundant confirmation. Missing status/category, merging,
 subject changes and reconstructed completeness remain explicit decisions.
@@ -166,6 +166,12 @@ mapped values agree. Identification history is retained without inferring an
 accepted determination; repeated core/history classifications are not merged
 by name similarity. Identical sequence strings and complete protocol descriptions
 share target records, while analyses retain source row multiplicity.
+
+Before the questions are built, an [automatic tidy-up](tidy.md) rewrites obviously messy values in a
+view of the archive (country names to ISO codes, GBIF vocabulary terms such as `f` → `female`, life
+stages written in remarks, placeholders such as `NA`, decimal commas) and lists every change with an
+Undo; doubtful repairs are offered as suggestions. Original files stay byte-exact and the conversion
+report lists every changed value.
 
 After inspection, an automatic AI reviewer (`gpt-6-sol`, high effort, Flex) checks the
 remaining choices against bounded evidence packets: column profiles, sample rows, option
