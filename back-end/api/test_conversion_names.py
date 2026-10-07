@@ -1352,6 +1352,37 @@ class GroupDecisionTests(SimpleTestCase):
         plain = {'label': 'Nrella sp.', 'qualifier': 'sp.', 'parsed': real_parse()}
         self.assertEqual(names.qualifier_kind(plain), 'uncertain')
 
+    def test_an_overlong_supplied_authorship_is_never_replaced_automatically(self):
+        content = ('occurrenceID,scientificName,scientificNameAuthorship\n'
+                   f'a,Aus bus,{"Smith " * 30}\n').encode()
+        record = names.collect_state(read_inputs([('occurrence.csv', content)]), {'id': 'plan'})['labels'][0]
+        self.assertTrue(record['authorships_truncated'])
+        record.update(parsed=real_parse('Aus bus'), match={'matchType': 'EXACT', 'hintOnly': False, 'usage': {
+            'id': 'X', 'scientificName': 'Aus bus', 'scientificNameAuthorship': 'Jones, 1900', 'taxonRank': 'species'}})
+        state = {'labels': [record], 'decisions': {}, 'col_release': RELEASE}
+        names.auto_accept(state)
+        self.assertEqual(state['decisions']['Aus bus']['decision'], 'parsed')
+        self.assertNotIn('col', names.classify(record)['eligible'])
+
+    def test_rows_giving_a_uninomial_two_high_ranks_are_mixed(self):
+        content = (b'occurrenceID,scientificName,taxonRank\n'
+                   b'a,Anura,order\nb,Anura,genus\nc,Larus sp.,species\nd,Larus sp.,genus\n')
+        records = {record['label']: record for record in
+                   names.collect_state(read_inputs([('occurrence.csv', content)]), {'id': 'plan'})['labels']}
+        self.assertEqual(records['Anura']['mixed_hints'], ['rank'])
+        # "species" beside "Larus sp." is below genus and says nothing about the stem.
+        self.assertEqual(records['Larus sp.']['mixed_hints'], [])
+
+    def test_an_uncertain_stem_at_another_rank_than_supplied_is_a_check(self):
+        record = {'label': 'Anura indet.', 'rows': 1, 'qualifier': 'indet.', 'source_rank': 'order', 'parsed': real_parse(),
+                  'match': {'matchType': 'EXACT', 'hintOnly': False, 'alternatives': [],
+                            'usage': {'scientificName': 'Anura', 'taxonRank': 'genus', 'scientificNameAuthorship': None}}}
+        classification = names.classify(record)
+        self.assertEqual((classification['group'], classification['eligible']), ('check:rank', ['mine']))
+        self.assertEqual(names.auto_accept({'labels': [record], 'decisions': {}, 'col_release': RELEASE}), 0)
+        record['source_rank'] = 'species'
+        self.assertEqual(names.classify(record)['kind'], 'uncertain')
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,

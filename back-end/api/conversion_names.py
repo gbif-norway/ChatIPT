@@ -115,6 +115,9 @@ def collect_state(archive, plan):
                 hint = normal(row[index], MAX_CONTEXT_CHARS)
                 if hint and len(hint) <= MAX_CONTEXT_CHARS:
                     record['context'][rank].add(hint)
+                elif rank == 'scientificNameAuthorship' and str(row[index] or '').strip():
+                    # Too long to keep, but supplied: it must never count as "no authorship" when COL's is compared.
+                    record['authorship_overlong'] = True
             for field in ('scientificNameID', 'taxonID'):
                 term = DWC + field
                 if term in table.terms:
@@ -154,6 +157,12 @@ def collect_state(archive, plan):
         authorships = sorted(record['context'].get('scientificNameAuthorship', ()))
         mixed_hints = sorted(rank for rank in ('kingdom', 'phylum', 'class')
                              if len({_hint_normal(value) for value in record['context'].get(rank, ()) if _hint_normal(value)}) > 1)
+        # A uninomial's rows giving two ranks at genus or above ("Anura" order and genus) may be two taxa; a "species"
+        # beside "Larus sp." says nothing about the uninomial and is ignored.
+        high_ranks = {value.casefold() for value in record['context'].get('taxonRank', ())
+                      if value.casefold() in RANK_ORDER and RANK_ORDER.index(value.casefold()) <= RANK_ORDER.index('genus')}
+        if len(high_ranks) > 1 and len(name_parts(split_qualifier(record['label'])[0])) == 1:
+            mixed_hints = sorted([*mixed_hints, 'rank'])
         source_ids = {}
         for field, values in record['source_ids'].items():
             if len(values) == 1:
@@ -165,7 +174,8 @@ def collect_state(archive, plan):
                 # Rows of one label that disagree on these ranks may be different taxa with the same name.
                 'mixed_hints': mixed_hints,
                 'source_rank': context.get('taxonRank', '').lower() or None, 'qualifier': qualifier,
-                'source_authorships': authorships[:MAX_AUTHORSHIPS], 'authorships_truncated': len(authorships) > MAX_AUTHORSHIPS,
+                'source_authorships': authorships[:MAX_AUTHORSHIPS],
+                'authorships_truncated': len(authorships) > MAX_AUTHORSHIPS or bool(record.get('authorship_overlong')),
                 'source_ids': source_ids}
         if record['has_qualifier_column'] and record['source_qualifiers']:
             qualifiers = sorted(record['source_qualifiers'] - {'\0overlong'})
@@ -573,13 +583,23 @@ def _hint_normal(value):
 
 
 def _rank_conflict(record):
-    """A uninomial whose supplied rank (genus or above) is not its exact COL usage's rank: maybe another taxon."""
-    match = record.get('match') or {}
-    usage = match.get('usage') or {}
-    source_rank, col_rank = record.get('source_rank'), usage.get('taxonRank')
-    return (match.get('matchType') == 'EXACT' and bool(usage) and qualifier_kind(record) != 'uncertain'
-            and len(name_parts(asserted_name(record))) == 1 and source_rank in RANK_ORDER
-            and RANK_ORDER.index(source_rank) <= RANK_ORDER.index('genus') and col_rank in RANK_ORDER and source_rank != col_rank)
+    """COL's rank when a uninomial's supplied rank (genus or above) differs from it, else None: maybe another taxon.
+
+    The COL rank is the exact match's, or for "sp."/"indet." names the stem's. A "species" given for "Larus sp." is
+    below genus and says nothing about the stem.
+    """
+    source_rank = record.get('source_rank')
+    if source_rank not in RANK_ORDER or RANK_ORDER.index(source_rank) > RANK_ORDER.index('genus'):
+        return None
+    if len(name_parts(asserted_name(record))) != 1:
+        return None
+    if qualifier_kind(record) == 'uncertain':
+        col_rank = (stem_usage(record) or {}).get('taxonRank')
+    else:
+        match = record.get('match') or {}
+        usage = match.get('usage') or {}
+        col_rank = usage.get('taxonRank') if match.get('matchType') == 'EXACT' and usage and not match.get('hintOnly') else None
+    return col_rank if col_rank in RANK_ORDER and col_rank != source_rank else None
 
 
 def _conflicts(record):
@@ -591,8 +611,9 @@ def _conflicts(record):
         found = change(record, usage, 'EXACT')
         if found:
             out.append(('name', 'check:name', f"COL returned a different name: {usage.get('scientificName')} ({usage.get('taxonRank') or 'unknown rank'})"))
-        if _rank_conflict(record):
-            out.append(('rank', 'check:rank', f"Your rank is {record['source_rank']}; COL has this name as {usage['taxonRank']}"))
+    col_rank = _rank_conflict(record)
+    if col_rank:
+        out.append(('rank', 'check:rank', f"Your rank is {record['source_rank']}; COL has this name as {col_rank}"))
     idcheck = match.get('idCheck') or {}
     if idcheck.get('outcome') == 'elsewhere' or 'SCIENTIFIC_NAME_AND_ID_INCONSISTENT' in (match.get('issues') or []):
         fields = ', '.join((idcheck.get('fields') or record.get('source_ids') or {}).keys()) or 'identifier'
@@ -814,8 +835,7 @@ def groups(state, classified=None):
                                  'col': ((record.get('match') or {}).get('matchedId') or {}).get('scientificName')
                                  or (idcheck.get('usage') or {}).get('scientificName')}
                 elif code == 'rank':
-                    signature = {'code': code, 'yours': record.get('source_rank'),
-                                 'col': ((record.get('match') or {}).get('usage') or {}).get('taxonRank')}
+                    signature = {'code': code, 'yours': record.get('source_rank'), 'col': _rank_conflict(record)}
                 else:
                     signature = {'code': code, 'yours': asserted_name(record),
                                  'col': ((record.get('match') or {}).get('usage') or {}).get('scientificName')}

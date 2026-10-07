@@ -171,7 +171,7 @@ function NameRows({ group, expanded, updated, datasetId, url, editable, busy, se
   </>
 }
 
-function GroupDecisionBar({ group, planId, busy, editable, send, summary, selected, onSelect }) {
+function GroupDecisionBar({ group, planId, busy, editable, send, summary, selected, onSelect, showOptions = true }) {
   const options = groupOptions(group)
   const selectedOption = options.find(option => option.decision === selected)
   const lastBatch = groupBatch(summary, group.id)
@@ -182,7 +182,7 @@ function GroupDecisionBar({ group, planId, busy, editable, send, summary, select
     try { await send(undoBatchBody(planId, lastBatch.id)) } catch (err) { return err }
   }
   return <>
-    {options.length > 0 && <fieldset className="name-review-decision-bar mb-2">
+    {showOptions && options.length > 0 && <fieldset className="name-review-decision-bar mb-2">
       <div className="d-flex flex-wrap align-items-center gap-2">
         <legend className="small fw-semibold mb-0 me-1">Your decision</legend>
         {options.map(option => <label key={option.decision} className="form-check form-check-inline mb-0">
@@ -225,7 +225,7 @@ function PreAcceptedGroup({ group, summary, planId, url, datasetId, updated, edi
       {group.auto > 0 && <button type="button" className="btn btn-sm btn-link" disabled={!editable || busy} onClick={undoAll}>Undo all</button>}
     </div>
     {group.kind === 'auto' && group.authorship_kept > 0 && <div className="small text-muted ms-3">{group.authorship_kept.toLocaleString()} kept your authorship because Catalogue of Life&apos;s differs.</div>}
-    {group.undecided > 0 && <GroupDecisionBar group={group} planId={planId} busy={busy} editable={editable} send={send} summary={summary} selected={selected} onSelect={setSelected} />}
+    {(group.undecided > 0 || groupBatch(summary, group.id)) && <GroupDecisionBar group={group} planId={planId} busy={busy} editable={editable} send={send} summary={summary} selected={selected} onSelect={setSelected} showOptions={group.undecided > 0} />}
     {expanded && <div className="mt-2">
       <NameRows group={group} expanded={expanded} updated={updated} datasetId={datasetId} url={url} editable={editable} busy={busy} selectedOption={selected} onDecide={onDecide} searchable undecidedChip />
     </div>}
