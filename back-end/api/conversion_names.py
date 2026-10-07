@@ -103,7 +103,8 @@ def collect_state(archive, plan):
                 continue
             record = found.setdefault(label, {'label': label, 'rows': 0, 'tables': {}, 'context': defaultdict(set),
                                               'source_ids': defaultdict(set), 'source_qualifiers': set(),
-                                              'source_qualifier_rows': 0, 'has_qualifier_column': False})
+                                              'source_qualifier_rows': 0, 'source_qualifier_counts': Counter(),
+                                              'has_qualifier_column': False})
             record['rows'] += 1
             record['tables'][target] = record['tables'].get(target, 0) + 1
             for rank, index in context_at.items():
@@ -123,11 +124,18 @@ def collect_state(archive, plan):
             qualifier_term = DWC + 'identificationQualifier'
             if qualifier_term in table.terms:
                 record['has_qualifier_column'] = True
-                value = normal(row[table.terms.index(qualifier_term)], MAX_CONTEXT_CHARS)
+                raw = row[table.terms.index(qualifier_term)]
+                value = normal(raw, MAX_CONTEXT_CHARS)
                 if value and len(value) <= MAX_CONTEXT_CHARS:
                     record['source_qualifier_rows'] += 1
+                    record['source_qualifier_counts'][_normal_qualifier(value)] += 1
                     if len(record['source_qualifiers']) < MAX_SOURCE_QUALIFIERS + 1:
                         record['source_qualifiers'].add(value)
+                elif str(raw or '').strip():
+                    record['source_qualifier_rows'] += 1
+                    record['source_qualifier_counts']['\0overlong'] += 1
+                    if len(record['source_qualifiers']) < MAX_SOURCE_QUALIFIERS + 1:
+                        record['source_qualifiers'].add('\0overlong')
     ordered = sorted(found.values(), key=lambda record: (-record['rows'], record['label']))
     labels = []
     for record in ordered[:MAX_LABELS]:
@@ -151,6 +159,7 @@ def collect_state(archive, plan):
             qualifiers = sorted(record['source_qualifiers'])
             item.update(source_qualifiers=qualifiers[:MAX_SOURCE_QUALIFIERS],
                         source_qualifier_rows=record['source_qualifier_rows'],
+                        source_qualifier_counts=dict(record['source_qualifier_counts']),
                         qualifiers_truncated=len(qualifiers) > MAX_SOURCE_QUALIFIERS)
         labels.append(item)
     return {'plan_id': plan['id'], 'status': 'pending' if labels else 'none', 'error': '', 'runs': 0,
@@ -469,9 +478,8 @@ def qualifier_kind(record):
     label_kind = None if not qualifier else ('uncertain' if _normal_qualifier(qualifier) in UNCERTAIN_QUALIFIERS else 'doubt')
     values = record.get('source_qualifiers') or []
     if values:
-        source_kind = ('uncertain' if record.get('source_qualifier_rows') == record.get('rows')
-                       and len(values) == 1 and not record.get('qualifiers_truncated')
-                       and _normal_qualifier(values[0]) in UNCERTAIN_QUALIFIERS
+        source_kind = ('uncertain' if not record.get('qualifiers_truncated')
+                       and all(_normal_qualifier(value) in UNCERTAIN_QUALIFIERS for value in values)
                        and label_kind in {None, 'uncertain'} else 'doubt')
         label_kind = source_kind
     if label_kind == 'uncertain' and len(name_parts(asserted_name(record))) != 1:
@@ -486,7 +494,10 @@ def formula_qualifier(record):
     if record.get('qualifier'):
         return _normal_qualifier(record['qualifier'])
     values = record.get('source_qualifiers') or []
-    return _normal_qualifier(values[0]) if values else None
+    for qualifier in ('sp.', 'spp.', 'indet.'):
+        if any(_normal_qualifier(value) == qualifier for value in values):
+            return qualifier
+    return None
 
 
 def _stem_candidates(record):
@@ -557,6 +568,17 @@ def _reason_for_unconfirmed(record):
     """Explain why the current COL result cannot be confirmed automatically."""
     match = record.get('match') or {}
     if qualifier_kind(record) == 'doubt':
+        values = record.get('source_qualifiers') or []
+        doubtful = next((value for value in values if _normal_qualifier(value) not in UNCERTAIN_QUALIFIERS), None)
+        if doubtful is not None:
+            if doubtful == '\0overlong':
+                count = record.get('source_qualifier_rows') or 1
+                return [{'code': 'doubt', 'text': f'{count} of {record.get("rows", count)} rows have an overlong qualifier; decide this one yourself'}]
+            qualifier = _normal_qualifier(doubtful)
+            count = (record.get('source_qualifier_counts') or {}).get(qualifier)
+            if count is None:
+                count = record.get('source_qualifier_rows') or 1
+            return [{'code': 'doubt', 'text': f'{count} of {record.get("rows", count)} rows say “{qualifier}”; decide this one yourself'}]
         return [{'code': 'doubt', 'text': f'“{record.get("qualifier") or (record.get("source_qualifiers") or ["qualifier"])[0]}” marks an uncertain identification; decide this one yourself'}]
     if qualifier_kind(record) == 'uncertain':
         candidates = [usage for usage, _ in _stem_candidates(record)]
@@ -809,7 +831,11 @@ def build_decision(record, spec, state, by='user', group_kind=None):
         elif found:
             snapshot['corrects'] = found['text']
     if kind in {'stem', 'col', 'alternative'} and qualifier_kind(record) == 'uncertain' and same_name(record, {'scientificName': snapshot.get('scientificName')}):
-        snapshot['taxonFormula'] = 'A ' + formula_qualifier(record)
+        # A valid row qualifier wins, then the label qualifier; a blank column-only row stays blank.
+        snapshot['stemFormula'] = True
+        formula = formula_qualifier(record)
+        if formula:
+            snapshot['taxonFormula'] = 'A ' + formula
     if str(by).startswith('bulk:'):
         snapshot['batch'] = spec.get('batch')
     return snapshot
@@ -976,8 +1002,8 @@ def request_check(conversion, refresh=False):
 def row_source_names(archive, row_crosswalk, frames):
     """Per output table, the source name behind each frame row ('' when it has none or the sources disagree).
 
-    Each found name is {'name': source scientificName text, 'authorship': ..., 'rank': ...}, the last two read from the
-    same source row (None when the source table has no such column). An occurrence row and the identification row made from
+    Each found name is {'name': source scientificName text, 'authorship': ..., 'rank': ..., 'qualifier': ...}, read from
+    the same source row (None when the source table has no such column). An occurrence row and the identification row made from
     it therefore see the same supplied authorship and rank, whichever output table the converter copied them to.
     A crosswalk entry's `target_row` is the 1-based position in the converted frame (offset-corrected for nested Taxon plans),
     and `source_table_index` indexes the archive's tables.
@@ -998,7 +1024,8 @@ def row_source_names(archive, row_crosswalk, frames):
             continue
         if not names[position]:
             names[position] = {'name': text, **{key: row[table.terms.index(DWC + term)] if DWC + term in table.terms else None
-                                                for key, term in (('authorship', 'scientificNameAuthorship'), ('rank', 'taxonRank'))}}
+                                                for key, term in (('authorship', 'scientificNameAuthorship'), ('rank', 'taxonRank'),
+                                                                  ('qualifier', 'identificationQualifier'))}}
         elif names[position] is not CONFLICT and normal(names[position]['name']) != normal(text):
             names[position] = CONFLICT
     return {table: ['' if value is CONFLICT else value for value in values] for table, values in found.items()}
@@ -1008,10 +1035,10 @@ CONFLICT = object()
 
 
 def _source(value):
-    """(name text, supplied authorship, supplied rank) of one `row_source_names` value; a plain text has no supplied parts."""
+    """(name text, supplied authorship, supplied rank, qualifier) of one row source value."""
     if isinstance(value, dict):
-        return value.get('name') or '', value.get('authorship'), value.get('rank')
-    return value or '', None, None
+        return value.get('name') or '', value.get('authorship'), value.get('rank'), value.get('qualifier')
+    return value or '', None, None, None
 
 
 def _same_text(left, right):
@@ -1103,7 +1130,7 @@ def apply_name_decisions(frames, name_review, source_names):
                 taxon_formula = column('taxonFormula')
             formula_written = 0
             for position in rows:
-                text, supplied_authorship, supplied_rank = _source(verbatim[position])
+                text, supplied_authorship, supplied_rank, row_qualifier = _source(verbatim[position])
                 if supplied_authorship is None and authorship is not None:
                     supplied_authorship = authorship[position]
                 if supplied_rank is None and rank is not None:
@@ -1128,8 +1155,16 @@ def apply_name_decisions(frames, name_review, source_names):
                     new_rank = decision.get('taxonRank') or (supplied_rank if keeps_name else '')
                 if names is not None:
                     names[position] = decided_name
-                if formula and taxon_formula is not None and _blank_cell(taxon_formula[position]):
-                    taxon_formula[position] = formula
+                row_formula = formula
+                if decision.get('stemFormula'):
+                    qualifier = normal(row_qualifier)
+                    qualifier = _normal_qualifier(qualifier) if qualifier else None
+                    if qualifier not in UNCERTAIN_QUALIFIERS:
+                        qualifier = normal(records.get(label, {}).get('qualifier'))
+                        qualifier = _normal_qualifier(qualifier) if qualifier else None
+                    row_formula = 'A ' + qualifier if qualifier else None
+                if row_formula and taxon_formula is not None and _blank_cell(taxon_formula[position]):
+                    taxon_formula[position] = row_formula
                     formula_written += 1
                 if authorship is not None:
                     authorship[position] = new_authorship

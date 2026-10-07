@@ -193,6 +193,14 @@ class CollectTests(SimpleTestCase):
         self.assertEqual(record['source_qualifier_rows'], 6)
         self.assertTrue(record['qualifiers_truncated'])
 
+    def test_mixed_uncertain_source_qualifiers_allow_blank_rows(self):
+        archive = read_inputs([('occurrence.csv', b'occurrenceID,scientificName,identificationQualifier\n'
+                                                  b'a,Pseudocalanus,sp.\nb,Pseudocalanus,spp.\nc,Pseudocalanus,\n')])
+        record = names.collect_state(archive, {'id': 'plan'})['labels'][0]
+        self.assertEqual(record['source_qualifiers'], ['sp.', 'spp.'])
+        self.assertEqual(record['source_qualifier_rows'], 2)
+        self.assertEqual(names.qualifier_kind(record), 'uncertain')
+
 
 class CheckChunkTests(SimpleTestCase):
     def fixture_match(self, queries, deadline=None):
@@ -872,6 +880,16 @@ class SourceNameKeyTests(SimpleTestCase):
         self.assertEqual({table: texts(values) for table, values in names.row_source_names(archive, crosswalk, frames).items()},
                          {'occurrence': ['Aus bus', '', 'Eus eus'], 'identification': ['', 'Fus fus', '', '']})
 
+    def test_row_source_names_includes_each_identification_qualifier(self):
+        table = SimpleNamespace(row_type=DWC + 'Identification',
+                                terms=[names.NAME, DWC + 'identificationQualifier'],
+                                rows=[['Pseudocalanus', 'sp.']])
+        archive = SimpleNamespace(tables=[table])
+        frames = {'identification': pd.DataFrame([{'scientificName': ''}])}
+        sources = names.row_source_names(archive, [{'target_table': 'identification', 'target_row': 1,
+                                                     'source_table_index': 0, 'source_row': 1}], frames)
+        self.assertEqual(sources['identification'][0]['qualifier'], 'sp.')
+
     def test_nested_taxon_plans_keep_source_tables_and_row_offsets(self):
         from api.dwca_import import DWC as IMPORT_DWC
         from api.test_dwca_taxon import decisions as taxon_decisions, manifest_archive
@@ -1280,6 +1298,49 @@ class GroupDecisionTests(SimpleTestCase):
         source = {'identification': pd.DataFrame([{'scientificName': '', 'verbatimIdentification': 'Sterna sp.'}])}
         result, _ = names.apply_name_decisions(source, state, {'identification': ['Sterna sp.']})
         self.assertEqual(result['identification']['taxonFormula'].tolist(), ['A sp.'])
+
+    def test_column_qualifiers_auto_publish_stem_with_each_rows_formula(self):
+        label = 'Pseudocalanus'
+        record = {'label': label, 'rows': 3, 'qualifier': None, 'source_qualifiers': ['sp.', 'spp.'],
+                  'source_qualifier_rows': 2, 'source_qualifier_counts': {'sp.': 1, 'spp.': 1},
+                  'parsed': real_parse(), 'match': {'matchType': 'EXACT', 'hintOnly': False, 'alternatives': [],
+                                                    'usage': {'id': 'GENUS', 'scientificName': label,
+                                                              'taxonRank': 'genus', 'scientificNameAuthorship': None}}}
+        self.assertEqual(names.qualifier_kind(record), 'uncertain')
+        state = {'labels': [record], 'decisions': {}, 'col_release': RELEASE}
+        self.assertEqual(names.auto_accept(state), 1)
+        snapshot = state['decisions'][label]
+        self.assertEqual((snapshot['decision'], snapshot['taxonFormula'], snapshot['stemFormula']),
+                         ('stem', 'A sp.', True))
+        source = {'identification': pd.DataFrame([
+            {'scientificName': '', 'taxonFormula': ''},
+            {'scientificName': '', 'taxonFormula': ''},
+            {'scientificName': '', 'taxonFormula': ''}])}
+        source_names = {'identification': [
+            {'name': label, 'qualifier': 'sp.'}, {'name': label, 'qualifier': 'spp.'}, {'name': label, 'qualifier': None}]}
+        result, section = names.apply_name_decisions(source, state, source_names)
+        self.assertEqual(result['identification']['scientificName'].tolist(), [label] * 3)
+        self.assertEqual(result['identification']['taxonFormula'].tolist(), ['A sp.', 'A spp.', ''])
+        self.assertEqual(section['entries'][0]['taxonFormulaWritten'], 2)
+
+    def test_column_cf_rows_are_doubtful_and_not_auto_or_bulk(self):
+        record = {'label': 'Eutropis multifasciata (Kuhl, 1820)', 'rows': 10, 'qualifier': None,
+                  'source_qualifiers': ['cf.'], 'source_qualifier_rows': 2,
+                  'source_qualifier_counts': {'cf.': 2}, 'parsed': real_parse(), 'match': {}}
+        self.assertEqual(names.qualifier_kind(record), 'doubt')
+        reason = names._reason_for_unconfirmed(record)[0]['text']
+        self.assertEqual(reason, '2 of 10 rows say “cf.”; decide this one yourself')
+        state = {'labels': [record], 'decisions': {}, 'col_release': RELEASE}
+        self.assertEqual(names.auto_accept(state), 0)
+        self.assertFalse(names.eligible(record, 'keep', names.classify(record)))
+        conversion = self.conversion([record])
+        with self.assertRaises(names.NameDecisionError):
+            names.bulk_decide(conversion, 'unconfirmed', 'mine')
+
+    def test_one_question_mark_source_row_makes_draco_sp_doubtful(self):
+        record = {'label': 'Draco sp.', 'rows': 10, 'qualifier': 'sp.', 'source_qualifiers': ['?'],
+                  'source_qualifier_rows': 1, 'source_qualifier_counts': {'?.': 1}, 'parsed': real_parse(), 'match': {}}
+        self.assertEqual(names.qualifier_kind(record), 'doubt')
 
     def test_558_kingdom_conflict_groups_and_stem_option_are_server_computed(self):
         records = [copy.deepcopy(FIXTURE_RECORDS[label]) for label in
