@@ -142,6 +142,46 @@ class ProvisionalCoreTests(TestCase):
         self.assertEqual(core["eventDate"].tolist(), ["1958-05", "1958-05"])
         self.assertEqual(core["basisOfRecord"].tolist(), ["MaterialEntity", "MaterialEntity"])
 
+    def test_collectors_on_linked_specimens_fill_recorded_by(self):
+        # A converted specimen archive (prod 568) stores collectors on material.collectedBy. GBIF reads them
+        # through one unambiguous evidenceForOccurrenceID link, then from ordered collector agent roles.
+        import pandas as pd
+        from api.models import Table
+        from api.quality_report import provisional_core
+
+        dataset = Dataset.objects.create(title="Specimens", description="Test")
+        Table.objects.create(dataset=dataset, title="occurrence", df=pd.DataFrame([
+            {"occurrence_pk": "o1", "occurrenceID": "urn:1", "recordedBy": ""},
+            {"occurrence_pk": "o2", "occurrenceID": "urn:2", "recordedBy": "Own, Name"},
+            {"occurrence_pk": "o3", "occurrenceID": "urn:3", "recordedBy": ""},
+            {"occurrence_pk": "o4", "occurrenceID": "urn:4", "recordedBy": ""},
+            {"occurrence_pk": "o5", "occurrenceID": "urn:5", "recordedBy": ""},
+        ]))
+        Table.objects.create(dataset=dataset, title="material", df=pd.DataFrame([
+            {"materialEntity_pk": "m1", "evidenceForOccurrenceID": "urn:1", "collectedBy": "Hagen, Yngvar", "collectedByID": "https://orcid.org/0000-0001"},
+            {"materialEntity_pk": "m2", "evidenceForOccurrenceID": "urn:2", "collectedBy": "Collett, Robert", "collectedByID": ""},
+            # Two materials name one occurrence: ambiguous, never joined.
+            {"materialEntity_pk": "m3a", "evidenceForOccurrenceID": "urn:3", "collectedBy": "A", "collectedByID": ""},
+            {"materialEntity_pk": "m3b", "evidenceForOccurrenceID": "urn:3", "collectedBy": "B", "collectedByID": ""},
+            {"materialEntity_pk": "m4", "evidenceForOccurrenceID": "urn:4", "collectedBy": "", "collectedByID": ""},
+        ]))
+        Table.objects.create(dataset=dataset, title="agent", df=pd.DataFrame([
+            {"agent_pk": "a1", "preferredAgentName": "Kjernslie, O.L."},
+            {"agent_pk": "a2", "preferredAgentName": "Second, Person"},
+        ]))
+        Table.objects.create(dataset=dataset, title="material-agent-role", df=pd.DataFrame([
+            {"materialEntity_fk": "m4", "agent_fk": "a2", "agentRole": "collectedBy", "agentRoleOrder": "2"},
+            {"materialEntity_fk": "m4", "agent_fk": "a1", "agentRole": "collectedBy", "agentRoleOrder": "1"},
+            {"materialEntity_fk": "m4", "agent_fk": "a2", "agentRole": "identifiedBy", "agentRoleOrder": "3"},
+        ]))
+
+        core = provisional_core(dataset)
+
+        self.assertEqual(core["recordedBy"].fillna("").tolist(),
+                         ["Hagen, Yngvar", "Own, Name", "", "Kjernslie, O.L. | Second, Person", ""])
+        self.assertEqual(core["recordedByID"].fillna("").tolist()[0], "https://orcid.org/0000-0001")
+        self.assertEqual(core["occurrenceID"].tolist(), ["o1", "o2", "o3", "o4", "o5"])
+
     def test_no_record_resources_means_no_projection(self):
         import pandas as pd
         from api.models import Table

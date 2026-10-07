@@ -5,6 +5,7 @@ import json
 import os
 from urllib.parse import urlparse
 
+import pandas as pd
 from django.utils import timezone
 
 from api import agent_tools
@@ -262,10 +263,74 @@ def provisional_core(dataset):
             else:
                 core[column] = values
 
+    if base == 'occurrence':
+        _fill_collectors(core, tables)
     core['occurrenceID'] = core[pk].astype('string')
     if 'basisOfRecord' not in core:
         core['basisOfRecord'] = basis
     return core
+
+
+# Agent roles that name the people who recorded or collected an occurrence or its specimen.
+COLLECTOR_ROLES = frozenset({'collector', 'collectedby', 'recorder', 'recordedby'})
+
+
+def _fill_collectors(core, tables):
+    """Fill empty recordedBy the way GBIF reads a DwC-DP occurrence.
+
+    A specimen archive stores collectors on material.collectedBy. GBIF falls back to it only
+    through an unambiguous link (one material per occurrence via evidenceForOccurrenceID), and
+    then to ordered collector agent roles (gbif/pipelines OccurrenceDwcaMapping). No value is
+    joined from an ambiguous link.
+    """
+    def blank():
+        return _blank(core['recordedBy']) if 'recordedBy' in core else pd.Series(True, index=core.index)
+
+    material = tables.get('material')
+    linked = pd.Series(pd.NA, index=core.index, dtype='object')
+    if (material is not None and 'evidenceForOccurrenceID' in material and 'materialEntity_pk' in material
+            and 'occurrenceID' in core):
+        material = material[~_blank(material['evidenceForOccurrenceID'])]
+        material = material[~material['evidenceForOccurrenceID'].duplicated(keep=False)]
+        ids = core['occurrenceID'].where(~_blank(core['occurrenceID']))
+        unique = ids.notna() & ~ids.duplicated(keep=False)
+        by_occurrence = material.set_index('evidenceForOccurrenceID')
+        linked = ids.where(unique).map(by_occurrence['materialEntity_pk'])
+        for source, target in (('collectedBy', 'recordedBy'), ('collectedByID', 'recordedByID')):
+            if source not in by_occurrence:
+                continue
+            values = ids.where(unique).map(by_occurrence[source])
+            fill = (blank() if target == 'recordedBy' else
+                    (_blank(core[target]) if target in core else pd.Series(True, index=core.index)))
+            fill &= values.notna() & ~_blank(values)
+            if fill.any():
+                if target not in core:
+                    core[target] = pd.NA
+                core[target] = core[target].astype('object').where(~fill, values)
+
+    agents = tables.get('agent')
+    if agents is None or 'agent_pk' not in agents or 'preferredAgentName' not in agents:
+        return
+    names = agents.drop_duplicates('agent_pk').set_index('agent_pk')['preferredAgentName']
+    subjects = (('occurrence-agent-role', 'occurrence_fk', core['occurrence_pk'] if 'occurrence_pk' in core else None),
+                ('material-agent-role', 'materialEntity_fk', linked))
+    for role_table, subject_fk, subject in subjects:
+        roles = tables.get(role_table)
+        if roles is None or subject is None or subject_fk not in roles or 'agentRole' not in roles:
+            continue
+        roles = roles[roles['agentRole'].astype('string').str.strip().str.casefold().isin(COLLECTOR_ROLES)].copy()
+        if roles.empty:
+            continue
+        roles['_order'] = pd.to_numeric(roles['agentRoleOrder'], errors='coerce') if 'agentRoleOrder' in roles else 0
+        roles['_name'] = roles['agent_fk'].map(names)
+        roles = roles[roles['_name'].notna() & ~_blank(roles['_name'])].sort_values('_order', kind='stable')
+        joined = roles.groupby(subject_fk, sort=False)['_name'].agg(lambda values: ' | '.join(dict.fromkeys(values)))
+        values = subject.map(joined)
+        fill = blank() & values.notna()
+        if fill.any():
+            if 'recordedBy' not in core:
+                core['recordedBy'] = pd.NA
+            core['recordedBy'] = core['recordedBy'].astype('object').where(~fill, values)
 
 
 def _delete_archive(url):
