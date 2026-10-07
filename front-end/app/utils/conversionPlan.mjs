@@ -86,9 +86,12 @@ export function automaticSummary(state, selected, hidden = new Set()) {
       .map(id => entries.find(entry => entry.id === id)).find(Boolean)
     // A specimen field only receives values when specimen records are created; otherwise they stay in the originals.
     const materialId = prefix ? `${prefix}material:0` : `material:${item.table}`
-    const noSpecimens = isColumn && String(value).startsWith('material.') &&
-      entries.some(entry => entry.id === materialId) && !['per_row', 'by_id'].includes(selected(materialId))
-    if (noSpecimens) {
+    const materialEntry = isColumn && String(value).startsWith('material.') ? entries.find(entry => entry.id === materialId) : null
+    const materialAnswer = materialEntry ? selected(materialId) : null
+    if (materialEntry && (materialAnswer == null || materialAnswer === '')) {
+      title = `${shortTerm(item.term)} → waiting for your answer`
+      text = `This goes to the specimen record once you answer “${materialEntry.title}”: if specimen records are created, ${decided(value)}; if not, the values stay in your original files.`
+    } else if (materialEntry && !['per_row', 'by_id'].includes(materialAnswer)) {
       title = `${shortTerm(item.term)} → kept in your original files`
       text = `${changed ? `You chose “${optionLabel(item, value)}”, but` : 'This goes to the specimen record, but'} no specimen records are created, so the values stay in your original files. Choose another option, or create specimen records.`
     } else if (!changed && unsaved) {
@@ -118,6 +121,8 @@ export function automaticSummary(state, selected, hidden = new Set()) {
   const materialEntries = new Map(entries.filter(item => localId(item.id).startsWith('material:')).map(item => [item.id, item]))
   const details = plan.glossary?.specimen_details || {}
   for (const [id, item] of materialEntries) {
+    // A retained extension (an occurrence table kept in taxonomy tables only) creates no specimen records.
+    if (item.table !== undefined && !plan.tables?.[item.table]?.core && selected(`table:${item.table}`) === 'preserve') continue
     const followers = columns.filter(column => column.follows === id && column.nonempty > 0)
     if (!followers.length) continue
     const value = selected(id)
