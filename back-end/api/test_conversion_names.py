@@ -1553,6 +1553,14 @@ class GroupDecisionTests(SimpleTestCase):
         self.assertEqual(classification['kind'], 'check')
         self.assertNotIn('col', classification['eligible'])
 
+    def test_a_supplied_rank_in_two_cases_is_one_rank(self):
+        content = b'occurrenceID,scientificName,taxonRank\na,Anura,Genus\nb,Anura,genus\n'
+        record = names.collect_state(read_inputs([('occurrence.csv', content)]), {'id': 'plan'})['labels'][0]
+        self.assertEqual(record['source_rank'], 'genus')
+        record.update(parsed=real_parse('Anura'), match={'matchType': 'EXACT', 'hintOnly': False,
+                                                         'usage': {'scientificName': 'Anura', 'taxonRank': 'order'}})
+        self.assertEqual(names.classify(record)['group'], 'check:rank:genus:order')
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,

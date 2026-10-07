@@ -161,6 +161,10 @@ def collect_state(archive, plan):
             values = record['context'].get(rank) or ()
             if len(values) > 1 and len({_hint_normal(value) for value in values}) == 1:
                 context[rank] = sorted(values)[0]
+        ranks = {value.casefold() for value in record['context'].get('taxonRank') or ()}
+        if len(ranks) == 1:
+            # "Genus" and "genus" are one supplied rank.
+            context['taxonRank'] = ranks.pop()
         qualifier = split_qualifier(record['label'])[1]
         # The supplied authorships, so that accepting COL's in bulk never silently rewrites a different one.
         authorships = sorted(record['context'].get('scientificNameAuthorship', ()))
