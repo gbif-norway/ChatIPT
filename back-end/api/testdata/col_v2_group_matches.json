@@ -1,0 +1,5062 @@
+[
+ {
+  "label": "Sterna sp.",
+  "dataset": "570",
+  "hints": {
+   "class": "Aves",
+   "kingdom": "Animalia"
+  },
+  "source_rank": "species",
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Sterna",
+   "class": "Aves",
+   "kingdom": "Animalia"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "7N8Q",
+    "name": "Sterna Linnaeus, 1758",
+    "canonicalName": "Sterna",
+    "authorship": "Linnaeus, 1758",
+    "rank": "GENUS",
+    "code": "ZOOLOGICAL",
+    "status": "ACCEPTED",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Sterna</i> Linnaeus, 1758"
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "N",
+     "name": "Animalia",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "CH2",
+     "name": "Chordata",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "8V4V3",
+     "name": "Vertebrata",
+     "rank": "SUBPHYLUM"
+    },
+    {
+     "key": "8V4V5",
+     "name": "Gnathostomata",
+     "rank": "INFRAPHYLUM"
+    },
+    {
+     "key": "8VVWB",
+     "name": "Osteichthyes",
+     "rank": "PARVPHYLUM"
+    },
+    {
+     "key": "9CK8W",
+     "name": "Tetrapoda",
+     "rank": "MEGACLASS"
+    },
+    {
+     "key": "V2",
+     "name": "Aves",
+     "rank": "CLASS"
+    },
+    {
+     "key": "X3",
+     "name": "Charadriiformes",
+     "rank": "ORDER"
+    },
+    {
+     "key": "BSK",
+     "name": "Laridae",
+     "rank": "FAMILY"
+    },
+    {
+     "key": "7N8Q",
+     "name": "Sterna",
+     "rank": "GENUS"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "EXACT",
+    "confidence": 99,
+    "note": "Similarity: name=100; authorship=0; classification=19; rank=0; status=1; score=120; nextMatch=3",
+    "alternatives": [
+     {
+      "usage": {
+       "key": "PB2XB",
+       "name": "Sterna Dougalli, Mont. Vieill.",
+       "canonicalName": "Sterna",
+       "authorship": "Dougalli, Mont. Vieill.",
+       "rank": "GENUS",
+       "status": "PROVISIONALLY_ACCEPTED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Sterna</i> Dougalli, Mont. Vieill."
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "CH2",
+        "name": "Chordata",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "8V4V3",
+        "name": "Vertebrata",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "8V4V5",
+        "name": "Gnathostomata",
+        "rank": "INFRAPHYLUM"
+       },
+       {
+        "key": "8VVWB",
+        "name": "Osteichthyes",
+        "rank": "PARVPHYLUM"
+       },
+       {
+        "key": "9CK8W",
+        "name": "Tetrapoda",
+        "rank": "MEGACLASS"
+       },
+       {
+        "key": "V2",
+        "name": "Aves",
+        "rank": "CLASS"
+       },
+       {
+        "key": "X3",
+        "name": "Charadriiformes",
+        "rank": "ORDER"
+       },
+       {
+        "key": "D5K3Z",
+        "name": "Sternidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "PB2XB",
+        "name": "Sterna",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 97,
+       "note": "Similarity: name=100; authorship=0; classification=19; rank=0; status=-5; score=114",
+       "timeTaken": 0
+      },
+      "synonym": false
+     },
+     {
+      "usage": {
+       "key": "BDXX4",
+       "name": "Sterna Albers, 1850",
+       "canonicalName": "Sterna",
+       "authorship": "Albers, 1850",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "SYNONYM",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Sterna</i> Albers, 1850"
+      },
+      "acceptedUsage": {
+       "key": "7P3D7",
+       "name": "Elona H. Adams & A. Adams, 1855",
+       "canonicalName": "Elona",
+       "authorship": "H. Adams & A. Adams, 1855",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Elona</i> H. Adams & A. Adams, 1855"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "M2L",
+        "name": "Mollusca",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "7NF3Y",
+        "name": "Gastropoda",
+        "rank": "CLASS"
+       },
+       {
+        "key": "7NVXJ",
+        "name": "Heterobranchia",
+        "rank": "SUBCLASS"
+       },
+       {
+        "key": "CFV7Q",
+        "name": "Euthyneura",
+        "rank": "INFRACLASS"
+       },
+       {
+        "key": "7VBDS",
+        "name": "Tectipleura",
+        "rank": "SUBTERCLASS"
+       },
+       {
+        "key": "7NVXY",
+        "name": "Eupulmonata",
+        "rank": "SUPERORDER"
+       },
+       {
+        "key": "7NW29",
+        "name": "Helicoidei",
+        "rank": "INFRAORDER"
+       },
+       {
+        "key": "7NJC6",
+        "name": "Elonidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "7NXM6",
+        "name": "Eloninae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "7P3D7",
+        "name": "Elona",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 90,
+       "note": "Similarity: name=100; authorship=0; classification=-6; rank=0; status=0; score=94",
+       "timeTaken": 0
+      },
+      "synonym": true,
+      "left": 239022,
+      "right": 239025
+     },
+     {
+      "usage": {
+       "key": "BDXX5",
+       "name": "Helix (Sterna) Albers, 1850",
+       "canonicalName": "Sterna",
+       "authorship": "Albers, 1850",
+       "rank": "SUBGENUS",
+       "code": "ZOOLOGICAL",
+       "status": "SYNONYM",
+       "genericName": "Helix",
+       "infragenericEpithet": "Sterna",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Helix</i> (<i>Sterna</i>) Albers, 1850"
+      },
+      "acceptedUsage": {
+       "key": "7P3D7",
+       "name": "Elona H. Adams & A. Adams, 1855",
+       "canonicalName": "Elona",
+       "authorship": "H. Adams & A. Adams, 1855",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Elona</i> H. Adams & A. Adams, 1855"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "M2L",
+        "name": "Mollusca",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "7NF3Y",
+        "name": "Gastropoda",
+        "rank": "CLASS"
+       },
+       {
+        "key": "7NVXJ",
+        "name": "Heterobranchia",
+        "rank": "SUBCLASS"
+       },
+       {
+        "key": "CFV7Q",
+        "name": "Euthyneura",
+        "rank": "INFRACLASS"
+       },
+       {
+        "key": "7VBDS",
+        "name": "Tectipleura",
+        "rank": "SUBTERCLASS"
+       },
+       {
+        "key": "7NVXY",
+        "name": "Eupulmonata",
+        "rank": "SUPERORDER"
+       },
+       {
+        "key": "7NW29",
+        "name": "Helicoidei",
+        "rank": "INFRAORDER"
+       },
+       {
+        "key": "7NJC6",
+        "name": "Elonidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "7NXM6",
+        "name": "Eloninae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "7P3D7",
+        "name": "Elona",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 90,
+       "note": "Similarity: name=100; authorship=0; classification=-6; rank=0; status=0; score=94",
+       "timeTaken": 0
+      },
+      "synonym": true,
+      "left": 239022,
+      "right": 239025
+     },
+     {
+      "usage": {
+       "key": "TC4RV",
+       "name": "Sternia Gambel, 1849",
+       "canonicalName": "Sternia",
+       "authorship": "Gambel, 1849",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "SYNONYM",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Sternia</i> Gambel, 1849"
+      },
+      "acceptedUsage": {
+       "key": "7N8Q",
+       "name": "Sterna Linnaeus, 1758",
+       "canonicalName": "Sterna",
+       "authorship": "Linnaeus, 1758",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Sterna</i> Linnaeus, 1758"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "CH2",
+        "name": "Chordata",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "8V4V3",
+        "name": "Vertebrata",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "8V4V5",
+        "name": "Gnathostomata",
+        "rank": "INFRAPHYLUM"
+       },
+       {
+        "key": "8VVWB",
+        "name": "Osteichthyes",
+        "rank": "PARVPHYLUM"
+       },
+       {
+        "key": "9CK8W",
+        "name": "Tetrapoda",
+        "rank": "MEGACLASS"
+       },
+       {
+        "key": "V2",
+        "name": "Aves",
+        "rank": "CLASS"
+       },
+       {
+        "key": "X3",
+        "name": "Charadriiformes",
+        "rank": "ORDER"
+       },
+       {
+        "key": "BSK",
+        "name": "Laridae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "7N8Q",
+        "name": "Sterna",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 90,
+       "note": "Similarity: name=75; authorship=0; classification=19; rank=0; status=0; score=94",
+       "timeTaken": 0
+      },
+      "synonym": true
+     },
+     {
+      "usage": {
+       "key": "T2QFG",
+       "name": "Starna Bonaparte, 1838",
+       "canonicalName": "Starna",
+       "authorship": "Bonaparte, 1838",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "PROVISIONALLY_ACCEPTED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Starna</i> Bonaparte, 1838"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "T2QFG",
+        "name": "Starna",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 74,
+       "note": "Similarity: name=75; authorship=0; classification=4; rank=0; status=-5; score=74",
+       "timeTaken": 0
+      },
+      "synonym": false,
+      "left": 54014,
+      "right": 358148
+     },
+     {
+      "usage": {
+       "key": "TC4RW",
+       "name": "Sternia Kolenati, 1846",
+       "canonicalName": "Sternia",
+       "authorship": "Kolenati, 1846",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "MISAPPLIED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Sternia</i> Kolenati, 1846"
+      },
+      "acceptedUsage": {
+       "key": "9256Z",
+       "name": "Chiasmia Hübner, [1823]",
+       "canonicalName": "Chiasmia",
+       "authorship": "Hübner, [1823]",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Chiasmia</i> Hübner, [1823]"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "RT",
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "L2655",
+        "name": "Hexapoda",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "H6",
+        "name": "Insecta",
+        "rank": "CLASS"
+       },
+       {
+        "key": "B6L67",
+        "name": "Lepidoptera",
+        "rank": "ORDER"
+       },
+       {
+        "key": "626YP",
+        "name": "Geometroidea",
+        "rank": "SUPERFAMILY"
+       },
+       {
+        "key": "C76TY",
+        "name": "Geometridae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "C6ZT3",
+        "name": "Ennominae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "9256Z",
+        "name": "Chiasmia",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 59,
+       "note": "Similarity: name=75; authorship=0; classification=-6; rank=0; status=-10; score=59",
+       "timeTaken": 0
+      },
+      "synonym": true
+     }
+    ]
+   },
+   "synonym": false
+  }
+ },
+ {
+  "label": "Anthus spp.",
+  "dataset": "570",
+  "hints": {
+   "class": "Aves",
+   "kingdom": "Animalia"
+  },
+  "source_rank": "species",
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Anthus",
+   "class": "Aves",
+   "kingdom": "Animalia"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "XJ7",
+    "name": "Anthus Bechstein, 1805",
+    "canonicalName": "Anthus",
+    "authorship": "Bechstein, 1805",
+    "rank": "GENUS",
+    "code": "ZOOLOGICAL",
+    "status": "ACCEPTED",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Anthus</i> Bechstein, 1805"
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "N",
+     "name": "Animalia",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "CH2",
+     "name": "Chordata",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "8V4V3",
+     "name": "Vertebrata",
+     "rank": "SUBPHYLUM"
+    },
+    {
+     "key": "8V4V5",
+     "name": "Gnathostomata",
+     "rank": "INFRAPHYLUM"
+    },
+    {
+     "key": "8VVWB",
+     "name": "Osteichthyes",
+     "rank": "PARVPHYLUM"
+    },
+    {
+     "key": "9CK8W",
+     "name": "Tetrapoda",
+     "rank": "MEGACLASS"
+    },
+    {
+     "key": "V2",
+     "name": "Aves",
+     "rank": "CLASS"
+    },
+    {
+     "key": "3RL",
+     "name": "Passeriformes",
+     "rank": "ORDER"
+    },
+    {
+     "key": "CYC",
+     "name": "Motacillidae",
+     "rank": "FAMILY"
+    },
+    {
+     "key": "XJ7",
+     "name": "Anthus",
+     "rank": "GENUS"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "EXACT",
+    "confidence": 94
+   },
+   "synonym": false
+  }
+ },
+ {
+  "label": "Larus sp.",
+  "dataset": "570",
+  "hints": {
+   "class": "Aves",
+   "kingdom": "Animalia"
+  },
+  "source_rank": "species",
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Larus",
+   "class": "Aves",
+   "kingdom": "Animalia"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "62XFH",
+    "name": "Larus Linnaeus, 1758",
+    "canonicalName": "Larus",
+    "authorship": "Linnaeus, 1758",
+    "rank": "GENUS",
+    "code": "ZOOLOGICAL",
+    "status": "ACCEPTED",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Larus</i> Linnaeus, 1758"
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "N",
+     "name": "Animalia",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "CH2",
+     "name": "Chordata",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "8V4V3",
+     "name": "Vertebrata",
+     "rank": "SUBPHYLUM"
+    },
+    {
+     "key": "8V4V5",
+     "name": "Gnathostomata",
+     "rank": "INFRAPHYLUM"
+    },
+    {
+     "key": "8VVWB",
+     "name": "Osteichthyes",
+     "rank": "PARVPHYLUM"
+    },
+    {
+     "key": "9CK8W",
+     "name": "Tetrapoda",
+     "rank": "MEGACLASS"
+    },
+    {
+     "key": "V2",
+     "name": "Aves",
+     "rank": "CLASS"
+    },
+    {
+     "key": "X3",
+     "name": "Charadriiformes",
+     "rank": "ORDER"
+    },
+    {
+     "key": "BSK",
+     "name": "Laridae",
+     "rank": "FAMILY"
+    },
+    {
+     "key": "62XFH",
+     "name": "Larus",
+     "rank": "GENUS"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "EXACT",
+    "confidence": 94
+   },
+   "synonym": false
+  }
+ },
+ {
+  "label": "Anura indet.",
+  "dataset": "568",
+  "hints": {
+   "class": "Amphibia",
+   "genus": "Anura",
+   "order": "Anura",
+   "phylum": "Chordata",
+   "kingdom": "Animalia"
+  },
+  "source_rank": "order",
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Anura",
+   "class": "Amphibia",
+   "genus": "Anura",
+   "order": "Anura",
+   "phylum": "Chordata",
+   "kingdom": "Animalia"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "PW",
+    "name": "Anura",
+    "canonicalName": "Anura",
+    "rank": "ORDER",
+    "code": "ZOOLOGICAL",
+    "status": "ACCEPTED",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Anura</i>"
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "N",
+     "name": "Animalia",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "CH2",
+     "name": "Chordata",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "8V4V3",
+     "name": "Vertebrata",
+     "rank": "SUBPHYLUM"
+    },
+    {
+     "key": "8V4V5",
+     "name": "Gnathostomata",
+     "rank": "INFRAPHYLUM"
+    },
+    {
+     "key": "8VVWB",
+     "name": "Osteichthyes",
+     "rank": "PARVPHYLUM"
+    },
+    {
+     "key": "9CK8W",
+     "name": "Tetrapoda",
+     "rank": "MEGACLASS"
+    },
+    {
+     "key": "PH",
+     "name": "Amphibia",
+     "rank": "CLASS"
+    },
+    {
+     "key": "PW",
+     "name": "Anura",
+     "rank": "ORDER"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "EXACT",
+    "confidence": 100,
+    "note": "Similarity: name=100; authorship=0; classification=45; rank=0; status=1; score=146; nextMatch=5",
+    "alternatives": [
+     {
+      "usage": {
+       "key": "PX",
+       "name": "Anura Agassiz, 1846",
+       "canonicalName": "Anura",
+       "authorship": "Agassiz, 1846",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "SYNONYM",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Anura</i> Agassiz, 1846"
+      },
+      "acceptedUsage": {
+       "key": "X4K",
+       "name": "Anoura Gray, 1838",
+       "canonicalName": "Anoura",
+       "authorship": "Gray, 1838",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Anoura</i> Gray, 1838"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "CH2",
+        "name": "Chordata",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "8V4V3",
+        "name": "Vertebrata",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "8V4V5",
+        "name": "Gnathostomata",
+        "rank": "INFRAPHYLUM"
+       },
+       {
+        "key": "8VVWB",
+        "name": "Osteichthyes",
+        "rank": "PARVPHYLUM"
+       },
+       {
+        "key": "9CK8W",
+        "name": "Tetrapoda",
+        "rank": "MEGACLASS"
+       },
+       {
+        "key": "6224G",
+        "name": "Mammalia",
+        "rank": "CLASS"
+       },
+       {
+        "key": "6226C",
+        "name": "Theria",
+        "rank": "SUBCLASS"
+       },
+       {
+        "key": "LG",
+        "name": "Eutheria",
+        "rank": "INFRACLASS"
+       },
+       {
+        "key": "XC",
+        "name": "Chiroptera",
+        "rank": "ORDER"
+       },
+       {
+        "key": "4FX",
+        "name": "Yangochiroptera",
+        "rank": "SUBORDER"
+       },
+       {
+        "key": "622NM",
+        "name": "Noctilionoidea",
+        "rank": "SUPERFAMILY"
+       },
+       {
+        "key": "625JW",
+        "name": "Phyllostomidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "JLS",
+        "name": "Glossophaginae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "628C3",
+        "name": "Choeronycterini",
+        "rank": "TRIBE"
+       },
+       {
+        "key": "628H5",
+        "name": "Anourina",
+        "rank": "SUBTRIBE"
+       },
+       {
+        "key": "X4K",
+        "name": "Anoura",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 91,
+       "note": "Similarity: name=100; authorship=0; classification=-4; rank=0; status=0; score=96",
+       "timeTaken": 0
+      },
+      "synonym": true
+     },
+     {
+      "usage": {
+       "key": "PY",
+       "name": "Anura Nicolet, 1847",
+       "canonicalName": "Anura",
+       "authorship": "Nicolet, 1847",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "ACCEPTED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Anura</i> Nicolet, 1847"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "RT",
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "L2655",
+        "name": "Hexapoda",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "KZS5W",
+        "name": "Collembola",
+        "rank": "CLASS"
+       },
+       {
+        "key": "62376",
+        "name": "Poduromorpha",
+        "rank": "ORDER"
+       },
+       {
+        "key": "5DP",
+        "name": "Neanuroidea",
+        "rank": "SUPERFAMILY"
+       },
+       {
+        "key": "D72",
+        "name": "Neanuridae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "628MF",
+        "name": "Neanurinae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "PY",
+        "name": "Anura",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 78,
+       "note": "Similarity: name=100; authorship=0; classification=-23; rank=0; status=1; score=78",
+       "timeTaken": 0
+      },
+      "synonym": false
+     },
+     {
+      "usage": {
+       "key": "BDSWT",
+       "name": "Anura Bellardi, 1873",
+       "canonicalName": "Anura",
+       "authorship": "Bellardi, 1873",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "SYNONYM",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Anura</i> Bellardi, 1873"
+      },
+      "acceptedUsage": {
+       "key": "7PCN8",
+       "name": "Pisanianura Rovereto, 1899",
+       "canonicalName": "Pisanianura",
+       "authorship": "Rovereto, 1899",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Pisanianura</i> Rovereto, 1899"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "M2L",
+        "name": "Mollusca",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "7NF3Y",
+        "name": "Gastropoda",
+        "rank": "CLASS"
+       },
+       {
+        "key": "9WLSP",
+        "name": "Caenogastropoda",
+        "rank": "SUBCLASS"
+       },
+       {
+        "key": "7NG7T",
+        "name": "Littorinimorpha",
+        "rank": "ORDER"
+       },
+       {
+        "key": "7NH2Q",
+        "name": "Tonnoidea",
+        "rank": "SUPERFAMILY"
+       },
+       {
+        "key": "7NJS8",
+        "name": "Laubierinidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "7PCN8",
+        "name": "Pisanianura",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 76,
+       "note": "Similarity: name=100; authorship=0; classification=-24; rank=0; status=0; score=76",
+       "timeTaken": 0
+      },
+      "synonym": true,
+      "left": 173453,
+      "right": 173462
+     },
+     {
+      "usage": {
+       "key": "VMGJD",
+       "name": "Adura Krzeminska, 2005",
+       "canonicalName": "Adura",
+       "authorship": "Krzeminska, 2005",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "PROVISIONALLY_ACCEPTED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Adura</i> Krzeminska, 2005"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "VMGJD",
+        "name": "Adura",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 75,
+       "note": "Similarity: name=75; authorship=0; classification=5; rank=0; status=-5; score=75",
+       "timeTaken": 0
+      },
+      "synonym": false,
+      "left": 54014,
+      "right": 358148
+     },
+     {
+      "usage": {
+       "key": "L5CK8",
+       "name": "Acura Agassiz, 1846",
+       "canonicalName": "Acura",
+       "authorship": "Agassiz, 1846",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "SYNONYM",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Acura</i> Agassiz, 1846"
+      },
+      "acceptedUsage": {
+       "key": "KVS5Z",
+       "name": "Schistura McClelland, 1838",
+       "canonicalName": "Schistura",
+       "authorship": "McClelland, 1838",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Schistura</i> McClelland, 1838"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "CH2",
+        "name": "Chordata",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "8V4V3",
+        "name": "Vertebrata",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "8V4V5",
+        "name": "Gnathostomata",
+        "rank": "INFRAPHYLUM"
+       },
+       {
+        "key": "8VVWB",
+        "name": "Osteichthyes",
+        "rank": "PARVPHYLUM"
+       },
+       {
+        "key": "8VR36",
+        "name": "Actinopterygii",
+        "rank": "GIGACLASS"
+       },
+       {
+        "key": "KTWM8",
+        "name": "Actinopteri",
+        "rank": "SUPERCLASS"
+       },
+       {
+        "key": "8V4VD",
+        "name": "Teleostei",
+        "rank": "CLASS"
+       },
+       {
+        "key": "334",
+        "name": "Cypriniformes",
+        "rank": "ORDER"
+       },
+       {
+        "key": "KVJR4",
+        "name": "Nemacheilidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "KVS5Z",
+        "name": "Schistura",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 71,
+       "note": "Similarity: name=75; authorship=0; classification=-4; rank=0; status=0; score=71",
+       "timeTaken": 0
+      },
+      "synonym": true
+     },
+     {
+      "usage": {
+       "key": "VFTNQ",
+       "name": "Abura Matsumura, 1917",
+       "canonicalName": "Abura",
+       "authorship": "Matsumura, 1917",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "ACCEPTED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Abura</i> Matsumura, 1917"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "RT",
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "L2655",
+        "name": "Hexapoda",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "H6",
+        "name": "Insecta",
+        "rank": "CLASS"
+       },
+       {
+        "key": "BXVWV",
+        "name": "Hemiptera",
+        "rank": "ORDER"
+       },
+       {
+        "key": "BXWD4",
+        "name": "Sternorrhyncha",
+        "rank": "SUBORDER"
+       },
+       {
+        "key": "8PRTX",
+        "name": "Aphidomorpha",
+        "rank": "INFRAORDER"
+       },
+       {
+        "key": "VH6TS",
+        "name": "Aphidoidea",
+        "rank": "SUPERFAMILY"
+       },
+       {
+        "key": "VGYJT",
+        "name": "Aphididae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "VFTNQ",
+        "name": "Abura",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 52,
+       "note": "Similarity: name=75; authorship=0; classification=-24; rank=0; status=1; score=52",
+       "timeTaken": 0
+      },
+      "synonym": false
+     }
+    ]
+   },
+   "synonym": false
+  }
+ },
+ {
+  "label": "AmphibiaReptilia sp.",
+  "dataset": "568",
+  "hints": {
+   "class": "Amphibia",
+   "genus": "AmphibiaReptilia",
+   "phylum": "Chordata",
+   "kingdom": "Animalia"
+  },
+  "source_rank": "genus",
+  "source_authorships": [],
+  "query": {
+   "scientificName": "AmphibiaReptilia",
+   "class": "Amphibia",
+   "genus": "AmphibiaReptilia",
+   "phylum": "Chordata",
+   "kingdom": "Animalia"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "PH",
+    "name": "Amphibia",
+    "canonicalName": "Amphibia",
+    "rank": "CLASS",
+    "code": "ZOOLOGICAL",
+    "status": "ACCEPTED",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Amphibia</i>"
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "N",
+     "name": "Animalia",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "CH2",
+     "name": "Chordata",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "8V4V3",
+     "name": "Vertebrata",
+     "rank": "SUBPHYLUM"
+    },
+    {
+     "key": "8V4V5",
+     "name": "Gnathostomata",
+     "rank": "INFRAPHYLUM"
+    },
+    {
+     "key": "8VVWB",
+     "name": "Osteichthyes",
+     "rank": "PARVPHYLUM"
+    },
+    {
+     "key": "9CK8W",
+     "name": "Tetrapoda",
+     "rank": "MEGACLASS"
+    },
+    {
+     "key": "PH",
+     "name": "Amphibia",
+     "rank": "CLASS"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "EXACT",
+    "confidence": 94
+   },
+   "synonym": false
+  }
+ },
+ {
+  "label": "Hypsiscopus plumbea (Boie, 1827)",
+  "dataset": "568",
+  "hints": {
+   "genus": "Hypsiscopus",
+   "order": "Squamata (snakes)",
+   "family": "Homalopsidae",
+   "phylum": "Chordata",
+   "kingdom": "Animalia"
+  },
+  "source_rank": "species",
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Hypsiscopus plumbea (Boie, 1827)",
+   "genus": "Hypsiscopus",
+   "order": "Squamata (snakes)",
+   "family": "Homalopsidae",
+   "phylum": "Chordata",
+   "kingdom": "Animalia"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "6MT3P",
+    "name": "Hypsiscopus plumbeus (Boie, 1827)",
+    "canonicalName": "Hypsiscopus plumbeus",
+    "authorship": "(Boie, 1827)",
+    "rank": "SPECIES",
+    "code": "ZOOLOGICAL",
+    "status": "ACCEPTED",
+    "genericName": "Hypsiscopus",
+    "specificEpithet": "plumbeus",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Hypsiscopus</i> <i>plumbeus</i> (Boie, 1827)"
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "N",
+     "name": "Animalia",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "CH2",
+     "name": "Chordata",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "8V4V3",
+     "name": "Vertebrata",
+     "rank": "SUBPHYLUM"
+    },
+    {
+     "key": "8V4V5",
+     "name": "Gnathostomata",
+     "rank": "INFRAPHYLUM"
+    },
+    {
+     "key": "8VVWB",
+     "name": "Osteichthyes",
+     "rank": "PARVPHYLUM"
+    },
+    {
+     "key": "9CK8W",
+     "name": "Tetrapoda",
+     "rank": "MEGACLASS"
+    },
+    {
+     "key": "RP",
+     "name": "Reptilia",
+     "rank": "CLASS"
+    },
+    {
+     "key": "45C",
+     "name": "Squamata",
+     "rank": "ORDER"
+    },
+    {
+     "key": "DJ4D3",
+     "name": "Serpentes",
+     "rank": "SUBORDER"
+    },
+    {
+     "key": "V7FVL",
+     "name": "Alethinophidia",
+     "rank": "INFRAORDER"
+    },
+    {
+     "key": "B5C",
+     "name": "Homalopsidae",
+     "rank": "FAMILY"
+    },
+    {
+     "key": "532P",
+     "name": "Hypsiscopus",
+     "rank": "GENUS"
+    },
+    {
+     "key": "6MT3P",
+     "name": "Hypsiscopus plumbeus",
+     "rank": "SPECIES"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "VARIANT",
+    "confidence": 100
+   },
+   "additionalStatus": [
+    {
+     "clbDatasetKey": "53131",
+     "datasetAlias": "IUCN",
+     "datasetKey": "19491596-35ae-4a91-9a98-85cf505f1bd3",
+     "status": "LEAST_CONCERN",
+     "statusCode": "LC",
+     "sourceId": "176699"
+    }
+   ],
+   "synonym": false
+  }
+ },
+ {
+  "label": "Viola sp.",
+  "dataset": "569",
+  "hints": {},
+  "source_rank": null,
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Viola"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "diagnostics": {
+    "matchType": "NONE",
+    "issues": [],
+    "confidence": 100,
+    "note": "Multiple equal matches for Viola",
+    "alternatives": [
+     {
+      "usage": {
+       "key": "86VM",
+       "name": "Viola L.",
+       "canonicalName": "Viola",
+       "authorship": "L.",
+       "rank": "GENUS",
+       "code": "BOTANICAL",
+       "status": "ACCEPTED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Viola</i> L."
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "P",
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "CMQ8S",
+        "name": "Pteridobiotina",
+        "rank": "SUBKINGDOM"
+       },
+       {
+        "key": "TP",
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "MG",
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "key": "MLP",
+        "name": "Malpighiales",
+        "rank": "ORDER"
+       },
+       {
+        "key": "6272Z",
+        "name": "Violaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "KHG",
+        "name": "Violoideae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "86VM",
+        "name": "Viola",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 99,
+       "note": "Similarity: name=100; authorship=0; classification=-2; rank=0; status=1; score=99",
+       "timeTaken": 0
+      },
+      "synonym": false,
+      "left": 1253157,
+      "right": 1254485
+     },
+     {
+      "usage": {
+       "key": "92QBZ",
+       "name": "Viola Evans, 1953",
+       "canonicalName": "Viola",
+       "authorship": "Evans, 1953",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "ACCEPTED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Viola</i> Evans, 1953"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "RT",
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "L2655",
+        "name": "Hexapoda",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "H6",
+        "name": "Insecta",
+        "rank": "CLASS"
+       },
+       {
+        "key": "B6L67",
+        "name": "Lepidoptera",
+        "rank": "ORDER"
+       },
+       {
+        "key": "5G9",
+        "name": "Papilionoidea",
+        "rank": "SUPERFAMILY"
+       },
+       {
+        "key": "6254D",
+        "name": "Hesperiidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "93MZN",
+        "name": "Pyrginae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "92QBZ",
+        "name": "Viola",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 99,
+       "note": "Similarity: name=100; authorship=0; classification=-2; rank=0; status=1; score=99",
+       "timeTaken": 0
+      },
+      "synonym": false
+     },
+     {
+      "usage": {
+       "key": "BXYHB",
+       "name": "Villa Lioy, 1864",
+       "canonicalName": "Villa",
+       "authorship": "Lioy, 1864",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "ACCEPTED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Villa</i> Lioy, 1864"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "RT",
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "L2655",
+        "name": "Hexapoda",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "H6",
+        "name": "Insecta",
+        "rank": "CLASS"
+       },
+       {
+        "key": "D2P",
+        "name": "Diptera",
+        "rank": "ORDER"
+       },
+       {
+        "key": "622GM",
+        "name": "Bombyliidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "87CDF",
+        "name": "Anthracinae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "BY5ZP",
+        "name": "Villini",
+        "rank": "TRIBE"
+       },
+       {
+        "key": "BXYHB",
+        "name": "Villa",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 74,
+       "note": "Similarity: name=75; authorship=0; classification=-2; rank=0; status=1; score=74",
+       "timeTaken": 0
+      },
+      "synonym": false
+     },
+     {
+      "usage": {
+       "key": "VD2G4",
+       "name": "Villa (flavicrura) Hall, 1976",
+       "canonicalName": "Villa",
+       "authorship": "Hall, 1976",
+       "rank": "SUBGENUS",
+       "code": "ZOOLOGICAL",
+       "status": "SYNONYM",
+       "genericName": "Villa",
+       "infragenericEpithet": "flavicrura",
+       "type": "SCIENTIFIC",
+       "formattedName": "subgen. <i>Villa</i> Hall, 1976"
+      },
+      "acceptedUsage": {
+       "key": "7FRZB",
+       "name": "Villa flavicrura Hall, 1976",
+       "canonicalName": "Villa flavicrura",
+       "authorship": "Hall, 1976",
+       "rank": "SPECIES",
+       "code": "ZOOLOGICAL",
+       "genericName": "Villa",
+       "specificEpithet": "flavicrura",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Villa</i> <i>flavicrura</i> Hall, 1976"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "RT",
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "L2655",
+        "name": "Hexapoda",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "H6",
+        "name": "Insecta",
+        "rank": "CLASS"
+       },
+       {
+        "key": "D2P",
+        "name": "Diptera",
+        "rank": "ORDER"
+       },
+       {
+        "key": "622GM",
+        "name": "Bombyliidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "87CDF",
+        "name": "Anthracinae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "BY5ZP",
+        "name": "Villini",
+        "rank": "TRIBE"
+       },
+       {
+        "key": "BXYHB",
+        "name": "Villa",
+        "rank": "GENUS"
+       },
+       {
+        "key": "7FRZB",
+        "name": "Villa flavicrura",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 73,
+       "note": "Similarity: name=75; authorship=0; classification=-2; rank=0; status=0; score=73",
+       "timeTaken": 0
+      },
+      "synonym": true
+     },
+     {
+      "usage": {
+       "key": "BGTMH",
+       "name": "Vioa Gray, 1870",
+       "canonicalName": "Vioa",
+       "authorship": "Gray, 1870",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "SYNONYM",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Vioa</i> Gray, 1870"
+      },
+      "acceptedUsage": {
+       "key": "84LYD",
+       "name": "Briareum Blainville, 1834",
+       "canonicalName": "Briareum",
+       "authorship": "Blainville, 1834",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Briareum</i> Blainville, 1834"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "CN2",
+        "name": "Cnidaria",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "C7W46",
+        "name": "Octocorallia",
+        "rank": "CLASS"
+       },
+       {
+        "key": "B6NHS",
+        "name": "Scleralcyonacea",
+        "rank": "ORDER"
+       },
+       {
+        "key": "84JXD",
+        "name": "Briareidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "84LYD",
+        "name": "Briareum",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 73,
+       "note": "Similarity: name=75; authorship=0; classification=-2; rank=0; status=0; score=73",
+       "timeTaken": 0
+      },
+      "synonym": true
+     },
+     {
+      "usage": {
+       "key": "BGTMG",
+       "name": "Vioa Nardo, 1839",
+       "canonicalName": "Vioa",
+       "authorship": "Nardo, 1839",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "SYNONYM",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Vioa</i> Nardo, 1839"
+      },
+      "acceptedUsage": {
+       "key": "84MFF",
+       "name": "Cliona Grant, 1826",
+       "canonicalName": "Cliona",
+       "authorship": "Grant, 1826",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Cliona</i> Grant, 1826"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "B8TXQ",
+        "name": "Porifera",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "84JN8",
+        "name": "Demospongiae",
+        "rank": "CLASS"
+       },
+       {
+        "key": "85G9J",
+        "name": "Heteroscleromorpha",
+        "rank": "SUBCLASS"
+       },
+       {
+        "key": "84JWY",
+        "name": "Clionaida",
+        "rank": "ORDER"
+       },
+       {
+        "key": "84K2Y",
+        "name": "Clionaidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "84MFF",
+        "name": "Cliona",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 73,
+       "note": "Similarity: name=75; authorship=0; classification=-2; rank=0; status=0; score=73",
+       "timeTaken": 0
+      },
+      "synonym": true,
+      "left": 346877,
+      "right": 347014
+     }
+    ]
+   },
+   "synonym": false
+  }
+ },
+ {
+  "label": "Galeopsis sp.",
+  "dataset": "569",
+  "hints": {},
+  "source_rank": null,
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Galeopsis"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "diagnostics": {
+    "matchType": "NONE",
+    "issues": [],
+    "confidence": 100,
+    "note": "Multiple equal matches for Galeopsis",
+    "alternatives": [
+     {
+      "usage": {
+       "key": "8VXRK",
+       "name": "Galeopsis L.",
+       "canonicalName": "Galeopsis",
+       "authorship": "L.",
+       "rank": "GENUS",
+       "code": "BOTANICAL",
+       "status": "ACCEPTED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Galeopsis</i> L."
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "P",
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "CMQ8S",
+        "name": "Pteridobiotina",
+        "rank": "SUBKINGDOM"
+       },
+       {
+        "key": "TP",
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "MG",
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "key": "3F4",
+        "name": "Lamiales",
+        "rank": "ORDER"
+       },
+       {
+        "key": "PR82T",
+        "name": "Lamiaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "V5N48",
+        "name": "Lamioideae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "V5RHH",
+        "name": "Galeopsideae",
+        "rank": "TRIBE"
+       },
+       {
+        "key": "8VXRK",
+        "name": "Galeopsis",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 99,
+       "note": "Similarity: name=100; authorship=0; classification=-2; rank=0; status=1; score=99",
+       "timeTaken": 0
+      },
+      "synonym": false,
+      "left": 1184368,
+      "right": 1184405
+     },
+     {
+      "usage": {
+       "key": "84JMQ",
+       "name": "Galeopsis Jullien, 1903",
+       "canonicalName": "Galeopsis",
+       "authorship": "Jullien, 1903",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "ACCEPTED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Galeopsis</i> Jullien, 1903"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "622CG",
+        "name": "Bryozoa",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "84JND",
+        "name": "Gymnolaemata",
+        "rank": "CLASS"
+       },
+       {
+        "key": "84JWL",
+        "name": "Cheilostomatida",
+        "rank": "ORDER"
+       },
+       {
+        "key": "85F2H",
+        "name": "Flustrina",
+        "rank": "SUBORDER"
+       },
+       {
+        "key": "84JZM",
+        "name": "Celleporoidea",
+        "rank": "SUPERFAMILY"
+       },
+       {
+        "key": "84JZ3",
+        "name": "Celleporidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "84JMQ",
+        "name": "Galeopsis",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 99,
+       "note": "Similarity: name=100; authorship=0; classification=-2; rank=0; status=1; score=99",
+       "timeTaken": 0
+      },
+      "synonym": false,
+      "left": 60764,
+      "right": 60793
+     },
+     {
+      "usage": {
+       "key": "NTZN3",
+       "name": "Galeopsis Hinz-Schallreuter, 1993",
+       "canonicalName": "Galeopsis",
+       "authorship": "Hinz-Schallreuter, 1993",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "ACCEPTED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Galeopsis</i> Hinz-Schallreuter, 1993"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "RT",
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "KZX8B",
+        "name": "Crustacea",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "B8TXJ",
+        "name": "Ostracoda",
+        "rank": "CLASS"
+       },
+       {
+        "key": "NTZN3",
+        "name": "Galeopsis",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 99,
+       "note": "Similarity: name=100; authorship=0; classification=-2; rank=0; status=1; score=99",
+       "timeTaken": 0
+      },
+      "synonym": false
+     },
+     {
+      "usage": {
+       "key": "8VXRM",
+       "name": "Galeopsis Moench",
+       "canonicalName": "Galeopsis",
+       "authorship": "Moench",
+       "rank": "GENUS",
+       "code": "BOTANICAL",
+       "status": "SYNONYM",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Galeopsis</i> Moench"
+      },
+      "acceptedUsage": {
+       "key": "8W3RD",
+       "name": "Stachys L.",
+       "canonicalName": "Stachys",
+       "authorship": "L.",
+       "rank": "GENUS",
+       "code": "BOTANICAL",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Stachys</i> L."
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "P",
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "CMQ8S",
+        "name": "Pteridobiotina",
+        "rank": "SUBKINGDOM"
+       },
+       {
+        "key": "TP",
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "MG",
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "key": "3F4",
+        "name": "Lamiales",
+        "rank": "ORDER"
+       },
+       {
+        "key": "PR82T",
+        "name": "Lamiaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "V5N48",
+        "name": "Lamioideae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "V5R2Z",
+        "name": "Stachydeae",
+        "rank": "TRIBE"
+       },
+       {
+        "key": "8W3RD",
+        "name": "Stachys",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 98,
+       "note": "Similarity: name=100; authorship=0; classification=-2; rank=0; status=0; score=98",
+       "timeTaken": 0
+      },
+      "synonym": true,
+      "left": 1186352,
+      "right": 1186965
+     },
+     {
+      "usage": {
+       "key": "8VXRL",
+       "name": "Galeopsis Hill",
+       "canonicalName": "Galeopsis",
+       "authorship": "Hill",
+       "rank": "GENUS",
+       "code": "BOTANICAL",
+       "status": "SYNONYM",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Galeopsis</i> Hill"
+      },
+      "acceptedUsage": {
+       "key": "8W3RD",
+       "name": "Stachys L.",
+       "canonicalName": "Stachys",
+       "authorship": "L.",
+       "rank": "GENUS",
+       "code": "BOTANICAL",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Stachys</i> L."
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "P",
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "CMQ8S",
+        "name": "Pteridobiotina",
+        "rank": "SUBKINGDOM"
+       },
+       {
+        "key": "TP",
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "MG",
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "key": "3F4",
+        "name": "Lamiales",
+        "rank": "ORDER"
+       },
+       {
+        "key": "PR82T",
+        "name": "Lamiaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "V5N48",
+        "name": "Lamioideae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "V5R2Z",
+        "name": "Stachydeae",
+        "rank": "TRIBE"
+       },
+       {
+        "key": "8W3RD",
+        "name": "Stachys",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 98,
+       "note": "Similarity: name=100; authorship=0; classification=-2; rank=0; status=0; score=98",
+       "timeTaken": 0
+      },
+      "synonym": true,
+      "left": 1186352,
+      "right": 1186965
+     },
+     {
+      "usage": {
+       "key": "9F4J8",
+       "name": "Galenopsis A. Milne-Edwards, 1865",
+       "canonicalName": "Galenopsis",
+       "authorship": "A. Milne-Edwards, 1865",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "ACCEPTED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Galenopsis</i> A. Milne-Edwards, 1865"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "RT",
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "KZX8B",
+        "name": "Crustacea",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "MC",
+        "name": "Malacostraca",
+        "rank": "CLASS"
+       },
+       {
+        "key": "33N",
+        "name": "Decapoda",
+        "rank": "ORDER"
+       },
+       {
+        "key": "7NFJ8",
+        "name": "Pleocyemata",
+        "rank": "SUBORDER"
+       },
+       {
+        "key": "B8WMW",
+        "name": "Brachyura",
+        "rank": "INFRAORDER"
+       },
+       {
+        "key": "B94FL",
+        "name": "Eubrachyura",
+        "rank": "SECTION_ZOOLOGY"
+       },
+       {
+        "key": "8PS7R",
+        "name": "Heterotremata",
+        "rank": "SUBSECTION_ZOOLOGY"
+       },
+       {
+        "key": "7NGW3",
+        "name": "Pilumnoidea",
+        "rank": "SUPERFAMILY"
+       },
+       {
+        "key": "7NKGZ",
+        "name": "Pilumnidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "847HB",
+        "name": "Pilumninae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "9F4J8",
+        "name": "Galenopsis",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 74,
+       "note": "Similarity: name=75; authorship=0; classification=-2; rank=0; status=1; score=74",
+       "timeTaken": 0
+      },
+      "synonym": false
+     }
+    ]
+   },
+   "synonym": false
+  }
+ },
+ {
+  "label": "Epilobium sp.",
+  "dataset": "569",
+  "hints": {},
+  "source_rank": null,
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Epilobium"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "4D6C",
+    "name": "Epilobium L.",
+    "canonicalName": "Epilobium",
+    "authorship": "L.",
+    "rank": "GENUS",
+    "code": "BOTANICAL",
+    "status": "ACCEPTED",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Epilobium</i> L."
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "P",
+     "name": "Plantae",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "CMQ8S",
+     "name": "Pteridobiotina",
+     "rank": "SUBKINGDOM"
+    },
+    {
+     "key": "TP",
+     "name": "Tracheophyta",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "MG",
+     "name": "Magnoliopsida",
+     "rank": "CLASS"
+    },
+    {
+     "key": "3LY",
+     "name": "Myrtales",
+     "rank": "ORDER"
+    },
+    {
+     "key": "DL8",
+     "name": "Onagraceae",
+     "rank": "FAMILY"
+    },
+    {
+     "key": "K22",
+     "name": "Onagroideae",
+     "rank": "SUBFAMILY"
+    },
+    {
+     "key": "KV9DL",
+     "name": "Epilobieae",
+     "rank": "TRIBE"
+    },
+    {
+     "key": "4D6C",
+     "name": "Epilobium",
+     "rank": "GENUS"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "EXACT",
+    "confidence": 94
+   },
+   "synonym": false,
+   "left": 1286619,
+   "right": 1286946
+  }
+ },
+ {
+  "label": "Circium heterophyllum",
+  "dataset": "569",
+  "hints": {},
+  "source_rank": null,
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Circium heterophyllum"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "VHZF",
+    "name": "Cirsium heterophyllum (L.) Hill",
+    "canonicalName": "Cirsium heterophyllum",
+    "authorship": "(L.) Hill",
+    "rank": "SPECIES",
+    "code": "BOTANICAL",
+    "status": "ACCEPTED",
+    "genericName": "Cirsium",
+    "specificEpithet": "heterophyllum",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Cirsium</i> <i>heterophyllum</i> (L.) Hill"
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "P",
+     "name": "Plantae",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "CMQ8S",
+     "name": "Pteridobiotina",
+     "rank": "SUBKINGDOM"
+    },
+    {
+     "key": "TP",
+     "name": "Tracheophyta",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "MG",
+     "name": "Magnoliopsida",
+     "rank": "CLASS"
+    },
+    {
+     "key": "ST",
+     "name": "Asterales",
+     "rank": "ORDER"
+    },
+    {
+     "key": "622TP",
+     "name": "Asteraceae",
+     "rank": "FAMILY"
+    },
+    {
+     "key": "B3HBG",
+     "name": "Carduoideae",
+     "rank": "SUBFAMILY"
+    },
+    {
+     "key": "KV3QN",
+     "name": "Cardueae",
+     "rank": "TRIBE"
+    },
+    {
+     "key": "KV3QR",
+     "name": "Carduinae",
+     "rank": "SUBTRIBE"
+    },
+    {
+     "key": "3Q7P",
+     "name": "Cirsium",
+     "rank": "GENUS"
+    },
+    {
+     "key": "VHZF",
+     "name": "Cirsium heterophyllum",
+     "rank": "SPECIES"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "VARIANT",
+    "confidence": 85
+   },
+   "synonym": false,
+   "left": 971833,
+   "right": 971833
+  }
+ },
+ {
+  "label": "Carex nigra var_ juncea",
+  "dataset": "569",
+  "hints": {},
+  "source_rank": null,
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Carex nigra var_ juncea"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "B88BN",
+    "name": "Carex nigra var. juncea (Fr.) Hyl.",
+    "canonicalName": "Carex nigra juncea",
+    "authorship": "(Fr.) Hyl.",
+    "rank": "VARIETY",
+    "code": "BOTANICAL",
+    "status": "SYNONYM",
+    "genericName": "Carex",
+    "specificEpithet": "nigra",
+    "infraspecificEpithet": "juncea",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Carex</i> <i>nigra</i> var. <i>juncea</i> (Fr.) Hyl."
+   },
+   "acceptedUsage": {
+    "key": "5G8GH",
+    "name": "Carex nigra subsp. juncea (Fr.) Soó",
+    "canonicalName": "Carex nigra juncea",
+    "authorship": "(Fr.) Soó",
+    "rank": "SUBSPECIES",
+    "code": "BOTANICAL",
+    "genericName": "Carex",
+    "specificEpithet": "nigra",
+    "infraspecificEpithet": "juncea",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Carex</i> <i>nigra</i> subsp. <i>juncea</i> (Fr.) Soó"
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "P",
+     "name": "Plantae",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "CMQ8S",
+     "name": "Pteridobiotina",
+     "rank": "SUBKINGDOM"
+    },
+    {
+     "key": "TP",
+     "name": "Tracheophyta",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "L2L",
+     "name": "Liliopsida",
+     "rank": "CLASS"
+    },
+    {
+     "key": "627VM",
+     "name": "Poales",
+     "rank": "ORDER"
+    },
+    {
+     "key": "8W5",
+     "name": "Cyperaceae",
+     "rank": "FAMILY"
+    },
+    {
+     "key": "8VRHY",
+     "name": "Carex",
+     "rank": "GENUS"
+    },
+    {
+     "key": "5XCKN",
+     "name": "Carex nigra",
+     "rank": "SPECIES"
+    },
+    {
+     "key": "5G8GH",
+     "name": "Carex nigra juncea",
+     "rank": "SUBSPECIES"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "EXACT",
+    "confidence": 98
+   },
+   "synonym": true,
+   "left": 888876,
+   "right": 888876
+  }
+ },
+ {
+  "label": "Trientalis europaea",
+  "dataset": "569",
+  "hints": {},
+  "source_rank": null,
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Trientalis europaea"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "62XTM",
+    "name": "Lysimachia Tourn. ex L.",
+    "canonicalName": "Lysimachia",
+    "authorship": "Tourn. ex L.",
+    "rank": "GENUS",
+    "code": "BOTANICAL",
+    "status": "ACCEPTED",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Lysimachia</i> Tourn. ex L."
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "P",
+     "name": "Plantae",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "CMQ8S",
+     "name": "Pteridobiotina",
+     "rank": "SUBKINGDOM"
+    },
+    {
+     "key": "TP",
+     "name": "Tracheophyta",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "MG",
+     "name": "Magnoliopsida",
+     "rank": "CLASS"
+    },
+    {
+     "key": "625QY",
+     "name": "Ericales",
+     "rank": "ORDER"
+    },
+    {
+     "key": "627BN",
+     "name": "Primulaceae",
+     "rank": "FAMILY"
+    },
+    {
+     "key": "JY3",
+     "name": "Myrsinoideae",
+     "rank": "SUBFAMILY"
+    },
+    {
+     "key": "KVYZM",
+     "name": "Lysimachieae",
+     "rank": "TRIBE"
+    },
+    {
+     "key": "62XTM",
+     "name": "Lysimachia",
+     "rank": "GENUS"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "HIGHERRANK",
+    "confidence": 97,
+    "note": "nextMatch=0",
+    "alternatives": [
+     {
+      "usage": {
+       "key": "7CSCQ",
+       "name": "Trientalis europaea L.",
+       "canonicalName": "Trientalis europaea",
+       "authorship": "L.",
+       "rank": "SPECIES",
+       "code": "BOTANICAL",
+       "status": "AMBIGUOUS_SYNONYM",
+       "genericName": "Trientalis",
+       "specificEpithet": "europaea",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Trientalis</i> <i>europaea</i> L."
+      },
+      "acceptedUsage": {
+       "key": "72QPX",
+       "name": "Lysimachia europaea (L.) U.Manns & Anderb.",
+       "canonicalName": "Lysimachia europaea",
+       "authorship": "(L.) U.Manns & Anderb.",
+       "rank": "SPECIES",
+       "code": "BOTANICAL",
+       "genericName": "Lysimachia",
+       "specificEpithet": "europaea",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Lysimachia</i> <i>europaea</i> (L.) U.Manns & Anderb."
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "P",
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "CMQ8S",
+        "name": "Pteridobiotina",
+        "rank": "SUBKINGDOM"
+       },
+       {
+        "key": "TP",
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "MG",
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "key": "625QY",
+        "name": "Ericales",
+        "rank": "ORDER"
+       },
+       {
+        "key": "627BN",
+        "name": "Primulaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "JY3",
+        "name": "Myrsinoideae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "KVYZM",
+        "name": "Lysimachieae",
+        "rank": "TRIBE"
+       },
+       {
+        "key": "62XTM",
+        "name": "Lysimachia",
+        "rank": "GENUS"
+       },
+       {
+        "key": "72QPX",
+        "name": "Lysimachia europaea",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 97,
+       "note": "Similarity: name=110; authorship=0; classification=-2; rank=6; status=-1; score=113",
+       "timeTaken": 0
+      },
+      "synonym": true,
+      "left": 1075399,
+      "right": 1075406
+     },
+     {
+      "usage": {
+       "key": "58PD9",
+       "name": "Trientalis europaea Michx.",
+       "canonicalName": "Trientalis europaea",
+       "authorship": "Michx.",
+       "rank": "SPECIES",
+       "code": "BOTANICAL",
+       "status": "AMBIGUOUS_SYNONYM",
+       "genericName": "Trientalis",
+       "specificEpithet": "europaea",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Trientalis</i> <i>europaea</i> Michx."
+      },
+      "acceptedUsage": {
+       "key": "6R2MY",
+       "name": "Lysimachia borealis (Raf.) U.Manns & Anderb.",
+       "canonicalName": "Lysimachia borealis",
+       "authorship": "(Raf.) U.Manns & Anderb.",
+       "rank": "SPECIES",
+       "code": "BOTANICAL",
+       "genericName": "Lysimachia",
+       "specificEpithet": "borealis",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Lysimachia</i> <i>borealis</i> (Raf.) U.Manns & Anderb."
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "P",
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "CMQ8S",
+        "name": "Pteridobiotina",
+        "rank": "SUBKINGDOM"
+       },
+       {
+        "key": "TP",
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "MG",
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "key": "625QY",
+        "name": "Ericales",
+        "rank": "ORDER"
+       },
+       {
+        "key": "627BN",
+        "name": "Primulaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "JY3",
+        "name": "Myrsinoideae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "KVYZM",
+        "name": "Lysimachieae",
+        "rank": "TRIBE"
+       },
+       {
+        "key": "62XTM",
+        "name": "Lysimachia",
+        "rank": "GENUS"
+       },
+       {
+        "key": "6R2MY",
+        "name": "Lysimachia borealis",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 97,
+       "note": "Similarity: name=110; authorship=0; classification=-2; rank=6; status=-1; score=113",
+       "timeTaken": 0
+      },
+      "synonym": true,
+      "left": 1075346,
+      "right": 1075347
+     }
+    ]
+   },
+   "synonym": false,
+   "left": 1074999,
+   "right": 1075611
+  }
+ },
+ {
+  "label": "Ficus sp",
+  "dataset": "558",
+  "hints": {
+   "kingdom": "Animalia"
+  },
+  "source_rank": null,
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Ficus",
+   "kingdom": "Animalia"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "N",
+    "name": "Animalia",
+    "canonicalName": "Animalia",
+    "rank": "KINGDOM",
+    "status": "ACCEPTED",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Animalia</i>"
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "N",
+     "name": "Animalia",
+     "rank": "KINGDOM"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "HIGHERRANK",
+    "confidence": 95,
+    "note": "nextMatch=0",
+    "alternatives": [
+     {
+      "usage": {
+       "key": "VBL9L",
+       "name": "Ficus",
+       "canonicalName": "Ficus",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "ACCEPTED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Ficus</i>"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "RT",
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "KZWYC",
+        "name": "Chelicerata",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "CCQKT",
+        "name": "Arachnida",
+        "rank": "CLASS"
+       },
+       {
+        "key": "LK",
+        "name": "Acariformes",
+        "rank": "SUPERORDER"
+       },
+       {
+        "key": "49Q",
+        "name": "Trombidiformes",
+        "rank": "ORDER"
+       },
+       {
+        "key": "4F5",
+        "name": "Prostigmata",
+        "rank": "SUBORDER"
+       },
+       {
+        "key": "4KB",
+        "name": "Eupodina",
+        "rank": "INFRAORDER"
+       },
+       {
+        "key": "54N",
+        "name": "Eriophyoidea",
+        "rank": "SUPERFAMILY"
+       },
+       {
+        "key": "VBL9L",
+        "name": "Ficus",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 95,
+       "note": "Similarity: name=100; authorship=0; classification=4; rank=0; status=1; score=105",
+       "timeTaken": 0
+      },
+      "synonym": false
+     },
+     {
+      "usage": {
+       "key": "VBL9K",
+       "name": "Ficus",
+       "canonicalName": "Ficus",
+       "rank": "GENUS",
+       "status": "ACCEPTED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Ficus</i>"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "RT",
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "L2655",
+        "name": "Hexapoda",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "H6",
+        "name": "Insecta",
+        "rank": "CLASS"
+       },
+       {
+        "key": "HYM",
+        "name": "Hymenoptera",
+        "rank": "ORDER"
+       },
+       {
+        "key": "KZPW7",
+        "name": "Apocrita",
+        "rank": "SUBORDER"
+       },
+       {
+        "key": "V7HJG",
+        "name": "Terebrantes",
+        "rank": "INFRAORDER"
+       },
+       {
+        "key": "C98NQ",
+        "name": "Chalcidoidea",
+        "rank": "SUPERFAMILY"
+       },
+       {
+        "key": "CBXJK",
+        "name": "Pteromalidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "VBL9K",
+        "name": "Ficus",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 95,
+       "note": "Similarity: name=100; authorship=0; classification=4; rank=0; status=1; score=105",
+       "timeTaken": 0
+      },
+      "synonym": false
+     },
+     {
+      "usage": {
+       "key": "7NF2C",
+       "name": "Ficus Röding, 1798",
+       "canonicalName": "Ficus",
+       "authorship": "Röding, 1798",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "ACCEPTED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Ficus</i> Röding, 1798"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "M2L",
+        "name": "Mollusca",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "7NF3Y",
+        "name": "Gastropoda",
+        "rank": "CLASS"
+       },
+       {
+        "key": "9WLSP",
+        "name": "Caenogastropoda",
+        "rank": "SUBCLASS"
+       },
+       {
+        "key": "7NG7T",
+        "name": "Littorinimorpha",
+        "rank": "ORDER"
+       },
+       {
+        "key": "7NGMP",
+        "name": "Ficoidea",
+        "rank": "SUPERFAMILY"
+       },
+       {
+        "key": "7NHLH",
+        "name": "Ficidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "7NF2C",
+        "name": "Ficus",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 95,
+       "note": "Similarity: name=100; authorship=0; classification=4; rank=0; status=1; score=105",
+       "timeTaken": 0
+      },
+      "synonym": false,
+      "left": 164645,
+      "right": 164715
+     },
+     {
+      "usage": {
+       "key": "BDV68",
+       "name": "Pyrula (Ficus) Röding, 1798",
+       "canonicalName": "Ficus",
+       "authorship": "Röding, 1798",
+       "rank": "SUBGENUS",
+       "code": "ZOOLOGICAL",
+       "status": "SYNONYM",
+       "genericName": "Pyrula",
+       "infragenericEpithet": "Ficus",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Pyrula</i> (<i>Ficus</i>) Röding, 1798"
+      },
+      "acceptedUsage": {
+       "key": "7NF2C",
+       "name": "Ficus Röding, 1798",
+       "canonicalName": "Ficus",
+       "authorship": "Röding, 1798",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Ficus</i> Röding, 1798"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "M2L",
+        "name": "Mollusca",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "7NF3Y",
+        "name": "Gastropoda",
+        "rank": "CLASS"
+       },
+       {
+        "key": "9WLSP",
+        "name": "Caenogastropoda",
+        "rank": "SUBCLASS"
+       },
+       {
+        "key": "7NG7T",
+        "name": "Littorinimorpha",
+        "rank": "ORDER"
+       },
+       {
+        "key": "7NGMP",
+        "name": "Ficoidea",
+        "rank": "SUPERFAMILY"
+       },
+       {
+        "key": "7NHLH",
+        "name": "Ficidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "7NF2C",
+        "name": "Ficus",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 94,
+       "note": "Similarity: name=100; authorship=0; classification=4; rank=0; status=0; score=104",
+       "timeTaken": 0
+      },
+      "synonym": true,
+      "left": 164645,
+      "right": 164715
+     },
+     {
+      "usage": {
+       "key": "7P2VH",
+       "name": "Fucus Linnaeus, 1753",
+       "canonicalName": "Fucus",
+       "authorship": "Linnaeus, 1753",
+       "rank": "GENUS",
+       "code": "BOTANICAL",
+       "status": "ACCEPTED",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Fucus</i> Linnaeus, 1753"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "C",
+        "name": "Chromista",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "D3MRQ",
+        "name": "Harosa",
+        "rank": "SUBKINGDOM"
+       },
+       {
+        "key": "D3MRV",
+        "name": "Heterokonta",
+        "rank": "INFRAKINGDOM"
+       },
+       {
+        "key": "5H",
+        "name": "Ochrophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "7NF4S",
+        "name": "Phaeophyceae",
+        "rank": "CLASS"
+       },
+       {
+        "key": "7NFB7",
+        "name": "Fucales",
+        "rank": "ORDER"
+       },
+       {
+        "key": "7NHM4",
+        "name": "Fucaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "7P2VH",
+        "name": "Fucus",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 65,
+       "note": "Similarity: name=75; authorship=0; classification=-11; rank=0; status=1; score=65",
+       "timeTaken": 0
+      },
+      "synonym": false,
+      "left": 399557,
+      "right": 399606
+     },
+     {
+      "usage": {
+       "key": "7P2VG",
+       "name": "Fucus Ellis in McIntosh, 1922",
+       "canonicalName": "Fucus",
+       "authorship": "Ellis in McIntosh, 1922",
+       "rank": "GENUS",
+       "code": "ZOOLOGICAL",
+       "status": "SYNONYM",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Fucus</i> Ellis in McIntosh, 1922"
+      },
+      "acceptedUsage": {
+       "key": "7P2VH",
+       "name": "Fucus Linnaeus, 1753",
+       "canonicalName": "Fucus",
+       "authorship": "Linnaeus, 1753",
+       "rank": "GENUS",
+       "code": "BOTANICAL",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Fucus</i> Linnaeus, 1753"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "C",
+        "name": "Chromista",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "D3MRQ",
+        "name": "Harosa",
+        "rank": "SUBKINGDOM"
+       },
+       {
+        "key": "D3MRV",
+        "name": "Heterokonta",
+        "rank": "INFRAKINGDOM"
+       },
+       {
+        "key": "5H",
+        "name": "Ochrophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "7NF4S",
+        "name": "Phaeophyceae",
+        "rank": "CLASS"
+       },
+       {
+        "key": "7NFB7",
+        "name": "Fucales",
+        "rank": "ORDER"
+       },
+       {
+        "key": "7NHM4",
+        "name": "Fucaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "7P2VH",
+        "name": "Fucus",
+        "rank": "GENUS"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 64,
+       "note": "Similarity: name=75; authorship=0; classification=-11; rank=0; status=0; score=64",
+       "timeTaken": 0
+      },
+      "synonym": true,
+      "left": 399557,
+      "right": 399606
+     }
+    ]
+   },
+   "synonym": false,
+   "left": 54014,
+   "right": 358148
+  }
+ },
+ {
+  "label": "Sapotaceae sp",
+  "dataset": "558",
+  "hints": {
+   "kingdom": "Animalia"
+  },
+  "source_rank": null,
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Sapotaceae",
+   "kingdom": "Animalia"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "SMQQD",
+    "name": "Sapotaceae Juss.",
+    "canonicalName": "Sapotaceae",
+    "authorship": "Juss.",
+    "rank": "FAMILY",
+    "code": "BOTANICAL",
+    "status": "ACCEPTED",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Sapotaceae</i> Juss."
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "P",
+     "name": "Plantae",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "CMQ8S",
+     "name": "Pteridobiotina",
+     "rank": "SUBKINGDOM"
+    },
+    {
+     "key": "TP",
+     "name": "Tracheophyta",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "MG",
+     "name": "Magnoliopsida",
+     "rank": "CLASS"
+    },
+    {
+     "key": "625QY",
+     "name": "Ericales",
+     "rank": "ORDER"
+    },
+    {
+     "key": "SMQQD",
+     "name": "Sapotaceae",
+     "rank": "FAMILY"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "EXACT",
+    "confidence": 94
+   },
+   "synonym": false,
+   "left": 1078390,
+   "right": 1080923
+  }
+ },
+ {
+  "label": "Bosqueia phoberos",
+  "dataset": "558",
+  "hints": {
+   "kingdom": "Animalia"
+  },
+  "source_rank": null,
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Bosqueia phoberos",
+   "kingdom": "Animalia"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "MM2B",
+    "name": "Bosqueia phoberos Baill.",
+    "canonicalName": "Bosqueia phoberos",
+    "authorship": "Baill.",
+    "rank": "SPECIES",
+    "code": "BOTANICAL",
+    "status": "SYNONYM",
+    "genericName": "Bosqueia",
+    "specificEpithet": "phoberos",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Bosqueia</i> <i>phoberos</i> Baill."
+   },
+   "acceptedUsage": {
+    "key": "7D64M",
+    "name": "Trilepisium madagascariense DC.",
+    "canonicalName": "Trilepisium madagascariense",
+    "authorship": "DC.",
+    "rank": "SPECIES",
+    "code": "BOTANICAL",
+    "genericName": "Trilepisium",
+    "specificEpithet": "madagascariense",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Trilepisium</i> <i>madagascariense</i> DC."
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "P",
+     "name": "Plantae",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "CMQ8S",
+     "name": "Pteridobiotina",
+     "rank": "SUBKINGDOM"
+    },
+    {
+     "key": "TP",
+     "name": "Tracheophyta",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "MG",
+     "name": "Magnoliopsida",
+     "rank": "CLASS"
+    },
+    {
+     "key": "3Z6",
+     "name": "Rosales",
+     "rank": "ORDER"
+    },
+    {
+     "key": "CXM",
+     "name": "Moraceae",
+     "rank": "FAMILY"
+    },
+    {
+     "key": "KV855",
+     "name": "Dorstenieae",
+     "rank": "TRIBE"
+    },
+    {
+     "key": "824S",
+     "name": "Trilepisium",
+     "rank": "GENUS"
+    },
+    {
+     "key": "7D64M",
+     "name": "Trilepisium madagascariense",
+     "rank": "SPECIES"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "EXACT",
+    "confidence": 98
+   },
+   "synonym": true,
+   "left": 1313141,
+   "right": 1313141
+  }
+ },
+ {
+  "label": "Trema orientalis",
+  "dataset": "558",
+  "hints": {
+   "kingdom": "Animalia"
+  },
+  "source_rank": null,
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Trema orientalis",
+   "kingdom": "Animalia"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "582Z9",
+    "name": "Trema orientale (L.) Blume",
+    "canonicalName": "Trema orientale",
+    "authorship": "(L.) Blume",
+    "rank": "SPECIES",
+    "code": "BOTANICAL",
+    "status": "ACCEPTED",
+    "genericName": "Trema",
+    "specificEpithet": "orientale",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Trema</i> <i>orientale</i> (L.) Blume"
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "P",
+     "name": "Plantae",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "CMQ8S",
+     "name": "Pteridobiotina",
+     "rank": "SUBKINGDOM"
+    },
+    {
+     "key": "TP",
+     "name": "Tracheophyta",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "MG",
+     "name": "Magnoliopsida",
+     "rank": "CLASS"
+    },
+    {
+     "key": "3Z6",
+     "name": "Rosales",
+     "rank": "ORDER"
+    },
+    {
+     "key": "7NV",
+     "name": "Cannabaceae",
+     "rank": "FAMILY"
+    },
+    {
+     "key": "7YPK",
+     "name": "Trema",
+     "rank": "GENUS"
+    },
+    {
+     "key": "582Z9",
+     "name": "Trema orientale",
+     "rank": "SPECIES"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "VARIANT",
+    "confidence": 96
+   },
+   "additionalStatus": [
+    {
+     "clbDatasetKey": "53131",
+     "datasetAlias": "IUCN",
+     "datasetKey": "19491596-35ae-4a91-9a98-85cf505f1bd3",
+     "status": "LEAST_CONCERN",
+     "statusCode": "LC",
+     "sourceId": "61988133"
+    }
+   ],
+   "synonym": false,
+   "left": 1312029,
+   "right": 1312044
+  }
+ },
+ {
+  "label": "Albizzia zygia",
+  "dataset": "558",
+  "hints": {
+   "kingdom": "Animalia"
+  },
+  "source_rank": null,
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Albizzia zygia",
+   "kingdom": "Animalia"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "65W69",
+    "name": "Albizia zygia (DC.) J.F.Macbr.",
+    "canonicalName": "Albizia zygia",
+    "authorship": "(DC.) J.F.Macbr.",
+    "rank": "SPECIES",
+    "code": "BOTANICAL",
+    "status": "ACCEPTED",
+    "genericName": "Albizia",
+    "specificEpithet": "zygia",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Albizia</i> <i>zygia</i> (DC.) J.F.Macbr."
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "P",
+     "name": "Plantae",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "CMQ8S",
+     "name": "Pteridobiotina",
+     "rank": "SUBKINGDOM"
+    },
+    {
+     "key": "TP",
+     "name": "Tracheophyta",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "MG",
+     "name": "Magnoliopsida",
+     "rank": "CLASS"
+    },
+    {
+     "key": "383",
+     "name": "Fabales",
+     "rank": "ORDER"
+    },
+    {
+     "key": "623QT",
+     "name": "Fabaceae",
+     "rank": "FAMILY"
+    },
+    {
+     "key": "9CJNC",
+     "name": "Albizia",
+     "rank": "GENUS"
+    },
+    {
+     "key": "65W69",
+     "name": "Albizia zygia",
+     "rank": "SPECIES"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "VARIANT",
+    "confidence": 85
+   },
+   "additionalStatus": [
+    {
+     "clbDatasetKey": "53131",
+     "datasetAlias": "IUCN",
+     "datasetKey": "19491596-35ae-4a91-9a98-85cf505f1bd3",
+     "status": "LEAST_CONCERN",
+     "statusCode": "LC",
+     "sourceId": "60758247"
+    }
+   ],
+   "synonym": false,
+   "left": 1087169,
+   "right": 1087169
+  }
+ },
+ {
+  "label": "Erigeron acre",
+  "dataset": "565",
+  "hints": {},
+  "source_rank": null,
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Erigeron acre"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "6GNFV",
+    "name": "Erigeron acris L.",
+    "canonicalName": "Erigeron acris",
+    "authorship": "L.",
+    "rank": "SPECIES",
+    "code": "BOTANICAL",
+    "status": "ACCEPTED",
+    "genericName": "Erigeron",
+    "specificEpithet": "acris",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Erigeron</i> <i>acris</i> L."
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "P",
+     "name": "Plantae",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "CMQ8S",
+     "name": "Pteridobiotina",
+     "rank": "SUBKINGDOM"
+    },
+    {
+     "key": "TP",
+     "name": "Tracheophyta",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "MG",
+     "name": "Magnoliopsida",
+     "rank": "CLASS"
+    },
+    {
+     "key": "ST",
+     "name": "Asterales",
+     "rank": "ORDER"
+    },
+    {
+     "key": "622TP",
+     "name": "Asteraceae",
+     "rank": "FAMILY"
+    },
+    {
+     "key": "J6T",
+     "name": "Asteroideae",
+     "rank": "SUBFAMILY"
+    },
+    {
+     "key": "KTZMX",
+     "name": "Astereae",
+     "rank": "TRIBE"
+    },
+    {
+     "key": "KV6NZ",
+     "name": "Conyzinae",
+     "rank": "SUBTRIBE"
+    },
+    {
+     "key": "633LL",
+     "name": "Erigeron",
+     "rank": "GENUS"
+    },
+    {
+     "key": "6GNFV",
+     "name": "Erigeron acris",
+     "rank": "SPECIES"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "VARIANT",
+    "confidence": 95
+   },
+   "synonym": false,
+   "left": 945630,
+   "right": 945641
+  }
+ },
+ {
+  "label": "Linaria vulgaris",
+  "dataset": "565",
+  "hints": {},
+  "source_rank": null,
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Linaria vulgaris"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "diagnostics": {
+    "matchType": "NONE",
+    "issues": [],
+    "confidence": 100,
+    "note": "Multiple equal matches for Linaria vulgaris",
+    "alternatives": [
+     {
+      "usage": {
+       "key": "6QGBG",
+       "name": "Linaria vulgaris Mill.",
+       "canonicalName": "Linaria vulgaris",
+       "authorship": "Mill.",
+       "rank": "SPECIES",
+       "code": "BOTANICAL",
+       "status": "ACCEPTED",
+       "genericName": "Linaria",
+       "specificEpithet": "vulgaris",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Linaria</i> <i>vulgaris</i> Mill."
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "P",
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "CMQ8S",
+        "name": "Pteridobiotina",
+        "rank": "SUBKINGDOM"
+       },
+       {
+        "key": "TP",
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "MG",
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "key": "3F4",
+        "name": "Lamiales",
+        "rank": "ORDER"
+       },
+       {
+        "key": "6262K",
+        "name": "Plantaginaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "BVBBB",
+        "name": "Antirrhinoideae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "62YPR",
+        "name": "Linaria",
+        "rank": "GENUS"
+       },
+       {
+        "key": "6QGBG",
+        "name": "Linaria vulgaris",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 115,
+       "note": "Similarity: name=110; authorship=0; classification=-2; rank=6; status=1; score=115",
+       "timeTaken": 0
+      },
+      "synonym": false,
+      "left": 1204941,
+      "right": 1204947
+     },
+     {
+      "usage": {
+       "key": "QBLB2",
+       "name": "Linaria vulgaris Rüppell, WPES, 1835",
+       "canonicalName": "Linaria vulgaris",
+       "authorship": "Rüppell, WPES, 1835",
+       "rank": "SPECIES",
+       "code": "ZOOLOGICAL",
+       "status": "SYNONYM",
+       "genericName": "Linaria",
+       "specificEpithet": "vulgaris",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Linaria</i> <i>vulgaris</i> Rüppell, WPES, 1835"
+      },
+      "acceptedUsage": {
+       "key": "72F75",
+       "name": "Linaria cannabina (Linnaeus, 1758)",
+       "canonicalName": "Linaria cannabina",
+       "authorship": "(Linnaeus, 1758)",
+       "rank": "SPECIES",
+       "code": "ZOOLOGICAL",
+       "genericName": "Linaria",
+       "specificEpithet": "cannabina",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Linaria</i> <i>cannabina</i> (Linnaeus, 1758)"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "CH2",
+        "name": "Chordata",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "8V4V3",
+        "name": "Vertebrata",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "8V4V5",
+        "name": "Gnathostomata",
+        "rank": "INFRAPHYLUM"
+       },
+       {
+        "key": "8VVWB",
+        "name": "Osteichthyes",
+        "rank": "PARVPHYLUM"
+       },
+       {
+        "key": "9CK8W",
+        "name": "Tetrapoda",
+        "rank": "MEGACLASS"
+       },
+       {
+        "key": "V2",
+        "name": "Aves",
+        "rank": "CLASS"
+       },
+       {
+        "key": "3RL",
+        "name": "Passeriformes",
+        "rank": "ORDER"
+       },
+       {
+        "key": "6244D",
+        "name": "Fringillidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "62YPP",
+        "name": "Linaria",
+        "rank": "GENUS"
+       },
+       {
+        "key": "72F75",
+        "name": "Linaria cannabina",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 114,
+       "note": "Similarity: name=110; authorship=0; classification=-2; rank=6; status=0; score=114",
+       "timeTaken": 0
+      },
+      "synonym": true
+     },
+     {
+      "usage": {
+       "key": "B3J4T",
+       "name": "Linaria vulgaris Planellas",
+       "canonicalName": "Linaria vulgaris",
+       "authorship": "Planellas",
+       "rank": "SPECIES",
+       "code": "BOTANICAL",
+       "status": "AMBIGUOUS_SYNONYM",
+       "genericName": "Linaria",
+       "specificEpithet": "vulgaris",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Linaria</i> <i>vulgaris</i> Planellas"
+      },
+      "acceptedUsage": {
+       "key": "6QGR6",
+       "name": "Linaria saxatilis (L.) Chaz.",
+       "canonicalName": "Linaria saxatilis",
+       "authorship": "(L.) Chaz.",
+       "rank": "SPECIES",
+       "code": "BOTANICAL",
+       "genericName": "Linaria",
+       "specificEpithet": "saxatilis",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Linaria</i> <i>saxatilis</i> (L.) Chaz."
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "P",
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "CMQ8S",
+        "name": "Pteridobiotina",
+        "rank": "SUBKINGDOM"
+       },
+       {
+        "key": "TP",
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "MG",
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "key": "3F4",
+        "name": "Lamiales",
+        "rank": "ORDER"
+       },
+       {
+        "key": "6262K",
+        "name": "Plantaginaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "BVBBB",
+        "name": "Antirrhinoideae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "62YPR",
+        "name": "Linaria",
+        "rank": "GENUS"
+       },
+       {
+        "key": "6QGR6",
+        "name": "Linaria saxatilis",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 113,
+       "note": "Similarity: name=110; authorship=0; classification=-2; rank=6; status=-1; score=113",
+       "timeTaken": 0
+      },
+      "synonym": true,
+      "left": 1204912,
+      "right": 1204912
+     },
+     {
+      "usage": {
+       "key": "KS9HB",
+       "name": "Linaria vulgaris",
+       "canonicalName": "Linaria vulgaris",
+       "rank": "SPECIES_AGGREGATE",
+       "status": "SYNONYM",
+       "genericName": "Linaria",
+       "specificEpithet": "vulgaris",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Linaria</i> <i>vulgaris</i>"
+      },
+      "acceptedUsage": {
+       "key": "6QGBG",
+       "name": "Linaria vulgaris Mill.",
+       "canonicalName": "Linaria vulgaris",
+       "authorship": "Mill.",
+       "rank": "SPECIES",
+       "code": "BOTANICAL",
+       "genericName": "Linaria",
+       "specificEpithet": "vulgaris",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Linaria</i> <i>vulgaris</i> Mill."
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "P",
+        "name": "Plantae",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "CMQ8S",
+        "name": "Pteridobiotina",
+        "rank": "SUBKINGDOM"
+       },
+       {
+        "key": "TP",
+        "name": "Tracheophyta",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "MG",
+        "name": "Magnoliopsida",
+        "rank": "CLASS"
+       },
+       {
+        "key": "3F4",
+        "name": "Lamiales",
+        "rank": "ORDER"
+       },
+       {
+        "key": "6262K",
+        "name": "Plantaginaceae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "BVBBB",
+        "name": "Antirrhinoideae",
+        "rank": "SUBFAMILY"
+       },
+       {
+        "key": "62YPR",
+        "name": "Linaria",
+        "rank": "GENUS"
+       },
+       {
+        "key": "6QGBG",
+        "name": "Linaria vulgaris",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 110,
+       "note": "Similarity: name=110; authorship=0; classification=-2; rank=2; status=0; score=110",
+       "timeTaken": 0
+      },
+      "synonym": true,
+      "left": 1204941,
+      "right": 1204947
+     },
+     {
+      "usage": {
+       "key": "6PZG2",
+       "name": "Limaria vulgaris Link, 1807",
+       "canonicalName": "Limaria vulgaris",
+       "authorship": "Link, 1807",
+       "rank": "SPECIES",
+       "code": "ZOOLOGICAL",
+       "status": "SYNONYM",
+       "genericName": "Limaria",
+       "specificEpithet": "vulgaris",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Limaria</i> <i>vulgaris</i> Link, 1807"
+      },
+      "acceptedUsage": {
+       "key": "6PZW8",
+       "name": "Lima vulgaris (Link, 1807)",
+       "canonicalName": "Lima vulgaris",
+       "authorship": "(Link, 1807)",
+       "rank": "SPECIES",
+       "code": "ZOOLOGICAL",
+       "genericName": "Lima",
+       "specificEpithet": "vulgaris",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Lima</i> <i>vulgaris</i> (Link, 1807)"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "M2L",
+        "name": "Mollusca",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "7NF3C",
+        "name": "Bivalvia",
+        "rank": "CLASS"
+       },
+       {
+        "key": "7NVXG",
+        "name": "Autobranchia",
+        "rank": "SUBCLASS"
+       },
+       {
+        "key": "7NF5P",
+        "name": "Pteriomorphia",
+        "rank": "INFRACLASS"
+       },
+       {
+        "key": "7NG7S",
+        "name": "Limida",
+        "rank": "ORDER"
+       },
+       {
+        "key": "7NGQ3",
+        "name": "Limoidea",
+        "rank": "SUPERFAMILY"
+       },
+       {
+        "key": "7NJFL",
+        "name": "Limidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "7P7GV",
+        "name": "Lima",
+        "rank": "GENUS"
+       },
+       {
+        "key": "6PZW8",
+        "name": "Lima vulgaris",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 79,
+       "note": "Similarity: name=75; authorship=0; classification=-2; rank=6; status=0; score=79",
+       "timeTaken": 0
+      },
+      "synonym": true,
+      "left": 114462,
+      "right": 114463
+     },
+     {
+      "usage": {
+       "key": "3V9WV",
+       "name": "Liparis vulgaris Fleming, 1828",
+       "canonicalName": "Liparis vulgaris",
+       "authorship": "Fleming, 1828",
+       "rank": "SPECIES",
+       "code": "ZOOLOGICAL",
+       "status": "SYNONYM",
+       "genericName": "Liparis",
+       "specificEpithet": "vulgaris",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Liparis</i> <i>vulgaris</i> Fleming, 1828"
+      },
+      "acceptedUsage": {
+       "key": "3V9PH",
+       "name": "Liparis liparis (Linnaeus, 1766)",
+       "canonicalName": "Liparis liparis",
+       "authorship": "(Linnaeus, 1766)",
+       "rank": "SPECIES",
+       "code": "ZOOLOGICAL",
+       "genericName": "Liparis",
+       "specificEpithet": "liparis",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Liparis</i> <i>liparis</i> (Linnaeus, 1766)"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "CH2",
+        "name": "Chordata",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "8V4V3",
+        "name": "Vertebrata",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "8V4V5",
+        "name": "Gnathostomata",
+        "rank": "INFRAPHYLUM"
+       },
+       {
+        "key": "8VVWB",
+        "name": "Osteichthyes",
+        "rank": "PARVPHYLUM"
+       },
+       {
+        "key": "8VR36",
+        "name": "Actinopterygii",
+        "rank": "GIGACLASS"
+       },
+       {
+        "key": "KTWM8",
+        "name": "Actinopteri",
+        "rank": "SUPERCLASS"
+       },
+       {
+        "key": "8V4VD",
+        "name": "Teleostei",
+        "rank": "CLASS"
+       },
+       {
+        "key": "PC",
+        "name": "Perciformes",
+        "rank": "ORDER"
+       },
+       {
+        "key": "KV662",
+        "name": "Cottoidei",
+        "rank": "SUBORDER"
+       },
+       {
+        "key": "KVFV2",
+        "name": "Liparidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "KVJDB",
+        "name": "Liparis",
+        "rank": "GENUS"
+       },
+       {
+        "key": "3V9PH",
+        "name": "Liparis liparis",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 69,
+       "note": "Similarity: name=65; authorship=0; classification=-2; rank=6; status=0; score=69",
+       "timeTaken": 0
+      },
+      "synonym": true
+     }
+    ]
+   },
+   "synonym": false
+  }
+ },
+ {
+  "label": "Sitticus floricola",
+  "dataset": "559",
+  "hints": {
+   "class": "Arachnida",
+   "genus": "Sitticus",
+   "order": "Araneae",
+   "family": "Salticidae",
+   "phylum": "Arthropoda",
+   "kingdom": "Animalia"
+  },
+  "source_rank": null,
+  "source_authorships": [],
+  "query": {
+   "scientificName": "Sitticus floricola",
+   "class": "Arachnida",
+   "genus": "Sitticus",
+   "order": "Araneae",
+   "family": "Salticidae",
+   "phylum": "Arthropoda",
+   "kingdom": "Animalia"
+  },
+  "captured_from": "tier_cache (live GBIF v2, COL XR checklistKey, Oct 2026)",
+  "response": {
+   "usage": {
+    "key": "CVNXY",
+    "name": "Salticidae Blackwall, 1841",
+    "canonicalName": "Salticidae",
+    "authorship": "Blackwall, 1841",
+    "rank": "FAMILY",
+    "code": "ZOOLOGICAL",
+    "status": "ACCEPTED",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Salticidae</i> Blackwall, 1841"
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "N",
+     "name": "Animalia",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "RT",
+     "name": "Arthropoda",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "KZWYC",
+     "name": "Chelicerata",
+     "rank": "SUBPHYLUM"
+    },
+    {
+     "key": "CCQKT",
+     "name": "Arachnida",
+     "rank": "CLASS"
+    },
+    {
+     "key": "RN",
+     "name": "Araneae",
+     "rank": "ORDER"
+    },
+    {
+     "key": "CVNXY",
+     "name": "Salticidae",
+     "rank": "FAMILY"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "HIGHERRANK",
+    "confidence": 100,
+    "note": "nextMatch=0",
+    "alternatives": [
+     {
+      "usage": {
+       "key": "T2CKQ",
+       "name": "Sitticus floricola Simon, 1901a",
+       "canonicalName": "Sitticus floricola",
+       "authorship": "Simon, 1901a",
+       "rank": "SPECIES",
+       "status": "SYNONYM",
+       "genericName": "Sitticus",
+       "specificEpithet": "floricola",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Sitticus</i> <i>floricola</i> Simon, 1901a"
+      },
+      "acceptedUsage": {
+       "key": "93QY8",
+       "name": "Attulus floricola (C. L. Koch, 1837)",
+       "canonicalName": "Attulus floricola",
+       "authorship": "(C. L. Koch, 1837)",
+       "rank": "SPECIES",
+       "code": "ZOOLOGICAL",
+       "genericName": "Attulus",
+       "specificEpithet": "floricola",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Attulus</i> <i>floricola</i> (C. L. Koch, 1837)"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "RT",
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "KZWYC",
+        "name": "Chelicerata",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "CCQKT",
+        "name": "Arachnida",
+        "rank": "CLASS"
+       },
+       {
+        "key": "RN",
+        "name": "Araneae",
+        "rank": "ORDER"
+       },
+       {
+        "key": "CVNXY",
+        "name": "Salticidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "CTR4L",
+        "name": "Attulus",
+        "rank": "GENUS"
+       },
+       {
+        "key": "93QY8",
+        "name": "Attulus floricola",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 100,
+       "note": "Similarity: name=110; authorship=0; classification=50; rank=6; status=0; score=166",
+       "timeTaken": 0
+      },
+      "synonym": true
+     },
+     {
+      "usage": {
+       "key": "93MVV",
+       "name": "Sitticus floricola (C. L. Koch, 1837)",
+       "canonicalName": "Sitticus floricola",
+       "authorship": "(C. L. Koch, 1837)",
+       "rank": "SPECIES",
+       "code": "ZOOLOGICAL",
+       "status": "SYNONYM",
+       "genericName": "Sitticus",
+       "specificEpithet": "floricola",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Sitticus</i> <i>floricola</i> (C. L. Koch, 1837)"
+      },
+      "acceptedUsage": {
+       "key": "Q37S",
+       "name": "Calositticus floricola (C. L. Koch, 1837)",
+       "canonicalName": "Calositticus floricola",
+       "authorship": "(C. L. Koch, 1837)",
+       "rank": "SPECIES",
+       "code": "ZOOLOGICAL",
+       "genericName": "Calositticus",
+       "specificEpithet": "floricola",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Calositticus</i> <i>floricola</i> (C. L. Koch, 1837)"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "RT",
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "KZWYC",
+        "name": "Chelicerata",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "CCQKT",
+        "name": "Arachnida",
+        "rank": "CLASS"
+       },
+       {
+        "key": "RN",
+        "name": "Araneae",
+        "rank": "ORDER"
+       },
+       {
+        "key": "CVNXY",
+        "name": "Salticidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "MGLBQ",
+        "name": "Calositticus",
+        "rank": "GENUS"
+       },
+       {
+        "key": "Q37S",
+        "name": "Calositticus floricola",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "EXACT",
+       "confidence": 100,
+       "note": "Similarity: name=110; authorship=0; classification=50; rank=6; status=0; score=166",
+       "timeTaken": 0
+      },
+      "synonym": true
+     },
+     {
+      "usage": {
+       "key": "V9KFP",
+       "name": "Salticus floricola Doleschall, 1859",
+       "canonicalName": "Salticus floricola",
+       "authorship": "Doleschall, 1859",
+       "rank": "SPECIES",
+       "code": "ZOOLOGICAL",
+       "status": "SYNONYM",
+       "genericName": "Salticus",
+       "specificEpithet": "floricola",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Salticus</i> <i>floricola</i> Doleschall, 1859"
+      },
+      "acceptedUsage": {
+       "key": "33Q93",
+       "name": "Cytaea sinuata (Doleschall, 1859)",
+       "canonicalName": "Cytaea sinuata",
+       "authorship": "(Doleschall, 1859)",
+       "rank": "SPECIES",
+       "code": "ZOOLOGICAL",
+       "genericName": "Cytaea",
+       "specificEpithet": "sinuata",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Cytaea</i> <i>sinuata</i> (Doleschall, 1859)"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "RT",
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "KZWYC",
+        "name": "Chelicerata",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "CCQKT",
+        "name": "Arachnida",
+        "rank": "CLASS"
+       },
+       {
+        "key": "RN",
+        "name": "Araneae",
+        "rank": "ORDER"
+       },
+       {
+        "key": "CVNXY",
+        "name": "Salticidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "CV22P",
+        "name": "Cytaea",
+        "rank": "GENUS"
+       },
+       {
+        "key": "33Q93",
+        "name": "Cytaea sinuata",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 46,
+       "note": "Similarity: name=-10; authorship=0; classification=50; rank=6; status=0; score=46",
+       "timeTaken": 0
+      },
+      "synonym": true
+     },
+     {
+      "usage": {
+       "key": "V85XG",
+       "name": "Salticus floricola O. Pickard-Cambridge, 1873c",
+       "canonicalName": "Salticus floricola",
+       "authorship": "O. Pickard-Cambridge, 1873c",
+       "rank": "SPECIES",
+       "status": "SYNONYM",
+       "genericName": "Salticus",
+       "specificEpithet": "floricola",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Salticus</i> <i>floricola</i> O. Pickard-Cambridge, 1873c"
+      },
+      "acceptedUsage": {
+       "key": "93QY8",
+       "name": "Attulus floricola (C. L. Koch, 1837)",
+       "canonicalName": "Attulus floricola",
+       "authorship": "(C. L. Koch, 1837)",
+       "rank": "SPECIES",
+       "code": "ZOOLOGICAL",
+       "genericName": "Attulus",
+       "specificEpithet": "floricola",
+       "type": "SCIENTIFIC",
+       "formattedName": "<i>Attulus</i> <i>floricola</i> (C. L. Koch, 1837)"
+      },
+      "classification": [
+       {
+        "key": "CS5HF",
+        "name": "Eukaryota",
+        "rank": "DOMAIN"
+       },
+       {
+        "key": "N",
+        "name": "Animalia",
+        "rank": "KINGDOM"
+       },
+       {
+        "key": "RT",
+        "name": "Arthropoda",
+        "rank": "PHYLUM"
+       },
+       {
+        "key": "KZWYC",
+        "name": "Chelicerata",
+        "rank": "SUBPHYLUM"
+       },
+       {
+        "key": "CCQKT",
+        "name": "Arachnida",
+        "rank": "CLASS"
+       },
+       {
+        "key": "RN",
+        "name": "Araneae",
+        "rank": "ORDER"
+       },
+       {
+        "key": "CVNXY",
+        "name": "Salticidae",
+        "rank": "FAMILY"
+       },
+       {
+        "key": "CTR4L",
+        "name": "Attulus",
+        "rank": "GENUS"
+       },
+       {
+        "key": "93QY8",
+        "name": "Attulus floricola",
+        "rank": "SPECIES"
+       }
+      ],
+      "diagnostics": {
+       "matchType": "VARIANT",
+       "confidence": 46,
+       "note": "Similarity: name=-10; authorship=0; classification=50; rank=6; status=0; score=46",
+       "timeTaken": 0
+      },
+      "synonym": true
+     }
+    ]
+   },
+   "synonym": false
+  }
+ },
+ {
+  "label": "Ornithuroscincus noctua (Lesson, 1830)",
+  "dataset": "568",
+  "hints": {
+   "genus": "Ornithuroscincus",
+   "order": "Squamata (lizards)",
+   "family": "Scincidae",
+   "phylum": "Chordata",
+   "kingdom": "Animalia"
+  },
+  "source_rank": "species",
+  "source_authorships": [],
+  "query": {
+   "family": "Scincidae",
+   "genus": "Ornithuroscincus",
+   "kingdom": "Animalia",
+   "order": "Squamata (lizards)",
+   "phylum": "Chordata",
+   "scientificName": "Ornithuroscincus noctua (Lesson, 1830)"
+  },
+  "captured_from": "tier_cache",
+  "response": {
+   "usage": {
+    "key": "8SJ3L",
+    "name": "Ornithuroscincus noctua (Lesson, 1829)",
+    "canonicalName": "Ornithuroscincus noctua",
+    "authorship": "(Lesson, 1829)",
+    "rank": "SPECIES",
+    "code": "ZOOLOGICAL",
+    "status": "ACCEPTED",
+    "genericName": "Ornithuroscincus",
+    "specificEpithet": "noctua",
+    "type": "SCIENTIFIC",
+    "formattedName": "<i>Ornithuroscincus</i> <i>noctua</i> (Lesson, 1829)"
+   },
+   "classification": [
+    {
+     "key": "CS5HF",
+     "name": "Eukaryota",
+     "rank": "DOMAIN"
+    },
+    {
+     "key": "N",
+     "name": "Animalia",
+     "rank": "KINGDOM"
+    },
+    {
+     "key": "CH2",
+     "name": "Chordata",
+     "rank": "PHYLUM"
+    },
+    {
+     "key": "8V4V3",
+     "name": "Vertebrata",
+     "rank": "SUBPHYLUM"
+    },
+    {
+     "key": "8V4V5",
+     "name": "Gnathostomata",
+     "rank": "INFRAPHYLUM"
+    },
+    {
+     "key": "8VVWB",
+     "name": "Osteichthyes",
+     "rank": "PARVPHYLUM"
+    },
+    {
+     "key": "9CK8W",
+     "name": "Tetrapoda",
+     "rank": "MEGACLASS"
+    },
+    {
+     "key": "RP",
+     "name": "Reptilia",
+     "rank": "CLASS"
+    },
+    {
+     "key": "45C",
+     "name": "Squamata",
+     "rank": "ORDER"
+    },
+    {
+     "key": "V7J5V",
+     "name": "Autarchoglossa",
+     "rank": "SUBORDER"
+    },
+    {
+     "key": "G43",
+     "name": "Scincidae",
+     "rank": "FAMILY"
+    },
+    {
+     "key": "8GNR5",
+     "name": "Sphenomorphinae",
+     "rank": "SUBFAMILY"
+    },
+    {
+     "key": "8TMQK",
+     "name": "Ornithuroscincus",
+     "rank": "GENUS"
+    },
+    {
+     "key": "8SJ3L",
+     "name": "Ornithuroscincus noctua",
+     "rank": "SPECIES"
+    }
+   ],
+   "diagnostics": {
+    "matchType": "EXACT",
+    "confidence": 100,
+    "timeTaken": 0
+   },
+   "additionalStatus": [
+    {
+     "clbDatasetKey": "53131",
+     "datasetAlias": "IUCN",
+     "datasetKey": "19491596-35ae-4a91-9a98-85cf505f1bd3",
+     "status": "LEAST_CONCERN",
+     "statusCode": "LC",
+     "sourceId": "196630"
+    }
+   ],
+   "synonym": false
+  }
+ }
+]
