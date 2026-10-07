@@ -269,6 +269,18 @@ class MatchColTests(SimpleTestCase):
         taxon_matching.match_col([{"scientificName": "Sterna"}])
         self.assertEqual(get_json.call_count, 1)
 
+    def test_exact_alternatives_are_kept_beyond_the_display_limit_and_overflow_is_flagged(self):
+        def alternative(key, match_type):
+            return {"usage": {"key": key, "name": f"Aus {key}", "rank": "GENUS"}, "diagnostics": {"matchType": match_type}}
+        payload = {"diagnostics": {"matchType": "EXACT", "alternatives": [alternative(str(i), "VARIANT") for i in range(8)]
+                                   + [alternative(f"e{i}", "EXACT") for i in range(3)]}}
+        summary = taxon_matching.summarize_match(payload)
+        self.assertEqual(sum(item["matchType"] == "EXACT" for item in summary["alternatives"]), 3)
+        self.assertEqual(sum(item["matchType"] == "VARIANT" for item in summary["alternatives"]), taxon_matching.MAX_ALTERNATIVES)
+        self.assertFalse(summary["exactAlternativesDropped"])
+        many = {"diagnostics": {"matchType": "EXACT", "alternatives": [alternative(f"e{i}", "EXACT") for i in range(25)]}}
+        self.assertTrue(taxon_matching.summarize_match(many)["exactAlternativesDropped"])
+
     @patch("api.taxon_matching._get_json")
     def test_identifiers_are_sent_and_are_part_of_the_dedup_key(self, get_json):
         get_json.side_effect = [[{"diagnostics": {"matchType": "NONE"}}, {"diagnostics": {"matchType": "NONE"}}],

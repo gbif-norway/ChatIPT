@@ -32,6 +32,8 @@ RUN_BUDGET_SECONDS = 180
 # Lookups made while a reviewer waits in the browser.
 INTERACTIVE_BUDGET_SECONDS = 10
 MAX_ALTERNATIVES = 5
+# Exact alternatives are possible homonyms of the user's name, so more of them are kept; beyond this a match says so.
+MAX_EXACT_ALTERNATIVES = 20
 CONCURRENT_REQUESTS = 4
 PROGRESS_CHUNK = 25
 
@@ -501,8 +503,7 @@ def summarize_match(payload):
             "matchType": str(alt_diagnostics.get("matchType") or "").upper() or None,
             "confidence": alt_diagnostics.get("confidence"),
         })
-        if len(alternatives) >= MAX_ALTERNATIVES:
-            break
+    alternatives, exact_dropped = bounded_alternatives(alternatives)
     return {
         "matchType": match_type,
         "status": MATCH_STATUS.get(match_type, "ambiguous"),
@@ -511,12 +512,31 @@ def summarize_match(payload):
         "usage": usage,
         "acceptedUsage": accepted,
         "alternatives": alternatives,
+        "exactAlternativesDropped": exact_dropped,
         "issues": [str(issue) for issue in diagnostics.get("issues") or []],
         "matchedId": ({"id": (diagnostics.get("matchedID") or {}).get("id"),
                        "scientificName": (diagnostics.get("matchedID") or {}).get("scientificName"),
                        "datasetTitle": (diagnostics.get("matchedID") or {}).get("datasetTitle")}
                       if diagnostics.get("matchedID") else None),
     }
+
+
+def bounded_alternatives(alternatives):
+    """(alternatives kept in their order, whether exact ones were dropped): every exact one up to MAX_EXACT_ALTERNATIVES,
+    other ones up to MAX_ALTERNATIVES."""
+    kept, exact, other, dropped = [], 0, 0, False
+    for alternative in alternatives:
+        if alternative.get("matchType") == "EXACT":
+            if exact >= MAX_EXACT_ALTERNATIVES:
+                dropped = True
+                continue
+            exact += 1
+        else:
+            if other >= MAX_ALTERNATIVES:
+                continue
+            other += 1
+        kept.append(alternative)
+    return kept, dropped
 
 
 def _query_params(query):
@@ -582,7 +602,9 @@ def match_col(queries, deadline=None, verbose_exact=False):
                 alternatives = list(verbose["alternatives"])
                 if verbose["usage"] and str(verbose["usage"].get("id")) != str((results[key]["usage"] or {}).get("id")):
                     alternatives.insert(0, {**verbose["usage"], "matchType": verbose["matchType"], "confidence": verbose["confidence"]})
-                results[key] = {**results[key], "alternatives": alternatives[:MAX_ALTERNATIVES]}
+                kept, dropped = bounded_alternatives(alternatives)
+                results[key] = {**results[key], "alternatives": kept,
+                                "exactAlternativesDropped": dropped or verbose.get("exactAlternativesDropped", False)}
             else:
                 results[key] = summarize_match(single)
     return [

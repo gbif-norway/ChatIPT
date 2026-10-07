@@ -21,7 +21,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from api import taxon_matching
-from api.taxon_matching import (HINT_RANKS, MAX_ALTERNATIVES, NAME_RULES_VERSION, RANK_ORDER, TaxonServiceError, authorships_agree, col_release,
+from api.taxon_matching import (HINT_RANKS, NAME_RULES_VERSION, RANK_ORDER, TaxonServiceError, authorships_agree, col_release,
                                 implied_rank, match_col, name_change, name_parts, split_qualifier)
 
 logger = logging.getLogger(__name__)
@@ -370,7 +370,9 @@ def compact_match(summary):
     return {'matchType': summary.get('matchType'), 'status': summary.get('status'), 'confidence': summary.get('confidence'),
             'usage': compact_usage(summary.get('usage')), 'acceptedUsage': compact_usage(summary.get('acceptedUsage')),
             'alternatives': [{**compact_usage(alternative), 'matchType': alternative.get('matchType')}
-                             for alternative in (summary.get('alternatives') or [])[:MAX_ALTERNATIVES]],
+                             for alternative in summary.get('alternatives') or []],
+            # More exact usages than were kept: their homonyms cannot all be checked.
+            'exactAlternativesDropped': bool(summary.get('exactAlternativesDropped')),
             'hintOnly': bool(summary.get('hintOnly')), 'issues': list(summary.get('issues') or []),
             'matchedId': summary.get('matchedId'),
             **{key: summary[key] for key in ('idCheck', 'disambiguatedBy', 'nameMatch') if key in summary}}
@@ -636,6 +638,8 @@ def _homonyms(record):
             continue
         if not _same_taxon(pick, usage):
             found.append(usage)
+    if (record.get('match') or {}).get('exactAlternativesDropped'):
+        found.append({'id': None, 'scientificName': pick.get('scientificName'), 'unlisted': True})
     return found
 
 

@@ -1608,6 +1608,13 @@ class GroupDecisionTests(SimpleTestCase):
         record['match']['alternatives'] = [usage('2', 'Aidae')]
         self.assertEqual(names.stem_usage(record)['scientificNameAuthorship'], 'Smith')
 
+    def test_unlisted_exact_alternatives_count_as_homonyms(self):
+        record = {'label': 'Aus', 'rows': 1, 'qualifier': None, 'parsed': real_parse('Aus'),
+                  'match': {'matchType': 'EXACT', 'hintOnly': False, 'exactAlternativesDropped': True, 'alternatives': [],
+                            'usage': {'id': '1', 'scientificName': 'Aus', 'scientificNameAuthorship': 'Smith', 'taxonRank': 'genus'}}}
+        self.assertTrue(names._homonyms(record))
+        self.assertEqual(names.row_default(record, names.classify(record)), 'parsed')
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,
