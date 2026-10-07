@@ -513,7 +513,7 @@ def _query_params(query):
     return params
 
 
-def match_col(queries, deadline=None):
+def match_col(queries, deadline=None, verbose_uninomials=False):
     """Match many names against COL XR through GBIF; returns one summary per query, in order.
 
     Names go through the batch endpoint first. The batch response omits alternatives, and it has
@@ -541,7 +541,10 @@ def match_col(queries, deadline=None):
             )
         for key, item in zip(chunk, payload):
             results[key] = summarize_match(item)
-    retry = [key for key, summary in results.items() if summary["status"] not in {"exact", "variant"}]
+    # With verbose_uninomials, exact one-word names are fetched again for their alternatives: a genus or higher name is
+    # where homonyms live, and the batch response leaves them out.
+    retry = [key for key, summary in results.items() if summary["status"] not in {"exact", "variant"}
+             or (verbose_uninomials and len(unique[key]["scientificName"].split()) == 1)]
 
     def verbose_match(key):
         return _get_json(

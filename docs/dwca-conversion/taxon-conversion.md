@@ -190,7 +190,12 @@ authorship is written only when the same-name usages agree on it and it agrees
 with any authorship the user supplied, so homonyms ("Viola" the plant and the
 moth, "Ficus" in 558) are published as the bare genus name. "sp." and "spp." follow a genus or family, so a stem COL has at a
 higher rank ("Anura sp.", the order) is decided one name at a time; "indet." may
-stop at any rank. DwC-DP has no
+stop at any rank. When the same-name candidates sit at different ranks ("Anura" the order and
+the genus), only the source's own rank settles which one is meant; a genus and
+its subgenus of the same name count as one. The stem's lineage is checked
+against the source's kingdom, phylum and class like any other name. Exact
+one-word names are fetched with GBIF's verbose output, because the batch
+response leaves out the homonyms a genus or higher name may have. DwC-DP has no
 identificationQualifier, so identification rows get `taxonFormula` "A sp.",
 "A spp." or "A indet." from their own row's qualifier, else the label's (blank
 cells only). `verbatimIdentification` still holds the text as written.

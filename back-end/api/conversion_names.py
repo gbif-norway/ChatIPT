@@ -379,12 +379,12 @@ def check_chunk(items, deadline):
     match_items = [item for item in items if not item.get('match')]
     step1 = {}
     try:
-        summaries = match_col([item['query'] for item in match_items], deadline=deadline) if match_items else []
+        summaries = match_col([item['query'] for item in match_items], deadline=deadline, verbose_uninomials=True) if match_items else []
         step1 = {item['label']: compact_match(summary) for item, summary in zip(match_items, summaries)}
         id_items = [item for item in match_items if item.get('ids')
                     and not _exact_same_name(step1[item['label']], split_qualifier(item['label'])[0])]
         step2_queries = [{**item['query'], **item['ids']} for item in id_items]
-        step2 = match_col(step2_queries, deadline=deadline) if step2_queries else []
+        step2 = match_col(step2_queries, deadline=deadline, verbose_uninomials=True) if step2_queries else []
         for item, summary in zip(id_items, step2):
             first = step1[item['label']]
             second = compact_match(summary)
@@ -573,6 +573,11 @@ def stem_usage(record):
     candidates = _stem_candidates(record)
     if not candidates:
         return None
+    # A genus and its subgenus of the same name are one assertion; any other rank difference ("Anura" the order and the
+    # genus) is resolved only when the source's own rank is the pick's.
+    ranks = {'genus' if usage.get('taxonRank') == 'subgenus' else usage.get('taxonRank') for usage, _ in candidates}
+    if candidates[0][1] and len(ranks) > 1 and record.get('source_rank') != candidates[0][0].get('taxonRank'):
+        return None
     if candidates[0][1]:
         usage = candidates[0][0]
         authorship = usage.get('scientificNameAuthorship')
@@ -584,7 +589,6 @@ def stem_usage(record):
         return {'scientificName': usage.get('scientificName'), 'scientificNameAuthorship': authorship,
                 'taxonRank': usage.get('taxonRank'), 'usageId': str(usage['id']) if usage.get('id') is not None else None,
                 'candidates': len(candidates)}
-    ranks = {usage.get('taxonRank') for usage, _ in candidates}
     if len(ranks) != 1 or None in ranks:
         return None
     usage = candidates[0][0]
@@ -656,6 +660,22 @@ def _rank_conflict(record):
     return col_rank if col_rank in RANK_ORDER and col_rank != source_rank else None
 
 
+def _lineage(record):
+    """COL's classification of the user's own name: the same-name pick's, or what every exact stem candidate agrees on."""
+    pick = _same_name_match(record)
+    if pick:
+        return pick.get('classification') or {}
+    if qualifier_kind(record) != 'uncertain':
+        return {}
+    candidates = [usage for usage, _ in _stem_candidates(record)]
+    shared = {}
+    for rank in ('kingdom', 'phylum', 'class'):
+        values = {(usage.get('classification') or {}).get(rank) for usage in candidates}
+        if len(values) == 1 and None not in values:
+            shared[rank] = values.pop()
+    return shared
+
+
 def _conflicts(record):
     match = record.get('match') or {}
     usage = match.get('usage') or {}
@@ -676,10 +696,12 @@ def _conflicts(record):
     mixed = record.get('mixed_hints') or []
     if mixed:
         out.append(('mixed', 'check:mixed', f"Your rows give this name different {', '.join(mixed)}"))
-    # The source's lineage is compared with COL's pick whenever that pick is the same name, whatever the match type.
-    for rank in ('kingdom', 'phylum', 'class') if _same_name_match(record) else ():
+    # The source's lineage is compared with COL's pick whenever that pick is the same name, whatever the match type, or
+    # for a "sp." stem with the lineage all its same-name candidates share.
+    lineage = _lineage(record)
+    for rank in ('kingdom', 'phylum', 'class'):
         hint = (record.get('hints') or {}).get(rank)
-        theirs = ((usage.get('classification') or {}).get(rank))
+        theirs = lineage.get(rank)
         if hint and theirs and _hint_normal(hint) != _hint_normal(theirs):
             out.append((rank, f'check:{rank}:{hint}:{theirs}', f'Your {rank} says {hint}; COL places this name in {theirs}'))
     return out
@@ -888,8 +910,7 @@ def groups(state, classified=None):
                 record = members[0][0]
                 code = reason['code']
                 if code in {'kingdom', 'phylum', 'class'}:
-                    signature = {'code': code, 'yours': (record.get('hints') or {}).get(code),
-                                 'col': (((record.get('match') or {}).get('usage') or {}).get('classification') or {}).get(code)}
+                    signature = {'code': code, 'yours': (record.get('hints') or {}).get(code), 'col': _lineage(record).get(code)}
                 elif code == 'mixed':
                     signature = {'code': code, 'yours': ', '.join(record.get('mixed_hints') or []), 'col': None}
                 elif code == 'id':

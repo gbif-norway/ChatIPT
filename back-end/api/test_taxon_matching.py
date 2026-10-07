@@ -241,6 +241,19 @@ class MatchColTests(SimpleTestCase):
         self.assertEqual(retry_call.kwargs["params"]["kingdom"], "Animalia")
 
     @patch("api.taxon_matching._get_json")
+    def test_exact_uninomials_can_be_fetched_again_for_their_homonyms(self, get_json):
+        exact = {"diagnostics": {"matchType": "EXACT"}, "usage": {"key": "1", "name": "Sterna", "rank": "GENUS"}}
+        get_json.side_effect = [[exact, {**exact, "usage": {"key": "2", "name": "Sterna hirundo", "rank": "SPECIES"}}], exact]
+        taxon_matching.match_col([{"scientificName": "Sterna"}, {"scientificName": "Sterna hirundo"}], verbose_uninomials=True)
+        verbose = get_json.call_args_list[1:]
+        self.assertEqual([call.kwargs["params"]["scientificName"] for call in verbose], ["Sterna"])
+        self.assertEqual(verbose[0].kwargs["params"]["verbose"], "true")
+        get_json.reset_mock(side_effect=True)
+        get_json.side_effect = [[exact]]
+        taxon_matching.match_col([{"scientificName": "Sterna"}])
+        self.assertEqual(get_json.call_count, 1)
+
+    @patch("api.taxon_matching._get_json")
     def test_identifiers_are_sent_and_are_part_of_the_dedup_key(self, get_json):
         get_json.side_effect = [[{"diagnostics": {"matchType": "NONE"}}, {"diagnostics": {"matchType": "NONE"}}],
                                 {"diagnostics": {"matchType": "NONE"}}, {"diagnostics": {"matchType": "NONE"}}]

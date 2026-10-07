@@ -67,7 +67,7 @@ MATCHES = {
 }
 
 
-def fake_match(queries, deadline=None):
+def fake_match(queries, deadline=None, **kwargs):
     return [MATCHES.get(query['scientificName']) or col_summary('NONE') for query in queries]
 
 
@@ -213,7 +213,7 @@ class CollectTests(SimpleTestCase):
 
 
 class CheckChunkTests(SimpleTestCase):
-    def fixture_match(self, queries, deadline=None):
+    def fixture_match(self, queries, deadline=None, **kwargs):
         entries = {json.dumps(item['query'], sort_keys=True): item for item in ID_MATCHES}
         return [taxon_matching.summarize_match(entries[json.dumps(query, sort_keys=True)]['response']) for query in queries]
 
@@ -273,7 +273,7 @@ class CheckChunkTests(SimpleTestCase):
 
     def test_step_two_failure_discards_matches_but_keeps_parses(self):
         calls = 0
-        def failing_match(queries, deadline=None):
+        def failing_match(queries, deadline=None, **kwargs):
             nonlocal calls
             calls += 1
             if calls == 1:
@@ -509,7 +509,7 @@ class NameJobTests(NamesCase):
         self.inspected()
         calls = []
 
-        def limited(queries, deadline=None):
+        def limited(queries, deadline=None, **kwargs):
             calls.append(len(queries))
             if len(calls) == 2:
                 raise TaxonServiceError('the time budget for this matching run was used up')
@@ -702,7 +702,7 @@ class NameDecisionAPITests(NamesCase):
         self.assertNotIn('changes', first['batches'][0])
 
     def test_a_fully_automatic_check_settles_the_fallback_and_declines_survive_a_recheck(self):
-        def all_exact(queries, deadline=None):
+        def all_exact(queries, deadline=None, **kwargs):
             exact = {'Cus dus': col_summary('EXACT', 'COL-CUS', 'Cus dus', 'Jones')}
             return [exact.get(query['scientificName'].split(' (')[0]) or MATCHES.get(query['scientificName']) or col_summary('NONE')
                     for query in queries]
@@ -1007,7 +1007,7 @@ def answer_chat(conversion_id, job_id, claim):
 def budget_after_first_chunk(on_first=None):
     calls = []
 
-    def limited(queries, deadline=None):
+    def limited(queries, deadline=None, **kwargs):
         calls.append(len(queries))
         if len(calls) == 1 and on_first:
             on_first()
@@ -1099,7 +1099,7 @@ class JobOrderingTests(NamesCase):
         self.inspect_without_ai()
         calls = []
 
-        def match(queries, deadline=None):
+        def match(queries, deadline=None, **kwargs):
             calls.append(len(queries))
             if len(calls) == 1:
                 self.assertEqual(self.post('chat', message='Wait for me').status_code, 202)
@@ -1115,7 +1115,7 @@ class JobOrderingTests(NamesCase):
         self.inspect_without_ai()
         calls = []
 
-        def match(queries, deadline=None):
+        def match(queries, deadline=None, **kwargs):
             calls.append(len(queries))
             if len(calls) == 1:
                 self.assertEqual(self.post('review').status_code, 202)
@@ -1215,7 +1215,7 @@ def id_fixture_record(label, ids=None):
                        if key in {'scientificNameID', 'taxonID'}})
     cases_by_query = {json.dumps(case['query'], sort_keys=True): case for case in ID_MATCHES_FIXTURE}
 
-    def match(queries, deadline=None):
+    def match(queries, deadline=None, **kwargs):
         return [taxon_matching.summarize_match(cases_by_query[json.dumps(item, sort_keys=True)]['response'])
                 for item in queries]
 
@@ -1483,6 +1483,27 @@ class GroupDecisionTests(SimpleTestCase):
         stem = record({'scientificNameAuthorship': None})
         stem.update(label='Aus sp.', qualifier='sp.', parsed=real_parse())
         self.assertIsNone(names.stem_usage(stem)['scientificNameAuthorship'])
+
+    def test_a_stem_whose_same_name_usages_differ_in_rank_needs_the_supplied_rank(self):
+        anura = copy.deepcopy(FIXTURE_RECORDS['Anura indet.'])  # COL's pick is the order; genus homonyms are alternatives
+        self.assertEqual(names.stem_usage({**anura, 'source_rank': 'order'})['taxonRank'], 'order')
+        unranked = {**anura, 'source_rank': None}
+        self.assertIsNone(names.stem_usage(unranked))
+        self.assertEqual((names.classify(unranked)['kind'], names.classify(unranked)['reasons'][0]['code']), ('unconfirmed', 'rank'))
+        # A genus and its subgenus of the same name ("Sterna") are one assertion.
+        self.assertEqual(names.stem_usage(copy.deepcopy(FIXTURE_RECORDS['Sterna sp.']))['taxonRank'], 'genus')
+
+    def test_a_sp_stem_found_only_among_alternatives_is_checked_against_the_sources_kingdom(self):
+        # 558: "Sapotaceae sp" tagged Animalia; the verbose match picks nothing and lists the plant family twice.
+        record = {'label': 'Sapotaceae sp', 'rows': 28, 'qualifier': 'sp.', 'hints': {'kingdom': 'Animalia'}, 'parsed': real_parse(),
+                  'match': {'matchType': 'HIGHERRANK', 'hintOnly': True, 'usage': None, 'alternatives': [
+                      {'id': 'A', 'scientificName': 'Sapotaceae', 'taxonRank': 'family', 'matchType': 'EXACT',
+                       'classification': {'kingdom': 'Plantae'}},
+                      {'id': 'B', 'scientificName': 'Sapotaceae', 'taxonRank': 'family', 'matchType': 'EXACT',
+                       'classification': {'kingdom': 'Plantae'}}]}}
+        classification = names.classify(record)
+        self.assertEqual((classification['group'], classification['eligible']), ('check:kingdom:Animalia:Plantae', ['col', 'mine']))
+        self.assertEqual(names.auto_accept({'labels': [record], 'decisions': {}, 'col_release': RELEASE}), 0)
 
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
@@ -2177,7 +2198,7 @@ class SpellingCorrectionTests(SimpleTestCase):
         self.assertEqual(names.unconfirmed(state), {})
 
 
-def coarse_match(queries, deadline=None):
+def coarse_match(queries, deadline=None, **kwargs):
     """"Aus bus L." matched only to its genus, as GBIF does for a species missing from COL."""
     return [col_summary('HIGHERRANK', 'COL-AUS-GENUS', 'Aus', 'L.', rank='GENUS') if query['scientificName'] == 'Aus bus L.'
             else fake_match([query])[0] for query in queries]

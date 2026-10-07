@@ -215,7 +215,7 @@ function NameGroup({ group, summary, planId, url, datasetId, updated, editable, 
 function PreAcceptedGroup({ group, summary, planId, url, datasetId, updated, editable, busy, send, onDecide }) {
   const [expanded, setExpanded] = useState(false)
   const [selected, setSelected] = useState(group.default || groupOptions(group)[0]?.decision || '')
-  const verb = group.kind === 'auto' ? 'exact Catalogue of Life matches' : 'published as the genus or family'
+  const verb = group.kind === 'auto' ? 'exact Catalogue of Life matches' : 'published as the name before “sp.” or “indet.”'
   const undoAll = async () => { try { await send(undoAutoBody(planId, group.kind)) } catch (err) { return err } }
   return <section className="name-review-preaccepted">
     <div className="d-flex flex-wrap align-items-center gap-2">

@@ -17,7 +17,7 @@ test('group order, titles and option labels follow the server groups', () => {
   ])
   assert.deepEqual(groupOptions({ kind: 'check', options: [{ decision: 'mine', eligible: 0 }] }), [{ decision: 'mine', label: 'Keep my names', eligible: 0 }])
   assert.equal(groupOptions({ kind: 'spelling', options: [{ decision: 'col', eligible: 2 }, { decision: 'mine', eligible: 1 }] })[1].label, 'Keep my spelling')
-  assert.equal(groupOptions({ kind: 'uncertain', options: [{ decision: 'stem', eligible: 4 }, { decision: 'keep', eligible: 2 }] })[0].label, 'Publish the genus or family name')
+  assert.equal(groupOptions({ kind: 'uncertain', options: [{ decision: 'stem', eligible: 4 }, { decision: 'keep', eligible: 2 }] })[0].label, 'Publish the name without “sp.”')
   assert.equal(groupOptions({ kind: 'unconfirmed', options: [{ decision: 'mine', eligible: 3 }] })[0].eligible, 3)
   assert.equal(applyLabel(1), 'Apply to 1 name')
   assert.equal(applyLabel(4), 'Apply to 4 names')
@@ -67,7 +67,7 @@ test('request bodies and group paging use the server contract', () => {
 })
 
 test('row helpers label result, provenance, reasons and stem choices', () => {
-  assert.equal(DECISION_LABELS.stem, 'Published as the genus or family')
+  assert.equal(DECISION_LABELS.stem, 'Published without “sp.”')
   assert.equal(decisionResult({ decision: 'col', scientificName: 'Aus bus', scientificNameAuthorship: 'L.' }), 'Aus bus L.')
   assert.equal(decisionResult({ decision: 'stem', scientificName: 'Larus', scientificNameAuthorship: 'Linnaeus, 1758', taxonRank: 'genus' }),
     'Larus Linnaeus, 1758 (genus)')
@@ -80,7 +80,7 @@ test('row helpers label result, provenance, reasons and stem choices', () => {
     { kind: 'held', text: 'Your text as written (until you confirm)' })
   assert.deepEqual(rowStatus({}), { kind: null, text: '' })
   assert.equal(reasonText({ reasons: [{ text: 'Not found in COL' }] }), 'Not found in COL')
-  assert.equal(stemLabel({ stem: { scientificName: 'Galium', taxonRank: 'genus' } }), 'Publish the genus Galium')
+  assert.equal(stemLabel({ stem: { scientificName: 'Galium', taxonRank: 'genus' } }), 'Publish Galium (genus)')
   assert.equal(needsRowDecision({ eligible: ['col'] }, 'col'), false)
   assert.equal(needsRowDecision({ eligible: ['keep'] }, 'col'), true)
   // Nothing is flagged before a group decision is chosen (check groups have no default).

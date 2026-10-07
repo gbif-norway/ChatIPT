@@ -7,14 +7,14 @@ export const DECISION_LABELS = {
   alternative: 'Other Catalogue of Life name',
   keep: 'Kept as supplied',
   empty: 'No name published',
-  stem: 'Published as the genus or family',
+  stem: 'Published without “sp.”',
 }
 
 export const GROUPS = {
   check: { title: 'Check against your data', options: { col: 'Use COL names', mine: 'Keep my names' } },
   unconfirmed: { title: 'Not confirmed by COL', options: { mine: 'Keep my names' } },
   spelling: { title: 'Spelling differs from COL', options: { col: 'Use COL spelling', mine: 'Keep my spelling' } },
-  uncertain: { title: 'Uncertain to genus or family', options: { stem: 'Publish the genus or family name', keep: 'Keep as written' } },
+  uncertain: { title: 'Uncertain to genus or family', options: { stem: 'Publish the name without “sp.”', keep: 'Keep as written' } },
   auto: { title: 'Accepted automatically', options: { col: 'Use COL name', parsed: 'Use split', keep: 'Keep as written' } },
 }
 
@@ -125,7 +125,7 @@ export const reasonText = (entry) => entry?.reasons?.[0]?.text || ''
 export const stemLabel = (entry) => {
   const stem = entry?.stem
   if (!stem?.scientificName) return ''
-  return `Publish the ${stem.taxonRank || 'genus or family'} ${formatName(stem)}`
+  return `Publish ${formatName(stem)}${stem.taxonRank ? ` (${stem.taxonRank})` : ''}`
 }
 
 // An undecided name the chosen group decision does not cover; nothing is flagged until a decision is chosen.
