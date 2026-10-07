@@ -652,10 +652,16 @@ class NameDecisionAPITests(NamesCase):
         self.assertEqual(response.data['name_review']['labels'][0]['decision']['source'], 'col')
         self.post('names', name_decisions={'Eus sp.': None})
         self.assertNotIn('Eus sp.', self.conversion.name_review['decisions'])
-        # Deciding every name settled the scientificName fallback, which now applies to no row; withdrawing
-        # one decision later keeps that safe fallback (the text stays in verbatimIdentification).
+        # Deciding every name settled the scientificName fallback; withdrawing a decision withdraws that system answer,
+        # so the question is asked again instead of leaving the undecided name without a scientificName.
+        self.assertEqual(self.conversion.decisions, {})
+        self.assertIn('column:0:1', self.state()['unresolved'])
+        # An answer the user gave stands when names are decided and withdrawn again.
+        self.assertEqual(self.post('save', changes={'column:0:1': 'preserve'}).status_code, 200)
+        self.post('names', name_decisions={'Eus sp.': {'decision': 'keep'}})
+        self.post('names', name_decisions={'Eus sp.': None})
         self.assertEqual(self.conversion.decisions, {'column:0:1': 'preserve'})
-        self.assertEqual(self.state()['decision_sources']['column:0:1']['source'], 'system')
+        self.assertEqual(self.state()['decision_sources']['column:0:1']['source'], 'user')
 
     def test_bulk_actions_decide_only_pending_labels_they_may(self):
         self.reviewed()
@@ -689,6 +695,28 @@ class NameDecisionAPITests(NamesCase):
         self.assertIsNone(undone.data['name_review']['summary']['last_batch'])
         self.assertEqual(self.post('names', undo_auto='auto').status_code, 200)
         self.assertGreater(self.conversion.name_review['auto_declined'].__len__(), 0)
+
+    def test_a_fully_automatic_check_settles_the_fallback_and_declines_survive_a_recheck(self):
+        def all_exact(queries, deadline=None):
+            exact = {'Cus dus': col_summary('EXACT', 'COL-CUS', 'Cus dus', 'Jones')}
+            return [exact.get(query['scientificName'].split(' (')[0]) or MATCHES.get(query['scientificName']) or col_summary('NONE')
+                    for query in queries]
+        self.inspected()
+        with override_settings(CONVERSION_NAME_CHECKS_ENABLED=True):
+            self.run_names(match=all_exact)
+            review = self.conversion.name_review
+            self.assertEqual({label: decision['by'] for label, decision in review['decisions'].items()},
+                             {'Aus bus L.': 'auto:exact', 'Cus dus (Smith) Jones 1900': 'auto:exact', 'Eus sp.': 'auto:uncertain'})
+            # Nobody clicked anything, and the scientificName fallback question settled itself.
+            self.assertEqual(self.conversion.decisions, {'column:0:1': 'preserve'})
+            # Undo all brings the question back; a re-check never accepts the declined names again.
+            self.assertEqual(self.post('names', undo_auto='auto').status_code, 200)
+            self.assertNotIn('column:0:1', self.conversion.decisions)
+            self.assertEqual(self.post('check_names', refresh=True).status_code, 202)
+            self.run_names(match=all_exact)
+            review = self.conversion.name_review
+            self.assertEqual(sorted(review['auto_declined']), ['Aus bus L.', 'Cus dus (Smith) Jones 1900'])
+            self.assertEqual(sorted(review['decisions']), ['Eus sp.'])
 
     def test_invalid_decisions_are_rejected_without_saving_anything(self):
         self.reviewed()
@@ -1129,7 +1157,8 @@ class NameQuestionTests(SimpleTestCase):
     def test_deciding_every_name_settles_the_fallback_question(self):
         from api.conversion_names import settle_name_questions
         partial = self.conversion({'Aus bus': {'decision': 'parsed'}})
-        with patch('api.conversion_review.apply_decision_changes') as apply:
+        with patch('api.conversion_review.apply_decision_changes') as apply, \
+                patch('api.conversion_review.latest_sources', return_value={}):
             self.assertEqual(settle_name_questions(partial), [])
             apply.assert_not_called()
             complete = self.conversion({'Aus bus': {'decision': 'parsed'}, 'Cus dus': {'decision': 'keep'}})
@@ -1294,6 +1323,16 @@ class GroupDecisionTests(SimpleTestCase):
                     conversion = self.conversion([record])
                     with self.assertRaises(names.NameDecisionError):
                         names.bulk_decide(conversion, 'unconfirmed', 'mine')
+
+    def test_a_group_signature_is_the_conflict_that_named_the_group(self):
+        # AmphibiaReptilia sp. (568) whose source also said Plantae: the name conflict names the group, not the kingdom.
+        record = copy.deepcopy(FIXTURE_RECORDS['AmphibiaReptilia sp.'])
+        record['hints'] = {**record['hints'], 'kingdom': 'Plantae'}
+        classification = names.classify(record)
+        self.assertEqual(classification['group'], 'check:name')
+        self.assertEqual([reason['code'] for reason in classification['reasons']], ['name', 'kingdom'])
+        signature = names.groups({'labels': [record], 'decisions': {}})[0]['signature']
+        self.assertEqual((signature['code'], signature['col']), ('name', 'Amphibia'))
 
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,

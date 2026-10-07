@@ -171,7 +171,10 @@ is published as its stem).
 chunk of the name check. Undo all (per group) or a row's Undo removes them and
 records the labels in `auto_declined`, so a re-check does not accept them
 again. When every name has a decision, automatic or not, the scientificName
-fallback question settles itself.
+fallback question settles itself; when names lose their decision again, that
+automatic answer is withdrawn and the question is asked again (an answer the
+user gave stands). A bulk decision keeps the snapshots it replaced for its
+Undo; the last five can be undone.
 
 **Bulk decisions are batches.** "Apply to N names" covers the group's eligible
 names not decided one at a time and records the batch. Its Undo restores only

@@ -49,6 +49,7 @@ RANK_MARKERS = {'sp.': 'species', 'subsp.': 'subspecies', 'var.': 'variety', 'f.
 CONTEXT_RANKS = ('kingdom', 'phylum', 'class', 'family')
 MAX_AUTHORSHIPS = 5  # distinct supplied authorships kept per label; more is "too many to agree"
 MAX_SOURCE_QUALIFIERS = 5
+MAX_BATCHES = 5  # bulk decisions that can still be undone; each keeps the snapshots it replaced
 _OVERLONG_SOURCE_ID = '\0overlong'
 UNCERTAIN_QUALIFIERS = {'sp.', 'spp.', 'indet.'}
 GROUP_OPTIONS = {
@@ -158,11 +159,12 @@ def collect_state(archive, plan):
                 if re.match(r'^(urn:lsid:|https?://)', value, re.IGNORECASE):
                     source_ids[field] = value
         item = {'label': record['label'], 'rows': record['rows'], 'tables': record['tables'],
-                       'hints': {rank: value for rank, value in context.items() if rank in HINT_RANKS},
-                       'mixed_hints': mixed_hints,
-                       'source_rank': context.get('taxonRank', '').lower() or None, 'qualifier': qualifier,
-                       'source_authorships': authorships[:MAX_AUTHORSHIPS], 'authorships_truncated': len(authorships) > MAX_AUTHORSHIPS,
-                       'source_ids': source_ids}
+                'hints': {rank: value for rank, value in context.items() if rank in HINT_RANKS},
+                # Rows of one label that disagree on these ranks may be different taxa with the same name.
+                'mixed_hints': mixed_hints,
+                'source_rank': context.get('taxonRank', '').lower() or None, 'qualifier': qualifier,
+                'source_authorships': authorships[:MAX_AUTHORSHIPS], 'authorships_truncated': len(authorships) > MAX_AUTHORSHIPS,
+                'source_ids': source_ids}
         if record['has_qualifier_column'] and record['source_qualifiers']:
             qualifiers = sorted(record['source_qualifiers'] - {'\0overlong'})
             kept_qualifiers = qualifiers[:MAX_SOURCE_QUALIFIERS]
@@ -189,8 +191,9 @@ def carry_decisions(conversion, fresh, plan):
     carried by label when the source is unchanged (same fingerprint) or yields exactly the same labels, and are checked
     again under the current rules: the stamp of the check they passed is dropped, so a COL name that now counts as a
     coarser or different taxon is held until confirmed (an explicit earlier confirmation stands). Bulk decisions are
-    not carried; the bulk actions are offered again under the current rules. Name results are not carried either:
-    the names are checked again.
+    not carried (the groups offer them again) and automatic ones are made again from the fresh matches; declined
+    automatic acceptances stay declined. User decisions that cannot be carried are counted as `dropped`. Name results
+    are not carried either: the names are checked again.
     """
     previous = conversion.name_review or {}
     old_plan = conversion.plan or {}
@@ -261,12 +264,19 @@ def every_name_decided(conversion):
 def settle_name_questions(conversion):
     """Once every name has a decision, the scientificName fallback applies to no row; record that instead of asking.
 
-    The caller holds the conversion lock. Withdrawing a name decision later leaves this safe fallback in place:
-    an undecided name keeps its text in verbatimIdentification.
+    The caller holds the conversion lock. When names lose their decision again (Undo all of the automatic acceptances),
+    an answer this function recorded itself is withdrawn, so the question is asked again rather than silently leaving
+    those names without a scientificName; an answer the user or the AI gave stands.
     """
+    from api.conversion_review import apply_decision_changes, latest_sources
     if not every_name_decided(conversion):
+        sources = latest_sources(conversion)
+        settled = [identifier for identifier in name_question_ids(conversion)
+                   if conversion.decisions.get(identifier) == 'preserve' and sources.get(identifier) == 'system']
+        if settled:
+            apply_decision_changes(conversion, dict.fromkeys(settled), 'system',
+                                   rationale='Some scientific names have no decision again, so this fallback applies to rows again.')
         return []
-    from api.conversion_review import apply_decision_changes
     open_ids = [identifier for identifier in name_question_ids(conversion) if identifier not in conversion.decisions]
     if open_ids:
         apply_decision_changes(conversion, dict.fromkeys(open_ids, 'preserve'), 'system',
@@ -780,9 +790,8 @@ def groups(state, classified=None):
                     counts[option] += 1
         signature = None
         if kind == 'check':
-            reason = next((r for r in bucket['reasons'] if r['code'] in {'mixed', 'kingdom', 'phylum', 'class', 'id', 'rank'}), None)
-            if reason is None:
-                reason = next((r for r in bucket['reasons'] if r['code'] == 'name'), None)
+            # The signature is the conflict that named the group (a label may have several).
+            reason = next((r for r in bucket['reasons'] if r['code'] == bucket['id'].split(':')[1]), None)
             if reason:
                 record = members[0][0]
                 code = reason['code']
@@ -978,7 +987,7 @@ def bulk_decide(conversion, group, decision):
     batch = {'id': batch_id, 'group': group, 'decision': decision, 'count': count,
              'at': timezone.now().isoformat(), 'changes': changes}
     state.setdefault('batches', []).append(batch)
-    state['batches'] = state['batches'][-10:]
+    state['batches'] = state['batches'][-MAX_BATCHES:]
     conversion.name_review = state
     conversion.save(update_fields=['name_review', 'updated_at'])
     return {'batch': batch_id, 'count': count}
