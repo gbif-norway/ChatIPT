@@ -200,6 +200,19 @@ class TidyModelSafetyTests(SimpleTestCase):
         source = archive([['o1', '', '', '1', 'M\ufffdre og Romsdal, ' + 'x' * 200, 'Aus bus', 'present']])
         self.assertEqual(conversion_tidy.candidates(tidy_archive(source)[0]), [])
 
+    def test_review_round_nine_cases(self):
+        # An event remark the model does not read as describing the organism stays where it is.
+        source = archive([['o1', '', 'Sampling failed', '1', '', 'Aus bus', 'present']])
+        self.assertEqual(conversion_tidy.model_changes(source, {'k': {'table': 0, 'column': 2, 'value': 'Sampling failed',
+            'fields': {}, 'residue': 'Sampling failed', 'confidence': 'high', 'note': ''}}), [])
+        # Neighbouring values are clipped, and a column too large for one call is left out.
+        long = archive([['o1', 'Female?', '', '1', '', 'Aus bus', 'present', 'x' * 5000]], extra_terms=('occurrenceRemarks',))
+        column = next(item for item in conversion_tidy.candidates(tidy_archive(long)[0]) if item['field'] == 'sex')
+        remarks = next(item for item in column['context']['siblings'] if item['term'] == 'occurrenceRemarks')
+        self.assertEqual(len(remarks['values'][0]['value']), conversion_tidy.SIBLING_CHARS)
+        with patch.object(conversion_tidy, 'REQUEST_CHARS', 50):
+            self.assertEqual(conversion_tidy.candidates(tidy_archive(long)[0]), [])
+
     def test_model_answers_never_corroborate_each_other(self):
         # Both remarks columns propose lifeStage adult for a row whose own lifeStage is empty: nothing in the source agrees.
         source = archive([['o1', '', 'fad', '1', '', 'Aus bus', 'present', 'adult female']], extra_terms=('occurrenceRemarks',))
@@ -284,6 +297,25 @@ class TidyModelFlowTests(ConversionTestCase):
             process_next_conversion()
             self.assertFalse(DwcConversionJob.objects.filter(conversion=self.conversion).exists())
             self.assertEqual(query.call_count, 1)
+
+    def test_a_superseded_tidy_call_is_paid_for_but_changes_nothing(self):
+        conversion_id = self.conversion.pk
+
+        def response(args, max_retries=None):
+            # Meanwhile the user asks for a new inspection, which replaces the running tidy job.
+            DwcConversionJob.objects.filter(conversion_id=conversion_id).delete()
+            DwcConversionJob.objects.create(conversion_id=conversion_id, action='inspect')
+            return SimpleNamespace(id='superseded', status='completed', model='gpt-6-sol', usage={'input_tokens': 10, 'output_tokens': 5},
+                                   output_text=json.dumps({'columns': []}))
+        with patch('api.helpers.openai_helpers.query_with_flex_fallback', side_effect=response):
+            process_next_conversion()
+            plan_id = self.conversion.plan['id']
+            process_next_conversion()
+        self.assertTrue(OpenAIUsage.objects.filter(response_id='superseded').exists())
+        conversion = self.conversion
+        self.assertEqual(conversion.plan['id'], plan_id)
+        self.assertEqual(conversion.tidy['model']['status'], 'running')
+        self.assertEqual(DwcConversionJob.objects.get(conversion=conversion).action, 'inspect')
 
     def test_model_failure_keeps_deterministic_plan_and_undo_does_not_call_model(self):
         with patch('api.helpers.openai_helpers.query_with_flex_fallback', side_effect=RuntimeError('offline')) as query:

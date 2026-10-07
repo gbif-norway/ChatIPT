@@ -14,6 +14,8 @@ from api.dwca_tidy import TIDY_VERSION, summarize, tidy_archive as apply_tidy
 logger = logging.getLogger(__name__)
 REPORT_WHITESPACE_VALUES = 500
 PROMPT_VERSION = '2'
+SIBLING_CHARS = 100  # neighbouring-column values sent as context are clipped to this
+REQUEST_CHARS = 120000  # values and context of one call
 TIDY_TASK = 'DwC-A conversion tidy-up'
 VALUE_FIELDS = {'lifeStage', 'sex', 'reproductiveCondition', 'behavior', 'vitality', 'establishmentMeans',
                 'degreeOfEstablishment', 'pathway', 'preparations', 'organismQuantityType', 'countryCode', 'country',
@@ -133,17 +135,20 @@ def candidates(view, table=None):
                 if sibling not in SIBLINGS or sibling == name or len(siblings) >= 6:
                     continue
                 sibling_counts = Counter(row[sc] if sc < len(row) else '' for row in source.rows)
-                siblings.append({'term': sibling, 'values': [{'value': val, 'rows': n} for val, n in
+                siblings.append({'term': sibling, 'values': [{'value': val[:SIBLING_CHARS], 'rows': n} for val, n in
                                   sorted(sibling_counts.items(), key=lambda pair: (-pair[1], pair[0])) if val.strip()][:8]})
             raw_columns.append({'key': _column_key(t, c), 'table': t, 'table_name': source.name,
                 'row_type': source.row_type, 'column': c, 'term': source.terms[c], 'field': name,
                 'values': values, 'context': {'table': source.name, 'row_type': source.row_type,
                 'term': source.terms[c], 'siblings': siblings}})
     # Largest columns are retained first; ties preserve archive order.
-    kept, remaining = [], 1500
+    # Bounded by values and by characters, so one call always fits; the largest columns are kept first.
+    kept, remaining, characters = [], 1500, REQUEST_CHARS
     for column in sorted(raw_columns, key=lambda item: (-len(item['values']), item['table'], item['column'])):
-        if len(column['values']) <= remaining:
-            kept.append(column); remaining -= len(column['values'])
+        size = len(json.dumps({'values': [value['text'] for value in column['values']], 'context': column['context']},
+                              ensure_ascii=False))
+        if len(column['values']) <= remaining and size <= characters:
+            kept.append(column); remaining -= len(column['values']); characters -= size
     return sorted(kept, key=lambda item: (item['table'], item['column']))
 
 
@@ -238,7 +243,9 @@ def model_changes(view_or_archive, entries):
             fields.pop('occurrenceRemarks')
         # The supplied text is never lost from the package: a remark about the organism keeps its exact words in
         # occurrenceRemarks, and so does any value whose interpretation leaves something over.
-        if own in REMARK_FIELDS and occurrence_row and (ORGANISM_FIELDS & set(fields) or item.get('residue') or fields.get(own) == ''):
+        if own in REMARK_FIELDS and not ORGANISM_FIELDS & set(fields):
+            continue  # a remark only changes when it is read as describing the organism
+        if own in REMARK_FIELDS and occurrence_row:
             fields['occurrenceRemarks'] = original
             fields[own] = '' if own == 'eventRemarks' else original
         elif item.get('residue'):

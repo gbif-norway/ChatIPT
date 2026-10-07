@@ -90,8 +90,8 @@ Values the rules cannot settle go to the model once per dataset (`conversion_tid
   country in county/stateProvince). Columns with more than 300 such values (free text such as
   localities) are never sent, nor are values longer than 200 characters, protected columns or columns the
   tidy-up added. At most 1,500
-  values per call (a value known only in another field's vocabulary, such as sex `juvenile`, is sent), each clipped to 200 characters, with counts and the most frequent values of up to six
-  neighbouring columns (sex, counts, places, remarks), plus the title and description from the archive's own
+  values and 120,000 characters per call (a value known only in another field's vocabulary, such as sex `juvenile`, is sent), each clipped to 200 characters, with counts and the most frequent values of up to six
+  neighbouring columns (sex, counts, places, remarks; clipped to 100 characters), plus the title and description from the archive's own
   metadata (so answers depend on the source bytes alone).
 - **Call**: `gpt-6-sol` at medium effort on Flex (`OPENAI_CONVERSION_TIDY_MODEL`,
   `OPENAI_CONVERSION_TIDY_EFFORT`), reserved and recorded under the dataset cost limit with task
@@ -101,7 +101,8 @@ Values the rules cannot settle go to the model once per dataset (`conversion_tid
   life stage, sex, count and other organism fields; a country column: countryCode, country, waterBody;
   …). sex must be GBIF Sex concepts, establishment vocabularies GBIF concepts, individualCount a whole
   number, countryCode an ISO code. Protected fields are never written.
-- **Exact words are kept** (after the automatic space clean-up that applies to all text): a remark about the organism moves its exact text to `occurrenceRemarks`
+- **Exact words are kept** (after the automatic space clean-up that applies to all text). A remark changes
+  only when it is read as describing the organism (a life stage, sex, count …); then a remark about the organism moves its exact text to `occurrenceRemarks`
   (an `eventRemarks` value leaves the event); a value whose reading leaves something over (`Female?`)
   keeps its exact text in `occurrenceRemarks` beside the interpreted field. A place restated word for word
   in another field (`county` `Norway` → country) moves there. A split without anything left over (copepod
