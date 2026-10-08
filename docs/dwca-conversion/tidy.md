@@ -25,7 +25,10 @@ The earlier per-value questions remain as a fallback for what the tidy-up leaves
 label in `countryCode` that is still not an ISO code) and `age-remark:` (an event remark of an occurrence
 row that still starts with a life-stage word, such as `1 juv.`). Values the tidy-up settled no longer
 qualify, and a value it offers as a suggestion is not asked about as well; undoing a change, or a conflict
-that keeps a value as written in some rows (also for an applied suggestion), brings the question back for that value. With `CONVERSION_TIDY_ENABLED=0` every such value is asked about.
+that keeps (or, for an open suggestion, would keep) a value as written in some rows, brings the question back for
+that value. A suggestion that would change no row (every row already says something different, as for 572 `1 juv.`
+beside individualCount 2) is not offered; its value is asked about instead. Taxon-core stand-in occurrence plans
+carry the extension's tidy record, so they follow the same rule. With `CONVERSION_TIDY_ENABLED=0` every such value is asked about.
 
 ## Rules (deterministic, `TIDY_VERSION` 1)
 
@@ -132,7 +135,9 @@ applied to one column with a plain-language title, for example *"countryCode hel
 
 The review page shows these in **Here's what we tidied** (`ConversionTidySummary.js`): each group with
 examples and **Undo**, and suggestions with **Apply** (one value) or **Apply all** (every value of the
-group, including any beyond the 30 listed). Undo/Apply posts
+group, including any beyond the 30 listed); a suggestion card says how many rows already hold something
+different and would stay as written. While a change is sent, the form is locked and the change waits for
+answers still being saved; a change is refused (409) while the model is still reading the values. Undo/Apply posts
 `{action: 'tidy', plan_id, changes: {id: 'undo'|'apply'|null}}`; ids are group ids
 (`tidy:t:c:rule`) or value ids. Overrides survive a re-inspection of the same source.
 
