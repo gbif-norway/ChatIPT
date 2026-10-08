@@ -1681,6 +1681,18 @@ class GroupDecisionTests(SimpleTestCase):
         self.assertIsNone(names.stem_usage(record))
         self.assertEqual(names.stem_usage({**record, 'source_rank': 'genus'})['taxonRank'], 'genus')
 
+    def test_a_confirmed_marker_or_rank_change_does_not_carry_the_supplied_authorship(self):
+        frame = pd.DataFrame([{'occurrence_pk': 'o1', 'scientificName': 'x', 'scientificNameAuthorship': 'Smith', 'taxonRank': 'variety'}])
+        for label, decision in (('Aus bus var. cus', {'scientificName': 'Aus bus subsp. cus', 'taxonRank': 'subspecies', 'changeKind': 'marker'}),
+                                ('Anura', {'scientificName': 'Anura', 'taxonRank': 'order', 'changeKind': None, 'rankChange': 'makes your genus an order'})):
+            state = {'labels': [{'label': label, 'parsed': real_parse(label)}],
+                     'decisions': {label: {'decision': 'col', 'source': 'col', 'scientificNameAuthorship': None, 'confirmedCoarser': True,
+                                           'nameRules': names.NAME_RULES_VERSION, 'by': 'user', **decision}}}
+            with self.subTest(label=label):
+                result, _ = names.apply_name_decisions({'occurrence': frame.assign(scientificName=label)}, state,
+                                                       {'occurrence': [{'name': label, 'authorship': 'Smith', 'rank': 'variety'}]})
+                self.assertEqual(result['occurrence'].loc[0, 'scientificNameAuthorship'], '')
+
     def test_exact_uninomial_source_rank_mismatch_is_a_check_conflict(self):
         record = {'label': 'Anura', 'rows': 1, 'source_rank': 'genus', 'qualifier': None,
                   'parsed': real_parse('Anura', 'genus'), 'match': {'matchType': 'EXACT', 'hintOnly': False,

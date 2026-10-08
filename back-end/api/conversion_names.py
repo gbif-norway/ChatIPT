@@ -1054,6 +1054,8 @@ def build_decision(record, spec, state, by='user', group_kind=None):
             confirmation = _stem_confirmation(record, usage)
             if confirmation and spec.get('confirm_coarser') is not True:
                 raise NameDecisionError(f'"{usage["scientificName"]}" {confirmation}. Confirm it explicitly, or keep your name.')
+            if confirmation:
+                snapshot['rankChange'] = confirmation
             snapshot.update(source='col', scientificName=usage['scientificName'], scientificNameAuthorship=usage.get('scientificNameAuthorship'),
                             taxonRank=usage.get('taxonRank'), usageId=usage.get('usageId'), candidates=usage['candidates'],
                             checklist=_checklist(state), changeKind=None, nameRules=NAME_RULES_VERSION)
@@ -1087,6 +1089,8 @@ def build_decision(record, spec, state, by='user', group_kind=None):
             raise NameDecisionError(f'"{usage["scientificName"]}" {replaces["text"]} for "{record["label"]}". Confirm that replacement explicitly, or keep your name.')
         if _rank_change(record, usage) and spec.get('confirm_coarser') is not True:
             raise NameDecisionError(f'"{usage["scientificName"]}" {_rank_change(record, usage)}. Confirm that explicitly, or keep your name.')
+        if _rank_change(record, usage):
+            snapshot['rankChange'] = _rank_change(record, usage)
         if (normal(usage.get('scientificNameAuthorship')) and not authorship_agrees(record, usage)
                 and spec.get('confirm_coarser') is not True):
             raise NameDecisionError(f'Catalogue of Life writes the authorship of "{usage["scientificName"]}" as '
@@ -1395,8 +1399,11 @@ def apply_name_decisions(frames, name_review, source_names):
             # A COL name that is the asserted name may keep supplied parts COL lacks; a different name may not.
             # A COL name that is the asserted name, or only corrects its spelling, may keep supplied parts COL lacks;
             # a different name may not.
-            keeps_name = kind in {'col', 'alternative', 'stem'} and (decision.get('changeKind') == 'spelling'
-                                                                     or same_name(records.get(label) or {'label': label}, {'scientificName': decided_name}))
+            # A confirmed marker or rank change is another taxon: the supplied authorship is not carried over to it.
+            keeps_name = (kind in {'col', 'alternative', 'stem'} and not decision.get('rankChange')
+                          and (decision.get('changeKind') == 'spelling'
+                               or (decision.get('changeKind') is None
+                                   and same_name(records.get(label) or {'label': label}, {'scientificName': decided_name}))))
             formula = decision.get('taxonFormula')
             if taxon_formula is None and table == 'identification' and formula:
                 taxon_formula = column('taxonFormula')
