@@ -79,6 +79,15 @@ class SummarizeMatchTests(SimpleTestCase):
         self.assertEqual(result["alternatives"][0]["id"], "C3DM4")
         self.assertEqual(result["alternatives"][0]["matchType"], "VARIANT")
 
+    def test_match_diagnostics_keep_issues_and_matched_id(self):
+        result = taxon_matching.summarize_match({"diagnostics": {
+            "matchType": "EXACT", "issues": ["TAXON_ID_NOT_FOUND"],
+            "matchedID": {"id": "urn:lsid:x:1", "scientificName": "Aus bus", "datasetTitle": "Example"}}})
+        self.assertEqual(result["issues"], ["TAXON_ID_NOT_FOUND"])
+        self.assertEqual(result["matchedId"], {"id": "urn:lsid:x:1", "scientificName": "Aus bus", "datasetTitle": "Example"})
+        self.assertEqual(taxon_matching.summarize_match({"diagnostics": {}})["issues"], [])
+        self.assertIsNone(taxon_matching.summarize_match({"diagnostics": {}})["matchedId"])
+
 
 REAL = json.loads((Path(__file__).parent / "testdata" / "col_v2_real_matches.json").read_text())
 
@@ -137,6 +146,13 @@ class RealNameTests(SimpleTestCase):
             ("L.", "Linnaeus, 1758"),
             ("DC.", "de Candolle"),
             ("Lam.", "Lamarck"),
+            ("Fabr.", "Fabricius"),
+            ("Mill.", "Miller"),
+            ("Hook.", "Hooker"),
+            ("Willd.", "Willdenow"),
+            ("Pers.", "Persoon"),
+            ("Lamour.", "Lamouroux"),
+            ("Lesson, [1830]", "Lesson, 1830"),
             ("Fitzinger, 1838", "Fitzinger in Bonaparte, 1838"),
             ("(Müller, 1836)", "(Müller in Van Oort & Müller, 1836)"),
             ("Welw. ex Ficalho", "Ficalho"),
@@ -159,6 +175,7 @@ class RealNameTests(SimpleTestCase):
             ("S.", "Smith"), ("Fr.", "Franch."), ("Sm.", "Smirnov"), ("L.f.", "Fabricius"), ("L.f.", "L."),
             ("A.Gray", "Gray"), ("J.E. Gray, 1831", "G.R. Gray, 1831"), ("N.E.Br.", "R.Br."), ("DC.", "A.DC."),
             ("Rich.", "A.Rich."),
+            ("Lam.", "Lamouroux"), ("Fabr.", "Fabre"), ("Lin.", "Lindley"), ("Lin.", "Linnaeus"),
             ("L. Koch, 1843", "C. L. Koch, 1843"),  # Ludwig Koch and Carl Ludwig Koch (559)
         ]
         for supplied, col in agree:
@@ -222,6 +239,80 @@ class MatchColTests(SimpleTestCase):
         self.assertEqual(len(batch_call.kwargs["json"]), 2)  # duplicate query sent once
         self.assertEqual(retry_call.kwargs["params"]["verbose"], "true")
         self.assertEqual(retry_call.kwargs["params"]["kingdom"], "Animalia")
+
+    @patch("api.taxon_matching._get_json")
+    def test_exact_names_can_be_fetched_again_for_their_homonyms(self, get_json):
+        exact = {"diagnostics": {"matchType": "EXACT"}, "usage": {"key": "1", "name": "Sterna", "rank": "GENUS"}}
+        get_json.side_effect = [[exact, {**exact, "usage": {"key": "2", "name": "Sterna hirundo", "rank": "SPECIES"}}], exact]
+        get_json.side_effect = [[exact, {**exact, "usage": {"key": "2", "name": "Sterna hirundo", "rank": "SPECIES"}}], exact, exact]
+        taxon_matching.match_col([{"scientificName": "Sterna"}, {"scientificName": "Sterna hirundo"}], verbose_exact=True)
+        verbose = get_json.call_args_list[1:]
+        self.assertEqual(sorted(call.kwargs["params"]["scientificName"] for call in verbose), ["Sterna", "Sterna hirundo"])
+        get_json.reset_mock(side_effect=True)
+        # The batch's exact pick stands even when the verbose answer differs; only the homonyms are taken from it.
+        verbose_answer = {"diagnostics": {"matchType": "HIGHERRANK", "alternatives": [
+            {"usage": {"key": "9", "name": "Sterna Albers, 1850", "authorship": "Albers, 1850", "rank": "GENUS"},
+             "diagnostics": {"matchType": "EXACT"}}]}, "usage": {"key": "A", "name": "Animalia", "rank": "KINGDOM"}}
+        get_json.side_effect = [[exact], verbose_answer]
+        summary = taxon_matching.match_col([{"scientificName": "Sterna"}], verbose_exact=True)[0]
+        self.assertEqual((summary["matchType"], summary["usage"]["id"]), ("EXACT", "1"))
+        self.assertEqual([alternative["id"] for alternative in summary["alternatives"]], ["A", "9"])
+        get_json.reset_mock(side_effect=True)
+        # A verbose pick of another exact usage of the same name joins the homonyms.
+        jones = {"diagnostics": {"matchType": "EXACT"}, "usage": {"key": "J", "name": "Sterna Jones", "authorship": "Jones", "rank": "GENUS"}}
+        get_json.side_effect = [[exact], jones]
+        summary = taxon_matching.match_col([{"scientificName": "Sterna"}], verbose_exact=True)[0]
+        self.assertEqual((summary["usage"]["id"], [(item["id"], item["matchType"]) for item in summary["alternatives"]]), ("1", [("J", "EXACT")]))
+        get_json.reset_mock(side_effect=True)
+        # A variant pick is fetched again too, keeping the batch's pick.
+        variant = {"diagnostics": {"matchType": "VARIANT"}, "usage": {"key": "V", "name": "Aus bus", "rank": "SPECIES"}}
+        get_json.side_effect = [[variant], jones]
+        summary = taxon_matching.match_col([{"scientificName": "Aus bus"}], verbose_exact=True)[0]
+        self.assertEqual((summary["matchType"], summary["usage"]["id"], [item["id"] for item in summary["alternatives"]]), ("VARIANT", "V", ["J"]))
+        self.assertEqual(verbose[0].kwargs["params"]["verbose"], "true")
+        get_json.reset_mock(side_effect=True)
+        get_json.side_effect = [[exact]]
+        taxon_matching.match_col([{"scientificName": "Sterna"}])
+        self.assertEqual(get_json.call_count, 1)
+
+    def test_same_name_alternatives_of_any_match_type_are_kept(self):
+        others = [{"usage": {"key": str(i), "name": f"Bus {i}", "rank": "GENUS"}, "diagnostics": {"matchType": "VARIANT"}} for i in range(8)]
+        same = {"usage": {"key": "S", "name": "Aus Jones", "authorship": "Jones", "rank": "GENUS"}, "diagnostics": {"matchType": "VARIANT"}}
+        summary = taxon_matching.summarize_match({"diagnostics": {"matchType": "EXACT", "alternatives": others + [same]}}, "Aus")
+        self.assertIn("S", [item["id"] for item in summary["alternatives"]])
+
+    def test_exact_alternatives_are_kept_beyond_the_display_limit_and_overflow_is_flagged(self):
+        def alternative(key, match_type):
+            return {"usage": {"key": key, "name": f"Aus {key}", "rank": "GENUS"}, "diagnostics": {"matchType": match_type}}
+        payload = {"diagnostics": {"matchType": "EXACT", "alternatives": [alternative(str(i), "VARIANT") for i in range(8)]
+                                   + [alternative(f"e{i}", "EXACT") for i in range(3)]}}
+        summary = taxon_matching.summarize_match(payload)
+        self.assertEqual(sum(item["matchType"] == "EXACT" for item in summary["alternatives"]), 3)
+        self.assertEqual(sum(item["matchType"] == "VARIANT" for item in summary["alternatives"]), taxon_matching.MAX_ALTERNATIVES)
+        self.assertFalse(summary["exactAlternativesDropped"])
+        many = {"diagnostics": {"matchType": "EXACT", "alternatives": [alternative(f"e{i}", "EXACT") for i in range(25)]}}
+        self.assertTrue(taxon_matching.summarize_match(many)["exactAlternativesDropped"])
+
+    @patch("api.taxon_matching._get_json")
+    def test_identifiers_are_sent_and_are_part_of_the_dedup_key(self, get_json):
+        get_json.side_effect = [[{"diagnostics": {"matchType": "NONE"}}, {"diagnostics": {"matchType": "NONE"}}],
+                                {"diagnostics": {"matchType": "NONE"}}, {"diagnostics": {"matchType": "NONE"}}]
+        query = {"scientificName": "Aus bus", "scientificNameID": "urn:lsid:x:1", "taxonID": "https://x/2"}
+        other = {**query, "taxonID": "https://x/3"}
+        taxon_matching.match_col([query, dict(query), other])
+        batch, *verbose = get_json.call_args_list
+        self.assertEqual(len(batch.kwargs["json"]), 2)
+        self.assertEqual({item["taxonID"] for item in batch.kwargs["json"]}, {query["taxonID"], other["taxonID"]})
+        self.assertEqual(verbose[0].kwargs["params"]["scientificNameID"], query["scientificNameID"])
+        self.assertIn(verbose[0].kwargs["params"]["taxonID"], {query["taxonID"], other["taxonID"]})
+
+    @patch("api.taxon_matching._get_json")
+    def test_review_aids_keeps_source_ids_out_of_checklistbank_query(self, get_json):
+        get_json.side_effect = [{"diagnostics": {"matchType": "NONE"}}, {}]
+        taxon_matching.review_aids({"scientificName": "Aus bus", "kingdom": "Animalia",
+                                    "scientificNameID": "urn:lsid:x:1", "taxonID": "https://x/2"})
+        clb_params = get_json.call_args_list[1].kwargs["params"]
+        self.assertEqual(clb_params, {"q": "Aus bus", "kingdom": "Animalia"})
 
     @patch("api.taxon_matching._get_json")
     def test_higher_rank_match_that_echoes_the_hint_is_no_match(self, get_json):

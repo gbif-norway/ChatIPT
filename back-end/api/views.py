@@ -522,9 +522,13 @@ class DatasetViewSet(viewsets.ModelViewSet):
             raise ValidationError('This dataset is not an archive conversion.')
         if request.method == 'GET':
             query = request.query_params
+            names_view = query.get('names_view', 'all')
+            if names_view not in {'all', 'pending', 'group'}:
+                names_view = 'all'
             names_page = {'offset': int(query['names_offset']) if query.get('names_offset', '').isdigit() else 0,
                           'limit': int(query['names_limit']) if query.get('names_limit', '').isdigit() else 100,
-                          'view': 'pending' if query.get('names_view') == 'pending' else 'all'}
+                          'view': names_view, 'group': str(query['names_group'])[:300] if query.get('names_group') else None,
+                          'q': str(query.get('names_q') or '')[:100]}
             return Response(self._conversion_state(dataset.conversion, names_page))
         operation = request.data.get('action', 'convert')
         if operation not in {'convert', 'review', 'inspect', 'save', 'chat', 'names', 'check_names', 'tidy',
@@ -583,8 +587,18 @@ class DatasetViewSet(viewsets.ModelViewSet):
                     with transaction.atomic():
                         if 'name_decisions' in request.data:
                             conversion_names.set_decisions(conversion, request.data['name_decisions'])
-                        if request.data.get('bulk'):
-                            conversion_names.bulk_decide(conversion, request.data['bulk'])
+                        if 'bulk' in request.data:
+                            bulk = request.data['bulk']
+                            if not isinstance(bulk, dict) or set(bulk) != {'group', 'decision'} or not all(isinstance(bulk[key], str) for key in ('group', 'decision')):
+                                raise conversion_names.NameDecisionError('Bulk decisions need a group and decision.')
+                            conversion_names.bulk_decide(conversion, bulk['group'], bulk['decision'])
+                        if 'undo_batch' in request.data:
+                            batch_id = request.data['undo_batch']
+                            if not isinstance(batch_id, str):
+                                raise conversion_names.NameDecisionError('A bulk batch id must be text.')
+                            conversion_names.undo_batch(conversion, batch_id)
+                        if 'undo_auto' in request.data:
+                            conversion_names.undo_auto(conversion, request.data['undo_auto'])
                         conversion_names.settle_name_questions(conversion)
                 except conversion_names.NameDecisionError as exc:
                     raise ValidationError(str(exc))

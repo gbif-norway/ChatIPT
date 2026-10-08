@@ -32,6 +32,8 @@ RUN_BUDGET_SECONDS = 180
 # Lookups made while a reviewer waits in the browser.
 INTERACTIVE_BUDGET_SECONDS = 10
 MAX_ALTERNATIVES = 5
+# Exact alternatives are possible homonyms of the user's name, so more of them are kept; beyond this a match says so.
+MAX_EXACT_ALTERNATIVES = 20
 CONCURRENT_REQUESTS = 4
 PROGRESS_CHUNK = 25
 
@@ -90,9 +92,9 @@ def split_qualifier(label):
     return name, None
 
 
-# Bump when name comparison (name_parts, name_change, authorships_agree) changes what needs confirming: a saved
-# decision stamped with another version is checked again under the current rules.
-NAME_RULES_VERSION = 1
+# Bump when name comparison or authorship agreement changes: stored automatic and bulk COL decisions are
+# re-checked for name replacements and authorship changes under the current rules.
+NAME_RULES_VERSION = 2
 
 # Highest first. Ranks outside this list are never compared.
 RANK_ORDER = (
@@ -209,6 +211,25 @@ def _is_spelling(mine, theirs, match_type, asserted_rank, rank, usage, hints):
     return _classification_agrees(usage, hints, uninomial=len(mine) == 1)
 
 
+# Infraspecific rank markers and their usual variants; "ssp." is "subsp.", "fo."/"forma" is "f.".
+_MARKER_FORMS = {"subsp.": "subsp.", "ssp.": "subsp.", "var.": "var.", "subvar.": "subvar.", "f.": "f.", "fo.": "f.",
+                 "forma": "f.", "subf.": "subf.", "nothosubsp.": "nothosubsp.", "nothovar.": "nothovar."}
+
+
+def explicit_markers(name):
+    """The meaning-bearing markers written in a name: infraspecific rank markers, normalised ("ssp." is "subsp."), a
+    hybrid sign ("Rosa × canina", "×Agropogon", "Rosa x canina") and "agg."; authorship words are ignored."""
+    tokens = str(name or "").split()
+    markers = [_MARKER_FORMS[token.casefold()] for index, token in enumerate(tokens)
+               if token.casefold() in _MARKER_FORMS and index + 1 < len(tokens) and tokens[index + 1][:1].islower()]
+    if "×" in str(name or "") or any(token == "x" and index + 1 < len(tokens) and tokens[index + 1][:1].islower()
+                                     for index, token in enumerate(tokens[1:], 1)):
+        markers.append("×")
+    if any(token.casefold() == "agg." for token in tokens):
+        markers.append("agg.")
+    return markers
+
+
 def name_change(asserted, usage, match_type=None, asserted_rank=None, hints=None):
     """How accepting `usage` would change the asserted name; None when it is the same name.
 
@@ -228,6 +249,11 @@ def name_change(asserted, usage, match_type=None, asserted_rank=None, hints=None
         return None
     asserted_rank = asserted_rank or implied_rank(mine)
     change = {"from": asserted_rank, "to": rank, "confirm": True}
+    # The same parts with another explicit rank marker ("subsp. juncea" and "var. juncea") are another name.
+    my_markers, their_markers = explicit_markers(asserted), explicit_markers(usage.get("scientificName"))
+    if mine == theirs and my_markers != their_markers:
+        mine_text = " ".join(my_markers) or "name without a rank marker"
+        return {**change, "kind": "marker", "text": f"writes your {mine_text} as {' '.join(their_markers) or 'a name without one'}"}
     if mine == theirs:
         # Only an infrageneric name carries its rank in its parts; any other same name is the user's assertion.
         if any("." in part for part in mine) and asserted_rank and rank and asserted_rank != rank:
@@ -259,7 +285,10 @@ def coarser_replacement(asserted, usage, match_type=None, asserted_rank=None, hi
 
 
 # Standard abbreviations too short for prefix matching that name one author unambiguously.
-_AUTHOR_ABBREVIATIONS = {"l.": "linnaeus", "dc.": "candolle"}
+_AUTHOR_ABBREVIATIONS = {
+    "l.": "linnaeus", "dc.": "candolle", "lam.": "lamarck", "fabr.": "fabricius",
+    "mill.": "miller", "hook.": "hooker", "willd.": "willdenow", "pers.": "persoon",
+}
 _FILIUS = {"f.", "fil.", "filius", "jr.", "jun.", "fils"}
 _INITIAL = re.compile(r"[A-Z]\.")
 
@@ -287,11 +316,12 @@ def _author(piece):
 def _author_keys(value):
     """(authors, "et al." used) of an authorship, each author as `_author` reads it.
 
-    Years and parentheses are dropped. For "A ex B" only B, the publishing author, counts; for "A in B" only A.
+    Years (including square-bracketed years) and parentheses are dropped. For "A ex B" only B, the publishing author,
+    counts; for "A in B" only A.
     """
     text = unicodedata.normalize("NFKD", str(value or ""))
     text = "".join(character for character in text if not unicodedata.combining(character))
-    text = re.sub(r"\d{4}[a-z]?", " ", text)
+    text = re.sub(r"\[?(\d{4}[a-z]?)\]?", " ", text)
     text = re.split(r"\bex\b", text)[-1]
     # "A in B": A is the author, B's work only published it ("Fitzinger in Bonaparte").
     text = re.sub(r"\bin\b[^(),]*", " ", text)
@@ -302,8 +332,10 @@ def _author_keys(value):
 
 
 def _surname_part(left, right, compound):
-    """One surname (part) against another; an abbreviation matches a full name it begins, if its stem has 3+ letters
-    ("Lam." and "Lamarck"); within a compound any abbreviated part may ("P." in "P.-Cambridge")."""
+    """Compare a surname or compound part, allowing curated aliases and long surname abbreviations.
+
+    Outside compounds, prefix matching needs a four-letter stem. Inside compounds a one-letter part may be abbreviated.
+    """
     left, right = _AUTHOR_ABBREVIATIONS.get(left, left), _AUTHOR_ABBREVIATIONS.get(right, right)
     if left == right:
         return True
@@ -311,7 +343,7 @@ def _surname_part(left, right, compound):
         stem = short.rstrip(".")
         # Within a compound a lone letter is an abbreviation even without its full stop ("F.O.P-Cambridge").
         abbreviated = short.endswith(".") or (compound and len(stem) == 1)
-        if abbreviated and not full.endswith(".") and len(full) > len(stem) and full.startswith(stem) and (len(stem) >= 3 or (compound and stem)):
+        if abbreviated and not full.endswith(".") and len(full) > len(stem) and full.startswith(stem) and (len(stem) >= 4 or (compound and stem)):
             return True
     return False
 
@@ -350,11 +382,13 @@ def _same_form(left, right, both_dated):
 def authorships_agree(left, right):
     """Two authorships name the same authors.
 
-    Years must be equal when both give one. Each author's surname must match: exactly, by one of a few standard
-    abbreviations ("L." for Linnaeus), or as an abbreviation of 3+ letters ("Lam." and "Lamarck"). Initials given on
+    Years must be equal when both give one. Brackets around a year are ignored. Each author's surname must match: exactly,
+    by one of the curated abbreviations ("L." for Linnaeus, "Lam." for Lamarck), or as an abbreviation with a stem of
+    at least 4 letters ("Lamour." and "Lamouroux"). Initials given on
     both sides must be equal; initials on one side only are accepted for the same full surname with the same year.
-    Punctuation, spacing and parentheses do not matter. So "O.P.-Cambridge" agrees with "O. Pickard-Cambridge" and
-    "L.Koch" with "L. Koch", while "L." and "Lam.", "J.E. Gray" and "G.R. Gray", "A.Gray" and "Gray", "Blackwall" and
+    Punctuation, spacing and parentheses do not matter; square brackets around years are ignored. So
+    "O.P.-Cambridge" agrees with "O. Pickard-Cambridge" and "L.Koch" with "L. Koch", while "L." and "Lam.",
+    "J.E. Gray" and "G.R. Gray", "A.Gray" and "Gray", "Blackwall" and
     "Seo, 2017" disagree.
     """
     left_years, right_years = re.findall(r"\d{4}", str(left or "")), re.findall(r"\d{4}", str(right or ""))
@@ -456,8 +490,9 @@ def _usage(usage, classification=None):
     }
 
 
-def summarize_match(payload):
-    """Reduce a GBIF v2 match response to what review and write-back need."""
+def summarize_match(payload, name=None):
+    """Reduce a GBIF v2 match response to what review and write-back need; `name` is the queried name, whose same-name
+    alternatives (possible homonyms) are all kept."""
     payload = payload or {}
     diagnostics = payload.get("diagnostics") or {}
     usage = _usage(payload.get("usage"), payload.get("classification"))
@@ -476,8 +511,7 @@ def summarize_match(payload):
             "matchType": str(alt_diagnostics.get("matchType") or "").upper() or None,
             "confidence": alt_diagnostics.get("confidence"),
         })
-        if len(alternatives) >= MAX_ALTERNATIVES:
-            break
+    alternatives, exact_dropped = bounded_alternatives(alternatives, name)
     return {
         "matchType": match_type,
         "status": MATCH_STATUS.get(match_type, "ambiguous"),
@@ -486,7 +520,32 @@ def summarize_match(payload):
         "usage": usage,
         "acceptedUsage": accepted,
         "alternatives": alternatives,
+        "exactAlternativesDropped": exact_dropped,
+        "issues": [str(issue) for issue in diagnostics.get("issues") or []],
+        "matchedId": ({"id": (diagnostics.get("matchedID") or {}).get("id"),
+                       "scientificName": (diagnostics.get("matchedID") or {}).get("scientificName"),
+                       "datasetTitle": (diagnostics.get("matchedID") or {}).get("datasetTitle")}
+                      if diagnostics.get("matchedID") else None),
     }
+
+
+def bounded_alternatives(alternatives, name=None):
+    """(alternatives kept in their order, whether possible homonyms were dropped): every exact one, and every one with the
+    queried name's parts whatever its match type, up to MAX_EXACT_ALTERNATIVES; other ones up to MAX_ALTERNATIVES."""
+    kept, exact, other, dropped = [], 0, 0, False
+    parts = name_parts(name) if name else None
+    for alternative in alternatives:
+        if alternative.get("matchType") == "EXACT" or (parts and name_parts(alternative.get("scientificName")) == parts):
+            if exact >= MAX_EXACT_ALTERNATIVES:
+                dropped = True
+                continue
+            exact += 1
+        else:
+            if other >= MAX_ALTERNATIVES:
+                continue
+            other += 1
+        kept.append(alternative)
+    return kept, dropped
 
 
 def _query_params(query):
@@ -494,10 +553,13 @@ def _query_params(query):
     for rank in HINT_RANKS:
         if query.get(rank):
             params[rank] = query[rank]
+    for identifier in ("scientificNameID", "taxonID"):
+        if query.get(identifier):
+            params[identifier] = query[identifier]
     return params
 
 
-def match_col(queries, deadline=None):
+def match_col(queries, deadline=None, verbose_exact=False):
     """Match many names against COL XR through GBIF; returns one summary per query, in order.
 
     Names go through the batch endpoint first. The batch response omits alternatives, and it has
@@ -524,8 +586,11 @@ def match_col(queries, deadline=None):
                 f"GBIF batch matcher returned {len(payload)} results for {len(chunk)} names."
             )
         for key, item in zip(chunk, payload):
-            results[key] = summarize_match(item)
-    retry = [key for key, summary in results.items() if summary["status"] not in {"exact", "variant"}]
+            results[key] = summarize_match(item, unique[key]["scientificName"])
+    # With verbose_exact, exact names are fetched again for their alternatives: the batch response leaves out the
+    # homonyms an automatic decision must see.
+    retry = [key for key, summary in results.items() if summary["status"] not in {"exact", "variant"}
+             or (verbose_exact and summary["status"] in {"exact", "variant"})]
 
     def verbose_match(key):
         return _get_json(
@@ -537,8 +602,20 @@ def match_col(queries, deadline=None):
 
     with ThreadPoolExecutor(max_workers=CONCURRENT_REQUESTS) as pool:
         for key, single in zip(retry, pool.map(verbose_match, retry)):
-            if single is not None:
-                results[key] = summarize_match(single)
+            if single is None:
+                continue
+            if results[key]["status"] in {"exact", "variant"}:
+                # The batch's exact match stands (the verbose answer can differ); its homonyms are added, and so is the
+                # verbose pick when it is another usage.
+                verbose = summarize_match(single, unique[key]["scientificName"])
+                alternatives = list(verbose["alternatives"])
+                if verbose["usage"] and str(verbose["usage"].get("id")) != str((results[key]["usage"] or {}).get("id")):
+                    alternatives.insert(0, {**verbose["usage"], "matchType": verbose["matchType"], "confidence": verbose["confidence"]})
+                kept, dropped = bounded_alternatives(alternatives, unique[key]["scientificName"])
+                results[key] = {**results[key], "alternatives": kept,
+                                "exactAlternativesDropped": dropped or verbose.get("exactAlternativesDropped", False)}
+            else:
+                results[key] = summarize_match(single, unique[key]["scientificName"])
     return [
         _without_hint_echo(results[json.dumps(_query_params(query), sort_keys=True)], query)
         for query in queries
@@ -593,7 +670,8 @@ def review_aids(query, deadline=None):
         "GET",
         f"{CHECKLISTBANK_API}/dataset/{col_checklistbank_dataset()}/match/nameusage",
         deadline=deadline,
-        params={"q": params["scientificName"], **{k: v for k, v in params.items() if k != "scientificName"}},
+        params={"q": params["scientificName"], **{k: v for k, v in params.items()
+                                                    if k not in {"scientificName", "scientificNameID", "taxonID"}}},
     ) or {}
     clb_usage = clb.get("usage") or {}
     clb_type = str(clb.get("type") or "NONE").upper()
