@@ -269,3 +269,44 @@ class DwcaTidyTests(SimpleTestCase):
             self.assertEqual((entry['nonempty_values'], entry['tidy_filled_values'], entry['source_nonempty_values']),
                              (2, 2 if 'countryCode' not in header else 1, 0 if 'countryCode' not in header else 1), header)
 
+    def test_final_review_cases(self):
+        from api.dwca_conversion import build_plan
+        # Titles show letters such as ü as they are, escape only control characters, and name where moved values went.
+        names = self.build('occurrenceID,recordedBy,eventRemarks', ['a,Kr\x81ger,ad'])
+        table = tidy_archive(names)[1]
+        self.assertIn('‘Kr\\x81ger’ → Krüger', self.group(table, 'encoding')['title'])
+        self.assertIn('‘ad’ → lifeStage: adult', self.group(table, 'life-stage-remark')['title'])
+        # A stray byte beside a letter that survived is dropped, not decoded into a second letter (568).
+        damaged = self.build('occurrenceID,recordedBy,locality', ['a,Kl\x81üver,Brü\x81ssel', 'b,B\x99SINGEN,"Liebenzell, W\x81ürttemberg"'])
+        repairs = {value['value']: value['fields'] for group in tidy_archive(damaged)[1]['groups'] for value in group['values']}
+        self.assertEqual(repairs['Kl\x81üver'], {'recordedBy': 'Klüver'})
+        self.assertEqual(repairs['Brü\x81ssel'], {'locality': 'Brüssel'})
+        self.assertEqual(repairs['Liebenzell, W\x81ürttemberg'], {'locality': 'Liebenzell, Württemberg'})
+        self.assertEqual(repairs['B\x99SINGEN'], {'recordedBy': 'BÖSINGEN'})
+        # 572: a suggestion that would change no row (every row already has a different count) is not offered, and the
+        # remark is still asked about; one that would change some rows shows its conflicts and leaves the question too.
+        model = [{'table': 0, 'column': 1, 'value': '1 juv.', 'tier': 'suggest', 'move': True,
+                  'fields': {'eventRemarks': '', 'lifeStage': 'juvenile', 'individualCount': '1', 'occurrenceRemarks': '1 juv.'}}]
+        for rows, offered in ((['a,1 juv.,2,present'], False), (['a,1 juv.,2,present', 'b,1 juv.,,present'], True)):
+            source = self.build('occurrenceID,eventRemarks,individualCount,occurrenceStatus', rows)
+            view, table = tidy_archive(source, model_changes=model)
+            suggestion = [value for group in table['groups'] for value in group['values'] if value['value'] == '1 juv.']
+            self.assertEqual(bool(suggestion), offered)
+            if offered:
+                self.assertEqual((suggestion[0]['conflict_rows'], suggestion[0]['applied']), (1, False))
+            self.assertIn('1 juv.', [issue.get('source_value') for issue in build_plan(view)['issues']])
+
+    def test_taxon_core_stand_in_plans_know_what_was_tidied(self):
+        from api.dwca_conversion import build_plan
+        from api.test_dwca_taxon import manifest_archive
+        source = read_inputs(manifest_archive([
+            ('records.csv', DWC + 'Occurrence', [DWC + term for term in ('occurrenceID', 'occurrenceStatus', 'countryCode', 'eventRemarks')],
+             [['join-a', 'occ-1', 'present', 'Norway', 'juv.'], ['join-b', 'occ-2', 'present', 'United Kingdom (English Channel)', 'ad']]),
+        ]).items())
+        # 'United Kingdom (English Channel)' is offered as a waterBody suggestion in the tidy panel, so it is not asked again.
+        nested = build_plan(tidy_archive(source)[0])['taxonomy']['occurrence_plans']
+        asked = [issue['id'] for inner in nested.values() for issue in inner['issues']]
+        self.assertFalse([identifier for identifier in asked if identifier.startswith(('country-label:', 'age-remark:'))], asked)
+        untidied = build_plan(source)['taxonomy']['occurrence_plans']
+        self.assertTrue(any(issue['id'].startswith('country-label:') for inner in untidied.values() for issue in inner['issues']))
+

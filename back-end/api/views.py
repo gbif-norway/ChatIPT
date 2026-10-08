@@ -570,6 +570,9 @@ class DatasetViewSet(viewsets.ModelViewSet):
             if conversion.status not in {'review', 'reviewing'} and not (operation == 'tidy' and job is not None and job.action == 'tidy'):
                 # A completed, blocked or failed conversion's choices must stay those of its result.
                 return Response({'detail': 'Choices can only be changed while the conversion is in review.'}, status=409)
+            if operation == 'tidy' and job is not None and job.action == 'tidy':
+                # The model reading of the values is running; a change now would discard it.
+                return Response({'detail': 'We are still reading through your values. Try again in a moment.'}, status=409)
             if operation == 'tidy':
                 try:
                     conversion_tidy.request_changes(conversion, request.data.get('changes'))

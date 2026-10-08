@@ -30,7 +30,7 @@ export default function ConversionAutomaticSummary({ state, selected, hidden, di
     .map(heading => [heading, silent.filter(line => line.heading === heading)])
   return <section className="automatic-summary card card-body mb-3" aria-labelledby="automatic-summary-heading">
     <h2 id="automatic-summary-heading" className="h4">What we decided for you</h2>
-    <p className="small text-body-secondary">We made these choices from what your files show. Change any of them; your original files are always kept in the download.</p>
+    <p className="small text-body-secondary">We made these choices from what your files show. Change any of them.</p>
     {groups.map(([family, heading]) => <div key={family} className="automatic-summary-group">
       <h3 className="h6 text-body-secondary">{heading}</h3>
       {glance.filter(line => line.family === family).map(line => <SummaryLine key={line.id} line={line} icon="bi-lightbulb" renderChoice={renderChoice} disabled={disabled} />)}

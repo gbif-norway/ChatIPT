@@ -398,6 +398,14 @@ class TidyModelFlowTests(ConversionTestCase):
         self.assertEqual(conversion.tidy['model']['status'], 'running')
         self.assertEqual(DwcConversionJob.objects.get(conversion=conversion).action, 'inspect')
 
+    def test_tidy_changes_wait_while_values_are_being_read(self):
+        process_next_conversion()  # inspect; a tidy job is queued
+        self.assertEqual(DwcConversionJob.objects.get(conversion=self.conversion).action, 'tidy')
+        group = self.conversion.tidy['summary']['groups'][0]
+        response = self.post('tidy', changes={group['id']: 'undo'})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(DwcConversionJob.objects.get(conversion=self.conversion).action, 'tidy')
+
     def test_model_failure_keeps_deterministic_plan_and_undo_does_not_call_model(self):
         with patch('api.helpers.openai_helpers.query_with_flex_fallback', side_effect=RuntimeError('offline')) as query:
             process_next_conversion(); process_next_conversion()

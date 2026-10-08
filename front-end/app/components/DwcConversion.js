@@ -190,6 +190,12 @@ export default function DwcConversion() {
     if (saveFailed.current) throw new Error('Your last change could not be saved. Reload before sending another answer.')
     setState(await request(url, body))
   }
+  // A tidy-up change rebuilds the plan, so the form is locked from the click until the new plan is shown,
+  // and the change waits for answers still being saved (like converting).
+  const sendTidy = async (body) => {
+    setBusy(true)
+    try { await send(body) } finally { setBusy(false) }
+  }
   // Every change is saved, so the server's unresolved list and option availability stay current.
   // Saves send only the changed choice, so choices the AI reviewer applied meanwhile are kept.
   const save = (changes, extra = {}) => {
@@ -334,7 +340,7 @@ export default function DwcConversion() {
         </button>}
       </div>
       <ConversionAutomaticSummary state={state} selected={selected} hidden={guidedIds} disabled={disabled} renderChoice={item => <ChoiceCard item={item} asRadios {...cardProps} />} />
-      <ConversionTidySummary state={state} send={send} disabled={disabled} />
+      <ConversionTidySummary state={state} send={sendTidy} disabled={disabled || pendingSaves > 0} />
       {guidedItems.map((item, index) => <ChoiceCard key={item.id} item={item} number={index + 1} {...cardProps} onChoose={(...args) => {
         setAnsweredHere(ids => ids.includes(item.id) ? ids : [...ids, item.id])
         choose(...args)

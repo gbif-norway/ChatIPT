@@ -118,7 +118,17 @@ def occurrence_proxy(archive, index):
     proxy = SourceTable(table.name, DWC + 'Occurrence', terms, rows,
                         [f'taxon-occurrence:{index}:{n}' for n in range(len(rows))],
                         is_core=True, row_sources=sources, join_basis=table.join_basis)
-    return SourceArchive(archive.files, [proxy], archive.fingerprint, archive.has_meta, archive.uploaded_files), conflicts
+    return SourceArchive(archive.files, [proxy], archive.fingerprint, archive.has_meta, archive.uploaded_files,
+                         tidy=_proxy_tidy(archive.tidy, index)), conflicts
+
+
+def _proxy_tidy(tidy, index):
+    """The tidy-up record of the extension, renumbered to the stand-in's single table, so its plan knows what was tidied."""
+    if not tidy:
+        return None
+    return {**tidy, 'groups': [{**group, 'table': 0} for group in tidy.get('groups', []) if group.get('table') == index],
+            'added_columns': [{**item, 'table': 0} for item in tidy.get('added_columns', []) if item.get('table') == index],
+            'source_columns': {'0': (tidy.get('source_columns') or {}).get(str(index))}}
 
 
 def _prefixed_condition(condition, prefix):

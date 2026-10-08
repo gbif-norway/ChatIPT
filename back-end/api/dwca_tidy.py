@@ -170,39 +170,71 @@ def _model_valid(item):
                and isinstance(value, str) for field, value in item['fields'].items())
 
 
+def _repair(text):
+    """Undo bytes misread from code page 437 ('B\x99SINGEN' -> 'BÖSINGEN'). A stray byte beside a letter that already
+    survived intact ('Kl\x81üver', 'Brü\x81ssel') is a leftover of that letter and is dropped ('Klüver', 'Brüssel')."""
+    out = []
+    for i, ch in enumerate(text):
+        if not '\x80' <= ch <= '\x9f':
+            out.append(ch)
+            continue
+        beside = [text[j] for j in (i - 1, i + 1) if 0 <= j < len(text)]
+        if any(ord(other) > 127 and other.isalpha() for other in beside):
+            continue
+        out.append(bytes([ord(ch)]).decode('cp437'))
+    return ''.join(out)
+
+
+def _shown(text):
+    """Text for a notice: control characters escaped so they are visible; letters such as ø or ü as they are."""
+    return re.sub(r'[\x00-\x1f\x7f-\x9f]', lambda match: f'\\x{ord(match.group()):02X}', text)
+
+
+def _example(item, field):
+    """'‘ad’ → lifeStage: adult', '‘North Sea’ → waterBody', '‘Female’ → female', '‘NA’ → left empty'."""
+    old, new = item['value'], item['fields'].get(field, item['value'])
+    others = [(name, text) for name, text in item['fields'].items()
+              if name != field and text and not (name == 'occurrenceRemarks' and text == old)]
+    if new in ('', old) and others:
+        if all(text == old for _, text in others):
+            return f"‘{_shown(old)}’ → {', '.join(name for name, _ in others)}"
+        return f"‘{_shown(old)}’ → {', '.join(f'{name}: {_shown(text)}' for name, text in others)}"
+    if not new:
+        return f'‘{_shown(old)}’ → left empty'
+    extra = f" ({', '.join(f'{name}: {_shown(text)}' for name, text in others)})" if others else ''
+    return f'‘{_shown(old)}’ → {_shown(new)}{extra}'
+
+
 def _title(rule, field, values, n):
-    examples, raw_examples = [], []
-    for item in sorted(values, key=lambda v: (-v['rows'], v['value']))[:4]:
-        old = item['value'].encode('unicode_escape').decode('ascii').replace("'", "\\'")
-        new = item['fields'].get(field, '')
-        new = new.encode('unicode_escape').decode('ascii').replace("'", "\\'")
-        examples.append(f"'{old} → {new}'")
-        raw_examples.append(f"'{old}'")
-    sample = ', '.join(examples)
-    if rule == 'vocabulary': return f'{field}: standard terms used ({sample}) in {n:,} rows.'
-    if rule == 'empty-placeholder': return f"{field}: placeholders such as {', '.join(raw_examples)} left empty ({n:,} rows)."
+    top = sorted(values, key=lambda v: (-v['rows'], v['value']))[:4]
+    sample = ', '.join(_example(item, field) for item in top)
+    raw = ', '.join(f"‘{_shown(item['value'])}’" for item in top)
+    rows = f"{n:,} {'row' if n == 1 else 'rows'}"
+    if rule == 'vocabulary': return f'{field}: written with the standard terms, e.g. {sample} ({rows}).'
+    if rule == 'empty-placeholder': return f'{field}: placeholders such as {raw} were left empty ({rows}).'
     if rule == 'country-name':
         codes = list(dict.fromkeys(v['fields'][field] for v in values))[:4]
-        return f"countryCode held country names in {n:,} rows. The names now go to country and countryCode gets ISO codes: {', '.join(codes)}."
-    if rule == 'country-code': return f'{field}: codes written in the standard two-letter form ({sample}) in {n:,} rows.'
+        return f"countryCode held country names in {rows}. The names now go to country and countryCode gets the ISO codes {', '.join(codes)}."
+    if rule == 'country-code': return f'{field}: codes written in the standard two-letter form, e.g. {sample} ({rows}).'
     if rule == 'country-code-fill':
         codes = list(dict.fromkeys(v['fields']['countryCode'] for v in values))[:4]
-        return f"countryCode filled from the country names in {n:,} rows: {', '.join(codes)}."
-    if rule == 'water-body': return f'{field}: sea and ocean names moved to waterBody ({sample}) in {n:,} rows.'
-    if rule == 'water-body-suggestion': return f'{field}: these may name a sea or ocean rather than a country; they could move to waterBody ({sample}).'
-    if rule == 'model-suggestion': return f'{field}: possible readings to check ({sample}).'
-    if rule == 'life-stage-remark': return f'{field}: life stages moved to lifeStage ({sample}) in {n:,} rows.'
-    if rule == 'decimal-comma': return f'{field}: decimal commas changed to points ({sample}) in {n:,} rows.'
+        return f"countryCode filled in from the country names ({rows}): {', '.join(codes)}."
+    if rule == 'water-body': return f'{field}: sea and ocean names moved to waterBody, e.g. {sample} ({rows}).'
+    if rule == 'water-body-suggestion':
+        return f'{field}: these look like seas or oceans rather than countries and could move to waterBody: {sample}.'
+    if rule == 'model-suggestion': return f'{field}: possible readings for you to check: {sample}.'
+    if rule == 'life-stage-remark': return f'{field}: life stages moved to lifeStage, e.g. {sample} ({rows}).'
+    if rule == 'decimal-comma': return f'{field}: decimal commas changed to points, e.g. {sample} ({rows}).'
     if rule in {'thousands-or-decimal', 'trailing-separator'}:
-        item = sorted(values, key=lambda v: (-v['rows'], v['value']))[0]
-        return f"{field}: '{item['value']}' may be a number written with a comma; suggested '{item['fields'][field]}'."
+        return f'{field}: these may be numbers written with a comma: {sample}.'
     if rule == 'zero-placeholder' and values and values[0].get('tier') == SUGGEST:
-        return f'{field} is 0 on every row, as is another elevation or depth column. If 0 means "not recorded", it can be left empty ({n:,} rows).'
-    if rule == 'zero-placeholder': return f'{field} was 0 on every row, together with the other elevation or depth columns, so it is treated as not recorded and left empty ({n:,} rows).'
-    if rule == 'variant': return f'{field}: spelling variants made the same ({sample}) in {n:,} rows.'
-    if rule == 'whitespace': return f'{field}: extra spaces removed in {n:,} rows.'
-    if rule == 'encoding': return f'{field}: some characters look damaged by a file-encoding problem ({sample}); suggested repairs are listed.'
-    return f'{field}: values interpreted ({sample}) in {n:,} rows.'
+        return f'{field} is 0 on every row, as is another elevation or depth column. If 0 means "not recorded", it can be left empty ({rows}).'
+    if rule == 'zero-placeholder':
+        return f'{field} was 0 on every row, like the other elevation and depth columns, so it is treated as not recorded and left empty ({rows}).'
+    if rule == 'variant': return f'{field}: different spellings of the same value made the same, e.g. {sample} ({rows}).'
+    if rule == 'whitespace': return f'{field}: extra spaces removed ({rows}).'
+    if rule == 'encoding': return f'{field}: some letters look garbled by a file-encoding problem; suggested repairs: {sample}.'
+    return f'{field}: read by AI, e.g. {sample} ({rows}).'
 
 
 def tidy_archive(archive, overrides=None, model_changes=None):
@@ -271,7 +303,7 @@ def tidy_archive(archive, overrides=None, model_changes=None):
                 continue
             w = normalize_space(value)
             if any('\x80' <= ch <= '\x9f' for ch in w):
-                fixed = ''.join(bytes([ord(ch)]).decode('cp437') if '\x80' <= ch <= '\x9f' else ch for ch in w)
+                fixed = _repair(w)
                 if fixed != value:
                     proposed[t, c, value] = {'rule': 'encoding', 'tier': SUGGEST,
                         'fields': {name: fixed}, 'move': False, 'rows': rows, 'by': 'rule'}
@@ -455,6 +487,17 @@ def tidy_archive(archive, overrides=None, model_changes=None):
             copies[t][r][c] = ''
             if value != '':
                 changed_rows.add(r)
+    # An open suggestion is checked against the rows as they now are: rows where it would meet a different value
+    # would stay as written if it were applied (shown on its card, and its value still gets its question).
+    for (t, c), value_records in by_column.items():
+        field = archive.tables[t].terms[c].rsplit('/', 1)[-1]
+        for r, original_row in enumerate(archive.tables[t].rows):
+            pair = value_records.get(original_row[c] if c < len(original_row) else '')
+            if pair is None or pair[0]['applied'] or pair[1]['tier'] != SUGGEST:
+                continue
+            record, change = pair
+            if any(cell(t, r, f) not in ('', wanted) for f, wanted in change['fields'].items() if f != field and wanted):
+                record.setdefault('_conflicts', set()).add(r)
     for record, _change in records.values():
         record['changed_rows'] = len(record.get('_changed', set()))
         record['conflict_rows'] = len(record.get('_conflicts', set()))
@@ -492,7 +535,9 @@ def tidy_archive(archive, overrides=None, model_changes=None):
     for group in group_dicts:
         t, c, rule = group.pop('_key')
         # An applied value that changed no cell (its fills all agreed already) is not a change worth showing.
-        group['values'] = [v for v in group['values'] if not v['applied'] or v['changed_rows'] or v['conflict_rows']]
+        # Nor is a suggestion that would change no row: every row already says something different.
+        group['values'] = [v for v in group['values'] if (not v['applied'] or v['changed_rows'] or v['conflict_rows'])
+                           and not (not v['applied'] and v['tier'] == SUGGEST and v['conflict_rows'] >= v['rows'])]
         group['applied'] = any(v['applied'] for v in group['values'])
         group['rows'] = sum(v['rows'] for v in group['values'])
         group['changed_rows'] = sum(v['changed_rows'] for v in group['values'])
@@ -538,7 +583,7 @@ def tidy_archive(archive, overrides=None, model_changes=None):
 def settled_values(archive, t, c):
     """Values of a column the tidy-up has dealt with: applied changes and open suggestions.
 
-    Undone changes are not settled, nor are values some rows kept as written because of a conflict.
+    Undone changes are not settled, nor are values that some rows keep (or would keep) as written because of a conflict.
     """
     groups = (getattr(archive, 'tidy', None) or {}).get('groups', [])
     return {value['value'] for group in groups if group['table'] == t and group['column'] == c

@@ -271,7 +271,7 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
     <summary><i className={`bi ${needsReview ? 'bi-flower1' : 'bi-check-circle'} me-2`} aria-hidden="true" /><span id="scientific-names-heading">Scientific names</span><small>{checking ? 'Checking…' : skipped ? 'Some names weren’t checked' : nameReview.status === 'error' ? 'Check interrupted' : `${summary.decided.toLocaleString()} of ${summary.labels.toLocaleString()} decided`}</small></summary>
     <div className="mt-3">
       {editable && (summary.checked < summary.labels || nameReview.status === 'error') && !checking && <button type="button" className="btn btn-sm btn-outline-secondary mb-2" disabled={disabled || busy} onClick={() => act({ action: 'check_names', plan_id: planId })}>Check names again</button>}
-      <p className="small text-muted mb-2">Names are checked with the GBIF name parser and Catalogue of Life (COL). Only names are published; Catalogue of Life IDs stay in the report. Your original text always stays in verbatimIdentification and in your original files.</p>
+      <p className="small text-muted mb-2">Names are checked with the GBIF name parser and Catalogue of Life (COL). Only names are published; Catalogue of Life IDs stay in the report. Your original text always stays in verbatimIdentification.</p>
       <NameProgress summary={summary} />
       {held && <div className="alert alert-warning small py-2" role="status">{held}</div>}
       {carriedMessage(nameReview.carried) && <p className="small text-muted">{carriedMessage(nameReview.carried)}</p>}

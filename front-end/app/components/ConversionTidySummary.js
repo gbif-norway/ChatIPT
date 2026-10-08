@@ -55,6 +55,7 @@ export default function ConversionTidySummary({ state, send, disabled }) {
               aria-label={`${value.applied ? 'Undo applied suggestion' : 'Apply suggestion'} for ${group.field}`}
               onClick={() => change(value.id, groupChange(group, value.id))}>{value.applied ? 'Applied · Undo' : 'Apply'}</button>
           </div>
+          {value.conflict_rows > 0 && <p className="small text-muted mb-1 mt-1">{rows(value.conflict_rows)} already {value.conflict_rows === 1 ? 'says' : 'say'} something different in another column and would stay as written.</p>}
           {value.note && <p className="small text-muted mb-1 mt-1">{value.confidence ? `AI (${value.confidence} confidence): ` : ''}{value.note}</p>}
           {errors[value.id] && <p className="small text-danger mb-0" role="alert">{errors[value.id]}</p>}
         </div>)}
