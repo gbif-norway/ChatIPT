@@ -3378,6 +3378,9 @@ class PublishToGBIF(OpenAIBaseModel):
 
 
 GBIF_TERMINAL_STATUSES = ('SUCCEEDED', 'FAILED', 'FINISHED')
+# GBIF stops an aborted run without a result. The archive is submitted once more;
+# a second abort is reported instead of resubmitted indefinitely.
+GBIF_ABORTED_STATUS = 'ABORTED'
 
 
 def _gbif_auth():
@@ -3427,11 +3430,59 @@ def _fetch_gbif_validation(dataset, key, validation_url):
     """One status request; saves and returns the current validation payload."""
     validation = {**get_gbif_validation(key), 'url': validation_url, 'key': key}
     previous = dataset.dwca_validation or {}
-    if previous.get('key') == key and previous.get('submitted_at'):
-        validation['submitted_at'] = previous['submitted_at']
+    if previous.get('key') == key:
+        for field in ('submitted_at', 'aborted_keys'):
+            if previous.get(field):
+                validation[field] = previous[field]
     dataset.dwca_validation = validation
     dataset.save(update_fields=['dwca_validation'])
     return validation
+
+
+def resubmit_aborted_gbif_validation(dataset, aborted):
+    """Submit the archive again after GBIF aborted it; None once a resubmission was aborted too."""
+    if aborted.get('aborted_keys'):
+        return None
+    key = submit_gbif_validation(aborted['url'])
+    validation = {
+        'url': aborted['url'],
+        'key': key,
+        'status': 'RUNNING',
+        'submitted_at': timezone.now().isoformat(),
+        'aborted_keys': [aborted['key']],
+    }
+    dataset.dwca_validation = validation
+    dataset.save(update_fields=['dwca_validation'])
+    return validation
+
+
+def gbif_repeated_abort_note(validation):
+    keys = ', '.join([*validation.get('aborted_keys', []), validation.get('key', '')])
+    return (
+        f'GBIF aborted validating the current DwC-A twice without a result (validation keys {keys}), '
+        'so ChatIPT did not resubmit it again. Tell the user the GBIF validator could not process '
+        'this archive; call ValidateDwCA without validation_key to try once more.'
+    )
+
+
+def _gbif_aborted_result(dataset, validation):
+    """Tool result for an aborted run: waiting on a resubmission, or the repeated abort."""
+    try:
+        resubmitted = resubmit_aborted_gbif_validation(dataset, validation)
+    except Exception as e:
+        message = f'GBIF aborted this validation and resubmitting the archive failed: {repr(e)[:500]}'
+    else:
+        if resubmitted:
+            return json.dumps(_gbif_waiting_payload(
+                resubmitted['key'], resubmitted['url'], resubmitted, timezone.now().isoformat(),
+            ))
+        message = gbif_repeated_abort_note(validation)
+    return json.dumps({
+        'status': GBIF_ABORTED_STATUS,
+        'message': message,
+        'validation_key': validation.get('key'),
+        'url': validation.get('url'),
+    })
 
 
 def _gbif_waiting_payload(key, validation_url, last_payload, waiting_since, failed_checks=0):
@@ -3487,6 +3538,8 @@ def refresh_gbif_validation(dataset, waiting):
                 'url': validation_url,
             })
         return json.dumps(_gbif_waiting_payload(key, validation_url, None, waiting_since, failed_checks))
+    if validation.get('status') == GBIF_ABORTED_STATUS:
+        return _gbif_aborted_result(dataset, validation)
     if validation.get('status') in GBIF_TERMINAL_STATUSES:
         return json.dumps(validation)
     started = datetime.datetime.fromisoformat(waiting_since)
@@ -3602,6 +3655,8 @@ class ValidateDwCA(OpenAIBaseModel):
                 dataset.save(update_fields=update_fields)
 
             validation = _fetch_gbif_validation(dataset, key, validation_url)
+            if validation.get('status') == GBIF_ABORTED_STATUS:
+                return _gbif_aborted_result(dataset, validation)
             if validation.get('status') in GBIF_TERMINAL_STATUSES:
                 return json.dumps(validation)
             # Agent.next_message rechecks this payload server-side, so waiting on

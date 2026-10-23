@@ -4333,6 +4333,61 @@ class DwcaArtifactValidationTests(TestCase):
         waiting.refresh_from_db()
         self.assertEqual(json.loads(waiting.openai_obj["content"])["status"], "SUPERSEDED")
 
+    @patch("api.models.create_response_message")
+    @patch("api.agent_tools.requests.post")
+    @patch("api.agent_tools.requests.get")
+    def test_aborted_waiting_validation_is_resubmitted_without_a_model_turn(self, get_mock, post_mock, model_mock):
+        get_mock.return_value.status_code = 200
+        get_mock.return_value.json.return_value = {"status": "ABORTED"}
+        post_mock.return_value.status_code = 202
+        post_mock.return_value.json.return_value = {"key": "fresh-key"}
+        agent, waiting = self._waiting_agent()
+
+        agent.next_message()
+
+        model_mock.assert_not_called()
+        waiting.refresh_from_db()
+        payload = json.loads(waiting.openai_obj["content"])
+        self.assertEqual((payload["status"], payload["validation_key"]), ("RUNNING", "fresh-key"))
+        self.dataset.refresh_from_db()
+        self.assertEqual(self.dataset.dwca_validation["key"], "fresh-key")
+        self.assertEqual(self.dataset.dwca_validation["aborted_keys"], ["validation-key"])
+
+    @patch("api.models.create_response_message")
+    @patch("api.agent_tools.requests.post")
+    @patch("api.agent_tools.requests.get")
+    def test_repeated_abort_hands_back_to_model(self, get_mock, post_mock, model_mock):
+        get_mock.return_value.status_code = 200
+        get_mock.return_value.json.return_value = {"status": "ABORTED"}
+        model_mock.return_value = CompatAssistantMessage(content="GBIF could not validate it.")
+        agent, waiting = self._waiting_agent()
+        self.dataset.dwca_validation = {**self.dataset.dwca_validation, "aborted_keys": ["first-key"]}
+        self.dataset.save(update_fields=["dwca_validation"])
+
+        agent.next_message()
+
+        post_mock.assert_not_called()
+        self.assertTrue(model_mock.called)
+        waiting.refresh_from_db()
+        payload = json.loads(waiting.openai_obj["content"])
+        self.assertEqual(payload["status"], "ABORTED")
+        self.assertIn("first-key, validation-key", payload["message"])
+
+    @patch("api.agent_tools.requests.post")
+    @patch("api.agent_tools.requests.get")
+    def test_resuming_an_aborted_key_resubmits_the_archive(self, get_mock, post_mock):
+        get_mock.return_value.status_code = 200
+        get_mock.return_value.json.return_value = {"status": "ABORTED"}
+        post_mock.return_value.status_code = 202
+        post_mock.return_value.json.return_value = {"key": "fresh-key"}
+        self.dataset.dwca_validation = {"url": self.dataset.dwca_url, "key": "old-key", "status": "ABORTED"}
+        self.dataset.save(update_fields=["dwca_validation"])
+
+        result = json.loads(ValidateDwCA(agent_id=self.agent.id, validation_key="old-key").run())
+
+        self.assertEqual((result["status"], result["validation_key"]), ("RUNNING", "fresh-key"))
+        self.assertEqual(post_mock.call_args.kwargs["files"]["fileUrl"], (None, self.dataset.dwca_url))
+
     @patch("api.agent_tools.requests.post")
     def test_recovery_does_not_replace_a_saved_current_archive(self, post_mock):
         result = ValidateDwCA(

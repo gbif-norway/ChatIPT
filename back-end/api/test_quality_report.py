@@ -75,6 +75,39 @@ class PrepareGateReportTests(TestCase):
         self.assertFalse(prepare_gate_report(self.agent))
         self.assertFalse(self.report_messages().exists())
 
+    @patch("api.quality_report.agent_tools.submit_gbif_validation", return_value="k2")
+    @patch("api.quality_report.agent_tools.get_gbif_validation", return_value={"status": "ABORTED"})
+    def test_aborted_validation_is_resubmitted_once(self, _get, submit_mock, _inspect):
+        self.dataset.dwca_validation = {
+            "url": self.dataset.dwca_url, "key": "k1", "status": "RUNNING",
+            "submitted_at": timezone.now().isoformat(),
+        }
+        self.dataset.save(update_fields=["dwca_validation"])
+
+        self.assertFalse(prepare_gate_report(self.agent))
+
+        submit_mock.assert_called_once_with("https://example.org/current.zip")
+        self.dataset.refresh_from_db()
+        self.assertEqual(self.dataset.dwca_validation["key"], "k2")
+        self.assertEqual(self.dataset.dwca_validation["aborted_keys"], ["k1"])
+        self.assertFalse(self.report_messages().exists())
+
+    @patch("api.quality_report.agent_tools.submit_gbif_validation")
+    @patch("api.quality_report.agent_tools.get_gbif_validation", return_value={"status": "ABORTED"})
+    def test_repeated_abort_is_reported_instead_of_resubmitted(self, _get, submit_mock, _inspect):
+        self.dataset.dwca_validation = {
+            "url": self.dataset.dwca_url, "key": "k2", "status": "RUNNING",
+            "submitted_at": timezone.now().isoformat(), "aborted_keys": ["k1"],
+        }
+        self.dataset.save(update_fields=["dwca_validation"])
+
+        self.assertTrue(prepare_gate_report(self.agent))
+
+        submit_mock.assert_not_called()
+        content = self.report_messages().get().openai_obj["content"]
+        self.assertIn("GBIF aborted validating the current DwC-A twice", content)
+        self.assertIn("k1, k2", content)
+
     def test_finished_validation_creates_hidden_report(self, _inspect):
         self.dataset.dwca_validation = FINISHED_VALIDATION
         self.dataset.save(update_fields=["dwca_validation"])
@@ -263,6 +296,34 @@ class RefinementReportTests(TestCase):
         delete_mock.assert_called_once_with("https://example.org/provisional.zip")
         self.assertIn("Could not build or submit", report)
         self.assertIn("material records were not validated separately", report)
+
+    @patch("api.quality_report._delete_archive")
+    @patch("api.quality_report.agent_tools.submit_gbif_validation", return_value="k2")
+    @patch("api.quality_report.agent_tools.get_gbif_validation", return_value={"status": "ABORTED"})
+    def test_aborted_provisional_validation_is_resubmitted_once_then_reported(
+        self, _get, submit_mock, delete_mock
+    ):
+        import json
+        from api.quality_report import _refinement_waiting_payload, refresh_refinement_report
+
+        record = {
+            "agent_id": self.agent.id, "url": "https://example.org/provisional.zip", "key": "k1",
+            "status": "RUNNING", "submitted_at": timezone.now().isoformat(),
+        }
+        self.dataset.provisional_dwca_validation = record
+        self.dataset.save(update_fields=["provisional_dwca_validation"])
+
+        waiting = json.loads(refresh_refinement_report(self.dataset, json.loads(_refinement_waiting_payload(record))))
+
+        self.assertEqual((waiting["status"], waiting["validation_key"]), ("RUNNING", "k2"))
+        submit_mock.assert_called_once_with("https://example.org/provisional.zip")
+        delete_mock.assert_not_called()
+
+        report = refresh_refinement_report(self.dataset, waiting)
+
+        self.assertIn("GBIF aborted validating the provisional DwC-A twice", report)
+        submit_mock.assert_called_once()
+        delete_mock.assert_called_once_with("https://example.org/provisional.zip")
 
     @patch("api.quality_report._delete_archive")
     @patch("api.quality_report.agent_tools.submit_gbif_validation", return_value="k1")

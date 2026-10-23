@@ -186,7 +186,18 @@ def prepare_gate_report(agent):
             validation = agent_tools._fetch_gbif_validation(dataset, validation['key'], url)
         except Exception:
             validation = {}
-        if validation.get('status') not in agent_tools.GBIF_TERMINAL_STATUSES:
+        if validation.get('status') == agent_tools.GBIF_ABORTED_STATUS:
+            try:
+                if agent_tools.resubmit_aborted_gbif_validation(dataset, validation):
+                    return False
+            except Exception as exc:
+                gbif_note = (
+                    f'GBIF aborted validating the current DwC-A and resubmitting it failed ({exc}). '
+                    'Call ValidateDwCA.'
+                )
+            else:
+                gbif_note = agent_tools.gbif_repeated_abort_note(validation)
+        elif validation.get('status') not in agent_tools.GBIF_TERMINAL_STATUSES:
             if waited < agent_tools._gbif_max_wait_seconds():
                 return False
             gbif_note = (
@@ -488,6 +499,20 @@ def refresh_refinement_report(dataset, waiting):
             return _deliver(dataset, record, f'Checking the GBIF validator failed repeatedly: {repr(exc)[:300]}')
         return _refinement_waiting_payload(record, failed_checks)
     record['status'] = validation.get('status')
+    if record['status'] == agent_tools.GBIF_ABORTED_STATUS:
+        if record.get('aborted_keys'):
+            return _deliver(dataset, record, 'GBIF aborted validating the provisional DwC-A twice; no GBIF result.')
+        try:
+            key = agent_tools.submit_gbif_validation(record['url'])
+        except Exception as exc:
+            return _deliver(dataset, record, f'GBIF aborted the provisional validation and resubmitting it failed: {exc}')
+        record.update({
+            'aborted_keys': [record['key']], 'key': key, 'status': 'RUNNING',
+            'submitted_at': timezone.now().isoformat(),
+        })
+        dataset.provisional_dwca_validation = record
+        dataset.save(update_fields=['provisional_dwca_validation'])
+        return _refinement_waiting_payload(record)
     if record['status'] in agent_tools.GBIF_TERMINAL_STATUSES:
         record['validation'] = validation
         return _deliver(dataset, record)
