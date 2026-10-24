@@ -9,7 +9,7 @@ from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from api import python_sessions
+from api import gbif_pause, python_sessions
 from api.models import Agent, AgentTurnJob, Dataset, Message
 
 
@@ -174,6 +174,11 @@ def _retry_or_fail_job(job_id, claimed_at):
         job = AgentTurnJob.objects.select_for_update().filter(pk=job_id, claimed_at=claimed_at).first()
         if not job:
             return
+        if gbif_pause.is_paused():
+            # A turn that fails during a GBIF outage is not counted against the job; it reruns afterwards.
+            job.claimed_at = None
+            job.save(update_fields=['claimed_at'])
+            return
         job.failure_count += 1
         if job.failure_count >= 3:
             Agent.objects.filter(pk=job.agent_id).update(busy_thinking=False)
@@ -196,6 +201,8 @@ CLAIM_CANDIDATE_LIMIT = 50
 def process_next_agent_turn():
     """Claim one due turn. The job survives each turn until a genuine pause."""
     close_old_connections()
+    if gbif_pause.is_paused():
+        return False
     now = timezone.now()
     stale_before = now - timedelta(seconds=getattr(settings, 'AGENT_TURN_LEASE_SECONDS', 3600))
     job = None

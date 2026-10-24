@@ -511,6 +511,17 @@ class DatasetListSerializer(serializers.ModelSerializer):
         return last_table.updated_at if last_table else obj.created_at
 
     def get_status(self, obj):
+        status = self._status(obj)
+        if status == 'preparing':
+            from api import gbif_pause
+
+            if 'gbif_paused' not in self.context:
+                self.context['gbif_paused'] = gbif_pause.is_paused()
+            if self.context['gbif_paused']:
+                return 'paused'
+        return status
+
+    def _status(self, obj):
         if obj.workflow_type == Dataset.WorkflowType.DWCA_CONVERSION:
             state = getattr(obj, 'conversion', None)
             return {'complete': 'ready', 'review': 'needs_input', 'failed': 'failed'}.get(state.status if state else '', 'preparing')

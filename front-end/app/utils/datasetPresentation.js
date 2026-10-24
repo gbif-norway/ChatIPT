@@ -5,6 +5,12 @@ export const DATASET_STATUS = {
     textClass: 'text-primary',
     icon: 'bi-arrow-clockwise',
   },
+  paused: {
+    label: 'Paused',
+    badgeClass: 'text-bg-secondary',
+    textClass: 'text-secondary',
+    icon: 'bi-pause-circle',
+  },
   needs_input: {
     label: 'Needs input',
     badgeClass: 'text-bg-warning',
@@ -53,7 +59,13 @@ const RESOURCE_LABELS = {
   'usage-policy': ['usage policy', 'usage policies'],
 }
 
-export const getDatasetStatus = (dataset) => {
+// gbifPaused: ChatIPT is paused for a GBIF outage, so a dataset that would be preparing waits instead.
+export const getDatasetStatus = (dataset, gbifPaused = false) => {
+  const status = getWorkflowStatus(dataset)
+  return status === 'preparing' && gbifPaused ? 'paused' : status
+}
+
+const getWorkflowStatus = (dataset) => {
   if (dataset?.published_at) return 'published'
 
   const agents = Array.isArray(dataset?.visible_agent_set) ? dataset.visible_agent_set : []

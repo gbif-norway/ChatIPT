@@ -2251,6 +2251,10 @@ class Agent(models.Model):
         if self.busy_thinking:
             return last_message
 
+        from api import gbif_pause
+        if gbif_pause.is_paused():
+            return last_message  # The turn worker retries it once the GBIF outage ends.
+
         if self._dataset_cost_limit_reached():
             return [self._pause_for_cost_limit()]
 
@@ -2312,6 +2316,9 @@ class Agent(models.Model):
                 last_message.save(update_fields=['openai_obj'])
                 if self._gbif_poll_status(last_message):
                     return last_message
+
+            if gbif_pause.is_paused():
+                return last_message  # Paused since this turn was claimed; no model call until it ends.
 
             recent_non_system_messages = list(
                 self.message_set.exclude(openai_obj__role=Message.Role.SYSTEM).order_by('-created_at')[:2]
@@ -2575,6 +2582,31 @@ class AgentTurnJob(models.Model):
     claimed_at = models.DateTimeField(null=True, blank=True, db_index=True)
     available_at = models.DateTimeField(default=timezone.now, db_index=True)
     failure_count = models.PositiveIntegerField(default=0)
+
+
+class GbifOutage(models.Model):
+    """A period when ChatIPT paused all processing because part of GBIF's API was down.
+
+    Switched on and off by hand (api.gbif_pause). Ended outages are kept, so waits on
+    the GBIF validator can leave paused time out of their limits.
+    """
+    started_at = models.DateTimeField(default=timezone.now)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    message = models.TextField(blank=True, help_text='Shown to users instead of the default notice.')
+    started_by = models.CharField(max_length=150, blank=True)
+    ended_by = models.CharField(max_length=150, blank=True)
+
+    class Meta:
+        ordering = ['-started_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['ended_at'], condition=models.Q(ended_at__isnull=True), nulls_distinct=False,
+                name='one_open_gbif_outage',
+            ),
+        ]
+
+    def __str__(self):
+        return f"GBIF outage from {self.started_at:%Y-%m-%d %H:%M}" + (f" to {self.ended_at:%Y-%m-%d %H:%M}" if self.ended_at else ' (ongoing)')
 
 
 class Message(models.Model):

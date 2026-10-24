@@ -3,12 +3,14 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
+import { useGbifStatus } from '../contexts/GbifStatusContext'
 import config from '../config'
 import { getDatasetStatus, getStatusMeta } from '../utils/datasetPresentation'
 
 const Sidebar = ({ isOpen, onToggle, onDatasetSelect, currentDatasetId }) => {
   const { user } = useAuth()
   const { isDark } = useTheme()
+  const { paused: gbifPaused } = useGbifStatus()
   const [datasets, setDatasets] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -58,7 +60,7 @@ const Sidebar = ({ isOpen, onToggle, onDatasetSelect, currentDatasetId }) => {
   }
 
   const getSidebarDatasetStatus = (dataset) => {
-    const status = getDatasetStatus(dataset)
+    const status = getDatasetStatus(dataset, gbifPaused)
     const meta = getStatusMeta(status)
     return { text: meta.label, class: meta.textClass, icon: meta.icon }
   }

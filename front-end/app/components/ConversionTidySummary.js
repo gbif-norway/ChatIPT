@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { groupChange, suggestionGroupChange, tidyGroups, tidySummaryLine, valueChange } from '../utils/conversionTidy.mjs'
 
-export default function ConversionTidySummary({ state, send, disabled }) {
+export default function ConversionTidySummary({ state, send, disabled, paused = false }) {
   const { tidied, suggestions } = tidyGroups(state)
   const [errors, setErrors] = useState({})
   if (!tidied.length && !suggestions.length) return null
@@ -22,7 +22,9 @@ export default function ConversionTidySummary({ state, send, disabled }) {
   return <details className="review-disclosure" open={suggestions.length > 0}>
     <summary className="fw-semibold">Here’s what we tidied <small className="text-muted fw-normal">{tidySummaryLine(state)}</small></summary>
     <p className="small text-muted mt-2 mb-2">We cleaned these values automatically so you have fewer questions. Your original files are kept unchanged in the download, and you can undo any change.</p>
-    {pending && <p className="small text-muted" role="status"><span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />Updating your choices…</p>}
+    {pending && <p className="small text-muted" role="status">{paused
+      ? <><i className="bi bi-pause-circle me-2" aria-hidden="true" />Paused until GBIF is working again.</>
+      : <><span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />Updating your choices…</>}</p>}
     {tidied.map(group => <div key={group.id} className={`border rounded p-2 mb-2 ${group.applied ? '' : 'text-body-secondary'}`}>
       <div className="d-flex justify-content-between align-items-start gap-2">
         <div className="small fw-semibold">{group.title}</div>

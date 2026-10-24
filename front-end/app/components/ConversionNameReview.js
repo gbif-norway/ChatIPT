@@ -13,7 +13,7 @@ const fallbackLabel = (option, partial) => option.value === 'preserve'
     : 'Leave scientificName empty (the text stays in verbatimIdentification)')
   : `Copy the supplied text into scientificName${option.value.startsWith('identification.') ? ' (identification)' : ''}`
 
-export default function ConversionNameReview({ state, send, disabled, datasetId, onRefresh, questions = [], decisions = {}, onChoose }) {
+export default function ConversionNameReview({ state, send, disabled, paused = false, datasetId, onRefresh, questions = [], decisions = {}, onChoose }) {
   const nameReview = state?.name_review
   const editable = isEditable(state)
   const [busy, setBusy] = useState(false)
@@ -35,7 +35,9 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
   const saveNames = useCallback(body => act({ ...body, action: 'names', plan_id: planId }), [act, planId])
   if (!nameReview?.summary?.labels && !skippedMessage(nameReview?.summary)) return null
   const { summary } = nameReview
-  const message = checkMessage(nameReview)
+  const checkingMessage = checkMessage(nameReview)
+  const message = paused && checkingMessage?.spinner
+    ? { variant: 'secondary', text: 'Name checks are paused until GBIF is working again.' } : checkingMessage
   const skipped = skippedMessage(summary)
   const held = unconfirmedMessage(summary)
   const needsReview = summary.decided < summary.labels || Boolean(held) || checking || summary.checked < summary.labels || nameReview.status === 'error' || Boolean(skipped) || questions.some(question => state.unresolved?.includes(question.id))
@@ -44,7 +46,7 @@ export default function ConversionNameReview({ state, send, disabled, datasetId,
     <summary><i className={`bi ${needsReview ? 'bi-flower1' : 'bi-check-circle'} me-2`} aria-hidden="true" /><span id="scientific-names-heading">Scientific names</span><small>{checking ? 'Checking…' : skipped ? 'Some names weren’t checked' : nameReview.status === 'error' ? 'Check interrupted' : `${summary.decided.toLocaleString()} of ${summary.labels.toLocaleString()} decided`}</small></summary>
     <div className="mt-3">
       <p className="small text-muted mb-2">Names checked with Catalogue of Life. Only names are published; your text stays in verbatimIdentification.</p>
-      {editable && (summary.checked < summary.labels || nameReview.status === 'error') && !checking && <button type="button" className="btn btn-sm btn-outline-secondary mb-2" disabled={disabled || busy} onClick={() => act({ action: 'check_names', plan_id: planId })}>Check names again</button>}
+      {editable && (summary.checked < summary.labels || nameReview.status === 'error') && !checking && <button type="button" className="btn btn-sm btn-outline-secondary mb-2" disabled={disabled || busy || paused} onClick={() => act({ action: 'check_names', plan_id: planId })}>Check names again</button>}
       {carriedMessage(nameReview.carried) && <p className="small text-muted">{carriedMessage(nameReview.carried)}</p>}
       {skipped && <p className="small text-warning-emphasis">{skipped}</p>}
       {summary.truncated > 0 && <p className="small text-muted">Only the {summary.labels.toLocaleString()} most frequent names are listed; {summary.truncated.toLocaleString()} others are converted as they are.</p>}

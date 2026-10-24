@@ -5,7 +5,8 @@ import { decisionTitle, openProposals } from '../utils/conversionReview.mjs'
 
 // Escalated questions in plain language. Assertions are applied only by the Confirm buttons,
 // which show the plan's own option labels (docs/dwca-conversion/ai-review-and-chat.md §9.4).
-export default function ConversionChat({ state, send, disabled, onFocusDecision }) {
+// paused: ChatIPT is paused for a GBIF outage; a message would queue work, but confirming a proposal does not.
+export default function ConversionChat({ state, send, disabled, paused = false, onFocusDecision }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -33,7 +34,9 @@ export default function ConversionChat({ state, send, disabled, onFocusDecision 
           {message.actions?.length > 0 && <div className="small text-muted mt-1">Recorded {message.actions.length} {message.actions.length === 1 ? 'answer' : 'answers'}.</div>}
         </div>
       </div>)}
-      {chat.pending && <div className="small text-muted" role="status"><span className="spinner-border spinner-border-sm me-2" />Preparing a reply…</div>}
+      {chat.pending && <div className="small text-muted" role="status">{paused
+        ? <><i className="bi bi-pause-circle me-2" aria-hidden="true" />Your message will be answered once GBIF is working again.</>
+        : <><span className="spinner-border spinner-border-sm me-2" />Preparing a reply…</>}</div>}
     </div>
     {canDecide && proposals.length > 0 && <div className="border rounded p-2 mb-2">
       <p className="small fw-semibold mb-1">Please confirm these answers. They add information that is not in your files.</p>
@@ -44,10 +47,10 @@ export default function ConversionChat({ state, send, disabled, onFocusDecision 
       <p className="small text-muted mb-0">If an answer is wrong, say so below or pick another option in the list.</p>
     </div>}
     {error && <div className="alert alert-danger py-1 small" role="alert">{error}</div>}
-    {chat.available && <form className="d-flex gap-2" onSubmit={event => { event.preventDefault(); if (text.trim()) submit({ message: text }) }}>
+    {chat.available && <form className="d-flex gap-2" onSubmit={event => { event.preventDefault(); if (text.trim() && !paused) submit({ message: text }) }}>
       <textarea className="form-control" rows={2} maxLength={4000} value={text} disabled={disabled || busy} aria-label="Your answer"
         placeholder={canDecide ? 'Answer in your own words…' : 'Ask about the problem…'} onChange={event => setText(event.target.value)} />
-      <button className="btn btn-outline-primary align-self-end" disabled={disabled || busy || !text.trim()}>Send</button>
+      <button className="btn btn-outline-primary align-self-end" disabled={disabled || busy || paused || !text.trim()}>Send</button>
     </form>}
     <p className="small text-body-secondary mt-2 mb-0">This conversation is saved here. The download report includes your confirmed choices, without the conversation.</p>
   </section>

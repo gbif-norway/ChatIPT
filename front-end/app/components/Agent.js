@@ -12,6 +12,7 @@ import { getCsrfToken } from '../utils/csrf.js';
 import { getLoadingText } from '../utils/loading.js';
 import { groupAgentMessages } from '../utils/agentMessageGroups.mjs';
 import { useDataset } from '../contexts/DatasetContext.js';
+import { useGbifStatus } from '../contexts/GbifStatusContext.js';
 import {
   ALLOWED_FILE_EXTENSIONS,
   ACCEPT_INPUT_EXTENSIONS,
@@ -78,6 +79,7 @@ const Agent = ({
   const [showTaxonReview, setShowTaxonReview] = useState(false);
   const fileInputRef = useRef(null);
   const { isDark } = useTheme();
+  const { paused: gbifPaused } = useGbifStatus();
   const { consumeNextUserMessagePrefix, queueNextUserMessagePrefix } = useDataset();
   const agentRef = useRef(agent);
   const refreshDatasetRef = useRef(refreshDataset);
@@ -374,7 +376,7 @@ const Agent = ({
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (isUserSending) {
+    if (isUserSending || gbifPaused) {
       return;
     }
 
@@ -614,10 +616,17 @@ const Agent = ({
           {/* Show spinner while loading, thinking, or when the assistant hasn't yet asked for a reply */}
           {(isLoading || isUserSending || agent.busy_thinking || (!assistantWaitingForReply && !agent.completed_at)) && (
             <div className="message user-input-loading">
-              <div className="d-flex align-items-center">
-                <strong>{loadingMessage}</strong>
-                <div className="spinner-border ms-auto" role="status" aria-hidden="true"></div>
-              </div>
+              {gbifPaused && !isUserSending ? (
+                <div className="d-flex align-items-center gap-2">
+                  <i className="bi bi-pause-circle" aria-hidden="true"></i>
+                  <strong>Paused until GBIF is working again</strong>
+                </div>
+              ) : (
+                <div className="d-flex align-items-center">
+                  <strong>{loadingMessage}</strong>
+                  <div className="spinner-border ms-auto" role="status" aria-hidden="true"></div>
+                </div>
+              )}
             </div>
           )}
 
@@ -630,7 +639,7 @@ const Agent = ({
                   className="btn btn-outline-secondary"
                   onClick={triggerFileDialog}
                   title="Add data files, phylogenetic tree files, or manuscript PDFs"
-                  disabled={isUserSending}
+                  disabled={isUserSending || gbifPaused}
                 >
                   <i className="bi bi-paperclip" aria-hidden="true"></i>
                   <span className="visually-hidden">Attach files</span>
@@ -662,7 +671,7 @@ const Agent = ({
                   show={showSendTooltip}
                   trigger={[]}
                 >
-                  <button type="submit" className="btn btn-primary d-flex align-items-center gap-1" disabled={isUserSending}>
+                  <button type="submit" className="btn btn-primary d-flex align-items-center gap-1" disabled={isUserSending || gbifPaused}>
                     <i className="bi bi-send-fill" aria-hidden="true"></i>
                     <span className="d-none d-md-inline">Send</span>
                   </button>

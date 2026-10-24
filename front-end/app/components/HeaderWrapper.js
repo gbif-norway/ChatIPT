@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback } from 'react'
 import Header from './Header'
+import GbifPauseBanner from './GbifPauseBanner'
 
 // Create a context for navigation state
 const NavigationContext = createContext()
@@ -36,11 +37,14 @@ const HeaderWrapper = () => {
   const { navigationState } = useNavigation()
 
   return (
-    <Header 
-      showNavigation={navigationState.showNavigation}
-      onNewDataset={navigationState.onNewDataset}
-      onBackToDashboard={navigationState.onBackToDashboard}
-    />
+    <>
+      <Header 
+        showNavigation={navigationState.showNavigation}
+        onNewDataset={navigationState.onNewDataset}
+        onBackToDashboard={navigationState.onBackToDashboard}
+      />
+      <GbifPauseBanner />
+    </>
   )
 }
 

@@ -21,6 +21,7 @@ from api.attention_notifications import (
     cancel_notification,
     notification_payload,
 )
+from api import gbif_pause
 from api.agent_turns import ensure_dataset_work
 from api.helpers.publish import clean_person_name
 
@@ -110,6 +111,13 @@ def auth_status(request):
             'authenticated': False,
             'user': None
         })
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def gbif_status(request):
+    """Whether ChatIPT is paused for a GBIF outage, for the site-wide notice."""
+    return Response(gbif_pause.status())
 
 
 @api_view(['GET'])
@@ -460,6 +468,10 @@ class DatasetViewSet(viewsets.ModelViewSet):
         context['request'] = self.request
         return context
 
+    def create(self, request, *args, **kwargs):
+        gbif_pause.refuse_new_work()
+        return super().create(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         """Automatically assign the current user to the dataset"""
         logger.info(f"DatasetViewSet.perform_create - User ID: {self.request.user.id}")
@@ -534,6 +546,8 @@ class DatasetViewSet(viewsets.ModelViewSet):
         if operation not in {'convert', 'review', 'inspect', 'save', 'chat', 'names', 'check_names', 'tidy',
                              'drop_unlinked_extension_rows'}:
             raise ValidationError('Unknown conversion action.')
+        if operation not in {'save', 'names'} and not (operation == 'chat' and 'confirm' in request.data):
+            gbif_pause.refuse_new_work()  # Saving choices queues nothing, so it stays available.
         with transaction.atomic():
             # Lock order: conversion, then job (docs/dwca-conversion/ai-review-and-chat.md §5.9).
             conversion = DwcConversion.objects.select_for_update().get(dataset=dataset)
@@ -1133,6 +1147,10 @@ class UserFileViewSet(viewsets.ModelViewSet):
 
         return queryset.filter(dataset__user=self.request.user)
 
+    def create(self, request, *args, **kwargs):
+        gbif_pause.refuse_new_work()
+        return super().create(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         dataset_id = self.request.data.get('dataset') or self.request.data.get('dataset_id')
         if not dataset_id:
@@ -1284,6 +1302,7 @@ class TaxonNameMatchViewSet(viewsets.ReadOnlyModelViewSet):
         """
         from api import taxon_matching
 
+        gbif_pause.refuse_new_work()  # The decisions stay saved; finishing hands work back to the agent.
         with transaction.atomic():
             review = self._requested_review(request)
             if not review:
@@ -1321,6 +1340,7 @@ class TaxonNameMatchViewSet(viewsets.ReadOnlyModelViewSet):
         """Close an open taxon review without writing any names, then tell the paused agent."""
         from api import taxon_matching
 
+        gbif_pause.refuse_new_work()
         with transaction.atomic():
             review = self._requested_review(request)
             if not review:
@@ -1407,6 +1427,7 @@ class MessageViewSet(viewsets.ModelViewSet):
         openai_obj = serializer.validated_data.get('openai_obj') or {}
 
         if agent and (openai_obj or {}).get('role') == Message.Role.USER:
+            gbif_pause.refuse_new_work()
             dataset = agent.dataset
             # Only the active agent runs; a reply elsewhere would never be answered.
             active_agent = dataset.active_agent()

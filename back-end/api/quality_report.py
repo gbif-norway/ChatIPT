@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 import pandas as pd
 from django.utils import timezone
 
-from api import agent_tools
+from api import agent_tools, gbif_pause
 from api.publication_validation import _as_integer, _is_blank
 
 
@@ -181,7 +181,7 @@ def prepare_gate_report(agent):
             dataset.dwca_validation = {**validation, 'submitted_at': timezone.now().isoformat()}
             dataset.save(update_fields=['dwca_validation'])
             return False
-        waited = (timezone.now() - submitted_at).total_seconds()
+        waited = gbif_pause.active_seconds_since(submitted_at)
         try:
             validation = agent_tools._fetch_gbif_validation(dataset, validation['key'], url)
         except Exception:
@@ -191,6 +191,8 @@ def prepare_gate_report(agent):
                 if agent_tools.resubmit_aborted_gbif_validation(dataset, validation):
                     return False
             except Exception as exc:
+                if gbif_pause.is_paused():
+                    return False  # Resubmitted once the GBIF outage ends.
                 gbif_note = (
                     f'GBIF aborted validating the current DwC-A and resubmitting it failed ({exc}). '
                     'Call ValidateDwCA.'
@@ -203,6 +205,7 @@ def prepare_gate_report(agent):
             gbif_note = (
                 f"GBIF had not finished validating the current DwC-A after {int(waited // 60)} minutes. "
                 f"Call ValidateDwCA with validation_key {dataset.dwca_validation.get('key')} to keep waiting."
+                + agent_tools.gbif_resubmission_note(dataset.dwca_validation)
             )
     Message.objects.create(agent=agent, openai_obj={
         'role': Message.Role.SYSTEM,
@@ -494,6 +497,8 @@ def refresh_refinement_report(dataset, waiting):
     try:
         validation = agent_tools.get_gbif_validation(record['key'])
     except Exception as exc:
+        if gbif_pause.is_paused():
+            return _refinement_waiting_payload(record, failed_checks)  # GBIF being down is why ChatIPT paused.
         failed_checks += 1
         if failed_checks >= 5:
             return _deliver(dataset, record, f'Checking the GBIF validator failed repeatedly: {repr(exc)[:300]}')
@@ -505,11 +510,15 @@ def refresh_refinement_report(dataset, waiting):
         try:
             key = agent_tools.submit_gbif_validation(record['url'])
         except Exception as exc:
+            if gbif_pause.is_paused():
+                return _refinement_waiting_payload(record, failed_checks)  # Resubmitted once the outage ends.
             return _deliver(dataset, record, f'GBIF aborted the provisional validation and resubmitting it failed: {exc}')
         record.update({
             'aborted_keys': [record['key']], 'key': key, 'status': 'RUNNING',
             'submitted_at': timezone.now().isoformat(),
         })
+        for field in ('queued_since', 'queued_alert_sent'):
+            record.pop(field, None)
         dataset.provisional_dwca_validation = record
         dataset.save(update_fields=['provisional_dwca_validation'])
         return _refinement_waiting_payload(record)
@@ -517,6 +526,9 @@ def refresh_refinement_report(dataset, waiting):
         record['validation'] = validation
         return _deliver(dataset, record)
     submitted = _parse_time(record.get('submitted_at'))
-    if submitted and (timezone.now() - submitted).total_seconds() >= agent_tools._gbif_max_wait_seconds():
+    if submitted and gbif_pause.active_seconds_since(submitted) >= agent_tools._gbif_max_wait_seconds():
         return _deliver(dataset, record, 'GBIF did not finish validating the provisional DwC-A in time.')
+    if agent_tools.track_gbif_queue(record, dataset.id, 'provisional DwC-A'):
+        dataset.provisional_dwca_validation = record
+        dataset.save(update_fields=['provisional_dwca_validation'])
     return _refinement_waiting_payload(record, failed_checks)

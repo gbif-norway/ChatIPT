@@ -1,3 +1,4 @@
+import datetime
 from unittest.mock import patch
 
 from django.test import SimpleTestCase, TestCase
@@ -107,6 +108,20 @@ class PrepareGateReportTests(TestCase):
         content = self.report_messages().get().openai_obj["content"]
         self.assertIn("GBIF aborted validating the current DwC-A twice", content)
         self.assertIn("k1, k2", content)
+
+    @patch("api.quality_report.agent_tools.get_gbif_validation", return_value={"status": "QUEUED"})
+    def test_timed_out_resubmission_explains_the_replaced_key(self, _get, _inspect):
+        self.dataset.dwca_validation = {
+            "url": self.dataset.dwca_url, "key": "k2", "status": "RUNNING", "aborted_keys": ["k1"],
+            "submitted_at": (timezone.now() - datetime.timedelta(hours=4)).isoformat(),
+        }
+        self.dataset.save(update_fields=["dwca_validation"])
+
+        self.assertTrue(prepare_gate_report(self.agent))
+
+        content = self.report_messages().get().openai_obj["content"]
+        self.assertIn("Call ValidateDwCA with validation_key k2 to keep waiting.", content)
+        self.assertIn("GBIF aborted the earlier validation of this archive (k1)", content)
 
     def test_finished_validation_creates_hidden_report(self, _inspect):
         self.dataset.dwca_validation = FINISHED_VALIDATION

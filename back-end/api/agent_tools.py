@@ -3395,6 +3395,34 @@ def _gbif_max_wait_seconds():
     return max(int(getattr(settings, 'GBIF_VALIDATION_MAX_WAIT_SECONDS', 3 * 60 * 60)), 1)
 
 
+def _gbif_queued_alert_seconds():
+    return max(int(getattr(settings, 'GBIF_QUEUED_ALERT_SECONDS', 30 * 60)), 1)
+
+
+def track_gbif_queue(record, dataset_id, archive):
+    """Alert developers once when GBIF keeps a validation QUEUED too long.
+
+    GBIF normally starts a validation within about a minute, so a long QUEUED status
+    suggests its validator is stuck; a developer then decides whether to pause ChatIPT
+    (api.gbif_pause). Updates `record` and returns True when it changed.
+    """
+    if record.get('status') != 'QUEUED':
+        return bool(record.pop('queued_since', None))
+    if not record.get('queued_since'):
+        record['queued_since'] = timezone.now().isoformat()
+        return True
+    queued = (timezone.now() - datetime.datetime.fromisoformat(record['queued_since'])).total_seconds()
+    if record.get('queued_alert_sent') or queued < _gbif_queued_alert_seconds():
+        return False
+    # Not marked sent unless Discord accepted it, so a failed alert is retried at the next check.
+    record['queued_alert_sent'] = bool(discord_bot.send_discord_message(
+        f"⚠️ GBIF has kept validation {record.get('key')} of dataset {dataset_id}'s {archive} QUEUED for "
+        f"{int(queued // 60)} minutes; it normally starts within a minute. If GBIF's validator is stuck, "
+        "pause ChatIPT with `python manage.py gbif_pause on` or in Django admin under GBIF outages."
+    ))
+    return record['queued_alert_sent']
+
+
 class GbifSubmissionError(RuntimeError):
     pass
 
@@ -3431,9 +3459,10 @@ def _fetch_gbif_validation(dataset, key, validation_url):
     validation = {**get_gbif_validation(key), 'url': validation_url, 'key': key}
     previous = dataset.dwca_validation or {}
     if previous.get('key') == key:
-        for field in ('submitted_at', 'aborted_keys'):
+        for field in ('submitted_at', 'aborted_keys', 'queued_since', 'queued_alert_sent'):
             if previous.get(field):
                 validation[field] = previous[field]
+    track_gbif_queue(validation, dataset.id, 'DwC-A')
     dataset.dwca_validation = validation
     dataset.save(update_fields=['dwca_validation'])
     return validation
@@ -3465,11 +3494,29 @@ def gbif_repeated_abort_note(validation):
     )
 
 
+def gbif_resubmission_note(validation):
+    """Why a resubmitted run's key differs from the aborted one; '' for a first submission."""
+    aborted = validation.get('aborted_keys')
+    if not aborted:
+        return ''
+    return (
+        f" GBIF aborted the earlier validation of this archive ({', '.join(aborted)}) without a result, "
+        f"so ChatIPT submitted it again as {validation.get('key')}; use this key from now on."
+    )
+
+
 def _gbif_aborted_result(dataset, validation):
     """Tool result for an aborted run: waiting on a resubmission, or the repeated abort."""
     try:
         resubmitted = resubmit_aborted_gbif_validation(dataset, validation)
     except Exception as e:
+        from api import gbif_pause
+
+        if gbif_pause.is_paused():
+            # Recheck the aborted key once the GBIF outage ends; it is resubmitted then.
+            return json.dumps(_gbif_waiting_payload(
+                validation.get('key'), validation.get('url'), validation, timezone.now().isoformat(),
+            ))
         message = f'GBIF aborted this validation and resubmitting the archive failed: {repr(e)[:500]}'
     else:
         if resubmitted:
@@ -3486,12 +3533,12 @@ def _gbif_aborted_result(dataset, validation):
 
 
 def _gbif_waiting_payload(key, validation_url, last_payload, waiting_since, failed_checks=0):
-    return {
+    payload = {
         'status': 'RUNNING',
         'message': (
             'GBIF is still validating this archive. ChatIPT keeps checking and will replace '
             'this result with the finished validation automatically; do not call ValidateDwCA '
-            'again for this archive.'
+            'again for this archive.' + gbif_resubmission_note(last_payload or {})
         ),
         'validation_key': key,
         'url': validation_url,
@@ -3502,6 +3549,9 @@ def _gbif_waiting_payload(key, validation_url, last_payload, waiting_since, fail
             timezone.now() + datetime.timedelta(seconds=_gbif_recheck_seconds())
         ).isoformat(),
     }
+    if (last_payload or {}).get('aborted_keys'):
+        payload['aborted_keys'] = last_payload['aborted_keys']
+    return payload
 
 
 def refresh_gbif_validation(dataset, waiting):
@@ -3529,6 +3579,11 @@ def refresh_gbif_validation(dataset, waiting):
     try:
         validation = _fetch_gbif_validation(dataset, key, validation_url)
     except Exception as e:
+        from api import gbif_pause
+
+        if gbif_pause.is_paused():
+            # GBIF being down is why ChatIPT paused; keep waiting rather than failing.
+            return json.dumps(_gbif_waiting_payload(key, validation_url, saved, waiting_since, failed_checks))
         failed_checks += 1
         if failed_checks >= 5:
             return json.dumps({
@@ -3537,24 +3592,30 @@ def refresh_gbif_validation(dataset, waiting):
                 'validation_key': key,
                 'url': validation_url,
             })
-        return json.dumps(_gbif_waiting_payload(key, validation_url, None, waiting_since, failed_checks))
+        return json.dumps(_gbif_waiting_payload(key, validation_url, saved, waiting_since, failed_checks))
     if validation.get('status') == GBIF_ABORTED_STATUS:
         return _gbif_aborted_result(dataset, validation)
     if validation.get('status') in GBIF_TERMINAL_STATUSES:
         return json.dumps(validation)
+    from api import gbif_pause
+
+    # Time ChatIPT spent paused for a GBIF outage does not count towards the limit.
     started = datetime.datetime.fromisoformat(waiting_since)
-    if (timezone.now() - started).total_seconds() >= _gbif_max_wait_seconds():
-        return json.dumps({
+    if gbif_pause.active_seconds_since(started) >= _gbif_max_wait_seconds():
+        timed_out = {
             'status': 'TIMED_OUT',
             'message': (
                 f'GBIF has not finished validating this archive after {_gbif_max_wait_seconds() // 60} '
                 'minutes. Tell the user validation is delayed; call ValidateDwCA with this '
-                'validation_key later to resume waiting.'
+                'validation_key later to resume waiting.' + gbif_resubmission_note(validation)
             ),
             'validation_key': key,
             'url': validation_url,
             'last_seen_status': validation.get('status'),
-        })
+        }
+        if validation.get('aborted_keys'):
+            timed_out['aborted_keys'] = validation['aborted_keys']
+        return json.dumps(timed_out)
     return json.dumps(_gbif_waiting_payload(key, validation_url, validation, waiting_since))
 
 

@@ -12,7 +12,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from api.dwca_import import ConversionError, ImportFailure, read_inputs, source_zip
-from api import conversion_tidy
+from api import conversion_tidy, gbif_pause
 from api.dwca_conversion import RULE_VERSION, build_plan, convert
 from api.conversion_evidence import publication_metadata, source_eml_content
 from api.dwca_eml_descriptor import extract_eml_descriptor_metadata
@@ -114,6 +114,8 @@ def _claim(now):
     return conversion, job
 
 def process_next_conversion():
+    if gbif_pause.is_paused():
+        return False
     now = timezone.now()
     with transaction.atomic():
         conversion, job = _claim(now)

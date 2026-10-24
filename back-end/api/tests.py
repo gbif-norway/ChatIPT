@@ -4387,6 +4387,28 @@ class DwcaArtifactValidationTests(TestCase):
 
         self.assertEqual((result["status"], result["validation_key"]), ("RUNNING", "fresh-key"))
         self.assertEqual(post_mock.call_args.kwargs["files"]["fileUrl"], (None, self.dataset.dwca_url))
+        self.assertEqual(result["aborted_keys"], ["old-key"])
+        self.assertIn("aborted the earlier validation of this archive (old-key)", result["message"])
+
+    @patch("api.agent_tools.requests.get")
+    def test_timed_out_resubmission_explains_the_replaced_key(self, get_mock):
+        from api.agent_tools import refresh_gbif_validation
+
+        get_mock.return_value.status_code = 200
+        get_mock.return_value.json.return_value = {"status": "QUEUED"}
+        self.dataset.dwca_validation = {
+            "url": self.dataset.dwca_url, "key": "fresh-key", "status": "RUNNING", "aborted_keys": ["old-key"],
+        }
+        self.dataset.save(update_fields=["dwca_validation"])
+
+        result = json.loads(refresh_gbif_validation(self.dataset, {
+            "validation_key": "fresh-key", "url": self.dataset.dwca_url,
+            "waiting_since": (timezone.now() - datetime.timedelta(hours=4)).isoformat(),
+        }))
+
+        self.assertEqual((result["status"], result["validation_key"]), ("TIMED_OUT", "fresh-key"))
+        self.assertEqual(result["aborted_keys"], ["old-key"])
+        self.assertIn("(old-key) without a result, so ChatIPT submitted it again as fresh-key", result["message"])
 
     @patch("api.agent_tools.requests.post")
     def test_recovery_does_not_replace_a_saved_current_archive(self, post_mock):

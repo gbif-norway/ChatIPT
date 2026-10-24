@@ -3,6 +3,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useDataset } from '../contexts/DatasetContext';
 import { useAuth } from '../contexts/AuthContext';
+import { useGbifStatus } from '../contexts/GbifStatusContext';
 import Agent from './Agent';
 import DatasetPackageOverview, { PublicationPackageCards } from './DatasetPackageOverview';
 import PackageExplorer from './PackageExplorer';
@@ -81,6 +82,7 @@ const metadataFormFromDataset = (dataset, fallbackUser) => {
 
 const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const { currentDataset, currentDatasetId, loading, error, refreshDataset, queueNextUserMessagePrefix } = useDataset();
+  const { paused: gbifPaused } = useGbifStatus();
   const { user } = useAuth();
   const [tables, setTables] = useState([]);
   const [tablesLoading, setTablesLoading] = useState(true);
@@ -621,7 +623,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       })
     : [];
   const uploadedFiles = Array.isArray(currentDataset?.user_files) ? currentDataset.user_files : [];
-  const datasetStatus = getDatasetStatus(currentDataset);
+  const datasetStatus = getDatasetStatus(currentDataset, gbifPaused);
   const statusMeta = getStatusMeta(datasetStatus);
   const normalizedStructureNotes = String(currentDataset.structure_notes || '').replace(/\\n/g, '\n');
 
@@ -767,10 +769,17 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
           )}
           {datasetIsActivelyProcessing(currentDataset) && (
             <div className="message user-input-loading">
-              <div className="d-flex align-items-center">
-                <strong>Working...</strong>
-                <div className="spinner-border ms-auto" role="status" aria-hidden="true"></div>
-              </div>
+              {gbifPaused ? (
+                <div className="d-flex align-items-center gap-2">
+                  <i className="bi bi-pause-circle" aria-hidden="true"></i>
+                  <strong>Paused until GBIF is working again</strong>
+                </div>
+              ) : (
+                <div className="d-flex align-items-center">
+                  <strong>Working...</strong>
+                  <div className="spinner-border ms-auto" role="status" aria-hidden="true"></div>
+                </div>
+              )}
             </div>
           )}
           {currentDataset.published_at != null && (

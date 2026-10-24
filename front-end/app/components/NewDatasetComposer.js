@@ -7,6 +7,7 @@ import { ACCEPT_INPUT_EXTENSIONS, ALLOWED_FILE_EXTENSIONS, isExtensionAllowed } 
 import { formatFileSize, sendUpload, uploadSizeError } from '../utils/uploadSize.mjs';
 import { useAuth } from '../contexts/AuthContext.js';
 import { useTheme } from '../contexts/ThemeContext.js';
+import { useGbifStatus } from '../contexts/GbifStatusContext.js';
 
 const buildDisplayName = (user) => {
   if (!user) {
@@ -33,6 +34,7 @@ const buildDisplayName = (user) => {
 const NewDatasetComposer = ({ onDatasetCreated }) => {
   const { user } = useAuth();
   const { isDark } = useTheme();
+  const { paused: gbifPaused } = useGbifStatus();
   const [userInput, setUserInput] = useState('');
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -111,7 +113,7 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
   const handleSubmit = async (event) => {
     event.preventDefault();
 
-    if (isSubmitting || sizeError) {
+    if (isSubmitting || sizeError || gbifPaused) {
       return;
     }
 
@@ -233,7 +235,7 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
                   aria-label="Message ChatIPT"
                 />
               </div>
-              <button type="submit" className="btn btn-primary d-flex align-items-center gap-1" disabled={isSubmitting || Boolean(sizeError)}>
+              <button type="submit" className="btn btn-primary d-flex align-items-center gap-1" disabled={isSubmitting || Boolean(sizeError) || gbifPaused}>
                 {isSubmitting ? (
                   <>
                     <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>

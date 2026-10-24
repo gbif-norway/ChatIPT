@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import config from '../config'
 import { useDataset } from '../contexts/DatasetContext'
 import { useAuth } from '../contexts/AuthContext'
+import { useGbifStatus } from '../contexts/GbifStatusContext'
 import { getStatusMeta } from '../utils/datasetPresentation'
 import { datasetDisplayName, datasetKind } from '../utils/datasetKind.mjs'
 import NewDatasetChooser from './NewDatasetChooser'
@@ -33,9 +34,11 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset, onConvertArc
     }
   }
 
+  // Statuses come from the server, which reports working datasets as paused during a GBIF outage.
+  const { paused: gbifPaused } = useGbifStatus()
   useEffect(() => {
     fetchDatasets()
-  }, [])
+  }, [gbifPaused])
 
   const getDisplayName = (dataset) => datasetDisplayName(dataset, 'Untitled Dataset')
 

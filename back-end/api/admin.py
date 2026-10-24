@@ -1,10 +1,13 @@
-from django.contrib import admin
+from django import forms
+from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin
+from . import gbif_pause
 from .models import (
     Agent,
     CustomUser,
     Dataset,
     DatasetAttentionNotification,
+    GbifOutage,
     Message,
     OpenAIUsage,
     Table,
@@ -120,3 +123,40 @@ class OpenAIUsageAdmin(admin.ModelAdmin):
     search_fields = ('response_id', 'dataset__title', '=dataset__id', '=agent__id')
     readonly_fields = tuple(field.name for field in OpenAIUsage._meta.fields)
     date_hierarchy = 'created_at'
+
+
+class GbifOutageForm(forms.ModelForm):
+    class Meta:
+        model = GbifOutage
+        fields = ('message',)
+
+    def clean(self):
+        cleaned = super().clean()
+        if self.instance.pk is None and gbif_pause.is_paused():
+            raise forms.ValidationError('ChatIPT is already paused for a GBIF outage. Edit that outage instead.')
+        return cleaned
+
+
+@admin.register(GbifOutage)
+class GbifOutageAdmin(admin.ModelAdmin):
+    """Adding an outage pauses all processing; the "End" action resumes it."""
+    form = GbifOutageForm
+    list_display = ('started_at', 'ended_at', 'started_by', 'ended_by', 'message')
+    readonly_fields = ('started_at', 'ended_at', 'started_by', 'ended_by')
+    actions = ['end_outage']
+
+    def save_model(self, request, obj, form, change):
+        if change:
+            return super().save_model(request, obj, form, change)
+        outage, _ = gbif_pause.start(obj.message, by=request.user.get_username())
+        obj.pk, obj.started_at, obj.started_by = outage.pk, outage.started_at, outage.started_by
+
+    def has_delete_permission(self, request, obj=None):
+        return False  # Ended outages keep GBIF validation waits from counting paused time.
+
+    @admin.action(description='End the GBIF outage and resume processing')
+    def end_outage(self, request, queryset):
+        if not queryset.filter(ended_at__isnull=True).exists():
+            self.message_user(request, 'Select the ongoing outage to end it.', messages.WARNING)
+        elif gbif_pause.end(by=request.user.get_username()):
+            self.message_user(request, 'Processing resumed.')

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import config from '../config'
 import { getCsrfToken } from '../utils/csrf'
 import { useDataset } from '../contexts/DatasetContext'
+import { useGbifStatus } from '../contexts/GbifStatusContext'
 import { attentionItems, chatVisible, conflictsFor, optionState, shownRecommendation, unresolvedIssues } from '../utils/conversionReview.mjs'
 import { AGENT_NAMES_ID, automaticSummary, conversionTitle, dedupeNotices, glossaryEntry, isColumnId, makeSelector, shortTerm } from '../utils/conversionPlan.mjs'
 import { focusDecision } from '../utils/focusDecision'
@@ -27,13 +28,14 @@ async function request(url, body) {
 }
 
 export function ConversionUpload({ onDatasetCreated }) {
+  const { paused: gbifPaused } = useGbifStatus()
   const [files, setFiles] = useState([])
   const [title, setTitle] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const sizeError = uploadSizeError(files, config.maxUploadMB)
   const submit = async (event) => {
-    event.preventDefault(); if (sizeError) return
+    event.preventDefault(); if (sizeError || gbifPaused) return
     setBusy(true); setError('')
     try {
       const body = new FormData()
@@ -41,7 +43,7 @@ export function ConversionUpload({ onDatasetCreated }) {
       files.forEach(file => body.append('files', file))
       const response = await sendUpload(`${config.baseUrl}/api/datasets/`, { method: 'POST', body, credentials: 'include', headers: { 'X-CSRFToken': await getCsrfToken() } }, config.maxUploadMB)
       const data = await response.json()
-      if (!response.ok) throw new Error(Array.isArray(data) ? data.join(' ') : JSON.stringify(data))
+      if (!response.ok) throw new Error(data.detail || (Array.isArray(data) ? data.join(' ') : JSON.stringify(data)))
       onDatasetCreated(data.id)
     } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
@@ -56,7 +58,7 @@ export function ConversionUpload({ onDatasetCreated }) {
       {files.length > 0 && <ul>{files.map(file => <li key={file.name}>{file.name} · {formatFileSize(file.size)}</li>)}</ul>}
       <small className="text-muted">Maximum 200 MB uploaded or expanded. Archives built around events, occurrences or taxa (a species checklist) are accepted. A checklist on its own produces a taxonomy data package; actual occurrence records can also be converted to the Data Package standard after you review them.</small>
       {[error, sizeError].filter(Boolean).map(message => <div key={message} className="alert alert-danger" role="alert">{message}</div>)}
-      <button className="btn btn-primary align-self-start" disabled={busy || !files.length || Boolean(sizeError)}>{busy ? 'Uploading…' : 'Inspect my archive'}<i className="bi bi-arrow-right ms-2" aria-hidden="true" /></button>
+      <button className="btn btn-primary align-self-start" disabled={busy || !files.length || Boolean(sizeError) || gbifPaused}>{busy ? 'Uploading…' : 'Inspect my archive'}<i className="bi bi-arrow-right ms-2" aria-hidden="true" /></button>
     </form>
   </div>
 }
@@ -153,6 +155,7 @@ function ChoiceCard({ item, state, decisions, disabled, onChoose, selected, numb
 
 export default function DwcConversion() {
   const { currentDataset, refreshDataset } = useDataset()
+  const { paused: gbifPaused } = useGbifStatus()
   const [state, setState] = useState(null)
   const [decisions, setDecisions] = useState({})
   const [error, setError] = useState('')
@@ -249,6 +252,8 @@ export default function DwcConversion() {
   }))
   const reviewable = state?.review?.reviewable || 0
   const disabled = busy || working
+  // Saving choices stays available during a GBIF pause; actions that queue processing do not.
+  const startDisabled = disabled || gbifPaused
   const inReview = ['review', 'reviewing'].includes(state?.status)
   const needsInput = new Set([...unresolved.map(issue => issue.id), ...(state?.review?.escalated || []), ...(state?.conflicts || []).flatMap(conflict => conflict.decision_ids || [])])
   const scientific = state?.status === 'complete'
@@ -312,7 +317,7 @@ export default function DwcConversion() {
           </div>
         </section>)}
         <p className="small">You can remove these unlinked records from the conversion. Your uploaded files, including these records, will still be kept in the download.</p>
-        <button type="button" className="btn btn-primary" disabled={disabled} onClick={() => perform('drop_unlinked_extension_rows')}>
+        <button type="button" className="btn btn-primary" disabled={startDisabled} onClick={() => perform('drop_unlinked_extension_rows')}>
           Drop these records and continue
         </button>
       </> : <p className="small mb-0">Correct the source files and start a new conversion.</p>}
@@ -321,11 +326,11 @@ export default function DwcConversion() {
       {state.conflicts?.[0]?.category === 'internal'
         ? `The converter hit an internal problem. It has been logged.${state.conflicts[0].repeated ? ' It happened again, so trying again will help only after a fix is released.' : ''}`
         : state.retryable ? 'A temporary problem interrupted this conversion.' : 'The converter hit an internal problem. It has been logged.'} {state.error}
-      {state.retryable && <button className="btn btn-sm btn-primary ms-2" disabled={disabled} onClick={() => perform(state.plan?.id && state.conflicts?.[0]?.action !== 'inspect' ? 'convert' : 'inspect')}>Try again</button>}
+      {state.retryable && <button className="btn btn-sm btn-primary ms-2" disabled={startDisabled} onClick={() => perform(state.plan?.id && state.conflicts?.[0]?.action !== 'inspect' ? 'convert' : 'inspect')}>Try again</button>}
     </div>}
     {state?.status === 'review' && state.error && !state.conflicts?.length && <div className="alert alert-warning" role="alert">{state.error}</div>}
     {state?.status === 'review' && state.conflicts?.map(conflict => <div key={conflict.id} className="alert alert-warning" role="alert">
-      {conflict.category === 'stale-plan' ? <>{conflict.reason} <button className="btn btn-sm btn-outline-secondary ms-2" disabled={disabled} onClick={() => perform('inspect')}>Inspect again</button></>
+      {conflict.category === 'stale-plan' ? <>{conflict.reason} <button className="btn btn-sm btn-outline-secondary ms-2" disabled={startDisabled} onClick={() => perform('inspect')}>Inspect again</button></>
         : conflict.category === 'transient' ? <>{conflict.reason} You can convert again.</>
         : conflict.category === 'internal' ? <>The converter hit an internal problem, which has been logged: {conflict.reason} Your choices are kept. {conflict.repeated
           ? 'It failed the same way twice, so converting these choices again will be possible after a fix is released.'
@@ -333,8 +338,9 @@ export default function DwcConversion() {
         : <>The conversion stopped: {conflict.reason} The highlighted choices below can fix this.</>}
     </div>)}
     {!state && <p>Loading conversion…</p>}
-    {working && <p role="status"><span className="spinner-border spinner-border-sm me-2" />{state.status === 'converting' ? 'Converting and checking your data…' : state.tidy?.model?.status === 'running' ? 'Reading through your values to tidy them up…' : state.tidy?.pending ? 'Applying your tidy-up change…' : 'Inspecting your files…'} You can leave and return while this runs.</p>}
-    {state?.status === 'reviewing' && <p role="status"><span className="spinner-border spinner-border-sm me-2" />The AI reviewer is checking the remaining choices against your files. You can keep answering meanwhile.</p>}
+    {gbifPaused && (working || state?.status === 'reviewing') && <p role="status"><i className="bi bi-pause-circle me-2" aria-hidden="true" />Paused until GBIF is working again. Your choices are saved.</p>}
+    {working && !gbifPaused && <p role="status"><span className="spinner-border spinner-border-sm me-2" />{state.status === 'converting' ? 'Converting and checking your data…' : state.tidy?.model?.status === 'running' ? 'Reading through your values to tidy them up…' : state.tidy?.pending ? 'Applying your tidy-up change…' : 'Inspecting your files…'} You can leave and return while this runs.</p>}
+    {state?.status === 'reviewing' && !gbifPaused && <p role="status"><span className="spinner-border spinner-border-sm me-2" />The AI reviewer is checking the remaining choices against your files. You can keep answering meanwhile.</p>}
     {inReview && state.review?.error && <div className="alert alert-info small" role="status">{state.review.error}</div>}
     {state?.plan?.tables && <div className="conversion-layout">
     <div className="conversion-main">
@@ -344,22 +350,22 @@ export default function DwcConversion() {
           <h2 id="conversion-options-heading">{outstanding > 0 ? `${outstanding} ${outstanding === 1 ? 'choice' : 'choices'} to finish your conversion` : blockers.length ? 'Check the highlighted choices' : 'You’re ready to convert'}</h2>
           <p className="text-body-secondary">{outstanding > 0 ? 'Help us understand your data. Choose an answer below; each answer is saved automatically.' : blockers.length ? 'Review the AI choices below before continuing.' : 'Your choices are saved. Review them below or create your package.'}</p>
         </div>
-        {reviewable > 0 && state.status === 'review' && <button className="btn btn-sm btn-outline-secondary" disabled={disabled} onClick={() => perform('review')}>
+        {reviewable > 0 && state.status === 'review' && <button className="btn btn-sm btn-outline-secondary" disabled={startDisabled} onClick={() => perform('review')}>
           <i className="bi bi-stars me-1" aria-hidden="true" />Review {reviewable} {reviewable === 1 ? 'choice' : 'choices'} with AI
         </button>}
       </div>
       <ConversionAutomaticSummary state={state} selected={selected} hidden={guidedIds} disabled={disabled} renderChoice={item => <ChoiceCard item={item} asRadios {...cardProps} />} />
-      <ConversionTidySummary state={state} send={sendTidy} disabled={disabled || pendingSaves > 0} />
+      <ConversionTidySummary state={state} send={sendTidy} disabled={startDisabled || pendingSaves > 0} paused={gbifPaused} />
       {guidedItems.map((item, index) => <ChoiceCard key={item.id} item={item} number={index + 1} {...cardProps} onChoose={(...args) => {
         setAnsweredHere(ids => ids.includes(item.id) ? ids : [...ids, item.id])
         choose(...args)
       }} />)}
-      <ConversionNameReview state={state} send={send} disabled={disabled} datasetId={datasetId} onRefresh={load}
+      <ConversionNameReview state={state} send={send} disabled={disabled} paused={gbifPaused} datasetId={datasetId} onRefresh={load}
         questions={nameQuestions} decisions={decisions} onChoose={choose} />
       <ConversionAiDecisions state={state} disabled={disabled} onChoose={choose} onKeep={keep} />
       {chatVisible(state) && <details className="review-disclosure chat-disclosure">
         <summary><i className="bi bi-chat-dots me-2" aria-hidden="true" /><span>Need help deciding?</span><small>Talk it through with ChatIPT</small></summary>
-        <ConversionChat state={state} send={send} disabled={busy || working} onFocusDecision={focusDecision} />
+        <ConversionChat state={state} send={send} disabled={busy || working} paused={gbifPaused} onFocusDecision={focusDecision} />
       </details>}
       <details className="review-disclosure conversion-choices">
         <summary><i className="bi bi-sliders me-2" aria-hidden="true" /><span>All mapping choices</span><small>Advanced</small></summary>
@@ -371,7 +377,7 @@ export default function DwcConversion() {
       <div className="conversion-action-bar">
         <div role="status" aria-live="polite"><strong>{pendingSaves ? 'Saving your answer…' : outstanding > 0 ? `${outstanding} ${outstanding === 1 ? 'choice' : 'choices'} remaining` : blockers.length ? `${blockers.length} AI ${blockers.length === 1 ? 'choice' : 'choices'} to check` : 'Ready for the next step'}</strong>
           <small>{saveFailed.current ? 'Could not save. Reload to try again.' : outstanding > 0 || blockers.length ? 'Answer the questions above to continue.' : 'Create and validate your converted package.'}</small></div>
-        <button className="btn btn-primary" disabled={disabled || pendingSaves > 0 || saveFailed.current || outstanding > 0 || blockers.length > 0} onClick={() => perform('convert')}>Convert my data<i className="bi bi-arrow-right ms-2" aria-hidden="true" /></button>
+        <button className="btn btn-primary" disabled={startDisabled || pendingSaves > 0 || saveFailed.current || outstanding > 0 || blockers.length > 0} onClick={() => perform('convert')}>Convert my data<i className="bi bi-arrow-right ms-2" aria-hidden="true" /></button>
       </div>
     </section>}
     {state?.status === 'complete' && <div className="card card-body">

@@ -37,7 +37,12 @@ def send_discord_message(message: str, allowed_mentions: Optional[Dict[str, Any]
     if allowed_mentions is not None:
         payload["allowed_mentions"] = allowed_mentions
 
-    response = requests.post(webhook, json=payload)
+    # Bounded and non-raising: a Discord problem must never fail the work being reported on.
+    try:
+        response = requests.post(webhook, json=payload, timeout=10)
+    except requests.RequestException as exc:
+        print(f"Failed to send message: {exc!r}")
+        return False
 
     if response.status_code == 204:
         print("Message sent successfully.")

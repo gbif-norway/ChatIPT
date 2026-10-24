@@ -7,6 +7,7 @@ import './conversion.css'
 import './refresh.css'
 import { AuthProvider } from './contexts/AuthContext'
 import { ThemeProvider } from './contexts/ThemeContext'
+import { GbifStatusProvider } from './contexts/GbifStatusContext'
 import HeaderWrapper, { NavigationProvider } from './components/HeaderWrapper'
 
 const inter = Inter({ subsets: ['latin'] })
@@ -30,10 +31,12 @@ export default function RootLayout({ children }) {
       <body className={inter.className}>
         <ThemeProvider>
           <AuthProvider>
-            <NavigationProvider>
-              <HeaderWrapper />
-              {children}
-            </NavigationProvider>
+            <GbifStatusProvider>
+              <NavigationProvider>
+                <HeaderWrapper />
+                {children}
+              </NavigationProvider>
+            </GbifStatusProvider>
           </AuthProvider>
         </ThemeProvider>
       </body>
