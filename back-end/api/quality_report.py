@@ -45,6 +45,8 @@ def _sample_text(sample):
 
 def render_gbif_validation(validation, skip_files=()):
     status = validation.get('status', 'NOT_RUN')
+    if status == agent_tools.GBIF_NOT_APPLICABLE_STATUS:
+        return f"Status {status}; archive {validation.get('url')}. {validation.get('message')}"
     metrics = validation.get('metrics') or {}
     lines = [
         f"Status {status}; indexable: {'yes' if metrics.get('indexeable') else 'no'}; "
@@ -163,6 +165,8 @@ def prepare_gate_report(agent):
     gbif_note = None
     if not url:
         gbif_note = 'No current DwC-A exists, so it has not been validated.'
+    elif not_applicable := agent_tools.gbif_not_applicable(dataset, url):
+        gbif_note = not_applicable['message']
     elif validation.get('url') != url or not validation.get('key'):
         try:
             key = agent_tools.submit_gbif_validation(url)
@@ -188,8 +192,7 @@ def prepare_gate_report(agent):
             validation = {}
         if validation.get('status') == agent_tools.GBIF_ABORTED_STATUS:
             try:
-                if agent_tools.resubmit_aborted_gbif_validation(dataset, validation):
-                    return False
+                resubmitted = agent_tools.resubmit_aborted_gbif_validation(dataset, validation)
             except Exception as exc:
                 if gbif_pause.is_paused():
                     return False  # Resubmitted once the GBIF outage ends.
@@ -198,7 +201,12 @@ def prepare_gate_report(agent):
                     'Call ValidateDwCA.'
                 )
             else:
-                gbif_note = agent_tools.gbif_repeated_abort_note(validation)
+                if not resubmitted:
+                    gbif_note = agent_tools.gbif_repeated_abort_note(validation)
+                elif resubmitted['status'] == agent_tools.GBIF_NOT_APPLICABLE_STATUS:
+                    gbif_note = resubmitted['message']
+                else:
+                    return False
         elif validation.get('status') not in agent_tools.GBIF_TERMINAL_STATUSES:
             if waited < agent_tools._gbif_max_wait_seconds():
                 return False

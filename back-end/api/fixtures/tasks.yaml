@@ -244,18 +244,18 @@
          * Review taxon matches and spelling, coordinate interpretation, controlled vocabularies, record counts, uniqueness, and relationship resolution.
 
       2. **Resolve findings before completion:**
-         * Block on package/schema errors, broken record links, and non-indexable archives. Correct transformation mistakes and unintended metadata or source-data loss. Missing contact emails, placeholders, unmatched taxa, uncertain coordinates, source discrepancies, and documented omissions are non-blocking sandbox limitations. Preserve uncertainty rather than demand verified corrections.
+         * Block on package/schema errors, broken record links, and non-indexable archives. An archive ChatIPT reports as NOT_APPLICABLE for GBIF validation (an Event core without occurrence records) is not a blocker. Correct transformation mistakes and unintended metadata or source-data loss. Missing contact emails, placeholders, unmatched taxa, uncertain coordinates, source discrepancies, and documented omissions are non-blocking sandbox limitations. Preserve uncertainty rather than demand verified corrections.
          * Ask one short, consolidated question only when a meaningful choice is needed to continue. Offer to keep the current values with uncertainty documented. If the user wants to experiment, makes an estimate, or says to proceed, honor that choice without asking again.
          * Document unmatched taxa and other non-blocking validator findings in structure_notes and continue without requiring separate user acknowledgement for each issue.
          * Apply confirmed corrections to the authoritative data or metadata as appropriate. Rebuild both affected packages, then rerun the relevant internal validation.
 
       3. **Run the final external check:**
          * If you rebuilt the archive, call ValidateDwCA once for the replacement, on its own in that turn. ChatIPT waits for GBIF and returns the finished result to you; do not poll. If nothing was rebuilt, the QUALITY REPORT's validation of the current archive already counts.
-         * The task cannot complete unless GBIF reports that this exact current archive is indexable.
+         * The task cannot complete unless GBIF reports that this exact current archive is indexable, or ChatIPT reports GBIF validation as NOT_APPLICABLE for it because it has no occurrence records. Never add occurrence records only to obtain a GBIF result. When it is NOT_APPLICABLE, tell the user plainly that, if published, the dataset is registered on GBIF with its metadata but no occurrence records from it will appear on GBIF.
          * Interpret every validator issue. Describe a technically usable result as ready for sandbox testing, without claiming production publication readiness. If validation requires another correction, rebuild the affected packages and start a new validation for the replacement archive.
-         * Record a concise readiness report in structure_notes: checks performed, issues found, fixes made, remaining non-blocking limitations, user choices or overrides if any, and the final GBIF validator key/status. End with `SOURCE COVERAGE: COMPLETE` as the final nonblank line only when every current source column has a disposition.
+         * Record a concise readiness report in structure_notes: checks performed, issues found, fixes made, remaining non-blocking limitations, user choices or overrides if any, and the final GBIF validator key/status (or that GBIF validation is NOT_APPLICABLE). End with `SOURCE COVERAGE: COMPLETE` as the final nonblank line only when every current source column has a disposition.
 
-      Complete this task only when there are no unresolved blockers, the current archive has a finished indexable GBIF validation, metadata has been checked, and temporary DwC-A projection tables can be removed.
+      Complete this task only when there are no unresolved blockers, the current archive has a finished indexable GBIF validation (or GBIF validation is NOT_APPLICABLE for it), metadata has been checked, and temporary DwC-A projection tables can be removed.
 
 - model: api.task
   fields:
@@ -282,7 +282,7 @@
       3. Recreate the temporary DwC-A core and extension tables, then call UploadDwCA.
       4. Repeat the source-to-publication checks from the pre-publication quality gate, call ValidateDwCA for the rebuilt archive, and resolve technical blockers. Apply the same sandbox policy: document placeholders, user estimates, unmatched taxa, and other non-blocking limitations without reopening settled choices.
       5. Update structure_notes with a concise changelog and readiness report, ending with `SOURCE COVERAGE: COMPLETE` as the final nonblank line only when every current source column has a disposition. Remove temporary projection tables after validation.
-      6. Ask for explicit publication approval. Call PublishToGBIF only after the rebuilt current archive is indexable and the user approves.
+      6. Ask for explicit publication approval. Call PublishToGBIF only after the rebuilt current archive is indexable (or ChatIPT reports GBIF validation NOT_APPLICABLE for it because it has no occurrence records) and the user approves.
 
       If the user asks to improve taxon names, follow the same MatchTaxonNames and RequestTaxonReview sequence used during validation (ChatIPT applies the finished review), then rebuild and revalidate the packages as above. If you rebuild a table whose names were already reviewed, call ApplyTaxonDecisions to write them again.
 

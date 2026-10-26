@@ -4221,9 +4221,10 @@ class DwcaArtifactValidationTests(TestCase):
         "MINIO_BUCKET": "bucket",
         "MINIO_BUCKET_FOLDER": "packages",
     })
+    @patch("api.agent_tools._download_chatipt_archive", side_effect=OSError("no storage in tests"))
     @patch("api.agent_tools.requests.get")
     @patch("api.agent_tools.requests.post")
-    def test_recovery_revalidates_existing_archive_without_projection_tables(self, post_mock, get_mock):
+    def test_recovery_revalidates_existing_archive_without_projection_tables(self, post_mock, get_mock, _download):
         archive_url = "https://storage.example.org/bucket/packages/output-2026-09-17-134836-431742.zip"
         self.dataset.dwca_url = ""
         self.dataset.dwca_validation = None
@@ -5780,6 +5781,38 @@ class SetAgentTaskToCompleteTests(TestCase):
         self.assertFalse(Table.objects.filter(pk=projection.pk).exists())
         self.assertEqual(dataset.dwca_url, "https://example.org/archive.zip")
         self.assertTrue(dataset.has_current_dwca_validation)
+
+    def test_quality_gate_completes_when_gbif_validation_is_not_applicable(self):
+        task = Task.objects.create(
+            name=Task.PREPUBLICATION_QUALITY_TASK,
+            text="Check package",
+            order=1,
+        )
+        dataset = Dataset.objects.create()
+        Table.objects.create(
+            dataset=dataset,
+            title="event",
+            df=pd.DataFrame([{"event_pk": "event-1", "eventCategory": "site"}]),
+        )
+        projection = Table.objects.create(
+            dataset=dataset,
+            title="event_dwca",
+            df=pd.DataFrame([{"eventID": "event-1"}]),
+        )
+        dataset.dwc_dp_url = "https://example.org/package.tar.gz"
+        dataset.dwca_url = "https://example.org/archive.zip"
+        dataset.dwca_validation = {"url": dataset.dwca_url, "status": "NOT_APPLICABLE", "message": "No occurrences."}
+        dataset.save(update_fields=["dwc_dp_url", "dwca_url", "dwca_validation"])
+        agent = Agent.objects.create(dataset=dataset, task=task)
+        projection.delete()
+
+        result = SetAgentTaskToComplete(agent_id=agent.id).run()
+
+        agent.refresh_from_db()
+        dataset.refresh_from_db()
+        self.assertIn("Task marked as complete", result)
+        self.assertIsNotNone(agent.completed_at)
+        self.assertEqual(dataset.dwca_url, "https://example.org/archive.zip")
 
     def test_quality_gate_rejects_validation_for_replaced_archive(self):
         task = Task.objects.create(

@@ -36,6 +36,7 @@ import json
 import os
 import uuid
 import tempfile
+import zipfile
 from pathlib import Path
 from minio import Minio
 from xml.etree import ElementTree as ET
@@ -2909,7 +2910,7 @@ class SetAgentTaskToComplete(OpenAIBaseModel):
                         "Error: Cannot complete the pre-publication quality gate until the "
                         "current DwC-A has been submitted to the GBIF validator."
                     )
-                if validation.get("status") not in {"FINISHED", "SUCCEEDED"}:
+                if validation.get("status") not in {"FINISHED", "SUCCEEDED", GBIF_NOT_APPLICABLE_STATUS}:
                     return (
                         "Error: Cannot complete the pre-publication quality gate until the "
                         "current DwC-A has a finished GBIF validator result."
@@ -3173,13 +3174,13 @@ class UploadDwCA(OpenAIBaseModel):
             return repr(e)[:2000]
 
 
-def inspect_publication_artifacts(dataset):
-    """Summarize the current DwC-A, EML, table counts, and GBIF validator issues."""
+def _download_chatipt_archive(url, local_path):
+    """Download a ChatIPT DwC-A from configured storage to local_path."""
     uri = os.getenv("MINIO_URI", "")
     bucket = os.getenv("MINIO_BUCKET", "")
     folder = os.getenv("MINIO_BUCKET_FOLDER", "").strip("/")
     prefix = f"https://{uri}/{bucket}/{folder}/"
-    url = dataset.dwca_url or ""
+    url = url or ""
     name = url.removeprefix(prefix) if url.startswith(prefix) else ""
     if not re.fullmatch(r"output-\d{4}-\d{2}-\d{2}-\d{6}-\d{6}\.zip", name):
         raise ValueError("The current DwC-A is missing or is not a ChatIPT archive in configured storage.")
@@ -3189,9 +3190,15 @@ def inspect_publication_artifacts(dataset):
         access_key=os.getenv("MINIO_ACCESS_KEY"),
         secret_key=os.getenv("MINIO_SECRET_KEY"),
     )
+    client.fget_object(bucket, f"{folder}/{name}", str(local_path))
+
+
+def inspect_publication_artifacts(dataset):
+    """Summarize the current DwC-A, EML, table counts, and GBIF validator issues."""
+    url = dataset.dwca_url or ""
     with tempfile.TemporaryDirectory() as temp_dir:
         local_path = Path(temp_dir) / "archive.zip"
-        client.fget_object(bucket, f"{folder}/{name}", str(local_path))
+        _download_chatipt_archive(url, local_path)
         report = inspect_dwca_archive(local_path)
 
     intended_temporal = (dataset.eml or {}).get("temporal_scope")
@@ -3225,6 +3232,7 @@ def inspect_publication_artifacts(dataset):
     validation = dataset.dwca_validation or {}
     report["gbif_validation"] = {
         "status": validation.get("status", "NOT_RUN"),
+        **({"message": validation.get("message")} if validation.get("status") == GBIF_NOT_APPLICABLE_STATUS else {}),
         "current_archive": validation.get("url") == url,
         "key": validation.get("key"),
         "indexable": (validation.get("metrics") or {}).get("indexeable"),
@@ -3378,9 +3386,78 @@ class PublishToGBIF(OpenAIBaseModel):
 
 
 GBIF_TERMINAL_STATUSES = ('SUCCEEDED', 'FAILED', 'FINISHED')
+# Recorded instead of a GBIF result for an archive without occurrence records; see gbif_not_applicable.
+GBIF_NOT_APPLICABLE_STATUS = 'NOT_APPLICABLE'
+_DWC_EVENT_ROW_TYPE = 'http://rs.tdwg.org/dwc/terms/Event'
+_DWC_OCCURRENCE_ROW_TYPE = 'http://rs.tdwg.org/dwc/terms/Occurrence'
+GBIF_NOT_APPLICABLE_MESSAGE = (
+    'GBIF validation does not apply to this archive: it has an Event core and no Occurrence extension, '
+    'so it contains no occurrence records. ChatIPT does not submit such archives to the GBIF validator, '
+    'which reads their files and then stops at its occurrence step without a result. This counts as the '
+    'GBIF check for this archive: the quality gate can complete without an indexable GBIF result, and '
+    "ChatIPT's own DwC-DP and archive checks still apply. Tell the user plainly that, if published, the "
+    'dataset is registered on GBIF with its metadata, but no occurrence records from it will appear on GBIF.'
+)
 # GBIF stops an aborted run without a result. The archive is submitted once more;
 # a second abort is reported instead of resubmitted indefinitely.
 GBIF_ABORTED_STATUS = 'ABORTED'
+
+
+def _archive_row_types(url):
+    """The rowTypes declared in a ChatIPT archive's meta.xml: {'core': one rowType or None, 'extensions': [...]}."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = Path(temp_dir) / "archive.zip"
+        _download_chatipt_archive(url, local_path)
+        with zipfile.ZipFile(local_path) as archive:
+            meta = ET.fromstring(archive.read("meta.xml"))
+    tables = {"core": [], "extension": []}
+    for table in meta:
+        kind = table.tag.rsplit("}", 1)[-1]
+        if kind in tables:
+            tables[kind].append(table.attrib.get("rowType"))
+    return {
+        "core": tables["core"][0] if len(tables["core"]) == 1 else None,
+        "extensions": tables["extension"],
+    }
+
+
+def dwca_row_types(dataset, url):
+    """Row types of the archive at url, read from it once and kept on the dataset."""
+    recorded = dataset.dwca_row_types or {}
+    if recorded.get("url") == url:
+        return recorded
+    row_types = {"url": url, **_archive_row_types(url)}
+    dataset.dwca_row_types = row_types
+    dataset.save(update_fields=["dwca_row_types"])
+    return row_types
+
+
+def gbif_not_applicable(dataset, url):
+    """Record and return a NOT_APPLICABLE validation when the archive at url has no occurrence records.
+
+    GBIF's validator interprets occurrence records and checklists. Given an Event core without an
+    Occurrence extension it reads the files, then stops at its occurrence step until it aborts the run
+    (dataset 598), so such archives are not submitted. Any other archive, including one whose row types
+    cannot be read, is submitted as before.
+    """
+    try:
+        row_types = dwca_row_types(dataset, url)
+    except Exception as exc:
+        print(f"Could not read the row types of {url}; submitting it to GBIF: {exc!r}")
+        return None
+    if row_types.get("core") != _DWC_EVENT_ROW_TYPE or _DWC_OCCURRENCE_ROW_TYPE in row_types.get("extensions", []):
+        return None
+    record = {
+        'url': url,
+        'status': GBIF_NOT_APPLICABLE_STATUS,
+        'core_row_type': row_types['core'],
+        'extension_row_types': row_types['extensions'],
+        'checked_at': timezone.now().isoformat(),
+        'message': GBIF_NOT_APPLICABLE_MESSAGE,
+    }
+    dataset.dwca_validation = record
+    dataset.save(update_fields=['dwca_validation'])
+    return record
 
 
 def _gbif_auth():
@@ -3469,7 +3546,13 @@ def _fetch_gbif_validation(dataset, key, validation_url):
 
 
 def resubmit_aborted_gbif_validation(dataset, aborted):
-    """Submit the archive again after GBIF aborted it; None once a resubmission was aborted too."""
+    """Submit the archive again after GBIF aborted it; None once a resubmission was aborted too.
+
+    Returns the NOT_APPLICABLE record instead when the archive has no occurrence records.
+    """
+    not_applicable = gbif_not_applicable(dataset, aborted['url'])
+    if not_applicable:
+        return not_applicable
     if aborted.get('aborted_keys'):
         return None
     key = submit_gbif_validation(aborted['url'])
@@ -3519,6 +3602,8 @@ def _gbif_aborted_result(dataset, validation):
             ))
         message = f'GBIF aborted this validation and resubmitting the archive failed: {repr(e)[:500]}'
     else:
+        if resubmitted and resubmitted['status'] == GBIF_NOT_APPLICABLE_STATUS:
+            return json.dumps(resubmitted)
         if resubmitted:
             return json.dumps(_gbif_waiting_payload(
                 resubmitted['key'], resubmitted['url'], resubmitted, timezone.now().isoformat(),
@@ -3574,6 +3659,9 @@ def refresh_gbif_validation(dataset, waiting):
             'validation_key': key,
             'url': validation_url,
         })
+    not_applicable = gbif_not_applicable(dataset, validation_url)
+    if not_applicable:
+        return json.dumps(not_applicable)
     waiting_since = waiting.get('waiting_since') or timezone.now().isoformat()
     failed_checks = int(waiting.get('failed_checks') or 0)
     try:
@@ -3643,6 +3731,18 @@ class ValidateDwCA(OpenAIBaseModel):
         description="Required with archive_url to restore the archive's known core type.",
     )
 
+    def _restore_archive(self, dataset, url):
+        """Make a recovered archive the dataset's current DwC-A again; returns the changed fields."""
+        from api.models import Dataset
+
+        dataset.dwca_url = url
+        dataset.dwc_core = {
+            DarwinCoreCoreType.OCCURRENCE: Dataset.DWCCore.OCCURRENCE,
+            DarwinCoreCoreType.EVENT: Dataset.DWCCore.EVENT,
+            DarwinCoreCoreType.TAXON: Dataset.DWCCore.TAXONOMY,
+        }[self.core_type]
+        return ['dwca_url', 'dwc_core']
+
     def run(self):
         from api.models import Agent
 
@@ -3681,6 +3781,11 @@ class ValidateDwCA(OpenAIBaseModel):
                     return 'Error: No DwCA URL found. Run UploadDwCA first or recover an existing archive.'
             key = self.validation_key
             validation_url = self.archive_url if recovering_archive else dataset.dwca_url
+            not_applicable = gbif_not_applicable(dataset, validation_url)
+            if not_applicable:
+                if recovering_archive:
+                    dataset.save(update_fields=self._restore_archive(dataset, validation_url))
+                return json.dumps(not_applicable)
             if key:
                 saved_validation = dataset.dwca_validation or {}
                 if (
@@ -3705,14 +3810,7 @@ class ValidateDwCA(OpenAIBaseModel):
                 }
                 update_fields = ['dwca_validation']
                 if recovering_archive:
-                    core_choice_map = {
-                        DarwinCoreCoreType.OCCURRENCE: Dataset.DWCCore.OCCURRENCE,
-                        DarwinCoreCoreType.EVENT: Dataset.DWCCore.EVENT,
-                        DarwinCoreCoreType.TAXON: Dataset.DWCCore.TAXONOMY,
-                    }
-                    dataset.dwca_url = validation_url
-                    dataset.dwc_core = core_choice_map[self.core_type]
-                    update_fields.extend(['dwca_url', 'dwc_core'])
+                    update_fields.extend(self._restore_archive(dataset, validation_url))
                 dataset.save(update_fields=update_fields)
 
             validation = _fetch_gbif_validation(dataset, key, validation_url)

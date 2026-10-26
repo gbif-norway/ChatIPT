@@ -69,6 +69,8 @@ class Dataset(models.Model):
     eml = models.JSONField(null=True, blank=True)
     published_at = models.DateTimeField(null=True, blank=True)
     dwca_url = models.CharField(max_length=2000, blank=True)
+    # rowTypes read from an archive's meta.xml, keyed by its url (agent_tools.dwca_row_types).
+    dwca_row_types = models.JSONField(default=dict, blank=True)
     dwca_validation = models.JSONField(null=True, blank=True)
     # GBIF validation of a throwaway DwC-A built during refinement; never published.
     provisional_dwca_validation = models.JSONField(null=True, blank=True)
@@ -259,12 +261,15 @@ class Dataset(models.Model):
 
     @property
     def has_current_dwca_validation(self):
+        """The current DwC-A is GBIF-indexable, or has no occurrence records for GBIF to validate."""
         validation = self.dwca_validation or {}
         return bool(
             self.dwca_url
             and validation.get('url') == self.dwca_url
-            and validation.get('status') in {'FINISHED', 'SUCCEEDED'}
-            and validation.get('metrics', {}).get('indexeable')
+            and (
+                (validation.get('status') in {'FINISHED', 'SUCCEEDED'} and validation.get('metrics', {}).get('indexeable'))
+                or validation.get('status') == agent_tools.GBIF_NOT_APPLICABLE_STATUS
+            )
         )
 
     def next_agent(self):
