@@ -37,17 +37,14 @@ Use the manual sections below for troubleshooting or partial/custom deploy scena
   - Backend API: `https://api.chatipt.svc.gbif.no`
   - Helm release: `chatipt`
   - Values file: `../gitops/apps/chatipt/values-prod.yaml`
-- Staging
-  - Frontend: `https://staging.chatipt.svc.gbif.no`
-  - Backend API: `https://staging-api.chatipt.svc.gbif.no`
-  - Helm release: `chatipt-staging`
-  - Values file: `../gitops/apps/chatipt/values-staging.yaml`
+
+There is no staging environment. It was decommissioned on 2026-10-26 (release, secrets,
+database, user files and MinIO buckets removed).
 
 ## Critical guardrails
 
 - `NEXT_PUBLIC_BASE_API_URL` must be the API origin only (no trailing `/api`).
   - Correct prod value: `https://api.chatipt.svc.gbif.no`
-  - Correct staging value: `https://staging-api.chatipt.svc.gbif.no`
   - Wrong value example: `https://api.chatipt.svc.gbif.no/api` (causes frontend calls like `/api/api/auth/status/`)
 - Keep image tags mapped to the correct service:
   - `backEnd.image.tag` -> `gbifnorway/chatipt-back-end`
@@ -199,7 +196,6 @@ TAG="${SHA}-${STAMP}"
 
 Main bottleneck is usually frontend build/push (large image), not Helm or `kubectl`.
 
-- Build backend once and retag for staging (same backend image for both envs).
 - Reuse the persistent local `chatipt-builder` cache (Dockerfiles use BuildKit cache mounts).
 - Avoid `--cache-to ... mode=max` in normal releases; it adds a lot of push time.
 - Skip rebuilding unchanged component(s) when possible.
@@ -211,20 +207,13 @@ SHA=$(git rev-parse --short HEAD)
 STAMP=$(date -u +%Y%m%d-%H%M%S)
 TAG="${SHA}-${STAMP}"
 PROD_TAG="2.0.0-${TAG}"
-STAGING_TAG="staging-${TAG}"
 BUILDER="chatipt-builder"
 
-# Build backend once (prod tag)
 docker buildx build --builder ${BUILDER} --platform linux/amd64 \
   -f back-end/Dockerfile \
   -t gbifnorway/chatipt-back-end:${PROD_TAG} \
   --provenance=false --sbom=false \
   --push back-end
-
-# Reuse exact same backend image for staging tag (no second backend build)
-docker buildx imagetools create \
-  -t gbifnorway/chatipt-back-end:${STAGING_TAG} \
-  gbifnorway/chatipt-back-end:${PROD_TAG}
 
 # Frontend prod (build bakes NEXT_PUBLIC_BASE_API_URL into bundle)
 docker buildx build --builder ${BUILDER} --platform linux/amd64 \
@@ -232,15 +221,6 @@ docker buildx build --builder ${BUILDER} --platform linux/amd64 \
   --build-arg NEXT_PUBLIC_BASE_API_URL=https://api.chatipt.svc.gbif.no \
   --build-arg NEXT_BUILD_CACHE_SCOPE=prod \
   -t gbifnorway/chatipt-front-end:${PROD_TAG} \
-  --provenance=false --sbom=false \
-  --push front-end
-
-# Frontend staging (separate build because API URL differs)
-docker buildx build --builder ${BUILDER} --platform linux/amd64 \
-  -f front-end/Dockerfile \
-  --build-arg NEXT_PUBLIC_BASE_API_URL=https://staging-api.chatipt.svc.gbif.no \
-  --build-arg NEXT_BUILD_CACHE_SCOPE=staging \
-  -t gbifnorway/chatipt-front-end:${STAGING_TAG} \
   --provenance=false --sbom=false \
   --push front-end
 ```
@@ -263,32 +243,9 @@ docker buildx build --platform linux/amd64 \
   --push front-end
 ```
 
-### Staging-style tags
-
-```bash
-STAGING_TAG="staging-${TAG}"
-
-docker buildx build --platform linux/amd64 \
-  -f back-end/Dockerfile \
-  -t gbifnorway/chatipt-back-end:${STAGING_TAG} \
-  --push back-end
-
-docker buildx build --platform linux/amd64 \
-  -f front-end/Dockerfile \
-  --build-arg NEXT_PUBLIC_BASE_API_URL=https://staging-api.chatipt.svc.gbif.no \
-  --build-arg NEXT_BUILD_CACHE_SCOPE=staging \
-  -t gbifnorway/chatipt-front-end:${STAGING_TAG} \
-  --push front-end
-```
-
 ## 2) Update image tags in gitops
 
-Edit one or both values files:
-
-- `../gitops/apps/chatipt/values-prod.yaml`
-- `../gitops/apps/chatipt/values-staging.yaml`
-
-Set both:
+In `../gitops/apps/chatipt/values-prod.yaml`, set both:
 
 - `backEnd.image.tag`
 - `frontEnd.image.tag`
@@ -302,7 +259,6 @@ Quick check before commit/push (prevents backend/frontend tag mix-ups):
 ```bash
 cd /Users/rukayasj/Projects/gitops
 rg -n "^backEnd:|^frontEnd:|^  image:|^    repository:|^    tag:" apps/chatipt/values-prod.yaml
-rg -n "^backEnd:|^frontEnd:|^  image:|^    repository:|^    tag:" apps/chatipt/values-staging.yaml
 ```
 
 ## 3) Deploy with Helm
@@ -314,30 +270,18 @@ helm upgrade --install chatipt apps/chatipt \
   --kube-context nird-lmd \
   -n gbif-no-ns8095k \
   -f apps/chatipt/values-prod.yaml
-
-helm upgrade --install chatipt-staging apps/chatipt \
-  --kube-context nird-lmd \
-  -n gbif-no-ns8095k \
-  -f apps/chatipt/values-staging.yaml
 ```
-
-Deploy only the environment you changed.
 
 ## 4) Verify rollout
 
 ```bash
 kubectl --context nird-lmd -n gbif-no-ns8095k get deploy chatipt-backend chatipt-frontend
-kubectl --context nird-lmd -n gbif-no-ns8095k get deploy chatipt-staging-backend chatipt-staging-frontend
 kubectl --context nird-lmd -n gbif-no-ns8095k get ingress | grep chatipt
 kubectl --context nird-lmd -n gbif-no-ns8095k rollout status deploy/chatipt-backend
 kubectl --context nird-lmd -n gbif-no-ns8095k rollout status deploy/chatipt-frontend
-kubectl --context nird-lmd -n gbif-no-ns8095k rollout status deploy/chatipt-staging-backend
-kubectl --context nird-lmd -n gbif-no-ns8095k rollout status deploy/chatipt-staging-frontend
 
 # Confirm deployed images are mapped correctly
 kubectl --context nird-lmd -n gbif-no-ns8095k get deploy chatipt-backend chatipt-frontend \
-  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].image}{"\n"}{end}'
-kubectl --context nird-lmd -n gbif-no-ns8095k get deploy chatipt-staging-backend chatipt-staging-frontend \
   -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].image}{"\n"}{end}'
 ```
 
@@ -358,23 +302,16 @@ curl -sS https://chatipt.svc.gbif.no/_next/static/chunks/4282-ee375a392ac48521.j
 ```bash
 helm --kube-context nird-lmd -n gbif-no-ns8095k history chatipt
 helm --kube-context nird-lmd -n gbif-no-ns8095k rollback chatipt <REVISION>
-
-helm --kube-context nird-lmd -n gbif-no-ns8095k history chatipt-staging
-helm --kube-context nird-lmd -n gbif-no-ns8095k rollback chatipt-staging <REVISION>
 ```
 
 ## Runtime assumptions
 
-- Backend secret names expected by the chart:
-  - prod: `chatipt-backend`
-  - staging: `chatipt-backend-staging`
-- Discord bug-report env vars should be set in those backend secrets:
+- Backend secret name expected by the chart: `chatipt-backend`
+- Discord bug-report env vars should be set in that backend secret:
   - `DISCORD_WEBHOOK` (required for Discord notifications)
   - `DISCORD_DEVELOPER_USER_ID` (recommended for reliable user mention ping)
   - `DISCORD_DEVELOPER_HANDLE` (optional fallback, defaults to `@_rkian`)
   - Backward compatibility: `DISCORD_RUKAYA_USER_ID` is still accepted if already present.
 - Persistent storage is currently configured via existing shared PVC:
   - claim: `573890b9-3346-4027-ab0c-22eec6dfd665`
-  - subPath:
-    - prod: `chatipt-prod-user-files`
-    - staging: `chatipt-staging-user-files`
+  - subPath: `chatipt-prod-user-files`

@@ -8,19 +8,18 @@ HARDCODED_NEW_OPENAI_API_KEY=""
 KUBE_CONTEXT="${KUBE_CONTEXT:-nird-lmd}"
 KUBE_NAMESPACE="${KUBE_NAMESPACE:-gbif-no-ns8095k}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-300s}"
-TARGET="${1:-both}"
+TARGET="${1:-prod}"
 
 NEW_OPENAI_API_KEY="${NEW_OPENAI_API_KEY:-$HARDCODED_NEW_OPENAI_API_KEY}"
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/rotate-openai-api-key.sh [prod|staging|both]
+  ./scripts/rotate-openai-api-key.sh [prod]
 
 Options:
-  prod      Update secret/deployment for production only
-  staging   Update secret/deployment for staging only
-  both      Update both (default)
+  prod      Update the production secret and restart its backend (default; staging was
+            decommissioned on 2026-10-26)
 
 How to pass key:
   1) export NEW_OPENAI_API_KEY='sk-...'
@@ -38,13 +37,13 @@ require_cmd() {
 
 validate_target() {
   case "$1" in
-    prod|staging|both) ;;
+    prod) ;;
     -h|--help)
       usage
       exit 0
       ;;
     *)
-      echo "Error: invalid target '$1' (use prod|staging|both)" >&2
+      echo "Error: invalid target '$1' (use prod)" >&2
       usage
       exit 1
       ;;
@@ -105,13 +104,6 @@ main() {
   case "$TARGET" in
     prod)
       update_one "chatipt-backend" "chatipt-backend"
-      ;;
-    staging)
-      update_one "chatipt-backend-staging" "chatipt-staging-backend"
-      ;;
-    both)
-      update_one "chatipt-backend" "chatipt-backend"
-      update_one "chatipt-backend-staging" "chatipt-staging-backend"
       ;;
   esac
 

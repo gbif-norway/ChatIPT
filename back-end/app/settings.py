@@ -339,8 +339,6 @@ CORS_ALLOWED_ORIGINS = [
     FRONTEND_URL,
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://staging-api.chatipt.svc.gbif.no",
-    "https://staging.chatipt.svc.gbif.no",
     "https://chatipt.svc.gbif.no",
     "https://api.chatipt.svc.gbif.no",
 ]
@@ -379,12 +377,10 @@ CORS_EXPOSE_HEADERS = [
 
 # CSRF settings for cross-domain requests
 CSRF_TRUSTED_ORIGINS = [
-    "https://staging.chatipt.svc.gbif.no",
     "https://chatipt.svc.gbif.no",
     "https://api.chatipt.svc.gbif.no",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://staging-api.chatipt.svc.gbif.no",
 ]
 
 # Session settings for cross-domain authentication
