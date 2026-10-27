@@ -5,7 +5,13 @@ from django.test import TestCase
 
 from api.agent_tools import SetEML
 from api.dwc_dp_specs import validate_eml
-from api.helpers.publish import EmlExportError, make_eml
+from api.helpers.publish import (
+    PROVISIONAL_EML_NOTE,
+    UNDOCUMENTED_PERSON_POSITION,
+    UNKNOWN_CREATOR_POSITION,
+    EmlExportError,
+    make_eml,
+)
 from api.models import Agent, CustomUser, Dataset, Task
 
 
@@ -173,3 +179,44 @@ class EmlSourceRoleTests(TestCase):
                 self.assertIsNone(self.dataset.dwc_dp_validation)
                 self.assertEqual(self.dataset.dwca_url, "")
                 self.assertIsNone(self.dataset.dwca_validation)
+
+
+class ProvisionalEmlTests(TestCase):
+    """Dataset 615: the validation-only archive named "Test User" and granted CC BY 4.0."""
+
+    def render(self, user=None, eml_extra=None):
+        xml = make_eml("Title", "Description", user=user, eml_extra=eml_extra, provisional=True)
+        self.assertEqual(validate_eml(xml.encode("utf-8")), [])
+        return xml, ET.fromstring(xml).find("dataset")
+
+    def test_names_nobody_and_grants_no_licence_by_default(self):
+        xml, dataset = self.render()
+
+        self.assertNotIn("<surName>User</surName>", xml)
+        self.assertNotIn("creativecommons", xml)
+        self.assertIsNone(dataset.find("intellectualRights"))
+        self.assertEqual(dataset.findtext("creator/positionName"), UNKNOWN_CREATOR_POSITION)
+        for tag in ("metadataProvider", "contact"):
+            self.assertEqual(dataset.findtext(f"{tag}/positionName"), UNDOCUMENTED_PERSON_POSITION)
+        self.assertEqual(dataset.findtext("additionalInfo/para"), PROVISIONAL_EML_NOTE)
+
+    def test_account_holder_without_a_surname_is_not_named(self):
+        user = CustomUser.objects.create_user(username="orcid-only", first_name="Artem")
+
+        _xml, dataset = self.render(user=user)
+
+        self.assertEqual(dataset.findtext("contact/positionName"), UNDOCUMENTED_PERSON_POSITION)
+        self.assertIsNone(dataset.find("contact/individualName"))
+
+    def test_saved_people_and_licence_are_kept(self):
+        owner = CustomUser.objects.create_user(username="owner", first_name="Ada", last_name="Owner")
+        creator = {"first_name": "Alex", "last_name": "Sample", "email": "alex.sample@example.org"}
+
+        _xml, dataset = self.render(user=owner, eml_extra={"users": [creator], "license": "CC0 1.0"})
+
+        self.assertEqual(dataset.findtext("creator/individualName/surName"), "Sample")
+        self.assertEqual(dataset.findtext("contact/individualName/surName"), "Owner")
+        self.assertEqual(
+            dataset.find("intellectualRights/para/ulink").get("url"),
+            "http://creativecommons.org/publicdomain/zero/1.0/legalcode",
+        )

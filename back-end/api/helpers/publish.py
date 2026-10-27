@@ -105,6 +105,12 @@ def normalize_orcid(value) -> str | None:
 # EML creator for a dataset whose creators are explicitly unknown. A position
 # rather than a person or organisation name keeps it out of author lists.
 UNKNOWN_CREATOR_POSITION = "Unknown creator"
+# Placeholder for a required EML person a provisional archive cannot name yet.
+UNDOCUMENTED_PERSON_POSITION = "Not yet documented"
+PROVISIONAL_EML_NOTE = (
+    "Provisional archive for GBIF validation only. It holds core records without extensions, "
+    "and its people and licence are not final."
+)
 
 
 class EmlExportError(ValueError):
@@ -583,7 +589,7 @@ def eml_package_id(dataset_id=None) -> str:
     return f"{dataset_uuid}/v{version}"
 
 
-def make_eml(title, description, user=None, eml_extra: dict | None = None, dataset_id=None):
+def make_eml(title, description, user=None, eml_extra: dict | None = None, dataset_id=None, provisional=False):
     """Render an EML document populated with available metadata and prune empty elements.
 
     Args:
@@ -594,6 +600,9 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None, datas
                    geographic_scope, temporal_scope, taxonomic_scope, methodology, users, contacts,
                    metadata_providers, project_title
         dataset_id: ChatIPT dataset id, used to derive the EML packageId
+        provisional: Metadata for a validation-only archive. Only saved people and a
+                   saved licence are used: no account-holder creator, default licence or
+                   made-up name (dataset 615 got "Test User" and CC BY 4.0).
     """
     eml_path = _TEMPLATES_ROOT / "eml.xml"
     if not eml_path.exists():
@@ -823,6 +832,8 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None, datas
             'orcid': normalize_orcid(getattr(user, 'orcid_id', None)),
             'email': primary_email,
         }
+    elif provisional:
+        primary_person = {'first_name': '', 'last_name': '', 'orcid': None, 'email': ''}
     else:
         primary_person = {
             'first_name': 'Test',
@@ -864,16 +875,20 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None, datas
     # Optional additional metadata
     # GBIF accepts one of three dataset licenses. Keep the license in EML and
     # registration metadata instead of requiring a DwC-DP usage-policy table.
-    try:
-        _, license_metadata = normalize_gbif_license(eml_extra.get("license"))
-    except ValueError as exc:
-        raise EmlExportError(str(exc)) from exc
-    rights_link = get_or_create(
-        get_or_create(get_or_create(dataset_node, "intellectualRights"), "para"),
-        "ulink",
-    )
-    rights_link.set("url", license_metadata["url"])
-    set_text(get_or_create(rights_link, "citetitle"), license_metadata["title"])
+    if provisional and eml_extra.get("license") not in GBIF_LICENSES:
+        # The template's CC BY text would grant a licence nobody chose.
+        remove_children(dataset_node, "intellectualRights")
+    else:
+        try:
+            _, license_metadata = normalize_gbif_license(eml_extra.get("license"))
+        except ValueError as exc:
+            raise EmlExportError(str(exc)) from exc
+        rights_link = get_or_create(
+            get_or_create(get_or_create(dataset_node, "intellectualRights"), "para"),
+            "ulink",
+        )
+        rights_link.set("url", license_metadata["url"])
+        set_text(get_or_create(rights_link, "citetitle"), license_metadata["title"])
 
     users_list = eml_extra.get('users') or []
 
@@ -910,9 +925,10 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None, datas
     set_person(contact_node, contact_person)
 
     # Users array: add additional creators and (optionally) project personnel
-    if not users_list and eml_extra.get('creators_unknown'):
-        # The account holder uploaded the data but did not create it. The GBIF
-        # profile requires a creator, so name an unknown one instead of them.
+    if not users_list and (eml_extra.get('creators_unknown') or provisional):
+        # The account holder uploaded the data but did not create it, or a
+        # provisional archive cannot assume they did. The GBIF profile requires
+        # a creator, so name an unknown one instead of them.
         for existing_creator in list(findall(dataset_node, 'creator')):
             dataset_node.remove(existing_creator)
         creator = ET.Element('creator')
@@ -1053,6 +1069,8 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None, datas
         else:
             dataset_node.append(coverage)
 
+    if provisional:
+        scope_notes.insert(0, PROVISIONAL_EML_NOTE)
     if scope_notes:
         additional_info = ET.SubElement(dataset_node, 'additionalInfo')
         for note in scope_notes:
@@ -1110,6 +1128,18 @@ def make_eml(title, description, user=None, eml_extra: dict | None = None, datas
             'project',
         ],
     )
+
+    if provisional:
+        # Nobody with a verified surname is saved for this role yet. Replace the
+        # person before pruning, which would drop the required contact.
+        for role in ('creator', 'metadataProvider', 'contact'):
+            for person in findall(dataset_node, role):
+                if not any(
+                    (person.findtext(path) or '').strip()
+                    for path in ('individualName/surName', 'organizationName', 'positionName')
+                ):
+                    person[:] = []
+                    set_text(ET.SubElement(person, 'positionName'), UNDOCUMENTED_PERSON_POSITION)
 
     # Prune empty elements except root and dataset and intellectualRights
     def is_empty(element: ET.Element) -> bool:
@@ -1921,6 +1951,7 @@ def upload_dwca(
     additional_files: list[tuple[str, bytes]] | None = None,
     dataset_id=None,
     drop_unmapped_columns: bool = False,
+    provisional: bool = False,
 ):
     df_core = _sanitize_dataframe_for_utf8_export(df_core)
     if core_type == DarwinCoreCoreType.OCCURRENCE:
@@ -1955,7 +1986,9 @@ def upload_dwca(
         raise RuntimeError(f"Failed to create Archive: {e}") from e
     
     try:
-        archive.eml_text = make_eml(title, description, user, eml_extra, dataset_id=dataset_id)
+        archive.eml_text = make_eml(
+            title, description, user, eml_extra, dataset_id=dataset_id, provisional=provisional
+        )
     except EmlExportError:
         raise
     except Exception as e:

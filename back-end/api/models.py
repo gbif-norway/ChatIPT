@@ -9,6 +9,7 @@ from django.utils.translation import gettext_lazy as _
 from django.contrib.postgres.fields import ArrayField
 from django.contrib.auth.models import AbstractUser
 from api import agent_tools
+from api.schema_ledger import SOURCE_COVERAGE_MARKER
 from api.helpers.openai_helpers import TRANSIENT_OPENAI_ERRORS, create_response_message
 from picklefield.fields import PickledObjectField
 import pandas as pd
@@ -50,7 +51,7 @@ class CustomUser(AbstractUser):
 
 
 class Dataset(models.Model):
-    SOURCE_COVERAGE_MARKER = "SOURCE COVERAGE: COMPLETE"
+    SOURCE_COVERAGE_MARKER = SOURCE_COVERAGE_MARKER
     PUBLICATION_INPUT_FIELDS = frozenset({"title", "description", "eml"})
     PUBLICATION_ARTIFACT_FIELDS = frozenset({
         "dwc_dp_url",
@@ -1206,6 +1207,12 @@ PAUSING_TOOLS = {
     agent_tools.RequestTaxonReview.__name__,
 }
 
+DEVELOPER_NOTIFICATION_LIMIT_NOTICE = (
+    "Not sent: this stage has reached its limit of developer notifications since the user's last "
+    "message. This report stays in the conversation log, where the developers will see it. Do not report again; "
+    "continue the task, ask the user with RequestUserInput, or reply to the user."
+)
+
 
 class Task(models.Model):  # See tasks.yaml for the only objects this model is populated with
     PACKAGE_PREPARATION_TASK = "Publication package preparation"
@@ -1649,6 +1656,12 @@ def invalidate_publication_artifacts_after_table_delete(sender, instance, **kwar
 
 
 class Agent(models.Model):
+    # Internal "took no action" corrections allowed since the last progress or
+    # user message. Each correction used to restart the turn, so dataset 615
+    # was corrected 173 times after the user had asked it to stop.
+    NO_ACTION_RETRY_LIMIT = 2
+    # Developer notifications (bug reports, Discord messages) sent per user message.
+    DEVELOPER_NOTIFICATION_LIMIT = 2
     # DwC-DP building tasks where the server enforces the no-progress limit.
     NO_PROGRESS_GUARDED_TASKS = {
         "Data transformation",
@@ -1958,19 +1971,54 @@ class Agent(models.Model):
     def no_progress_stop_turns(self):
         return max(int(getattr(settings, "AGENT_NO_PROGRESS_STOP_TURNS", 15)), 0)
 
-    def turns_without_progress(self):
-        """Tool-calling turns since the last table write, non-read-only tool
-        result, or user message."""
-        from api.schema_ledger import turns_since_progress
-
+    def _progress_entries(self):
         latest_table_revision = Table.objects.filter(dataset_id=self.dataset_id).aggregate(
             latest=models.Max('updated_at')
         )['latest']
         entries = [
             (message.created_at, message.openai_obj or {})
-            for message in self.message_set.all()
+            for message in self.message_set.order_by('created_at', 'id')
         ]
-        return turns_since_progress(entries, latest_table_revision)
+        return entries, latest_table_revision
+
+    def turns_without_progress(self):
+        """Tool-calling turns since the last table write, non-read-only tool
+        result, or user message."""
+        from api.schema_ledger import turns_since_progress
+
+        return turns_since_progress(*self._progress_entries())
+
+    def no_action_retries_since_progress(self):
+        from api.schema_ledger import last_progress_at
+
+        entries, latest_table_revision = self._progress_entries()
+        since = last_progress_at(entries, latest_table_revision)
+        return sum(
+            1
+            for created_at, obj in entries
+            if obj.get('no_action_retry') and (since is None or created_at > since)
+        )
+
+    def developer_notifications_since_user_message(self):
+        from api.schema_ledger import NOTIFICATION_TOOLS
+
+        call_names = {}
+        sent = 0
+        for message in self.message_set.order_by('created_at', 'id'):
+            obj = message.openai_obj or {}
+            role = obj.get('role')
+            if role == Message.Role.USER:
+                sent = 0
+            elif role == Message.Role.ASSISTANT:
+                for tool_call in obj.get('tool_calls') or []:
+                    call_names[str(tool_call.get('id'))] = ((tool_call.get('function') or {}).get('name'))
+            elif (
+                role == Message.Role.TOOL
+                and call_names.get(str(obj.get('tool_call_id'))) in NOTIFICATION_TOOLS
+                and obj.get('content') != DEVELOPER_NOTIFICATION_LIMIT_NOTICE
+            ):
+                sent += 1
+        return sent
 
     def _pause_for_no_progress(self, turns):
         logger = logging.getLogger(__name__)
@@ -2377,11 +2425,19 @@ class Agent(models.Model):
             # user-input tool, or complete. Retry once internally instead of making
             # the user type "please continue". While a taxon review is open, a plain
             # reply is the right end of the turn: the user still has the review to finish.
+            # Once the retry budget is spent without progress, a plain reply also ends
+            # the turn: the agent has nothing left it can do without the user.
             completion_tool_available = any(
                 function.__name__ == agent_tools.SetAgentTaskToComplete.__name__
                 for function in self.task.functions
             )
-            if not response_message.tool_calls and completion_tool_available and not self.open_taxon_review:
+            retried_no_action = (
+                not response_message.tool_calls
+                and completion_tool_available
+                and not self.open_taxon_review
+                and self.no_action_retries_since_progress() < self.NO_ACTION_RETRY_LIMIT
+            )
+            if retried_no_action:
                 first_response_content = getattr(response_message, "content", "") or ""
                 if self._dataset_cost_limit_reached():
                     return [self._pause_for_cost_limit()]
@@ -2423,7 +2479,10 @@ class Agent(models.Model):
                     response_message.content = first_response_content
 
             # Store the assistant message returned by OpenAI
-            message = Message.objects.create(agent=self, openai_obj=response_message.dict())  # response_message.__dict__
+            openai_obj = response_message.dict()
+            if retried_no_action:
+                openai_obj['no_action_retry'] = True
+            message = Message.objects.create(agent=self, openai_obj=openai_obj)
 
             # If no tool calls are requested, simply return the assistant message
             if not response_message.tool_calls:
@@ -2547,6 +2606,11 @@ class Agent(models.Model):
 
         from api import schema_ledger
 
+        if fn.name in schema_ledger.NOTIFICATION_TOOLS:
+            if self.developer_notifications_since_user_message() >= self.DEVELOPER_NOTIFICATION_LIMIT:
+                return DEVELOPER_NOTIFICATION_LIMIT_NOTICE
+            if fn.name == agent_tools.LogBugWithDeveloper.__name__:
+                fn_args['agent_id'] = self.id
         if fn.name == 'Python' and schema_ledger.reads_schema_files(fn_args.get('code')):
             return schema_ledger.SCHEMA_FILE_NOTICE
         if fn.name == agent_tools.GetDwcDpTableInfo.__name__ and fn_args.get('table_name'):

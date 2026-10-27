@@ -5989,6 +5989,79 @@ class AgentWorkflowActionTests(TestCase):
         )
 
     @patch("api.models.create_response_message")
+    def test_no_action_retries_stop_once_the_budget_is_spent(self, create_response_message_mock):
+        # Dataset 615: the user had stopped the stage, and every correction
+        # produced a plan update that restarted the turn, 173 times.
+        agent = self._agent_with_user_message()
+
+        def plan_update(index):
+            return CompatAssistantMessage(tool_calls=[CompatToolCall(
+                id=f"plan-{index}",
+                function=CompatFunctionCall(
+                    name="SetWorkingPlan", arguments=json.dumps({"plan": "Stopped as asked."}),
+                ),
+            )])
+
+        stopped = "Stopped as an unexported private draft."
+        create_response_message_mock.side_effect = [
+            CompatAssistantMessage(content=stopped), plan_update(1),
+            CompatAssistantMessage(content=stopped), plan_update(2),
+            CompatAssistantMessage(content=stopped),
+        ]
+
+        for _ in range(3):
+            agent.next_message()
+
+        self.assertEqual(create_response_message_mock.call_count, 5)
+        self.assertIsNone(agent.next_message())  # waits for the user
+        retried = [m for m in agent.message_set.all() if m.openai_obj.get("no_action_retry")]
+        self.assertEqual(len(retried), 2)
+        last = agent.message_set.last().openai_obj
+        self.assertEqual((last["role"], last["content"]), ("assistant", stopped))
+        self.assertFalse(last.get("tool_calls"))
+
+        Message.objects.create(agent=agent, openai_obj={"role": "user", "content": "Please continue."})
+        self.assertEqual(agent.no_action_retries_since_progress(), 0)
+
+    @patch("api.helpers.discord_bot.send_discord_message", return_value=True)
+    def test_developer_notifications_are_capped_per_user_message(self, send_mock):
+        from api.models import DEVELOPER_NOTIFICATION_LIMIT_NOTICE
+
+        agent = self._agent_with_user_message()
+
+        def notify(name, arguments):
+            call_id = f"notify-{agent.message_set.count()}"
+            result = agent.run_function(SimpleNamespace(name=name, arguments=json.dumps(arguments)))
+            Message.objects.create(agent=agent, openai_obj={
+                "role": "assistant", "content": "", "tool_calls": [{
+                    "id": call_id, "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(arguments)},
+                }],
+            })
+            Message.create_function_message(agent=agent, function_result=result, tool_call_id=call_id)
+            return result
+
+        def sent():
+            # User messages are also relayed to Discord; count only the agent's reports.
+            return [
+                call.args[0] for call in send_mock.call_args_list
+                if not call.args[0].startswith("User message on dataset")
+            ]
+
+        notify("LogBugWithDeveloper", {"message": "Completion needs exports.", "agent_id": 999})
+        notify("SendDiscordMessage", {"message": "Still blocked."})
+        self.assertEqual(
+            notify("LogBugWithDeveloper", {"message": "Still blocked."}),
+            DEVELOPER_NOTIFICATION_LIMIT_NOTICE,
+        )
+        self.assertEqual(len(sent()), 2)
+        self.assertIn(f"Agent ID: {agent.id}", sent()[0])
+
+        Message.objects.create(agent=agent, openai_obj={"role": "user", "content": "Try again."})
+        notify("LogBugWithDeveloper", {"message": "New problem."})
+        self.assertEqual(len(sent()), 3)
+
+    @patch("api.models.create_response_message")
     def test_request_user_input_creates_terminal_visible_questions(
         self,
         create_response_message_mock,

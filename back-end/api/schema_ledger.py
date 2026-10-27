@@ -21,6 +21,9 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Sequ
 
 LOOKUP_TOOL = "GetDwcDpTableInfo"
 PLAN_TOOL = "SetWorkingPlan"
+NOTES_TOOL = "SetStructureNotes"
+# Last line of a finished source coverage report in the structure notes.
+SOURCE_COVERAGE_MARKER = "SOURCE COVERAGE: COMPLETE"
 DWC_TERM_TOOL = "GetDarwinCoreInfo"
 EXTENSION_TOOL = "GetDwCExtensionInfo"
 
@@ -46,6 +49,9 @@ READ_ONLY_TOOLS = frozenset({
     EXTENSION_TOOL,
     "PreviewDwcDpDescriptor",
 })
+# Telling the developers about a problem changes nothing in the package.
+# Dataset 615 reset the no-progress limit with 33 bug reports.
+NOTIFICATION_TOOLS = frozenset({"LogBugWithDeveloper", "SendDiscordMessage"})
 
 _FAILED_RESULT_PREFIXES = (
     "Unknown DwC-DP table",
@@ -517,26 +523,32 @@ def latest_working_plan(openai_objs: Iterable[Dict[str, Any]]) -> str:
 
 
 def result_is_progress(tool_name: Optional[str], result: Any) -> bool:
-    if tool_name in READ_ONLY_TOOLS:
+    if tool_name in READ_ONLY_TOOLS or tool_name in NOTIFICATION_TOOLS:
         return False
     text = result if isinstance(result, str) else json.dumps(result)
-    if text.startswith(("ERROR CALLING FUNCTION", OPEN_TAXON_REVIEW_REFUSAL)):
+    # Refused and failed calls ("ERROR CALLING FUNCTION", "Error: Cannot complete
+    # ...", an open taxon review) changed nothing. Dataset 615 retried a refused
+    # completion nine times.
+    if text.lstrip().lower().startswith("error"):
         return False
     success_prefixes = PROGRESS_RESULT_PREFIXES.get(tool_name or "")
     return success_prefixes is None or text.startswith(success_prefixes)
 
 
-def turns_since_progress(entries: Iterable[Tuple[Any, Dict[str, Any]]], progress_floor=None) -> int:
-    """Count tool-calling assistant turns since the last evidence of progress.
+def last_progress_at(entries: Iterable[Tuple[Any, Dict[str, Any]]], progress_floor=None):
+    """When the last evidence of progress happened, or None if there was none.
 
     ``entries`` are (created_at, openai_obj) pairs in chronological order.
     Progress is a user message, a result from a tool outside READ_ONLY_TOOLS
     that reports a change (see ``result_is_progress``), or ``progress_floor`` (e.g. the latest table revision, which catches
-    package writes made through Python).
+    package writes made through Python). Saving structure notes counts once
+    after other progress, and so does saving the final source coverage report:
+    dataset 615 rewrote the same findings 18 times.
     """
-    entries = list(entries)
     call_names: Dict[str, str] = {}
+    call_arguments: Dict[str, str] = {}
     last_progress = progress_floor
+    notes_saves = []
     for created_at, obj in entries:
         obj = obj or {}
         role = obj.get("role")
@@ -546,11 +558,30 @@ def turns_since_progress(entries: Iterable[Tuple[Any, Dict[str, Any]]], progress
         elif role == "assistant":
             for tool_call in obj.get("tool_calls") or []:
                 function = (tool_call or {}).get("function") or {}
-                call_names[str((tool_call or {}).get("id"))] = str(function.get("name") or "")
+                call_id = str((tool_call or {}).get("id"))
+                call_names[call_id] = str(function.get("name") or "")
+                call_arguments[call_id] = str(function.get("arguments") or "")
         elif role == "tool":
-            is_progress = result_is_progress(call_names.get(str(obj.get("tool_call_id"))), obj.get("content"))
+            call_id = str(obj.get("tool_call_id"))
+            tool_name = call_names.get(call_id)
+            is_progress = result_is_progress(tool_name, obj.get("content"))
+            if is_progress and tool_name == NOTES_TOOL:
+                notes_saves.append((created_at, SOURCE_COVERAGE_MARKER in call_arguments.get(call_id, "")))
+                continue
         if is_progress and created_at is not None and (last_progress is None or created_at > last_progress):
             last_progress = created_at
+    later_notes = [
+        (created_at, reports_coverage) for created_at, reports_coverage in notes_saves
+        if created_at is not None and (last_progress is None or created_at > last_progress)
+    ]
+    credited = later_notes[:1] + [save for save in later_notes if save[1]][:1]
+    return max(created_at for created_at, _ in credited) if credited else last_progress
+
+
+def turns_since_progress(entries: Iterable[Tuple[Any, Dict[str, Any]]], progress_floor=None) -> int:
+    """Count tool-calling assistant turns since ``last_progress_at``."""
+    entries = list(entries)
+    last_progress = last_progress_at(entries, progress_floor)
     return sum(
         1
         for created_at, obj in entries

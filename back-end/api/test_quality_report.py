@@ -383,3 +383,41 @@ class RefinementReportTests(TestCase):
         self.assertEqual(captured["core"]["eventDate"].tolist(), ["2018-06-30"] * 2)
         occurrence.refresh_from_db()
         self.assertEqual(occurrence.df["occurrenceStatus"].tolist(), ["detected", "notDetected"])
+
+    @patch("api.quality_report._delete_archive")
+    @patch("api.quality_report.agent_tools.submit_gbif_validation", return_value="k1")
+    @patch("api.helpers.publish.upload_file")
+    @patch("api.helpers.publish.Minio")
+    def test_provisional_archive_metadata_states_only_saved_people_and_licence(
+        self, _minio, upload_mock, _submit, _delete
+    ):
+        # Dataset 615: the archive's eml.xml named "Test User" and granted CC BY 4.0.
+        import os
+        import zipfile
+        from api.models import CustomUser
+        from api.quality_report import start_refinement_report
+
+        self.dataset.user = CustomUser.objects.create_user(
+            username="uploader", first_name="Artem", last_name="Uploader",
+        )
+        # A scope the final export would reject must not stop the validation.
+        self.dataset.eml = {"creators_unknown": True, "temporal_scope": "the sampling season"}
+        self.dataset.save()
+        captured = {}
+
+        def capture_archive(_client, _bucket, _name, local_path):
+            with zipfile.ZipFile(local_path) as archive:
+                captured["eml"] = archive.read("eml.xml").decode("utf-8")
+
+        upload_mock.side_effect = capture_archive
+        with patch.dict(os.environ, {"MINIO_BUCKET": "bucket", "MINIO_BUCKET_FOLDER": "test"}):
+            report = start_refinement_report(self.agent)
+
+        self.assertNotIn("Could not build", report)
+        eml = captured["eml"]
+        self.assertNotIn("Test User", eml)
+        self.assertNotIn("<surName>User</surName>", eml)
+        self.assertNotIn("creativecommons", eml)
+        self.assertIn("Unknown creator", eml)
+        self.assertIn("<surName>Uploader</surName>", eml)
+        self.assertIn("Provisional archive for GBIF validation only", eml)

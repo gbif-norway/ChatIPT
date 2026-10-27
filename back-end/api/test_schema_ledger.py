@@ -363,6 +363,110 @@ class VerificationLoopTests(AgentFixtureMixin, TestCase):
         self.assertEqual(self.agent.turns_without_progress(), 0)
 
 
+class StoppedStageLoopTests(AgentFixtureMixin, TestCase):
+    """Dataset 615: after the user stopped the stage, the agent cycled plans,
+    re-saved notes, bug reports and a refused completion, which reset the limit."""
+
+    NOTES_SAVED = "Structure notes have been successfully updated."
+
+    def add_turn(self, name, result, args=None):
+        for obj in tool_turn(f"{name}-{self.agent.message_set.count()}", name, args or {}, result):
+            Message.objects.create(agent=self.agent, openai_obj=obj)
+
+    @override_settings(AGENT_NO_PROGRESS_WARN_TURNS=8, AGENT_NO_PROGRESS_STOP_TURNS=15)
+    def test_bookkeeping_and_refusals_do_not_reset_the_no_progress_count(self):
+        self.add_turn("SetStructureNotes", self.NOTES_SAVED)
+        self.assertEqual(self.agent.turns_without_progress(), 0)
+        cycle = [
+            ("LogBugWithDeveloper", "Bug report sent to developers via Discord (tagged @_rkian)."),
+            ("SetWorkingPlan", "Working plan saved. It is shown in the current workflow state on every turn."),
+            ("SetAgentTaskToComplete", (
+                "Error: Cannot complete publication package preparation until both the "
+                "DwC-DP package and DwC-A archive have been exported."
+            )),
+            ("SetStructureNotes", self.NOTES_SAVED),
+            ("SendDiscordMessage", "Message sent successfully to developers via Discord"),
+        ]
+        for _ in range(3):
+            for name, result in cycle:
+                self.add_turn(name, result)
+        self.assertEqual(self.agent.turns_without_progress(), 15)
+
+        warning = self.agent.current_state_update().split("NO PROGRESS", 1)[1]
+        self.assertIn("saving notes again do not count", warning)
+        with patch("api.models.create_response_message") as create_response_message_mock:
+            messages = self.agent.next_message()
+            create_response_message_mock.assert_not_called()
+        self.assertTrue(messages[-1].openai_obj.get("no_progress_pause"))
+
+    def test_notes_count_again_after_other_progress(self):
+        self.add_turn("SetStructureNotes", self.NOTES_SAVED)
+        self.add_read_only_turns(2)
+        self.add_turn("SetStructureNotes", self.NOTES_SAVED)
+        self.assertEqual(self.agent.turns_without_progress(), 3)
+
+        Message.objects.create(agent=self.agent, openai_obj={"role": "user", "content": "Add the licence."})
+        self.add_read_only_turns(1)
+        self.add_turn("SetStructureNotes", self.NOTES_SAVED)
+        self.assertEqual(self.agent.turns_without_progress(), 0)
+
+    @override_settings(AGENT_NO_PROGRESS_WARN_TURNS=8, AGENT_NO_PROGRESS_STOP_TURNS=15)
+    def test_final_coverage_report_counts_after_earlier_notes(self):
+        report = {"structure_notes": f"Coverage: all columns mapped.\n{Dataset.SOURCE_COVERAGE_MARKER}"}
+        self.add_turn("SetStructureNotes", self.NOTES_SAVED)
+        self.add_read_only_turns(13)
+        self.add_turn("SetStructureNotes", self.NOTES_SAVED, report)
+        self.assertEqual(self.agent.turns_without_progress(), 0)
+
+        self.add_read_only_turns(1)
+        self.add_turn("SetStructureNotes", self.NOTES_SAVED, report)
+        self.assertEqual(self.agent.turns_without_progress(), 2)
+
+    @patch("api.helpers.discord_bot.send_discord_message", return_value=True)
+    def test_run_615_loop_ends_without_user_input(self, send_mock):
+        self.task.name = Task.PACKAGE_PREPARATION_TASK
+        self.task.save()
+
+        def call(name, **arguments):
+            return CompatAssistantMessage(tool_calls=[CompatToolCall(
+                id=f"{name}-{next(counter)}",
+                function=CompatFunctionCall(name=name, arguments=json.dumps(arguments)),
+            )])
+
+        def responses():
+            # The agent's replies after the user had asked it to stop: a "stopped"
+            # message, then plans, notes, bug reports and a refused completion.
+            while True:
+                yield CompatAssistantMessage(content="Stopped as an unexported private draft.")
+                yield call(
+                    "SetStructureNotes", agent_id=self.agent.id,
+                    structure_notes="Kept as an unexported private draft.",
+                )
+                yield call("LogBugWithDeveloper", message="Completion requires exports.")
+                yield call("SetWorkingPlan", plan="Stopped.")
+                yield call("SetAgentTaskToComplete", agent_id=self.agent.id)
+                yield call("SendDiscordMessage", message="Still blocked.")
+
+        counter = iter(range(1000))
+        with patch("api.models.create_response_message", side_effect=responses()) as model_mock:
+            for _ in range(60):
+                if self.agent.next_message() is None:
+                    break
+            else:
+                self.fail("the loop did not stop")
+
+        self.assertLessEqual(model_mock.call_count, 20)
+        reports = [c.args[0] for c in send_mock.call_args_list if not c.args[0].startswith("User message")]
+        self.assertLessEqual(len(reports), Agent.DEVELOPER_NOTIFICATION_LIMIT)
+        self.agent.refresh_from_db()
+        self.assertIsNone(self.agent.completed_at)
+        last = self.agent.message_set.last().openai_obj
+        self.assertEqual(
+            (last["role"], last["content"]), ("assistant", "Stopped as an unexported private draft.")
+        )
+        self.assertFalse(last.get("tool_calls") or last.get("workflow_error"))
+
+
 class DatasetCostLimitTests(AgentFixtureMixin, TestCase):
     def add_cost(self, amount, response_id="cost-1"):
         return OpenAIUsage.objects.create(
@@ -477,6 +581,11 @@ class ArtifactProgressTests(SimpleTestCase):
         self.assertTrue(result_is_progress("SetStructureNotes", "ok"))
         self.assertFalse(result_is_progress("SetStructureNotes", "ERROR CALLING FUNCTION: bad"))
         self.assertFalse(result_is_progress("GetDarwinCoreInfo", "Darwin Core term lookup results:"))
+        self.assertFalse(result_is_progress("SetAgentTaskToComplete", "Error: Cannot complete the stage."))
+        self.assertFalse(result_is_progress("SetEML", "ERROR: table 3 not found"))
+        self.assertFalse(result_is_progress("LogBugWithDeveloper", "Bug report sent to developers via Discord."))
+        self.assertFalse(result_is_progress("SendDiscordMessage", "Message sent successfully to developers via Discord"))
+        self.assertTrue(result_is_progress("SetEML", "EML metadata saved."))
 
 
 class DwcTermLedgerTests(SimpleTestCase):

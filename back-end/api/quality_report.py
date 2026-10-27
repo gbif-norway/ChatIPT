@@ -13,6 +13,12 @@ from api.publication_validation import _as_integer, _is_blank
 
 
 REPORT_FLAG = 'quality_report'
+# Saved metadata the provisional archive may state: people and the licence.
+# Scopes are left out so incomplete metadata cannot stop the validation.
+PROVISIONAL_EML_KEYS = frozenset({
+    'users', 'creators_unknown', 'contacts', 'metadata_providers', 'metadata_provider',
+    'contact_email', 'license',
+})
 MAX_SAMPLES = 3
 MAX_VALUE_CHARS = 80
 MAX_SECTION_CHARS = 12000
@@ -416,7 +422,9 @@ def render_refinement_report(dataset, note=None):
     return (
         "QUALITY REPORT (completion was not recorded yet). ChatIPT built a provisional DwC-A from "
         "the DwC-DP tables only to run the GBIF validator; it is not published and is not the final "
-        "projection. GBIF sample record IDs are occurrence_pk or materialEntity_pk values, and "
+        "projection. It holds only core records with their event and accepted identification: no "
+        "extensions (such as DNA-derived data or measurements) and no final people or licence, so "
+        "never offer it as a package. GBIF sample record IDs are occurrence_pk or materialEntity_pk values, and "
         "informational notes need no action. Metadata is not checked here.\n"
         "Projection compatibility findings do not justify changing authoritative source facts; "
         "keep them separate from source-data conflicts. GBIF RECORDED_DATE_MISMATCH can also "
@@ -484,8 +492,13 @@ def start_refinement_report(agent):
             dataset.title or 'Provisional validation',
             dataset.description or 'Provisional archive for GBIF validation only.',
             DarwinCoreCoreType.OCCURRENCE,
+            user=dataset.user,
+            eml_extra={
+                key: value for key, value in (dataset.eml or {}).items() if key in PROVISIONAL_EML_KEYS
+            },
             # The flattened core keeps DwC-DP keys that have no DwC-A term.
             drop_unmapped_columns=True,
+            provisional=True,
         )
         key = agent_tools.submit_gbif_validation(record['url'])
     except Exception as exc:
