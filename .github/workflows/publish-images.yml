@@ -1,0 +1,67 @@
+name: Build and publish images
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.component }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [back-end, front-end]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and publish
+        uses: docker/build-push-action@v7
+        with:
+          context: ./${{ matrix.component }}
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          tags: gbifnorway/chatipt-${{ matrix.component }}:sha-${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_BASE_API_URL=https://api.chatipt.svc.gbif.no
+            NEXT_BUILD_CACHE_SCOPE=prod
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+          provenance: false
+          sbom: false
+  summary:
+    name: Published release
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show deployment command
+        env:
+          IMAGE_TAG: sha-${{ github.sha }}
+        run: |
+          {
+            echo 'Both production images were published successfully.'
+            echo
+            echo 'Deploy from your terminal:'
+            echo '```bash'
+            echo "./scripts/deploy-prod.sh --tag $IMAGE_TAG"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

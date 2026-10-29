@@ -170,5 +170,11 @@ Use the repo script as the standard production deploy entrypoint:
 
 ```bash
 cd /Users/rukayasj/Projects/chatipt
-./scripts/deploy-prod.sh
+./scripts/deploy-prod.sh --tag sha-<full-commit-sha>
 ```
+
+GitHub Actions builds both production images on pushes to `main` and publishes
+`sha-<full-commit-sha>` tags to Docker Hub. Pull requests build without publishing.
+Wait for the complete workflow to succeed, then use its summary's deploy command.
+The deployment script only deploys existing images; it never builds or pushes them.
+Repository Actions secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` are required.

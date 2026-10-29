@@ -4,7 +4,7 @@ This document describes the **current** ChatIPT deployment workflow.
 
 - Target cluster context: `nird-lmd`
 - Target namespace: `gbif-no-ns8095k`
-- CI/CD model: manual, command-driven
+- CI/CD model: GitHub Actions builds/publishes; local Helm deploys
 - Not used for routine deployment: Jenkins, Argo CD
 
 ## Default production path
@@ -13,11 +13,11 @@ For routine production deploys from this repo, use:
 
 ```bash
 cd /Users/rukayasj/Projects/chatipt
-./scripts/deploy-prod.sh
+./scripts/deploy-prod.sh --tag sha-<full-commit-sha>
 ```
 
 The script runs the end-to-end flow:
-- build and push backend/frontend production images
+- verify both tagged images exist in Docker Hub
 - update `../gitops/apps/chatipt/values-prod.yaml`
 - commit/push gitops change
 - `helm upgrade --install` for `chatipt`
@@ -180,68 +180,32 @@ Optional quick check:
 rg -n "^MaterialCitation:|basisOfRecord:" back-end/api/templates/dwc-quick-reference-guide.yaml
 ```
 
-## 1) Build and push images
+## 1) Build and publish with GitHub Actions
 
-Use a unique tag per release.
+The workflow `.github/workflows/publish-images.yml` builds both existing Dockerfiles
+on native Linux amd64 runners, in parallel, with separate persistent layer caches.
+Pushes to `main` publish both images as `sha-<full-commit-sha>` to the existing
+`gbifnorway/chatipt-back-end` and `gbifnorway/chatipt-front-end` Docker Hub repos.
+Pull requests build both images without publishing. The Actions page also supports
+manual runs; publishing is restricted to `main`. No cluster credentials are needed
+in GitHub. Application runtime secrets stay in Kubernetes.
 
-```bash
-cd /Users/rukayasj/Projects/chatipt
+One-time setup in this GitHub repository's Settings → Secrets and variables → Actions:
 
-SHA=$(git rev-parse --short HEAD)
-STAMP=$(date -u +%Y%m%d-%H%M%S)
-TAG="${SHA}-${STAMP}"
-```
+- `DOCKERHUB_USERNAME`: account with push access to both image repositories.
+- `DOCKERHUB_TOKEN`: Docker Hub access token with write permission to both repositories.
 
-### Fast path (recommended)
-
-Main bottleneck is usually frontend build/push (large image), not Helm or `kubectl`.
-
-- Reuse the persistent local `chatipt-builder` cache (Dockerfiles use BuildKit cache mounts).
-- Avoid `--cache-to ... mode=max` in normal releases; it adds a lot of push time.
-- Skip rebuilding unchanged component(s) when possible.
+Wait for the entire workflow (including both image jobs) to succeed. The workflow
+summary prints the exact deployment command:
 
 ```bash
-cd /Users/rukayasj/Projects/chatipt
-
-SHA=$(git rev-parse --short HEAD)
-STAMP=$(date -u +%Y%m%d-%H%M%S)
-TAG="${SHA}-${STAMP}"
-PROD_TAG="2.0.0-${TAG}"
-BUILDER="chatipt-builder"
-
-docker buildx build --builder ${BUILDER} --platform linux/amd64 \
-  -f back-end/Dockerfile \
-  -t gbifnorway/chatipt-back-end:${PROD_TAG} \
-  --provenance=false --sbom=false \
-  --push back-end
-
-# Frontend prod (build bakes NEXT_PUBLIC_BASE_API_URL into bundle)
-docker buildx build --builder ${BUILDER} --platform linux/amd64 \
-  -f front-end/Dockerfile \
-  --build-arg NEXT_PUBLIC_BASE_API_URL=https://api.chatipt.svc.gbif.no \
-  --build-arg NEXT_BUILD_CACHE_SCOPE=prod \
-  -t gbifnorway/chatipt-front-end:${PROD_TAG} \
-  --provenance=false --sbom=false \
-  --push front-end
+./scripts/deploy-prod.sh --tag sha-<full-commit-sha>
 ```
 
-### Production-style tags
-
-```bash
-PROD_TAG="2.0.0-${TAG}"
-
-docker buildx build --platform linux/amd64 \
-  -f back-end/Dockerfile \
-  -t gbifnorway/chatipt-back-end:${PROD_TAG} \
-  --push back-end
-
-docker buildx build --platform linux/amd64 \
-  -f front-end/Dockerfile \
-  --build-arg NEXT_PUBLIC_BASE_API_URL=https://api.chatipt.svc.gbif.no \
-  --build-arg NEXT_BUILD_CACHE_SCOPE=prod \
-  -t gbifnorway/chatipt-front-end:${PROD_TAG} \
-  --push front-end
-```
+This command verifies the images exist before changing GitOps values, commits and
+pushes the values, deploys with Helm, and verifies the rollout. It never builds or
+pushes images. `--tag` is required; existing older release tags are also accepted.
+The manual steps below are for troubleshooting; the script normally handles them.
 
 ## 2) Update image tags in gitops
 
