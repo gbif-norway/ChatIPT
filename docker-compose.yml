@@ -12,7 +12,7 @@ services:
       timeout: 5s
       retries: 5
   back-end: 
-    # docker buildx build --platform linux/amd64 -t gbifnorway/chatipt-back-end:$(git rev-parse --short HEAD) -t gbifnorway/chatipt-back-end:latest --push .
+    # Production images are built and published by .github/workflows/publish-images.yml.
     build: ./back-end
     image: gbifnorway/chatipt-back-end:latest
     volumes:
@@ -36,7 +36,7 @@ services:
     # Use the image entrypoint (start.sh) so migrations run automatically before the dev server starts
     command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
   front-end: 
-    # docker buildx build --platform linux/amd64 --build-arg NEXT_PUBLIC_BASE_API_URL=https://api.chatipt.svc.gbif.no/api -t gbifnorway/chatipt-front-end:$(git rev-parse --short HEAD) -t gbifnorway/chatipt-front-end:latest --push .
+    # Production images are built and published by .github/workflows/publish-images.yml.
     build: ./front-end
     image: gbifnorway/chatipt-front-end:latest
     volumes:

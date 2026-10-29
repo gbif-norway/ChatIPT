@@ -13,10 +13,14 @@ For routine production deploys from this repo, use:
 
 ```bash
 cd /Users/rukayasj/Projects/chatipt
-./scripts/deploy-prod.sh --tag sha-<full-commit-sha>
+./scripts/deploy-prod.sh --tag sha-FULL_COMMIT_SHA
 ```
 
-The script runs the end-to-end flow:
+After both GitHub Actions image jobs succeed, copy the exact command from the
+workflow summary (replace `FULL_COMMIT_SHA` above with the full commit hash).
+Pushing source or publishing images does not deploy production.
+
+The script runs the deployment flow:
 - verify both tagged images exist in Docker Hub
 - update `../gitops/apps/chatipt/values-prod.yaml`
 - commit/push gitops change
@@ -55,8 +59,8 @@ database, user files and MinIO buckets removed).
 
 - `docker` + `docker buildx`
 - `kubectl` configured with context `nird-lmd`
-- `helm`
-- Push access to Docker Hub repos:
+- `helm`, `git`, `perl`, and `rg`
+- Read access to the published Docker Hub images (local deployment does not require push access):
   - `gbifnorway/chatipt-back-end`
   - `gbifnorway/chatipt-front-end`
 - Write access to `../gitops`
@@ -193,13 +197,13 @@ in GitHub. Application runtime secrets stay in Kubernetes.
 One-time setup in this GitHub repository's Settings → Secrets and variables → Actions:
 
 - `DOCKERHUB_USERNAME`: account with push access to both image repositories.
-- `DOCKERHUB_TOKEN`: Docker Hub access token with write permission to both repositories.
+- `DOCKERHUB_TOKEN`: Docker Hub access token with Read & Write permission; delete access is unnecessary. For a personal token, the account must have push access to both repositories.
 
 Wait for the entire workflow (including both image jobs) to succeed. The workflow
 summary prints the exact deployment command:
 
 ```bash
-./scripts/deploy-prod.sh --tag sha-<full-commit-sha>
+./scripts/deploy-prod.sh --tag sha-FULL_COMMIT_SHA
 ```
 
 This command verifies the images exist before changing GitOps values, commits and

@@ -170,7 +170,7 @@ Use the repo script as the standard production deploy entrypoint:
 
 ```bash
 cd /Users/rukayasj/Projects/chatipt
-./scripts/deploy-prod.sh --tag sha-<full-commit-sha>
+./scripts/deploy-prod.sh --tag sha-FULL_COMMIT_SHA
 ```
 
 GitHub Actions builds both production images on pushes to `main` and publishes
