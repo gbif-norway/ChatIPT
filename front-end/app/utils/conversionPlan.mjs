@@ -1,6 +1,8 @@
 // Plain-language summaries of a conversion plan (docs/dwca-conversion/ai-review-and-chat.md §10–11).
 // Everything here is derived from the saved plan and decisions; nothing creates a second decision state.
 
+import { choicePresentation } from './conversionCopy.mjs'
+
 export const shortTerm = term => String(term || '').split(/[/#]/).pop()
 
 const plural = (count, singular, pluralForm = `${singular}s`) => `${count.toLocaleString()} ${count === 1 ? singular : pluralForm}`
@@ -73,11 +75,15 @@ export function automaticSummary(state, selected, hidden = new Set()) {
     const family = item.family || KIND_FAMILY[item.kind] || 'other'
     const heading = plan.glossary?.families?.[family] || FAMILY_HEADINGS[family] || FAMILY_HEADINGS.other
     const target = glossaryEntry(state, value)
+    const display = choicePresentation(item)
     const decided = option => glossaryEntry(state, option)?.decided ?? optionLabel(item, option)
-    let title = isColumn ? `${shortTerm(item.term)} → ${target?.decided ?? optionLabel(item, value)}` : item.title
+    const hasSizeUnit = display.summaryTitle === 'Sample sizes' && columns.some(column => idPrefix(column.id) === prefix && column.table === item.table &&
+      column.nonempty > 0 && String(column.term).endsWith('/sampleSizeUnit'))
+    let title = isColumn ? (display.summaryTitle === 'Sample sizes' && hasSizeUnit ? 'Sample sizes and units' : display.summaryTitle) ||
+      `${shortTerm(item.term)} → ${target?.decided ?? optionLabel(item, value)}` : display.title
     let text = isColumn
-      ? changed ? `You chose this: ${optionLabel(item, value)}.` : (state?.conditional_defaults?.[item.id]?.reason ?? item.reason)
-      : changed ? `You chose: ${optionLabel(item, value)}.` : `${optionLabel(item, value)}. ${item.reason || ''}`.trim()
+      ? changed ? `You chose this: ${optionLabel(item, value)}.` : (state?.conditional_defaults?.[item.id]?.reason ?? display.reason)
+      : changed ? `You chose: ${optionLabel(display, value)}.` : display.summary ? display.reason : `${optionLabel(display, value)}. ${display.reason || ''}`.trim()
     // A default that depends on a question still open says what each answer does, rather than explaining today's fallback.
     const withPrefix = id => prefix && !idPrefix(id) ? prefix + id : id
     const referenced = changed ? [] : [...conditionIds(item), ...conditionColumns(item)].map(withPrefix)
@@ -107,8 +113,13 @@ export function automaticSummary(state, selected, hidden = new Set()) {
       title = `${shortTerm(item.term)} → waiting for your answer`
       text = `Depends on your answer to “${waitingFor.title}”. ${outcomes.join('; ')}; otherwise ${decided(item.default)}.`
     }
+    // The size explanation already covers the unit. Keep the separate unit
+    // control in routine choices unless it was changed or has its own warning.
+    const pairedUnit = display.summaryTitle === 'Sample size units' && !changed && value === 'derive' &&
+      !warningIds.has(item.id) && columns.some(column => idPrefix(column.id) === prefix && column.table === item.table && column.nonempty > 0 &&
+        String(column.term).endsWith('/sampleSizeValue') && selected(column.id, column.default) === 'derive')
     lines.push({ line: { id: item.id, item, family, heading, title, text, value, changed },
-      glance: Boolean(item.glance || item.convention || warningIds.has(item.id)) })
+      glance: !pairedUnit && Boolean(item.glance || item.convention || warningIds.has(item.id)) })
   }
   const rank = family => {
     const index = FAMILY_ORDER.indexOf(family)

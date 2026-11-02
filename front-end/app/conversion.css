@@ -146,6 +146,21 @@
     background: var(--bs-danger-bg-subtle);
 }
 
+.conversion-help-term {
+    display: inline;
+    padding: 0;
+    border: 0;
+    border-bottom: 1px dotted currentColor;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: help;
+}
+
+.conversion-help-term .bi { font-size: 0.7em; }
+.conversion-examples { margin: 0.35rem 0; overflow-wrap: anywhere; }
+.conversion-examples > summary { cursor: pointer; }
+
 /* Plan diagram */
 .conversion-plan-svg {
     height: auto;

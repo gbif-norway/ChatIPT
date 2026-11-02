@@ -6,7 +6,7 @@ import { getCsrfToken } from '../utils/csrf'
 import { useDataset } from '../contexts/DatasetContext'
 import { useGbifStatus } from '../contexts/GbifStatusContext'
 import { attentionItems, chatVisible, conflictsFor, optionState, shownRecommendation, unresolvedIssues } from '../utils/conversionReview.mjs'
-import { AGENT_NAMES_ID, automaticSummary, conversionTitle, dedupeNotices, glossaryEntry, isColumnId, makeSelector, shortTerm } from '../utils/conversionPlan.mjs'
+import { AGENT_NAMES_ID, automaticSummary, conversionTitle, dedupeNotices, glossaryEntry, isColumnId, localId, makeSelector, shortTerm } from '../utils/conversionPlan.mjs'
 import { focusDecision } from '../utils/focusDecision'
 import { formatFileSize, sendUpload, uploadSizeError } from '../utils/uploadSize.mjs'
 import ConversionAiDecisions from './ConversionAiDecisions'
@@ -18,6 +18,8 @@ import ConversionTidySummary from './ConversionTidySummary'
 import ConversionPlanDiagram from './ConversionPlanDiagram'
 import ConversionSteps from './ConversionSteps'
 import PackageExplorer, { openPackageExplorer } from './PackageExplorer'
+import { choicePresentation } from '../utils/conversionCopy.mjs'
+import { ConversionChoiceTitle, ConversionExamples, ConversionHelpTerm } from './ConversionHelp'
 
 async function request(url, body) {
   const headers = body ? { 'Content-Type': 'application/json', 'X-CSRFToken': await getCsrfToken() } : {}
@@ -90,28 +92,29 @@ function GroupExceptions({ item, decisions, disabled, onChoose }) {
   </details>
 }
 
-function ChoiceCard({ item, state, decisions, disabled, onChoose, selected, number, asRadios = false }) {
+function ChoiceCard({ item: sourceItem, state, decisions, disabled, onChoose, selected, number, asRadios = false }) {
+  const item = choicePresentation(sourceItem)
   const recommendation = shownRecommendation(state, item.id)
   const deferred = state.review?.deferred?.[item.id]
   const value = selected(item.id, item.default)
   const current = optionState(state, item.id, value)
   const conflicts = conflictsFor(state, item.id)
   const guided = number !== undefined || asRadios
-  const eventLinks = guided && item.id.startsWith('occurrence-events:')
+  const eventLinks = guided && localId(item.id).startsWith('occurrence-events:')
   const automatic = (state.plan?.automatic_choices || []).some(choice => choice.id === item.id)
   // A default that follows another answer explains itself with the reason for that answer. In the
-  // "What we decided" panel the line above the card already shows it.
+  // automatic summary the line above the card already shows it.
   const reason = asRadios && automatic ? '' : state.conditional_defaults?.[item.id]?.reason ?? item.reason
   return <div data-decision-id={item.id} className={`card card-body choice-card mb-3 ${conflicts.length || !current.available ? 'border-warning' : ''}`}>
     {number !== undefined && <div className="d-flex align-items-center justify-content-between mb-2"><span className="choice-number mb-0">Question {number}</span>{!state.unresolved?.includes(item.id) && decisions[item.id] && <span className="answer-saved"><i className="bi bi-check-circle me-1" aria-hidden="true" />Answer saved</span>}</div>}
     {item.table !== undefined && <small className="text-muted mb-1">{state.plan.tables[item.table]?.name}</small>}
-    {guided ? <h3 id={`title-${item.id}`} className="choice-title fw-semibold">{eventLinks ? 'How should these records link to events?' : item.title || shortTerm(item.term)}</h3>
-      : <label id={`title-${item.id}`} htmlFor={item.id} className="choice-title fw-semibold">{item.title || shortTerm(item.term)}</label>}
-    {eventLinks ? <><p className="small mb-2">In a Data Package, dates and locations belong to events. Choose how to keep the details recorded on these occurrence rows.</p><details className="small mb-2"><summary>See what we found in your files</summary><p className="mt-2 mb-0">{reason}</p></details></> : recommendation?.user_question
+    <h3 id={`title-${item.id}`} className="choice-title fw-semibold"><ConversionChoiceTitle item={item} text={item.title || shortTerm(item.term)} /></h3>
+    {eventLinks ? <><p className="small mb-2">In a Data Package, these details belong to an <ConversionHelpTerm term="events">event</ConversionHelpTerm>. Choose where to put them, or leave them out.</p><details className="small mb-2"><summary>See what we found in your files</summary><p className="mt-2 mb-0">{reason}</p></details></> : recommendation?.user_question
       ? <><p className="small mb-2">{recommendation.user_question}</p>{reason && <details className="small mb-2"><summary>More about this question</summary><p className="mt-2 mb-0">{reason}</p></details>}</>
       : reason && <p className="small mb-2">{reason}</p>}
     {item.members && <p className="small mb-2">Applies to {item.count.toLocaleString()} rows that raise the same question (rows {item.sample_rows.join(', ')}{item.count > item.sample_rows.length ? ', …' : ''}).</p>}
-    {item.samples?.length > 0 && <div className="small text-muted mb-2" style={{ overflowWrap: 'anywhere' }}>Examples: {item.samples.join(' · ')}</div>}
+    <ConversionExamples state={state} item={item} open={number !== undefined && isColumnId(item.id)} />
+    {item.details && <details className="small mb-2"><summary>More about this choice</summary><p className="mt-1 mb-0">{item.details}</p></details>}
     {guided ? <fieldset id={item.id} className="choice-options" aria-labelledby={`title-${item.id}`}>
       <legend className="visually-hidden">Choose an answer</legend>
       {item.options.map((option, index) => {
@@ -130,7 +133,7 @@ function ChoiceCard({ item, state, decisions, disabled, onChoose, selected, numb
           {value === option.value && <i className="bi bi-check2 ms-auto" aria-hidden="true" />}
         </label>{!availability.available && availability.reasons?.length > 0 && <details className="small unavailable-reason"><summary>Why this option isn&apos;t available</summary><p className="mt-2 mb-0">{availability.reasons.join(' ')}</p></details>}</div>
       })}
-    </fieldset> : <><select id={item.id} className="form-select" value={selected(item.id, item.default) || ''} disabled={disabled} onChange={event => onChoose(item.id, event.target.value)}>
+    </fieldset> : <><select id={item.id} aria-labelledby={`title-${item.id}`} className="form-select" value={selected(item.id, item.default) || ''} disabled={disabled} onChange={event => onChoose(item.id, event.target.value)}>
       {!item.default && <option value="">Choose…</option>}
       {item.options.map(option => <option key={option.value} value={option.value}>
         {option.label}{optionState(state, item.id, option.value).available ? '' : ' (not available with your other choices)'}</option>)}

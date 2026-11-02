@@ -2,15 +2,18 @@
 
 import { useState } from 'react'
 import { automaticSummary } from '../utils/conversionPlan.mjs'
+import { choicePresentation } from '../utils/conversionCopy.mjs'
+import { ConversionChoiceTitle, ConversionExamples } from './ConversionHelp'
 
-function SummaryLine({ line, icon, renderChoice, disabled }) {
+function SummaryLine({ line, icon, renderChoice, disabled, state }) {
   const [open, setOpen] = useState(false)
   return <div className="automatic-summary-line" data-decision-id={line.id}>
     <div className="d-flex align-items-start gap-2">
       {icon && <i className={`bi ${icon} text-body-secondary mt-1`} aria-hidden="true" />}
       <div className="flex-grow-1">
-        <div className="d-flex flex-wrap align-items-center gap-2"><strong>{line.title}</strong>{line.changed && <span className="badge text-bg-secondary">Changed by you</span>}</div>
+        <div className="d-flex flex-wrap align-items-center gap-2"><strong><ConversionChoiceTitle item={choicePresentation(line.item)} text={line.title} /></strong>{line.changed && <span className="badge text-bg-secondary">Changed by you</span>}</div>
         {line.text && <p className="small text-body-secondary mb-1">{line.text}</p>}
+        {!open && <ConversionExamples state={state} item={line.item} />}
         <button type="button" className="btn btn-link btn-sm p-0" disabled={disabled} aria-expanded={open} onClick={() => setOpen(value => !value)}>
           {open ? 'Close' : 'Change'}
         </button>
@@ -29,11 +32,11 @@ export default function ConversionAutomaticSummary({ state, selected, hidden, di
   const silentGroups = [...new Map(silent.map(line => [line.heading, []])).keys()]
     .map(heading => [heading, silent.filter(line => line.heading === heading)])
   return <section className="automatic-summary card card-body mb-3" aria-labelledby="automatic-summary-heading">
-    <h2 id="automatic-summary-heading" className="h4">What we decided for you</h2>
-    <p className="small text-body-secondary">We made these choices from what your files show. Change any of them.</p>
+    <h2 id="automatic-summary-heading" className="h4">Already taken care of</h2>
+    <p className="small text-body-secondary">These choices are based on your files. You can change any of them.</p>
     {groups.map(([family, heading]) => <div key={family} className="automatic-summary-group">
       <h3 className="h6 text-body-secondary">{heading}</h3>
-      {glance.filter(line => line.family === family).map(line => <SummaryLine key={line.id} line={line} icon="bi-lightbulb" renderChoice={renderChoice} disabled={disabled} />)}
+      {glance.filter(line => line.family === family).map(line => <SummaryLine key={line.id} line={line} icon="bi-lightbulb" renderChoice={renderChoice} disabled={disabled} state={state} />)}
     </div>)}
     {specimen.map(line => <div className="automatic-summary-line" data-decision-id={line.id} key={line.id}>
       <div className="d-flex align-items-start gap-2"><i className="bi bi-archive text-body-secondary mt-1" aria-hidden="true" /><div className="flex-grow-1">
@@ -50,7 +53,7 @@ export default function ConversionAutomaticSummary({ state, selected, hidden, di
       <summary><i className="bi bi-check2-circle me-1" aria-hidden="true" />{silent.length} routine {silent.length === 1 ? 'choice' : 'choices'} made automatically</summary>
       <div className="mt-2">{silentGroups.map(([heading, lines]) => <details key={heading} className="small mb-2">
         <summary>{heading} ({lines.length})</summary>
-        {lines.map(line => <SummaryLine key={line.id} line={line} renderChoice={renderChoice} disabled={disabled} />)}
+        {lines.map(line => <SummaryLine key={line.id} line={line} renderChoice={renderChoice} disabled={disabled} state={state} />)}
       </details>)}</div>
     </details>}
   </section>

@@ -47,7 +47,9 @@ SYSTEM_PROMPT = (
     'Set needs_user when the user must decide. Write user_question for a non-specialist, without Darwin Core jargon, in at '
     'most 300 characters, with one short sentence on the consequence of each sensible option. Keep rationale under 400 characters. '
     'In user_question, name options by their plain labels (the option "label", or a target\'s "plain_label") and explain them '
-    'with the target "gloss" and "consequence"; never use table or field names such as material.collectedBy.'
+    'with the target "gloss" and "consequence"; never use table or field names such as material.collectedBy. '
+    'Use short, everyday words and explain an unfamiliar term only when needed. A brief example can help, but use only '
+    'values present in the cited evidence; never invent examples or pair values from unrelated rows.'
 )
 OUTPUT_SCHEMA = {
     'type': 'object', 'additionalProperties': False, 'required': ['items'],

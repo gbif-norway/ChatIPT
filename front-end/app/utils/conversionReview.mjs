@@ -1,6 +1,8 @@
 // The server resolves choices (automatic defaults, grouped rows, option requirements)
 // and returns `unresolved`; the interface only filters and labels.
 
+import { choicePresentation } from './conversionCopy.mjs'
+
 export function unresolvedIssues(state) {
   const unresolved = new Set(state?.unresolved || [])
   return (state?.plan?.issues || []).filter(issue => unresolved.has(issue.id))
@@ -16,7 +18,10 @@ export function attentionItems(state) {
 
 // AI review and conversation (docs/dwca-conversion/ai-review-and-chat.md §10–11).
 
-const issueById = (state, id) => (state?.plan?.issues || []).find(issue => issue.id === id)
+const issueById = (state, id) => {
+  const item = (state?.plan?.issues || []).find(issue => issue.id === id)
+  return item ? choicePresentation(item) : undefined
+}
 export const decisionTitle = (state, id) => issueById(state, id)?.title || id
 const optionLabel = (item, value) => item?.options?.find(option => option.value === value)?.label || value
 

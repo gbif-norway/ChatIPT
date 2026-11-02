@@ -815,6 +815,15 @@ items to the choice they wait for, and `review.blockers` lists retained stale AI
 
 ## 11. Interface
 
+- **Wording and examples:** plan titles, options and automatic explanations are
+  deterministic. `conversionCopy.mjs` supplies concise display text for saved
+  plans without changing their IDs or decisions. `ConversionHelp.js` explains
+  terms on hover, focus or tap and shows optional examples from the plan's
+  existing column samples and repeated names. Samples from separate columns
+  are never paired as if they came from one row. This needs no additional model
+  call or source-file read. AI recommendations and chat replies can include
+  model-written text; their prompts ask for brief explanations and examples
+  grounded in the file evidence.
 - **Chat panel** (`ConversionChat.js`) above the choices whenever escalated items,
   conflicts or messages exist: transcript, composer, pending indicator, and a note
   that the conversation is kept with this conversion, and that the report inside the
