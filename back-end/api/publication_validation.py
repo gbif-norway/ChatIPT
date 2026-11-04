@@ -478,9 +478,86 @@ def validate_publication_safety(resources: Mapping[str, pd.DataFrame]) -> list[s
     return warnings
 
 
+def _single_column(df: Any, column: str) -> pd.Series | None:
+    if not isinstance(df, pd.DataFrame) or list(df.columns).count(column) != 1:
+        return None
+    return df[column]
+
+
+def _text_values(series: pd.Series) -> pd.Series:
+    return series.astype("string").fillna("").str.strip()
+
+
+def _row_preview(rows: list[int]) -> str:
+    suffix = f" and {len(rows) - 10} more" if len(rows) > 10 else ""
+    return f"row(s) {', '.join(map(str, rows[:10]))}{suffix}"
+
+
+def dna_read_warnings(resources: Mapping[str, pd.DataFrame]) -> list[str]:
+    """Flag zero-read cells of an OTU/ASV table published as detections or absences."""
+    warnings: list[str] = []
+    zero_cells = (
+        "For metabarcoding OTU/ASV table cells, a zero read count is neither a detection nor an "
+        "absence (GBIF's Metabarcoding Data Toolkit publishes one occurrence per OTU per sample "
+        "with at least one read): omit those rows and report them in source coverage."
+    )
+
+    analysis = resources.get("nucleotide-analysis")
+    read_count = _single_column(analysis, "readCount")
+    if read_count is not None:
+        rows = _row_positions(pd.to_numeric(read_count, errors="coerce").eq(0))
+        if rows:
+            warnings.append(
+                f"Semantic review: resource 'nucleotide-analysis' has {len(rows)} analysis "
+                f"row(s) with readCount 0 in {_row_preview(rows)}. {zero_cells}"
+            )
+
+    occurrence = resources.get("occurrence")
+    if not isinstance(occurrence, pd.DataFrame) or occurrence.empty:
+        return warnings
+    quantity_type = _single_column(occurrence, "organismQuantityType")
+    reads = (
+        _text_values(quantity_type).str.casefold().eq("dna sequence reads")
+        if quantity_type is not None
+        else pd.Series(False, index=occurrence.index)
+    )
+    quantity = _single_column(occurrence, "organismQuantity")
+    if quantity is not None:
+        rows = _row_positions(reads & pd.to_numeric(quantity, errors="coerce").eq(0))
+        if rows:
+            warnings.append(
+                f"Semantic review: resource 'occurrence' has {len(rows)} occurrence(s) with "
+                f"organismQuantity 0 'DNA sequence reads' in {_row_preview(rows)}. {zero_cells}"
+            )
+
+    status = _single_column(occurrence, "occurrenceStatus")
+    if status is None:
+        return warnings
+    identification = resources.get("identification")
+    identified_occurrences = _single_column(identification, "occurrence_fk")
+    analysis_links = _single_column(identification, "nucleotideAnalysis_fk")
+    occurrence_key = _single_column(occurrence, "occurrence_pk")
+    analysed = pd.Series(False, index=occurrence.index)
+    if identified_occurrences is not None and analysis_links is not None and occurrence_key is not None:
+        linked = set(_text_values(identified_occurrences)[_text_values(analysis_links).ne("")])
+        analysed = _text_values(occurrence_key).isin(linked - {""})
+    non_detection = _text_values(status).str.casefold().isin({"absent", "notdetected"})
+    rows = _row_positions(non_detection & (reads | analysed))
+    if rows:
+        warnings.append(
+            f"Semantic review: resource 'occurrence' has {len(rows)} non-detection(s) linked to "
+            f"nucleotide analyses or counted in 'DNA sequence reads' in {_row_preview(rows)}. "
+            "Keep a targeted assay's reported non-detections, such as qPCR or ddPCR results; "
+            "remove absences inferred from zero cells of an OTU/ASV table, since zero reads do "
+            "not establish absence."
+        )
+    return warnings
+
+
 def semantic_dwc_dp_warnings(resources: Mapping[str, pd.DataFrame]) -> list[str]:
     """Return modelling observations for the agent to resolve using its judgement."""
     warnings = bdq_inspired_dwc_warnings(resources)
+    warnings.extend(dna_read_warnings(resources))
 
     for resource_name, df in resources.items():
         if resource_name.endswith("assertion") and "assertionValue" in df.columns:

@@ -838,7 +838,7 @@ def _dwc_dp_resources_from_mapping(dataset, resource_tables: Optional[List[DwcDp
 # across every dataset on the next deploy -- even ones whose tables never changed.
 # Without this, a validator bug fix or schema tightening would silently leave old
 # "valid" results trusted forever.
-_FINGERPRINT_CACHE_VERSION = 2
+_FINGERPRINT_CACHE_VERSION = 3
 
 
 def _dwc_dp_resource_fingerprint(dataset, resource_tables: Optional[List[DwcDpResourceTable]]) -> Optional[str]:
