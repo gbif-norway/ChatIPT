@@ -144,14 +144,25 @@ can cover materially different term sets.
   - Analyses without `materialEntity_fk` belong to their event; analyses with one reach the
     occurrence through `material.evidenceForOccurrenceID`.
   - `readCount` and `processedTotalReadCount` are copied through as they are.
-- **Read counts are not converted yet.** `organismQuantity` with
-  `organismQuantityType = "DNA sequence reads"` stays on `occurrence.organismQuantity`.
-  `nucleotide-analysis.readCount` and `processedTotalReadCount` stay empty (review-policy E5,
-  §11.1–2). For a later rule:
-  - Copy to `readCount` only when the occurrence has exactly one DNA row across all DNA
-    tables and that row converts. A preserved second marker must not leave its whole count
-    on the remaining analysis.
-  - `processedTotalReadCount` needs E5 grouping over `(materialSampleID, target_gene)`.
+- **Read counts** (rule version 30, Occurrence cores, review-policy §10.1 and §11.1).
+  - **When it applies.** The occurrence's converted `organismQuantityType` is
+    `DNA sequence reads` (any case) and its `organismQuantity` is a whole number. That count is
+    then also written to `nucleotide-analysis.readCount`, normalised like `individualCount`
+    (`+7` → `7`). `occurrence.organismQuantity` keeps it unchanged.
+  - **Exactly one DNA row.** The occurrence must have exactly one DNA row across all DNA tables,
+    converted or not, and that row must convert. A count for several markers cannot be split,
+    and preserving one marker's row must not move the whole count onto the other analysis.
+  - **Automatic and reversible.** It runs as the automatic choice `dna-read-counts` (default
+    `copy`), with a notice giving the plan-time upper bound. Choosing `preserve` leaves every
+    analysis without a read count.
+  - **Column decisions still apply.** A quantity column left out of the package is not copied
+    either.
+  - **Report.** The `organismQuantity` disposition records
+    `also_copied_to: nucleotide-analysis.readCount` and `also_copied_rows`. The value ledger
+    counts that field by `also_copied_rows`.
+  - **Not converted.** `processedTotalReadCount` stays empty; it needs E5 grouping over
+    `(materialSampleID, target_gene)`. `sampleSizeValue` keeps its existing survey or
+    event-assertion route.
 - **Review.** Linking to the occurrence via `identification.nucleotideAnalysis_fk`, and to material via `materialEntity_fk`. `dwc:occurrenceID` (2024-07-11+) is offered to the reviewer as evidence and is never used to create records.
 - **`molecular-protocol.DNA_sequence`.** The pinned `molecular-protocol` also has `DNA_sequence` (isVersionOf `gbif:dna_sequence`). The converter writes the sequence only to `nucleotide-sequence.sequence`, as GBIF's reverse mapping expects.
 - **GGBN** (designed for Material Sample cores). Permit, Loan and Cloning are unsupported. MaterialSample, Preparation, Preservation, Amplification and GelImage need a reviewed per-archive column plan (`ggbn-material-review`). Their MIxS terms use `http://gensc.org/ns/mixs/` IRIs, which must not be normalised automatically.

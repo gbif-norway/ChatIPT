@@ -136,8 +136,11 @@ benchmark does not establish that every automatic-column override is exposed by
 the current review UI. All eight final scenarios pass serialized validation,
 direct-copy checks, lineage/join checks and every reported copied-count check.
 
-The converter does not yet implement read-count reinterpretation,
-sample-level assertion deduplication or inferred material-to-analysis links. Those
+The benchmark runs predate rule version 30, which copies whole-number
+`DNA sequence reads` quantities to `nucleotide-analysis.readCount` for occurrences
+with exactly one DNA row. The converter does not yet map `sampleSizeValue` to
+`processedTotalReadCount` (E5), deduplicate sample-level assertions or infer
+material-to-analysis links. Those
 research expectations must not be treated as failing runtime requirements.
 `nucleotide-analysis.event_fk` is populated with the reviewed linked event context
 for all 10,365 analyses, as declared by the molecular table option. The source

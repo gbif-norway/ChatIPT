@@ -129,6 +129,10 @@ table with no sequence at all is left out with a reason that says why. The pinne
 satisfy it; final DwC-DP 1.0 drops that requirement
 ([extension notes](extension-notes.md#dna-derived-data-and-ggbn)). Preflight also ignores rows
 that always stay in the originals when it looks for two columns giving one field different values.
+On Occurrence cores, a whole-number `organismQuantity` in `DNA sequence reads` is also written to
+`nucleotide-analysis.readCount` when the occurrence has exactly one DNA row across all DNA tables.
+This is the automatic choice `dna-read-counts`, which can be switched off, and the occurrence keeps
+its quantity. `processedTotalReadCount` is not converted.
 
 Rule version 29 keeps two kinds of core sampling context that previously stayed in the originals
 (production dataset 590). `samplingProtocol` on core rows becomes `protocol` records, one per exact
