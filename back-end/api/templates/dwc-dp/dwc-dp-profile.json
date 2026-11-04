@@ -1,6 +1,8 @@
 {
-  "$schema": "http://json-schema.org/draft-04/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema#",
+  "$id": "https://rs.tdwg.org/dwc-dp/1.0/dwc-dp-profile.json",
   "title": "Darwin Core Data Package (DwC-DP) profile",
+  "version": "http://rs.tdwg.org/dwc-dp/1.0",
   "description": "Profile for organizing biodiversity data as a Data Package (https://specs.frictionlessdata.io/).",
   "type": "object",
   "$defs": {
@@ -25,8 +27,10 @@
         "event-protocol",
         "event-provenance",
         "event-reference",
+        "event-usage-policy",
         "geological-context",
         "geological-context-media",
+        "geological-material",
         "identification",
         "identification-agent-role",
         "identification-reference",
@@ -128,7 +132,9 @@
                   "schema": {
                     "properties": {
                       "fields": {
+                        "type": "array",
                         "items": {
+                          "type": "object",
                           "required": [
                             "name",
                             "title",
@@ -140,12 +146,7 @@
                             "dcterms:isVersionOf": {
                               "type": "string",
                               "format": "uri",
-                              "pattern": "^http.*$"
-                            },
-                            "dcterms:references": {
-                              "type": "string",
-                              "format": "uri",
-                              "pattern": "^http.*$"
+                              "pattern": "^https?://.+$"
                             }
                           }
                         }

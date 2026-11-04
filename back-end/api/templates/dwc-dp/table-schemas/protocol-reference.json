@@ -1,10 +1,11 @@
 {
-  "identifier": "http://rs.tdwg.org/dwc/dwc-dp/protocol-reference",
+  "identifier": "http://rs.tdwg.org/dwc-dp/1.0/protocol-reference",
+  "dcterms:isPartOf": "http://www.tdwg.org/standards/450",
   "url": "table-schemas/protocol-reference.json",
   "name": "protocol-reference",
   "title": "Protocol Reference",
   "description": "A dcterms:BibliographicResource related to a dwc:Protocol.",
-  "comments": "",
+  "notes": "",
   "examples": "",
   "namespace": "",
   "dcterms:isVersionOf": "http://example.com/term-pending//protocol-reference",
@@ -13,14 +14,12 @@
       "name": "reference_fk",
       "title": "Reference (Foreign Key)",
       "description": "An identifier for a dcterms:BibliographicResource.",
-      "comments": "The value in this field MAY refer to a dcterms:BibliographicResource within or external to the dataset in which this record originated.",
+      "notes": "The value in this field MAY be changed in aggregation to preserve the relationship to the related primary key.",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "dwc",
       "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/referenceID",
-      "dcterms:references": "http://rs.tdwg.org/dwc/terms/version/referenceID-2026-05-26",
-      "rdfs:comment": "An identifier for a dcterms:BibliographicResource.",
       "constraints": {
         "required": false,
         "unique": false
@@ -30,14 +29,12 @@
       "name": "protocol_fk",
       "title": "Protocol (Foreign Key)",
       "description": "An identifier for a dwc:Protocol.",
-      "comments": "The value in this field MAY be changed in aggregation to preserve the relationship to the (Primary Key).",
+      "notes": "The value in this field MAY be changed in aggregation to preserve the relationship to the related primary key.",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "dwc",
       "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/protocolID",
-      "dcterms:references": "http://rs.tdwg.org/dwc/terms/version/protocolID-2026-05-26",
-      "rdfs:comment": "An identifier for a dwc:Protocol.",
       "constraints": {
         "required": true,
         "unique": false
@@ -47,14 +44,12 @@
       "name": "relationshipType",
       "title": "Relationship Type",
       "description": "A relationship of a subject resource to a dcterms:BibliographicResource.",
-      "comments": "Recommended best practice is to use a controlled vocabulary.",
+      "notes": "Recommended best practice is to use a controlled vocabulary.",
       "examples": "`cited in`; `referenced`",
       "type": "string",
       "format": "default",
       "namespace": "dwc",
-      "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/relationshipOfResource",
-      "dcterms:references": "http://rs.tdwg.org/dwc/terms/version/relationshipOfResource-2023-06-28",
-      "rdfs:comment": "The relationship of the subject (identified by dwc:resourceID) to the object (identified by dwc:relatedResourceID)."
+      "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/relationshipOfResource"
     }
   ],
   "foreignKeys": [
