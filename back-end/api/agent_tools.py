@@ -44,6 +44,7 @@ from requests.auth import HTTPBasicAuth
 import requests
 import yaml
 
+from api import dna_projection
 from api.dwc_specs import (
     CORE_SCHEMAS,
     EXTENSION_SCHEMAS,
@@ -3075,7 +3076,44 @@ class UploadDwCA(OpenAIBaseModel):
             # Process tree files if core type is OCCURRENCE or TAXON
             core_df = core_table.df.copy()
             additional_files = []
-            
+
+            # DNA Derived Data comes straight from the DwC-DP, so no agent-built table competes with it.
+            dna_note = ""
+            resources, resource_errors = _dwc_dp_resources_from_mapping(dataset, None)
+            analyses = resources.get("nucleotide-analysis")
+            if analyses is not None and not analyses.empty:
+                agent_dna_tables = [
+                    assignment.table_id
+                    for assignment in extension_assignments
+                    if assignment.extension_type == DarwinCoreExtensionType.DNA_DERIVED_DATA
+                ]
+                if agent_dna_tables:
+                    return (
+                        "Error: ChatIPT builds the DNA Derived Data extension itself from the DwC-DP "
+                        "nucleotide-analysis, nucleotide-sequence and molecular-protocol resources and "
+                        "their links. Remove table(s) "
+                        f"{', '.join(map(str, agent_dna_tables))} from extension_tables and retry. "
+                        "Put any DNA facts missing from the extension into those DwC-DP resources, "
+                        "not into a projection table."
+                    )
+                if resource_errors:
+                    return "Error: " + " ".join(resource_errors)
+                columns = {str(column).casefold(): column for column in core_df.columns}
+                core_id_column = CORE_SCHEMAS[self.core_type].core_id_column
+                id_column = columns.get(str(core_id_column).casefold()) or columns.get("id")
+                core_ids = (
+                    set(core_df[id_column].astype("string").fillna("").str.strip())
+                    if id_column is not None else set()
+                )
+                dna_rows, dna_report = dna_projection.dna_derived_data(resources, self.core_type, core_ids)
+                if dna_rows is not None:
+                    extension_payload.append((
+                        dna_rows,
+                        DarwinCoreExtensionType.DNA_DERIVED_DATA,
+                        dna_projection.CORE_ID_COLUMN,
+                    ))
+                dna_note = "\n" + dna_projection.describe(dna_report)
+
             if self.core_type in (DarwinCoreCoreType.OCCURRENCE, DarwinCoreCoreType.TAXON):
                 # Find tree files in user_files
                 from api.models import UserFile
@@ -3126,7 +3164,7 @@ class UploadDwCA(OpenAIBaseModel):
             dataset.dwca_url = dwca_url
             dataset.dwca_validation = None
             dataset.save(update_fields=["dwc_core", "dwca_url", "dwca_validation"])
-            return f'DwCA successfully created and uploaded: {dwca_url}'
+            return f'DwCA successfully created and uploaded: {dwca_url}{dna_note}'
         except DwcaExtensionLinkError as e:
             assignments = self.extension_tables or []
             table_issues = []

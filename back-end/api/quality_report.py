@@ -8,7 +8,8 @@ from urllib.parse import urlparse
 import pandas as pd
 from django.utils import timezone
 
-from api import agent_tools, gbif_pause
+from api import agent_tools, dna_projection, gbif_pause
+from api.dwc_specs import DarwinCoreCoreType, DarwinCoreExtensionType
 from api.publication_validation import _as_integer, _is_blank
 
 
@@ -251,13 +252,31 @@ def _record_resources(dataset):
     }
 
 
-def provisional_core(dataset):
-    """Flatten DwC-DP records into one occurrence-core table, only for GBIF validation."""
+def _dwc_dp_tables(dataset):
     tables = {}
     for table in dataset.table_set.all():
         name = agent_tools.normalize_resource_name(table.title)
         if name in agent_tools.DWC_DP_TABLE_NAMES:
             tables[name] = table.df
+    return tables
+
+
+def provisional_dna(dataset, core):
+    """DNA Derived Data rows for the provisional core, linked as the final archive links them.
+
+    A material-based core has no occurrence for the rows to attach to, so it gets none.
+    """
+    tables = _dwc_dp_tables(dataset)
+    if 'occurrence' not in tables:
+        return None
+    rows, _ = dna_projection.dna_derived_data(
+        tables, DarwinCoreCoreType.OCCURRENCE, set(core['occurrenceID']), id_mode='pk')
+    return rows
+
+
+def provisional_core(dataset):
+    """Flatten DwC-DP records into one occurrence-core table, only for GBIF validation."""
+    tables = _dwc_dp_tables(dataset)
     if 'occurrence' in tables:
         base, pk, event_fk, identification_fk, basis = (
             'occurrence', 'occurrence_pk', 'event_fk', 'occurrence_fk', 'Occurrence')
@@ -425,8 +444,9 @@ def render_refinement_report(dataset, note=None):
     return (
         "QUALITY REPORT (completion was not recorded yet). ChatIPT built a provisional DwC-A from "
         "the DwC-DP tables only to run the GBIF validator; it is not published and is not the final "
-        "projection. It holds only core records with their event and accepted identification: no "
-        "extensions (such as DNA-derived data or measurements) and no final people or licence, so "
+        "projection. It holds only core records with their event and accepted identification, plus "
+        "the DNA Derived Data rows linked to occurrences (built as for the final archive): no other "
+        "extensions (such as measurements) and no final people or licence, so "
         "never offer it as a package. GBIF sample record IDs are occurrence_pk or materialEntity_pk values, and "
         "informational notes need no action. Metadata is not checked here.\n"
         "Projection compatibility findings do not justify changing authoritative source facts; "
@@ -475,7 +495,6 @@ def refinement_report_delivered(agent):
 def start_refinement_report(agent):
     """First refinement completion attempt: validate a provisional archive before completing."""
     from api.helpers.publish import upload_dwca
-    from api.dwc_specs import DarwinCoreCoreType
 
     dataset = agent.dataset
     record = {'agent_id': agent.id, 'created_at': timezone.now().isoformat()}
@@ -490,11 +509,14 @@ def start_refinement_report(agent):
             'material records were not validated separately.'
         )
     try:
+        dna = provisional_dna(dataset, core)
         record['url'] = upload_dwca(
             core,
             dataset.title or 'Provisional validation',
             dataset.description or 'Provisional archive for GBIF validation only.',
             DarwinCoreCoreType.OCCURRENCE,
+            extensions=[] if dna is None else [
+                (dna, DarwinCoreExtensionType.DNA_DERIVED_DATA, dna_projection.CORE_ID_COLUMN)],
             user=dataset.user,
             eml_extra={
                 key: value for key, value in (dataset.eml or {}).items() if key in PROVISIONAL_EML_KEYS

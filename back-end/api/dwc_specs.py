@@ -792,7 +792,11 @@ EXTENSION_SCHEMAS: Dict[DarwinCoreExtensionType, DarwinCoreSchema] = {
         compatible_cores=("occurrence", "event"),
         subject="DNA sequences, assays, and laboratory or bioinformatics methods for an occurrence or event.",
         typical_dwc_dp_resources=("nucleotide-analysis", "nucleotide-sequence", "molecular-protocol"),
-        use_when="Explicit molecular data or methods can be linked to an Occurrence or Event core record.",
+        use_when=(
+            "Built by UploadDwCA from the DwC-DP nucleotide-analysis, nucleotide-sequence and "
+            "molecular-protocol links whenever nucleotide analyses exist; do not assign a table then. "
+            "Supply one only for molecular facts the DwC-DP holds without nucleotide analyses."
+        ),
         avoid_when="The package has no molecular evidence, or rows cannot resolve to a core record.",
     ),
     DarwinCoreExtensionType.AUDIOVISUAL: DarwinCoreSchema(
