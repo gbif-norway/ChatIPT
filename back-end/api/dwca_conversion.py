@@ -24,13 +24,13 @@ from api.dwca_legacy import (LEGACY_FAMILIES, LEGACY_DERIVED_TERMS, BMDE, NXF, G
                             legacy_targets, legacy_row_review, nbn_event_date, emit_legacy_records)
 from api.dwc_dp_specs import TABLE_SPECS, dwc_dp_schema_snapshot, validate_dwc_dp_resources
 from api import dwca_glossary
-from api.dwca_preflight import preflight
+from api.dwca_preflight import SEQUENCE, preflight
 from api.dwca_review import (apply_policy, effective_decisions, failed_requirements, group_rows,  # noqa: F401
                              option_status, remove_unavailable, violations, conditional_defaults, asked)
 from api.dwca_semantic_audit import ASSERTION_IRI_FIELDS, is_age_like_remark, semantic_target_rejection
 from api.dwca_agents import ROLE_FIELDS, agent_name, build_agent_roles, composite_name_reason, split_agent_ids
 
-RULE_VERSION = "29"
+RULE_VERSION = "30"
 DERIVED_VALUE_EXAMPLE_LIMIT = 20
 ECO_SURVEY_ID = 'http://rs.tdwg.org/eco/terms/surveyID'
 REGISTERED_TERMS = {term for terms in REGISTRY['terms'].values() for term in terms}
@@ -88,6 +88,12 @@ TABLE_REASONS = {
                         'as a method description for the whole dataset, not attached to any particular record.'),
     'germplasm-trial': 'This table describes the field trial each event belongs to, such as its year, location and report.',
 }
+# The pinned DwC-DP 1.0_DEV requires nucleotide-analysis.nucleotideSequence_fk (final DwC-DP 1.0 does not, tdwg/dwc#934).
+# A row without a sequence, typically a targeted qPCR/ddPCR result, therefore stays in the originals; no stand-in sequence is made.
+SEQUENCELESS_DNA = ('This version of the Data Package format can record a DNA analysis only together with the sequence it produced, '
+                    'so {what} left out of the Data Package. No sequence is made up.')
+SEQUENCELESS_DNA_ROW = 'This DNA row has no DNA sequence. ' + SEQUENCELESS_DNA.format(
+    what='a targeted test result, such as a qPCR or ddPCR detection or Cq value, is')
 NAMESPACE = uuid.UUID("7750ccce-e9f9-4fd1-b9d8-a02a9747cae9")
 PRESERVE = {"value": "preserve", "label": dwca_glossary.PRESERVE['label']}
 PARENT = DWC + "parentEventID"
@@ -1354,6 +1360,13 @@ def build_plan(archive):
                     reason = 'This trait row has no name, method, source or remarks, so there is nothing to describe the trait. It is left out of the Data Package.'
                 if missing:
                     row_issues.append(_issue(f'row:{t}:{n}', f'{table.name}, row {n + 1}: incomplete description', reason, [PRESERVE], table=t, row=n + 1))
+        if family == 'molecular' and SEQUENCE in table.terms:
+            # Rows without a sequence stay in the originals; with none at all, preflight leaves out the whole table.
+            sequence = table.terms.index(SEQUENCE)
+            missing = [n for n, row in enumerate(table.rows) if not row[sequence].strip()]
+            if len(missing) < len(table.rows):
+                for n in missing:
+                    row_issues.append(_issue(f'row:{t}:{n}', f'{table.name}, row {n + 1}: no DNA sequence', SEQUENCELESS_DNA_ROW, [PRESERVE], table=t, row=n + 1))
         if family == 'eol-media':
             for n, source in enumerate(sources):
                 reason = eol_media_row_review(source)

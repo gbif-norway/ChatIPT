@@ -388,7 +388,9 @@ parser.
   show `organismQuantity == sampleSizeValue` (for example 13,162 for S079328).
 - `sampleSizeValue` exists only on `survey` in the pinned schema. The candidate target is
   `nucleotide-analysis.processedTotalReadCount`, gated by E5. `readCount` takes
-  `organismQuantity`.
+  `organismQuantity`. Neither is implemented yet (rule version 30). `readCount` also needs
+  exactly one DNA row per occurrence across all DNA tables
+  ([extension notes](extension-notes.md#dna-derived-data-and-ggbn)).
 - Whether `occurrence.organismQuantity` also keeps the read count is a §11 decision. Keeping
   it repeats a misleading abundance semantic. Dropping it changes the DwC-A projection.
 - `coordinateUncertaintyInMeters` differs within one event. Host rows have 7,901, and diet

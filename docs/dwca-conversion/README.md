@@ -120,6 +120,16 @@ NBN dates) patch the eventID event, never a depth child. Material can be combine
 each identifier stays within one depth. Because it asserts that each depth is a separate sampling
 action, it is a confirmed choice.
 
+Rule version 30 converts DNA Derived Data tables that have some rows without a `dna_sequence`.
+Previously one blank sequence left the whole DNA table out of the Data Package, with a generic notice.
+Each sequence-less row (typically a qPCR/ddPCR detection or Cq value) now stays in the originals
+through a preserve-only row issue, shown as one grouped notice, and the sequenced rows convert. A
+table with no sequence at all is left out with a reason that says why. The pinned 1.0_DEV requires
+`nucleotide-analysis.nucleotideSequence_fk`, and no identifier-only sequence record is made up to
+satisfy it; final DwC-DP 1.0 drops that requirement
+([extension notes](extension-notes.md#dna-derived-data-and-ggbn)). Preflight also ignores rows
+that always stay in the originals when it looks for two columns giving one field different values.
+
 Rule version 29 keeps two kinds of core sampling context that previously stayed in the originals
 (production dataset 590). `samplingProtocol` on core rows becomes `protocol` records, one per exact
 text and one per item of a ` | ` list (`protocolName`, or `protocolReferences` for a lone http(s)
@@ -185,7 +195,10 @@ copying. Shared event/material identifiers are combined only when all approved
 mapped values agree. Identification history is retained without inferring an
 accepted determination; repeated core/history classifications are not merged
 by name similarity. Identical sequence strings and complete protocol descriptions
-share target records, while analyses retain source row multiplicity.
+share target records, while analyses retain source row multiplicity. DNA rows
+without a sequence (qPCR/ddPCR results) stay in the originals with a notice,
+because the pinned DwC-DP 1.0_DEV links every analysis to a sequence; no
+stand-in sequence is created ([extension notes](extension-notes.md#dna-derived-data-and-ggbn)).
 
 Before the questions are built, an [automatic tidy-up](tidy.md) rewrites obviously messy values in a
 view of the archive (country names to ISO codes, GBIF vocabulary terms such as `f` → `female`, life

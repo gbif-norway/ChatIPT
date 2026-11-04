@@ -12,6 +12,7 @@ from rest_framework.test import APIClient
 
 from api.dwca_import import DWC, ImportFailure, read_inputs, source_zip
 from api.dwca_conversion import build_plan, convert, option_status, validate_decisions
+from api.dwca_preflight import preflight
 from api.dwc_dp_specs import create_dwc_dp_archive, validate_dwc_dp_archive
 from api.models import Agent, CustomUser, Dataset, DwcConversion, DwcConversionJob, Task
 from api.conversion_jobs import process_next_conversion
@@ -657,6 +658,67 @@ class ArchiveTests(SimpleTestCase):
         self.assertTrue(report['validation']['valid']); self.assertEqual(len(frames['nucleotide-analysis']), 2)
         self.assertEqual(len(frames['nucleotide-sequence']), 1); self.assertEqual(len(frames['molecular-protocol']), 1)
         self.assertNotIn('materialEntity_fk', frames['nucleotide-analysis'])
+
+    def test_dna_rows_without_a_sequence_stay_in_originals_while_sequenced_rows_convert(self):
+        # Pinned DwC-DP 1.0_DEV requires nucleotide-analysis.nucleotideSequence_fk, so no stand-in sequence is made.
+        archive = read_inputs([('occurrence.csv', b'occurrenceID,occurrenceStatus\na,present\nb,present\nc,absent\n'),
+                               ('dnaderiveddata.csv', b'occurrenceID,DNA_sequence,target_gene,quantificationCycle\n'
+                                                      b'a,ACGT,12S,\nb,,COI,31.2\nc,  ,COI,\n')])
+        plan = build_plan(archive)
+        group = next(item for item in plan['automatic_choices'] if item['id'] == 'row-group:1:0')
+        self.assertEqual((group['default'], group['rows'], [option['value'] for option in group['options']]), ('preserve', [2, 3], ['preserve']))
+        self.assertIn('qPCR', group['reason']); self.assertIn('No sequence is made up', group['reason'])
+        self.assertIn('row-group:1:0', {warning['id'] for warning in plan['warnings']})
+        self.assertIn('molecular', [option['value'] for option in next(item for item in plan['issues'] if item['id'] == 'table:1')['options']])
+        frames, report = convert(archive, plan, decisions_for(plan))
+        self.assertTrue(report['validation']['valid'])
+        self.assertEqual(len(frames['nucleotide-analysis']), 1)
+        self.assertEqual(frames['nucleotide-sequence']['sequence'].tolist(), ['ACGT'])
+        self.assertEqual(frames['molecular-protocol']['target_gene'].tolist(), ['12S'])
+        self.assertFalse(any(frames['molecular-protocol'].get('quantificationCycle', [])))
+        self.assertEqual([(row['source_table'], row['source_row']) for row in report['preserved_extension_rows']],
+                         [('dnaderiveddata.csv', 2), ('dnaderiveddata.csv', 3)])
+        self.assertTrue(all(row['reason'].startswith('This DNA row has no DNA sequence.') for row in report['preserved_extension_rows']))
+        self.assertEqual(len(frames['occurrence']), 3)
+        cycle = next(column for column in report['columns'] if column['term'].endswith('/quantificationCycle'))
+        self.assertEqual((cycle['disposition'], cycle['retained_only_rows']), ('retained-unmapped', 1))
+        gene = next(column for column in report['columns'] if column['term'] == 'https://w3id.org/mixs/0000044')
+        self.assertEqual((gene['mapped_rows'], gene['retained_only_rows']), (1, 2))
+
+    def test_dna_table_without_any_sequence_is_left_out_with_its_reason(self):
+        for header, rows in ((b'occurrenceID,target_gene,quantificationCycle\n', b'a,COI,31.2\nb,COI,\n'),
+                             (b'occurrenceID,DNA_sequence,target_gene,quantificationCycle\n', b'a,,COI,31.2\nb, ,COI,\n')):
+            with self.subTest(header=header):
+                archive = read_inputs([('occurrence.csv', b'occurrenceID,occurrenceStatus\na,present\nb,absent\n'),
+                                       ('dnaderiveddata.csv', header + rows)])
+                plan = build_plan(archive)
+                table = next(item for item in plan['automatic_choices'] if item['id'] == 'table:1')
+                self.assertEqual(([option['value'] for option in table['options']], table['default']), (['preserve'], 'preserve'))
+                self.assertTrue(table['reason'].startswith('None of the DNA rows has a DNA sequence.'))
+                self.assertIn('The rest of your dataset is converted.', table['reason'])
+                self.assertEqual(plan['tables'][1]['conversion_unavailable'], table['reason'])
+                self.assertEqual(next(warning for warning in plan['warnings'] if warning['id'] == 'table:1')['reason'], table['reason'])
+                self.assertFalse(any(item['id'].startswith(('row:1:', 'row-group:1:'))
+                                     for item in [*plan['issues'], *plan['automatic_choices'], *plan['row_issues']]))
+                with self.assertRaisesRegex(ImportFailure, 'None of the DNA rows'):
+                    validate_decisions(plan, {**decisions_for(plan), 'table:1': 'molecular'})
+                frames, report = convert(archive, plan, decisions_for(plan))
+                self.assertTrue(report['validation']['valid'])
+                self.assertEqual(len(frames['occurrence']), 2)
+                self.assertFalse({'nucleotide-analysis', 'nucleotide-sequence', 'molecular-protocol'} & set(frames))
+
+    def test_rows_kept_in_originals_cannot_create_column_conflicts(self):
+        archive = read_inputs([('occurrence.csv', b'occurrenceID,occurrenceStatus\na,present\nb,present\n'),
+                               ('dnaderiveddata.csv', b'occurrenceID,DNA_sequence,target_gene,sop\na,ACGT,12S,12S\nb,,COI,16S\n')])
+        plan = build_plan(archive)
+        # Offer sop for the same field as target_gene: only the sequence-less row gives them different values.
+        columns = [{**column, 'options': [{'value': 'molecular-protocol.target_gene'}, {'value': 'preserve'}]}
+                   if column['term'] == 'https://w3id.org/mixs/0000090' else column for column in plan['columns']]
+        row = {'id': 'row:1:1', 'table': 1, 'row': 2, 'options': [{'value': 'preserve'}]}
+        conflicts = lambda row_issues: {column['id'] for column in columns if column['table'] == 1
+                                        and preflight(archive, archive.tables[0], columns, plan['issues'], row_issues).requirements.get(column['id'])}
+        self.assertEqual(len(conflicts([])), 2)
+        self.assertEqual(conflicts([row]), set())
 
     def test_material_evidence_uses_persistent_occurrence_id(self):
         archive = occurrence(b'occurrenceID,materialSampleID,occurrenceStatus\npersistent-occ,physical-sample,present\n')
