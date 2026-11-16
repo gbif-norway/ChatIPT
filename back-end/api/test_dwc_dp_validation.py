@@ -56,6 +56,72 @@ def _field(resource, name):
     return next(field for field in resource["schema"]["fields"] if field["name"] == name)
 
 
+class DwcDpSharedResourceReferenceTests(SimpleTestCase):
+    def resources(self):
+        resources = _resources()
+        resources["nucleotide-sequence"] = pd.DataFrame([
+            {"nucleotideSequence_pk": "s1", "nucleotideSequenceID": "https://example.org/seq/1"},
+            {"nucleotideSequence_pk": "s2", "nucleotideSequenceID": "https://example.org/seq/2"},
+        ])
+        return resources
+
+    def unlinked_warnings(self, resources):
+        validation = validate_dwc_dp_resources(resources)
+        self.assertTrue(validation["valid"], validation)
+        return [warning for warning in validation["warnings"] if "no other resource references" in warning]
+
+    def test_gene_labelled_relationships_reference_sequence_primary_keys_from_either_endpoint(self):
+        for endpoint, other_endpoint in (
+            ("relatedResourceID", "subjectResourceID"),
+            ("subjectResourceID", "relatedResourceID"),
+        ):
+            with self.subTest(endpoint=endpoint):
+                resources = self.resources()
+                resources["resource-relationship"] = pd.DataFrame([
+                    {endpoint: key, other_endpoint: "occ-1", "relationshipType": "has COI accession"}
+                    for key in ("s1", "s2", "s1")
+                ])
+                # Literature accessions do not imply a nucleotide-analysis or molecular protocol.
+                self.assertEqual(self.unlinked_warnings(resources), [])
+
+    def test_relationships_reference_canonical_ids_from_either_endpoint(self):
+        resources = self.resources()
+        resources["resource-relationship"] = pd.DataFrame([
+            {"subjectResourceID": "occ-1", "relatedResourceID": " https://example.org/seq/1 "},
+            {"subjectResourceID": "https://example.org/seq/2", "relatedResourceID": "occ-1"},
+        ])
+        self.assertEqual(self.unlinked_warnings(resources), [])
+
+    def test_relationships_only_suppress_warnings_for_matching_internal_identifiers(self):
+        resources = self.resources()
+        resources["nucleotide-sequence"].loc[1, "nucleotideSequenceID"] = None
+        resources["resource-relationship"] = pd.DataFrame([
+            {"subjectResourceID": "occ-1", "relatedResourceID": "s1"},
+            {"subjectResourceID": "occ-1", "relatedResourceID": None, "externalRelatedResourceID": "s2"},
+            {"subjectResourceID": "occ-1", "relatedResourceID": " "},
+            {"subjectResourceID": "occ-1", "relatedResourceID": "missing"},
+        ])
+        warnings = self.unlinked_warnings(resources)
+        self.assertEqual(len(warnings), 1, warnings)
+        self.assertIn("'nucleotide-sequence' has 1 row(s)", warnings[0])
+        self.assertIn("(nucleotideSequence_pk: s2)", warnings[0])
+
+    def test_relationship_and_schema_references_are_combined_for_any_shared_resource(self):
+        resources = _resources()
+        resources["event"]["eventProtocol_fk"] = "p1"
+        resources["protocol"] = pd.DataFrame({"protocol_pk": ["p1", "p2", "p3"]})
+        resources["resource-relationship"] = pd.DataFrame([
+            {"subjectResourceID": "occ-1", "relatedResourceID": "p2"},
+            {"subjectResourceID": "p3", "relatedResourceID": "occ-1"},
+        ])
+        self.assertEqual(self.unlinked_warnings(resources), [])
+
+    def test_sequence_without_relationships_still_warns(self):
+        warnings = self.unlinked_warnings(self.resources())
+        self.assertEqual(len(warnings), 1, warnings)
+        self.assertIn("'nucleotide-sequence' has 2 row(s)", warnings[0])
+
+
 class DwcDpProfileValidationTests(SimpleTestCase):
     def test_generated_descriptor_matches_profile(self):
         descriptor = build_datapackage_descriptor(_resources())

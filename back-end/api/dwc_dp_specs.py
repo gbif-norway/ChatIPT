@@ -567,6 +567,16 @@ def _unlinked_shared_rows(
 ) -> list[str]:
     """Warn about rows of shared resources (agent, protocol, ...) that no data resource uses."""
     warnings = []
+    relationship = resources.get("resource-relationship")
+    relationship_fields = [
+        field for field in ("subjectResourceID", "relatedResourceID")
+        if field in valid_columns_by_resource.get("resource-relationship", set())
+    ]
+    relationship_ids: set[str] = set()
+    for field in relationship_fields:
+        relationship_ids.update(_series_text(relationship[field]))
+    relationship_ids.discard("")
+
     for target_name, target_df in resources.items():
         spec = get_table_spec(target_name)
         if any(
@@ -598,6 +608,12 @@ def _unlinked_shared_rows(
                 # Weak ID fields such as identifiedByID may list several agents.
                 parts = value.split("|") if weak else [value]
                 values.update(part.strip() for part in parts if part.strip())
+
+        # Generic relationship endpoints are polymorphic, so canonical schemas cannot
+        # declare their target table. They can name either its local key or canonical ID.
+        for identifier in (primary_key, spec.weak_primary_key):
+            if len(identifier) == 1 and identifier[0] in target_columns:
+                referenced.setdefault(identifier[0], set()).update(relationship_ids)
 
         keys = _series_text(target_df[primary_key[0]])
         linked = pd.Series(False, index=target_df.index)
