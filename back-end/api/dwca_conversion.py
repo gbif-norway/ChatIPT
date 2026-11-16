@@ -141,6 +141,7 @@ def _reviewed_value_id(kind, t, c, value):
 
 
 AGENT_NAMES_ID = 'agent-names'
+READ_COUNTS_ID = 'dna-read-counts'
 
 
 def _agent_names_warnings(warnings, roles):
@@ -332,6 +333,24 @@ def _individual_count(source):
     if quantity_type.casefold() == 'individuals' and re.fullmatch(r'\+?\d+', quantity) and int(quantity) == int(count):
         return 'supplied', count
     return 'assertion', count
+
+
+def _read_count(quantity, quantity_type):
+    """organismQuantity as a whole number of DNA sequence reads (readCount), or None."""
+    quantity = quantity.strip()
+    if quantity_type.strip().casefold() != 'dna sequence reads' or not re.fullmatch(r'\+?\d+', quantity):
+        return None
+    return str(int(quantity))
+
+
+def _dna_rows(archive):
+    """{core id: DNA Derived Data rows linked to it across all DNA tables}, converted or not.
+
+    An occurrence's read count belongs to its analysis only when it has exactly one: with several
+    (markers, say), the count cannot be split, and preserving one row must not move it to another.
+    """
+    return Counter(source_id for table in archive.tables if not table.is_core
+                   and SUPPORTED_EXTENSIONS.get(table.row_type) == 'molecular' for source_id in table.ids)
 
 
 def _words_at(text, words):
@@ -766,6 +785,14 @@ def _streamline_plan(archive, core, plan, warnings):
                       "listed once as a person or organization and linked to all its mentions. Choose 'Keep all names without "
                       "identifiers as text only' if the same name may stand for different people or organizations. Names with an "
                       "identifier are linked by that identifier.")
+        elif issue['id'] == READ_COUNTS_ID:
+            default = 'copy'
+            # A converted DNA table, sequence and quantity columns are needed too; the report gives what was copied.
+            reason = (f"Up to {issue['count']:,} {'occurrence gives its' if issue['count'] == 1 else 'occurrences give their'} organismQuantity "
+                      f"in DNA sequence reads and {'has' if issue['count'] == 1 else 'have'} one DNA row each, so each count is also recorded "
+                      "as the read count of that DNA analysis. The occurrence keeps it too. Occurrences with several DNA rows keep "
+                      "their count only on the occurrence, because it cannot be split between analyses. Choose 'Keep read counts only "
+                      "on the occurrences' to leave the DNA analyses without one.")
         elif issue['id'].startswith('agent-share:'):
             default = 'shared'
             reason = (f"The {issue['count']:,} mentions of {issue['source_value'][:100]!r} are linked to one person or "
@@ -819,7 +846,7 @@ def _streamline_plan(archive, core, plan, warnings):
             columns[issue['id']]['review'] = False
         # Unmapped columns are summarised from the column list, so they need no separate notice.
         if ((default == 'preserve' and not issue['id'].startswith('column:')) or (issue['id'] == 'event-grain' and default == 'per_row')
-                or issue.get('convention') or issue['id'] == AGENT_NAMES_ID):
+                or issue.get('convention') or issue['id'] in {AGENT_NAMES_ID, READ_COUNTS_ID}):
             notice = {**issue, 'reason': reason, **({'title': issue['convention']['title']} if issue.get('convention') else {})}
             warnings.append({key: value for key, value in notice.items() if key != 'options'})
     plan['issues'] = required
@@ -1468,6 +1495,22 @@ def build_plan(archive):
             [{'value': 'shared', 'label': 'Link every mention to one person or organization'},
              {'value': 'separate', 'label': 'Keep this name as text only'}],
             kind='agent-identity', source_value=name, count=count))
+    if core.row_type == DWC + 'Occurrence' and {DWC + 'organismQuantity', DWC + 'organismQuantityType'} <= set(core.terms):
+        # Occurrences whose single DNA row has a sequence, and so becomes their one analysis.
+        dna_rows = _dna_rows(archive)
+        sequenced = {source_id for table in archive.tables if SUPPORTED_EXTENSIONS.get(table.row_type) == 'molecular' and SEQUENCE in table.terms
+                     for source_id, row in zip(table.ids, table.rows) if row[table.terms.index(SEQUENCE)].strip()}
+        quantity, quantity_type = core.terms.index(DWC + 'organismQuantity'), core.terms.index(DWC + 'organismQuantityType')
+        reads = sum(dna_rows[source_id] == 1 and source_id in sequenced and _read_count(row[quantity], row[quantity_type]) is not None
+                    for source_id, row in zip(core.ids, core.rows))
+        if reads:
+            issues.append(_issue(READ_COUNTS_ID, 'DNA read counts',
+                f'{reads:,} {"occurrence gives its" if reads == 1 else "occurrences give their"} organismQuantity in DNA sequence reads and '
+                f'{"has" if reads == 1 else "have"} one DNA row each. Each count can also be recorded as the read count of that DNA analysis; '
+                'the occurrence keeps it either way.',
+                [{'value': 'copy', 'label': 'Also record each count as the read count of its DNA analysis'},
+                 {**PRESERVE, 'label': 'Keep read counts only on the occurrences'}],
+                count=reads))
     for t in range(len(archive.tables)):
         followers = [column['id'] for column in columns if column['table'] == t and column.get('follows') == f'material:{t}' and column['nonempty'] > 0]
         material_issue = next((issue for issue in issues if issue['id'] == f'material:{t}'), None)
@@ -1710,6 +1753,8 @@ def convert(archive, plan, decisions):
     events_by_key = {}; supplied_categories = set(); humboldt_groups = {}; column_consumption = defaultdict(set); withheld_values = []; preserved_rows = []
     materials_by_source = {}; material_identifiers = defaultdict(set); trait_protocols = defaultdict(list); skipped_by_table = defaultdict(set); extension_subjects = []; typed_withheld = defaultdict(set)
     reviewed_target_rows = defaultdict(set)
+    # Read counts of core occurrences with exactly one DNA row, by core id; analyses that received one.
+    dna_rows = _dna_rows(archive); read_counts = {}; copied_read_counts = 0
     # Missing-value tokens (NA, null, ...) in identifier fields are empty cells, counted once per column, not withheld values.
     placeholder_rows = defaultdict(set); qualifier_retained = defaultdict(Counter)
     core = archive.tables[core_index]; event_keys = {}; occurrence_keys = {}
@@ -1888,6 +1933,11 @@ def convert(archive, plan, decisions):
         occurrence.update(occurrence_pk=_key(archive, "occurrence", t, source_id), event_fk=event_key)
         if not occurrence.get("occurrenceStatus"):
             occurrence["occurrenceStatus"] = decisions.get(f"status:{t}", "")
+        if t == core_index and decisions.get(READ_COUNTS_ID) == 'copy' and dna_rows[source_id] == 1:
+            # From the converted pair, so a quantity column left out of the package is not copied either.
+            reads = _read_count(occurrence.get('organismQuantity', ''), occurrence.get('organismQuantityType', ''))
+            if reads is not None:
+                read_counts[source_id] = reads
         occurrence_keys[source_id] = occurrence["occurrence_pk"]
         if occurrence.get('occurrenceID') and not missing_reference(occurrence['occurrenceID'], ()):
             occurrences_by_identifier[occurrence['occurrenceID']].append((occurrence['occurrence_pk'], event_key))
@@ -2275,8 +2325,12 @@ def convert(archive, plan, decisions):
                         add('molecular-protocol', {**protocol, 'molecularProtocol_pk': protocol_key}, t, n)
                     else:
                         trace('molecular-protocol', {'molecularProtocol_pk': protocol_key}, t, n)
-                    add("nucleotide-analysis", {"nucleotideAnalysis_pk": _key(archive, "analysis", t, n), "nucleotideSequence_fk": sequence_key,
-                        "molecularProtocol_fk": protocol_key, "event_fk": event_keys[source_id]}, t, n)
+                    analysis = {"nucleotideAnalysis_pk": _key(archive, "analysis", t, n), "nucleotideSequence_fk": sequence_key,
+                                "molecularProtocol_fk": protocol_key, "event_fk": event_keys[source_id]}
+                    if source_id in read_counts:
+                        analysis['readCount'] = read_counts[source_id]
+                        copied_read_counts += 1
+                    add("nucleotide-analysis", analysis, t, n)
             except ConversionError:
                 raise
             except ImportFailure as error:
@@ -2396,6 +2450,8 @@ def convert(archive, plan, decisions):
         if target.endswith('verbatimAssertionType'):
             # add() also fills assertionType with the same text wherever none was supplied.
             extra['also_copied_to'] = target[:-len('verbatimAssertionType')] + 'assertionType'
+        if column['table'] == core_index and column['term'] == DWC + 'organismQuantity' and copied_read_counts:
+            extra.update(also_copied_to='nucleotide-analysis.readCount', also_copied_rows=copied_read_counts)
         dispositions.append({"source_table": archive.tables[column["table"]].name, "term": column["term"], "target": target,
                              "disposition": "retained-unmapped" if target == "preserve" else 'derived' if target == 'join' or target.startswith('derived ') else "mapped+retained", "nonempty": column["nonempty"], **extra})
     # Account for each converted occurrence's individualCount (core or extension)

@@ -62,6 +62,12 @@ claims without asking users to certify scientific validity.
   change it; the notice goes once every name is kept as text. Placeholders and
   doubtful names (with `?`) never become Agents, and explicit IDs decide
   identity on their own (see fidelity-audit.md).
+- A whole-number `organismQuantity` in `DNA sequence reads` is also copied to
+  `nucleotide-analysis.readCount` when its occurrence has exactly one DNA row.
+  This is the automatic choice and notice `dna-read-counts`, never a question;
+  `preserve` keeps read counts only on the occurrences (see extension-notes.md).
+- A DNA row without a sequence stays in the originals through a preserve-only
+  row notice, because the pinned schema requires a sequence for every analysis.
 - A nonnegative integer `individualCount` becomes `organismQuantity` with
   `organismQuantityType=individuals` on every converted occurrence, from an
   Occurrence core or an Occurrence extension, when the row supplies no quantity

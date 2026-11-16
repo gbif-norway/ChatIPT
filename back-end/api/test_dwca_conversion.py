@@ -13,6 +13,7 @@ from rest_framework.test import APIClient
 from api.dwca_import import DWC, ImportFailure, read_inputs, source_zip
 from api.dwca_conversion import build_plan, convert, option_status, validate_decisions
 from api.dwca_preflight import preflight
+from api.dwca_value_ledger import build_value_disposition_ledger
 from api.dwc_dp_specs import create_dwc_dp_archive, validate_dwc_dp_archive
 from api.models import Agent, CustomUser, Dataset, DwcConversion, DwcConversionJob, Task
 from api.conversion_jobs import process_next_conversion
@@ -684,6 +685,37 @@ class ArchiveTests(SimpleTestCase):
         self.assertEqual((cycle['disposition'], cycle['retained_only_rows']), ('retained-unmapped', 1))
         gene = next(column for column in report['columns'] if column['term'] == 'https://w3id.org/mixs/0000044')
         self.assertEqual((gene['mapped_rows'], gene['retained_only_rows']), (1, 2))
+
+    def test_dna_read_counts_reach_the_single_analysis_of_each_occurrence(self):
+        archive = read_inputs([('occurrence.csv', b'occurrenceID,occurrenceStatus,organismQuantity,organismQuantityType\n'
+                                                  b'a,present,120,DNA sequence reads\nb,present,30,dna sequence reads\nc,present,5,individuals\n'
+                                                  b'd,present,7.5,DNA sequence reads\ne,present,40,DNA sequence reads\n'),
+                               ('dnaderiveddata.csv', b'occurrenceID,DNA_sequence,target_gene\n'
+                                                      b'a,ACGT,12S\nb,ACGT,12S\nb,,trnL\nc,ACGT,12S\nd,ACGT,12S\ne,,12S\n')])
+        plan = build_plan(archive)
+        choice = next(item for item in plan['automatic_choices'] if item['id'] == 'dna-read-counts')
+        self.assertEqual((choice['default'], choice['count']), ('copy', 1))
+        self.assertIn('cannot be split between analyses', choice['reason'])
+        self.assertIn('dna-read-counts', {warning['id'] for warning in plan['warnings']})
+        frames, report = convert(archive, plan, decisions_for(plan))
+        self.assertTrue(report['validation']['valid'])
+        occurrences = dict(zip(frames['occurrence']['event_fk'], frames['occurrence']['occurrenceID']))  # One event per row.
+        reads = {occurrences[event]: count for event, count in zip(frames['nucleotide-analysis']['event_fk'], frames['nucleotide-analysis']['readCount'])}
+        # b's second marker stays in the originals, but the count still belongs to both analyses, not to the one left.
+        self.assertEqual(reads, {'a': '120', 'b': '', 'c': '', 'd': ''})
+        self.assertEqual(frames['occurrence']['organismQuantity'].tolist(), ['120', '30', '5', '7.5', '40'])
+        quantity = next(column for column in report['columns'] if column['term'] == DWC + 'organismQuantity')
+        self.assertEqual((quantity['also_copied_to'], quantity['also_copied_rows']), ('nucleotide-analysis.readCount', 1))
+        ledger = build_value_disposition_ledger(plan, report, frames)
+        self.assertIn({'field': 'nucleotide-analysis.readCount', 'source_term_count': 1}, ledger['output_fields'])
+        self.assertNotIn('nucleotide-analysis.readCount', {item['field'] for item in ledger['untraced_or_generated_output_fields']})
+        column = next(column['id'] for column in plan['columns'] if column['term'] == DWC + 'organismQuantity')
+        for override in ({'dna-read-counts': 'preserve'}, {column: 'preserve'}):
+            with self.subTest(override=override):
+                frames, report = convert(archive, plan, {**decisions_for(plan), **override})
+                self.assertTrue(report['validation']['valid'])
+                self.assertFalse(any(frames['nucleotide-analysis'].get('readCount', [])))
+                self.assertNotIn('also_copied_to', next(item for item in report['columns'] if item['term'] == DWC + 'organismQuantity'))
 
     def test_dna_table_without_any_sequence_is_left_out_with_its_reason(self):
         for header, rows in ((b'occurrenceID,target_gene,quantificationCycle\n', b'a,COI,31.2\nb,COI,\n'),
