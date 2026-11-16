@@ -153,7 +153,7 @@ references (`"pending"`), which ChatIPT used to strip, are gone.
 | Table | Fields (required) | Links |
 | --- | --- | --- |
 | `event-usage-policy` | `event_fk` (required), `usagePolicy_fk` | event, usage-policy |
-| `geological-material` | `materialEntity_fk` (required), `mineralogicalAnalysisProtocol_fk` (required), `materialEntityID`, `geologicalMaterialNames`, `geologicMaterialNameID`, `geologicalMaterialNameTypes`, `classificationCodes`, `mineralSequence`, `measuredChemistry`, `measuredChemistrySource`, `mineralogicalAnalysisProtocol`, `chemistryRemarks` | material, protocol |
+| `geological-material` | `materialEntity_fk` (required and unique: at most one row per material), `mineralogicalAnalysisProtocol_fk` (required), `materialEntityID`, `geologicalMaterialNames`, `geologicMaterialNameID`, `geologicalMaterialNameTypes`, `classificationCodes`, `mineralSequence`, `measuredChemistry`, `measuredChemistrySource`, `mineralogicalAnalysisProtocol`, `chemistryRemarks` | material, protocol |
 
 No table was removed.
 
@@ -181,6 +181,7 @@ No table was removed.
 - `nucleotide-analysis`: `rawTotalReadCount`.
 - `event`: `namedPlace`, `geologicalContext_fk`, `georeferencedBy_fk`, besides the moved fields above.
 - `occurrence`: `recordNumber`, `substrate`, `organism_fk`, `identifiedBy_fk`.
+- `identification`: `identifiedBy_fk`, besides the geological and classification fields above.
 - `material`: `derivedFromMaterialEntity_fk`, `isPartOfMaterialEntity_fk`, `derivationEventID`, `materialRole`, `materialProportion`, `sampledFeatureType`, `collectedBy_fk`, `identifiedBy_fk`, `measuredMassInGrams`, `verbatimMass`, `treatments`, `handlingRequirements`, `hazardType`, `hazardRemarks`, `damageRemarks`, `materialDescription`, `owner`, `owner_fk`, `license`.
 - `media`: `derivedFromMedia_fk`, `isPartOfMedia_fk`, `commenter_fk`, `reviewer_fk`, `owner`, `owner_fk`, `license`.
 - `molecular-protocol`: `source_mat_fk`.
@@ -193,9 +194,13 @@ No table was removed.
 - `organism-interaction`: `relatedOccurrence_fk`. `organism-relationship`: `relatedOrganism_fk`, `relationshipAccordingTo_fk`.
 - Every `*-assertion` table: `assertionBy_fk`.
 
-Each new `*_fk` comes with a matching foreign key, beside the existing weak
-`*ID` key where there is one (for example `occurrence.organism_fk` beside
-`organismID`). The `event_fk` predicate of `occurrence`, `survey` and
+Each new `*_fk` comes with a matching (strong) foreign key, beside the existing
+weak `*ID` key where there is one (for example `occurrence.organism_fk` beside
+`organismID`, and `identification.identifiedBy_fk` to `agent.agent_pk`). Weak
+keys change only with the renamed fields: `event.recordedByID` → `agent.agentID`
+replaces `eventConductedByID`; the weak keys of `occurrence.recordedByID` and
+`material.evidenceForOccurrenceID` go with those fields; and
+`material.derivationEventID` → `event.eventID` is new. The `event_fk` predicate of `occurrence`, `survey` and
 `organism-interaction` now reads "has context" (it was "happened during"), and
 `identification.materialEntity_fk` reads "of a".
 
@@ -238,6 +243,9 @@ No field changed its `type`, `format` or other constraints, apart from the one
   `rawTotalReadCount` stays unmapped: no DwC-A term or source column supplies it.
 - **Media rights.** `xmpRights:Owner` and `dcterms:license` match both `media` and
   `usage-policy` in 1.0. They stay on the usage policy with the other rights.
+- **Dataset name on provenance.** A media column holding `dwc:datasetName` now maps to the
+  new `provenance.datasetName`, which is the only field of that IRI among the media targets. On
+  Occurrence and Event cores, `datasetName` still goes to `event.datasetName`.
 - The other added fields have no DwC-A source in the registry, or are keys that
   the converter does not fill. A source column whose only target was a removed
   field, such as `relationshipOrder` or `externalClassificationSource`, now stays
