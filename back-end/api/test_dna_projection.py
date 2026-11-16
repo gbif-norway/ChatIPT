@@ -185,7 +185,7 @@ def capture(target):
             target['meta'] = ET.fromstring(archive.read('meta.xml'))
             target['names'] = archive.namelist()
             if DNA_FILE in target['names']:
-                target['dna'] = pd.read_csv(io.BytesIO(archive.read(DNA_FILE)), sep='\t', dtype=str,
+                target['dna'] = pd.read_csv(io.BytesIO(archive.read(DNA_FILE)), sep=',', dtype=str,
                                             keep_default_na=False)
     return capture_archive
 

@@ -165,6 +165,14 @@ def gbif_dataset_type_for_core(core_type: DarwinCoreCoreType | str) -> str:
     return GBIF_DATASET_TYPES[normalized_core_type]
 
 
+# Tables are comma-delimited because IPT 3.3.7 and 3.3.8 cannot import a
+# tab-delimited table with more commas than tabs in its first lines (the JSON in
+# dynamicProperties is enough): IPT guesses the delimiter before it reads
+# meta.xml and picks comma (gbif/ipt#3253). Comma tables are guessed correctly.
+ARCHIVE_FIELD_DELIMITER = ","
+ARCHIVE_FIELD_ENCLOSURE = '"'
+
+
 class LocalSpecTable(DwcaWriterTable):
     """Table implementation that supports both vendored local spec files and GBIF URLs."""
 
@@ -176,6 +184,26 @@ class LocalSpecTable(DwcaWriterTable):
         if self.output_filename:
             return self.output_filename
         return super().get_filename()
+
+    def write_tsv(self, file) -> None:
+        """Write the table without dwca-writer's backslash escape character.
+
+        That escape doubles every backslash in a value, but meta.xml declares no
+        escape character, so GBIF and IPT read both backslashes as data, which breaks
+        JSON with escaped quotes. Quoted fields with doubled quotes need no escaping.
+        """
+        if self.fields_enclosed_by is None:
+            return super().write_tsv(file)
+        exported_fields = [field["name"] for field in self.get_fields() if field["index_output"] is not None]
+        self.data.loc[:, exported_fields].to_csv(
+            file,
+            sep=self.fields_terminated_by,
+            index=False,
+            encoding=self.encoding,
+            quoting=csv.QUOTE_MINIMAL,
+            quotechar=self.fields_enclosed_by,
+            lineterminator=self.lines_terminated_by,
+        )
 
     def update_spec(self):
         spec = self.spec
@@ -2044,7 +2072,8 @@ def upload_dwca(
         "spec": core_spec_path,
         "data": df_core,
         "only_mapped_columns": True,
-        "fields_enclosed_by": '"',
+        "fields_terminated_by": ARCHIVE_FIELD_DELIMITER,
+        "fields_enclosed_by": ARCHIVE_FIELD_ENCLOSURE,
     }
     if core_id_index is not None:
         core_kwargs["id_index"] = core_id_index
@@ -2165,7 +2194,8 @@ def upload_dwca(
             "data": ext_df,
             "only_mapped_columns": True,
             "id_index": 0,
-            "fields_enclosed_by": '"',
+            "fields_terminated_by": ARCHIVE_FIELD_DELIMITER,
+            "fields_enclosed_by": ARCHIVE_FIELD_ENCLOSURE,
             "output_filename": re.sub(r"[^a-z0-9._-]+", "-", schema.key.casefold()) + ".txt",
         }
         try:

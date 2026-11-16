@@ -1,9 +1,12 @@
 """Checks for the publication-cost shortcuts that must preserve review quality."""
 
+import csv
+import io
 import json
 import os
 import shutil
 import tempfile
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -205,6 +208,57 @@ class PublicationEfficiencyTests(SimpleTestCase):
         self.assertEqual(occurrence.loc[0, "occurrenceStatus"], "detected")
         self.assertEqual(occurrence.loc[2, "occurrenceStatus"], "notDetected")
         self.assertEqual(captured["occurrence"].count("absent"), 2)
+
+    @patch("api.helpers.publish.upload_file")
+    @patch("api.helpers.publish.Minio")
+    def test_dwca_export_writes_comma_tables_ipt_can_import(self, minio_mock, upload_mock):
+        # IPT guesses each table's delimiter from its first lines, picking the most frequent
+        # candidate, before it reads meta.xml (gbif/ipt#3253). Comma-rich JSON in a tab table
+        # made it guess comma and fail, so tables are comma-delimited and must stay readable.
+        captured = {}
+
+        def capture_archive(client, bucket, object_name, local_path):
+            with zipfile.ZipFile(local_path) as archive:
+                captured["meta"] = ET.fromstring(archive.read("meta.xml"))
+                captured["files"] = {
+                    name: archive.read(name).decode("utf-8") for name in archive.namelist() if name.endswith(".txt")
+                }
+
+        upload_mock.side_effect = capture_archive
+        dynamic = json.dumps({
+            "eventAgentRoles": [{"role": "collector", "agent": "Doe, J."}, {"role": "identifier", "agent": "Roe, K."}],
+            "material": 'soil; "wet" | cores',
+            "sourceFile": "C:\\field\\cores.xlsx",
+        }, separators=(",", ":"))
+        event = pd.DataFrame([{"eventID": "ev-1", "eventDate": "2018-06-02", "dynamicProperties": dynamic}])
+        occurrence = pd.DataFrame([{
+            "_coreid": "ev-1", "occurrenceID": "occ-1", "basisOfRecord": "MaterialSample",
+            "scientificName": "Apus apus", "occurrenceStatus": "present", "dynamicProperties": dynamic,
+        }])
+        with patch.dict(os.environ, {
+            "MINIO_URI": "storage.example.org", "MINIO_ACCESS_KEY": "key",
+            "MINIO_SECRET_KEY": "secret", "MINIO_BUCKET": "bucket",
+            "MINIO_BUCKET_FOLDER": "packages",
+        }):
+            upload_dwca(
+                event, "Test dataset", "Test description",
+                core_type=DarwinCoreCoreType.EVENT,
+                extensions=[(occurrence, DarwinCoreExtensionType.OCCURRENCE, "_coreid")],
+            )
+
+        tables = [element for element in captured["meta"] if element.tag.rsplit("}", 1)[-1] in {"core", "extension"}]
+        self.assertEqual(len(tables), 2)
+        for table in tables:
+            location = table.find("{http://rs.tdwg.org/dwc/text/}files/{http://rs.tdwg.org/dwc/text/}location").text
+            with self.subTest(location=location):
+                self.assertEqual(table.attrib["fieldsTerminatedBy"], ",")
+                self.assertEqual(table.attrib["fieldsEnclosedBy"], '"')
+                text = captured["files"][location]
+                self.assertTrue(all(text.count(",") > text.count(other) for other in "\t;|"))
+                rows = list(csv.reader(io.StringIO(text, newline=""), delimiter=",", quotechar='"', strict=True))
+                self.assertEqual(len({len(row) for row in rows}), 1)
+                # Readers declare no escape character, so backslashes must be written once.
+                self.assertEqual(rows[1][rows[0].index("dynamicProperties")], dynamic)
 
     def test_occurrence_preflight_catches_missing_and_invalid_vocabulary(self):
         with tempfile.TemporaryDirectory() as directory:

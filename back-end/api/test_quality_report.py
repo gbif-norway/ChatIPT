@@ -369,7 +369,7 @@ class RefinementReportTests(TestCase):
         def capture_archive(_client, _bucket, _name, local_path):
             with zipfile.ZipFile(local_path) as archive:
                 captured["core"] = pd.read_csv(
-                    io.BytesIO(archive.read("occurrence.txt")), sep="\t", dtype=str, keep_default_na=False,
+                    io.BytesIO(archive.read("occurrence.txt")), sep=",", dtype=str, keep_default_na=False,
                 )
 
         _upload.side_effect = capture_archive
