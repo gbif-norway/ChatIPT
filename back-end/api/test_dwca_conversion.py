@@ -660,31 +660,36 @@ class ArchiveTests(SimpleTestCase):
         self.assertEqual(len(frames['nucleotide-sequence']), 1); self.assertEqual(len(frames['molecular-protocol']), 1)
         self.assertNotIn('materialEntity_fk', frames['nucleotide-analysis'])
 
-    def test_dna_rows_without_a_sequence_stay_in_originals_while_sequenced_rows_convert(self):
-        # Pinned DwC-DP 1.0_DEV requires nucleotide-analysis.nucleotideSequence_fk, so no stand-in sequence is made.
+    def test_dna_rows_without_a_sequence_become_analyses_without_a_sequence_link(self):
+        # DwC-DP 1.0 makes nucleotide-analysis.nucleotideSequence_fk optional, so no stand-in sequence is made.
         archive = read_inputs([('occurrence.csv', b'occurrenceID,occurrenceStatus\na,present\nb,present\nc,absent\n'),
                                ('dnaderiveddata.csv', b'occurrenceID,DNA_sequence,target_gene,quantificationCycle\n'
                                                       b'a,ACGT,12S,\nb,,COI,31.2\nc,  ,COI,\n')])
         plan = build_plan(archive)
-        group = next(item for item in plan['automatic_choices'] if item['id'] == 'row-group:1:0')
-        self.assertEqual((group['default'], group['rows'], [option['value'] for option in group['options']]), ('preserve', [2, 3], ['preserve']))
-        self.assertIn('qPCR', group['reason']); self.assertIn('No sequence is made up', group['reason'])
-        self.assertIn('row-group:1:0', {warning['id'] for warning in plan['warnings']})
+        notice = next(warning for warning in plan['warnings'] if warning['id'] == 'sequenceless-dna:1')
+        self.assertEqual(notice['count'], 2)
+        self.assertIn('qPCR', notice['reason']); self.assertIn('no sequence is made up', notice['reason'])
+        self.assertFalse(any(item['id'].startswith(('row:1:', 'row-group:1:'))
+                             for item in [*plan['issues'], *plan['automatic_choices'], *plan['row_issues']]))
         self.assertIn('molecular', [option['value'] for option in next(item for item in plan['issues'] if item['id'] == 'table:1')['options']])
         frames, report = convert(archive, plan, decisions_for(plan))
         self.assertTrue(report['validation']['valid'])
-        self.assertEqual(len(frames['nucleotide-analysis']), 1)
+        analyses = frames['nucleotide-analysis']
+        self.assertEqual(len(analyses), 3)
         self.assertEqual(frames['nucleotide-sequence']['sequence'].tolist(), ['ACGT'])
-        self.assertEqual(frames['molecular-protocol']['target_gene'].tolist(), ['12S'])
-        self.assertFalse(any(frames['molecular-protocol'].get('quantificationCycle', [])))
-        self.assertEqual([(row['source_table'], row['source_row']) for row in report['preserved_extension_rows']],
-                         [('dnaderiveddata.csv', 2), ('dnaderiveddata.csv', 3)])
-        self.assertTrue(all(row['reason'].startswith('This DNA row has no DNA sequence.') for row in report['preserved_extension_rows']))
+        self.assertEqual(analyses['nucleotideSequence_fk'].fillna('').tolist(),
+                         [frames['nucleotide-sequence']['nucleotideSequence_pk'].iloc[0], '', ''])
+        # The qPCR row keeps its Cq value on its method description, so b and c describe different methods.
+        self.assertEqual(frames['molecular-protocol']['target_gene'].tolist(), ['12S', 'COI', 'COI'])
+        self.assertEqual(frames['molecular-protocol']['quantificationCycle'].fillna('').tolist(), ['', '31.2', ''])
+        self.assertEqual(analyses['molecularProtocol_fk'].tolist(), frames['molecular-protocol']['molecularProtocol_pk'].tolist())
+        self.assertEqual(report['preserved_extension_rows'], [])
         self.assertEqual(len(frames['occurrence']), 3)
         cycle = next(column for column in report['columns'] if column['term'].endswith('/quantificationCycle'))
-        self.assertEqual((cycle['disposition'], cycle['retained_only_rows']), ('retained-unmapped', 1))
+        self.assertEqual((cycle['disposition'], cycle['target']), ('mapped+retained', 'molecular-protocol.quantificationCycle'))
         gene = next(column for column in report['columns'] if column['term'] == 'https://w3id.org/mixs/0000044')
-        self.assertEqual((gene['mapped_rows'], gene['retained_only_rows']), (1, 2))
+        # Every row converts now, so no target_gene value is left only in the originals.
+        self.assertEqual((gene['disposition'], gene.get('retained_only_rows', 0)), ('mapped+retained', 0))
 
     def test_dna_read_counts_reach_the_single_analysis_of_each_occurrence(self):
         archive = read_inputs([('occurrence.csv', b'occurrenceID,occurrenceStatus,organismQuantity,organismQuantityType\n'
@@ -694,20 +699,22 @@ class ArchiveTests(SimpleTestCase):
                                                       b'a,ACGT,12S\nb,ACGT,12S\nb,,trnL\nc,ACGT,12S\nd,ACGT,12S\ne,,12S\n')])
         plan = build_plan(archive)
         choice = next(item for item in plan['automatic_choices'] if item['id'] == 'dna-read-counts')
-        self.assertEqual((choice['default'], choice['count']), ('copy', 1))
+        # e's single DNA row has no sequence, but it is still the occurrence's one analysis.
+        self.assertEqual((choice['default'], choice['count']), ('copy', 2))
         self.assertIn('cannot be split between analyses', choice['reason'])
         self.assertIn('dna-read-counts', {warning['id'] for warning in plan['warnings']})
         frames, report = convert(archive, plan, decisions_for(plan))
         self.assertTrue(report['validation']['valid'])
         occurrences = dict(zip(frames['occurrence']['event_fk'], frames['occurrence']['occurrenceID']))  # One event per row.
         reads = {occurrences[event]: count for event, count in zip(frames['nucleotide-analysis']['event_fk'], frames['nucleotide-analysis']['readCount'])}
-        # b's second marker stays in the originals, but the count still belongs to both analyses, not to the one left.
-        self.assertEqual(reads, {'a': '120', 'b': '', 'c': '', 'd': ''})
+        # b has an analysis for each marker, so its count cannot be split between them.
+        self.assertEqual(len(frames['nucleotide-analysis']), 6)
+        self.assertEqual(reads, {'a': '120', 'b': '', 'c': '', 'd': '', 'e': '40'})
         self.assertEqual(frames['occurrence']['organismQuantity'].tolist(), ['120', '30', '5', '7.5', '40'])
         quantity = next(column for column in report['columns'] if column['term'] == DWC + 'organismQuantity')
-        self.assertEqual((quantity['also_copied_to'], quantity['also_copied_rows']), ('nucleotide-analysis.readCount', 1))
+        self.assertEqual((quantity['also_copied_to'], quantity['also_copied_rows']), ('nucleotide-analysis.readCount', 2))
         ledger = build_value_disposition_ledger(plan, report, frames)
-        self.assertIn({'field': 'nucleotide-analysis.readCount', 'source_term_count': 1}, ledger['output_fields'])
+        self.assertIn({'field': 'nucleotide-analysis.readCount', 'source_term_count': 2}, ledger['output_fields'])
         self.assertNotIn('nucleotide-analysis.readCount', {item['field'] for item in ledger['untraced_or_generated_output_fields']})
         column = next(column['id'] for column in plan['columns'] if column['term'] == DWC + 'organismQuantity')
         for override in ({'dna-read-counts': 'preserve'}, {column: 'preserve'}):
@@ -717,27 +724,27 @@ class ArchiveTests(SimpleTestCase):
                 self.assertFalse(any(frames['nucleotide-analysis'].get('readCount', [])))
                 self.assertNotIn('also_copied_to', next(item for item in report['columns'] if item['term'] == DWC + 'organismQuantity'))
 
-    def test_dna_table_without_any_sequence_is_left_out_with_its_reason(self):
+    def test_dna_table_without_any_sequence_converts_without_sequence_links(self):
         for header, rows in ((b'occurrenceID,target_gene,quantificationCycle\n', b'a,COI,31.2\nb,COI,\n'),
                              (b'occurrenceID,DNA_sequence,target_gene,quantificationCycle\n', b'a,,COI,31.2\nb, ,COI,\n')):
             with self.subTest(header=header):
                 archive = read_inputs([('occurrence.csv', b'occurrenceID,occurrenceStatus\na,present\nb,absent\n'),
                                        ('dnaderiveddata.csv', header + rows)])
                 plan = build_plan(archive)
-                table = next(item for item in plan['automatic_choices'] if item['id'] == 'table:1')
-                self.assertEqual(([option['value'] for option in table['options']], table['default']), (['preserve'], 'preserve'))
-                self.assertTrue(table['reason'].startswith('None of the DNA rows has a DNA sequence.'))
-                self.assertIn('The rest of your dataset is converted.', table['reason'])
-                self.assertEqual(plan['tables'][1]['conversion_unavailable'], table['reason'])
-                self.assertEqual(next(warning for warning in plan['warnings'] if warning['id'] == 'table:1')['reason'], table['reason'])
-                self.assertFalse(any(item['id'].startswith(('row:1:', 'row-group:1:'))
-                                     for item in [*plan['issues'], *plan['automatic_choices'], *plan['row_issues']]))
-                with self.assertRaisesRegex(ImportFailure, 'None of the DNA rows'):
-                    validate_decisions(plan, {**decisions_for(plan), 'table:1': 'molecular'})
-                frames, report = convert(archive, plan, decisions_for(plan))
+                self.assertNotIn('conversion_unavailable', plan['tables'][1])
+                table = next(item for item in [*plan['issues'], *plan['automatic_choices']] if item['id'] == 'table:1')
+                self.assertIn('molecular', [option['value'] for option in table['options']])
+                notice = next(warning for warning in plan['warnings'] if warning['id'] == 'sequenceless-dna:1')
+                self.assertTrue(notice['reason'].startswith('All 2 DNA rows in dnaderiveddata.csv have no DNA sequence'))
+                validate_decisions(plan, {**decisions_for(plan), 'table:1': 'molecular'})
+                frames, report = convert(archive, plan, {**decisions_for(plan), 'table:1': 'molecular'})
                 self.assertTrue(report['validation']['valid'])
                 self.assertEqual(len(frames['occurrence']), 2)
-                self.assertFalse({'nucleotide-analysis', 'nucleotide-sequence', 'molecular-protocol'} & set(frames))
+                self.assertNotIn('nucleotide-sequence', frames)
+                self.assertEqual(len(frames['nucleotide-analysis']), 2)
+                self.assertFalse(any(frames['nucleotide-analysis'].get('nucleotideSequence_fk', [])))
+                self.assertEqual(frames['molecular-protocol']['target_gene'].tolist(), ['COI', 'COI'])
+                self.assertEqual(frames['molecular-protocol']['quantificationCycle'].fillna('').tolist(), ['31.2', ''])
 
     def test_rows_kept_in_originals_cannot_create_column_conflicts(self):
         archive = read_inputs([('occurrence.csv', b'occurrenceID,occurrenceStatus\na,present\nb,present\n'),
@@ -752,11 +759,14 @@ class ArchiveTests(SimpleTestCase):
         self.assertEqual(len(conflicts([])), 2)
         self.assertEqual(conflicts([row]), set())
 
-    def test_material_evidence_uses_persistent_occurrence_id(self):
+    def test_material_evidence_links_its_occurrence_by_key(self):
+        # DwC-DP 1.0 replaces evidenceForOccurrenceID with evidenceForOccurrence_fk, a key into occurrence.
         archive = occurrence(b'occurrenceID,materialSampleID,occurrenceStatus\npersistent-occ,physical-sample,present\n')
         plan = build_plan(archive); decisions = decisions_for(plan); decisions['material:0'] = 'per_row'
         frames, report = convert(archive, plan, decisions)
-        self.assertTrue(report['validation']['valid']); self.assertEqual(frames['material'].iloc[0]['evidenceForOccurrenceID'], 'persistent-occ')
+        self.assertTrue(report['validation']['valid'])
+        self.assertEqual(frames['material'].iloc[0]['evidenceForOccurrence_fk'], frames['occurrence'].iloc[0]['occurrence_pk'])
+        self.assertEqual(frames['occurrence'].iloc[0]['occurrenceID'], 'persistent-occ')
         self.assertEqual(frames['material'].iloc[0]['materialEntityID'], 'physical-sample')
 
     def test_preserved_specimen_catalog_triples_create_material_records(self):
@@ -772,7 +782,7 @@ class ArchiveTests(SimpleTestCase):
         self.assertEqual(len(frames['material']), 2)
         self.assertEqual(set(frames['material']['catalogNumber']), {'1', '2'})
         self.assertEqual(set(frames['material']['preparations']), {'fluid'})
-        self.assertEqual(set(frames['material']['evidenceForOccurrenceID']), {'one', 'two'})
+        self.assertEqual(set(frames['material']['evidenceForOccurrence_fk']), set(frames['occurrence']['occurrence_pk']))
         self.assertNotIn('materialEntityID', frames['material'])
 
     def test_specimen_material_needs_review_when_catalog_identity_repeats(self):

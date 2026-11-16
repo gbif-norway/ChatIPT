@@ -1,8 +1,11 @@
 # DwC-A extension mapping notes
 
-Companion to `extension-catalogue.json`. Target: ChatIPT's vendored TDWG DwC-DP
-`1.0_DEV` (79 table schemas) at `76898192fd298c2aa170a7059e1bdadf3ee2a828`,
-`back-end/api/templates/dwc-dp`. The newer 81-table GBIF artefacts were not used.
+Companion to `extension-catalogue.json`. The catalogue was written against ChatIPT's
+earlier vendored TDWG DwC-DP `1.0_DEV` (79 table schemas, `76898192fd298c2aa170a7059e1bdadf3ee2a828`).
+The converter now targets the final DwC-DP 1.0 (81 table schemas, rs.tdwg.org
+`88a4b91f191849cd6dfb1aad78ed0510f1a47823`) in `back-end/api/templates/dwc-dp`. The
+[fidelity audit](fidelity-audit.md#changes-from-10_dev-to-10) lists every schema change and
+what the converter does with it; the notes below are updated where behaviour changed.
 
 Sources: `/Users/rukayasj/Projects/sandbox/dwc-dp-guides/audit/2026-10-02/`
 (`production-extensions.json`, `sandbox-extensions.json`, `registry-files.json`,
@@ -108,43 +111,47 @@ can cover materially different term sets.
 ### DNA-derived data and GGBN
 - **Exact IRI match.** The pinned `molecular-protocol` carries the MIxS, GBIF, GGBN and MIQE term IRIs as `dcterms:isVersionOf`. 121 of the 123 latest terms map one-to-one by IRI equality (`dna-mixs-fields`, `dna-gbif-ggbn-miqe-fields`).
 - **Legacy IRIs.** The 2021/2022 `gensc` IRIs map through a logged accession-number normalisation (`dna-legacy-gensc-fields`, conditional).
-- **Rows created per DNA row that has a sequence:**
+- **Rows created per DNA row:**
   - one `molecular-protocol` row (shared only for exact-duplicate tuples, because many fields are per-sample);
-  - one `nucleotide-sequence` row (`sequence` ← `dna_sequence`, shared by identical sequences);
-  - one `nucleotide-analysis` row linking the protocol and sequence to the event.
-- **Rows without a sequence** (rule version 30). Targeted assays (qPCR, ddPCR) report a
-  detection or Cq value but no sequence. The pinned 1.0_DEV `nucleotide-analysis` requires
-  `nucleotideSequence_fk`, so such a row has no faithful home:
-  - A blank or whitespace-only `dna_sequence` keeps the row unchanged in the originals through
-    a preserve-only `row:{t}:{n}` issue. These rows group into one automatic notice and are
-    listed in `preserved_extension_rows`. Rows with a sequence in the same table still convert,
-    and the column report counts the preserved rows' values as retained only.
-  - When no row has a sequence, or the column is missing (a pure qPCR archive), the table is
-    preserve-only with a reason that says so (`conversion_unavailable`). The rest of the archive
-    converts. Before rule version 30, one blank sequence left the whole DNA table out, with a
-    generic "cannot yet convert this kind of table" notice.
-  - Rejected alternatives:
-    - An identifier-only `nucleotide-sequence` stub would make the row validate, but it asserts
-      a sequence the assay never produced (the FK predicate is "produced").
-    - `molecular-protocol` rows without an analysis would detach per-sample Cq values from
-      their sample.
-    - Relaxing the pinned table schema locally would break validation against the declared
-      profile.
-  - Final DwC-DP 1.0 makes `nucleotideSequence_fk` optional for exactly this case
-    ([tdwg/dwc#934](https://github.com/tdwg/dwc/issues/934), closed 2026-10-22; 1.0 also adds
-    `rawTotalReadCount`). After the snapshot moves to 1.0 (README, "DwC-DP schema snapshot"),
-    these rows can become `nucleotide-analysis` + `molecular-protocol` with no sequence link.
+  - one `nucleotide-sequence` row (`sequence` ← `dna_sequence`, shared by identical sequences), only when the row has a sequence;
+  - one `nucleotide-analysis` row linking the protocol, and the sequence when there is one, to the event.
+- **Rows without a sequence** (rule version 31). Targeted assays (qPCR, ddPCR) report a
+  detection or Cq value but no sequence. DwC-DP 1.0 makes
+  `nucleotide-analysis.nucleotideSequence_fk` optional for exactly this case
+  ([tdwg/dwc#934](https://github.com/tdwg/dwc/issues/934)).
+  - A row whose `dna_sequence` is blank, whitespace only or missing becomes a
+    `nucleotide-analysis` plus its `molecular-protocol` (with any Cq value in
+    `quantificationCycle`), linked to the event and with no `nucleotideSequence_fk`. No
+    `nucleotide-sequence` row is created.
+  - This is automatic and disclosed. Each DNA table with such rows gets one notice
+    (`sequenceless-dna:{t}`) giving the count, and saying that no sequence is made up. To keep
+    these rows only in the originals, leave the whole table out of the Data Package.
+  - A pure qPCR table (no sequence column, or no row with a sequence) converts in the same way.
+  - When some rows do have sequences, their column must still go to
+    `nucleotide-sequence.sequence`, so no analysis loses the sequence it produced.
+  - History. Rule version 30 (1.0_DEV, where the FK was required) kept each sequence-less row
+    only in the originals through a preserve-only row issue. A table with no sequences at all
+    was left out of the package. Before rule version 30, one blank sequence left the whole DNA
+    table out.
+  - Never done:
+    - An identifier-only `nucleotide-sequence` stub. It asserts a sequence the assay never
+      produced (the FK predicate is "produced").
+    - `molecular-protocol` rows without an analysis. These would detach per-sample Cq values
+      from their sample.
+  - `rawTotalReadCount` (new in 1.0) stays empty: no DwC-A term or source column supplies it.
 - **GBIF comparison.** GBIF's DwC-DP → DwC-A mapping (`gbif/pipelines`
   `gbif/ingestion/spark-jobs/.../dwcdp/mapping/config/NucleotideMapping.java`, 2026-08-19):
   - It writes one DNA Derived Data row per `nucleotide-analysis` and joins the sequence and
     protocol as optional exactly-one links, so an analysis without a sequence round-trips to a
     DNA row without `dna_sequence`.
   - It takes `dna_sequence` from `nucleotide-sequence.sequence` and skips
-    `molecular-protocol.DNA_sequence`.
-  - Analyses without `materialEntity_fk` belong to their event; analyses with one reach the
-    occurrence through `material.evidenceForOccurrenceID`.
+    `molecular-protocol.DNA_sequence` (renamed `sequence` in 1.0).
+  - Analyses without `materialEntity_fk` belong to their event. Analyses with one reach the
+    occurrence through `material.evidenceForOccurrenceID`, which 1.0 replaces with
+    `evidenceForOccurrence_fk` (a key to `occurrence_pk`). The mapping dates from 1.0_DEV and
+    does not read the new name yet.
   - `readCount` and `processedTotalReadCount` are copied through as they are.
-- **Read counts** (rule version 30, Occurrence cores, review-policy §10.1 and §11.1).
+- **Read counts** (rule version 30; rule version 31 adds analyses without a sequence. Occurrence cores, review-policy §10.1 and §11.1).
   - **When it applies.** The occurrence's converted `organismQuantityType` is
     `DNA sequence reads` (any case) and its `organismQuantity` is a whole number. That count is
     then also written to `nucleotide-analysis.readCount`, normalised like `individualCount`
@@ -152,6 +159,7 @@ can cover materially different term sets.
   - **Exactly one DNA row.** The occurrence must have exactly one DNA row across all DNA tables,
     converted or not, and that row must convert. A count for several markers cannot be split,
     and preserving one marker's row must not move the whole count onto the other analysis.
+    Since rule version 31 a row without a sequence is an analysis too, so it can take the count.
   - **Automatic and reversible.** It runs as the automatic choice `dna-read-counts` (default
     `copy`), with a notice giving the plan-time upper bound. Choosing `preserve` leaves every
     analysis without a read count.
@@ -164,7 +172,7 @@ can cover materially different term sets.
     `(materialSampleID, target_gene)`. `sampleSizeValue` keeps its existing survey or
     event-assertion route.
 - **Review.** Linking to the occurrence via `identification.nucleotideAnalysis_fk`, and to material via `materialEntity_fk`. `dwc:occurrenceID` (2024-07-11+) is offered to the reviewer as evidence and is never used to create records.
-- **`molecular-protocol.DNA_sequence`.** The pinned `molecular-protocol` also has `DNA_sequence` (isVersionOf `gbif:dna_sequence`). The converter writes the sequence only to `nucleotide-sequence.sequence`, as GBIF's reverse mapping expects.
+- **`molecular-protocol.sequence`.** DwC-DP 1.0 replaces `molecular-protocol.DNA_sequence` (isVersionOf `gbif:dna_sequence`) with `sequence` (isVersionOf `dwc:sequence`). The converter writes the sequence only to `nucleotide-sequence.sequence`, as GBIF's reverse mapping expects. The DNA Derived Data projection reports any `molecular-protocol.sequence` value as skipped.
 - **GGBN** (designed for Material Sample cores). Permit, Loan and Cloning are unsupported. MaterialSample, Preparation, Preservation, Amplification and GelImage need a reviewed per-archive column plan (`ggbn-material-review`). Their MIxS terms use `http://gensc.org/ns/mixs/` IRIs, which must not be normalised automatically.
 
 ### Audiovisual / multimedia
@@ -227,7 +235,7 @@ All are unsupported against the pinned 79 tables: the Taxon core and every exten
 A model may draft a recommendation for any of these. The recommendation, the evidence it cites and the human decision are logged, and nothing is dropped while waiting for a decision.
 
 ## Open questions for implementation
-- Should `molecular-protocol.DNA_sequence` stay empty when `nucleotide-sequence.sequence` is filled? Yes: the converter does this, and GBIF's DwC-DP → DwC-A mapping ignores `DNA_sequence`.
+- Should `molecular-protocol.sequence` (1.0_DEV `DNA_sequence`) stay empty when `nucleotide-sequence.sequence` is filled? Yes: the converter does this, and GBIF's DwC-DP → DwC-A mapping ignores the protocol's sequence.
 - Weak foreign keys such as `identifiedByID` and `assertionByID` reference `agent.agentID`. Does the pinned profile validation require those agent rows to exist? If so, apply the core catalogue's agent policy; this catalogue never creates agents from names.
 - How should the conversion report be stored, and where are review queues kept? Shared with the core-term and review-policy work.
 

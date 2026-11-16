@@ -12,9 +12,16 @@ ECOIRI = 'http://rs.tdwg.org/eco/iri/'
 HUMBOLDT_ROW = ECO + 'Event'
 HUMBOLDT_FAMILIES = {HUMBOLDT_ROW: 'humboldt'}
 _REGISTERED = {term for candidates in REGISTRY['row_types'][HUMBOLDT_ROW].values() for term in candidates}
-DIRECT = {field['dcterms:isVersionOf']: field for field in TABLE_SPECS['survey'].schema['fields']
-          if field.get('dcterms:isVersionOf') in _REGISTERED
-          and not field['name'].endswith(('_pk', '_fk'))}
+# DwC-DP 1.0 keeps most Humboldt properties on survey, but moves the event-level ones (event duration,
+# weather, extreme conditions, vegetation cover) to event and abundanceCap to survey-target.
+TARGET_TABLES = ('survey', 'event', 'survey-target')
+TARGET_TABLE = {field['dcterms:isVersionOf']: table for table in reversed(TARGET_TABLES)
+                for field in TABLE_SPECS[table].schema['fields']
+                if field.get('dcterms:isVersionOf') in _REGISTERED and not field['name'].endswith(('_pk', '_fk'))
+                and (table == 'survey' or field['dcterms:isVersionOf'].startswith(ECO))}
+DIRECT = {term: TABLE_SPECS[table].field_descriptors[name] for term, table in TARGET_TABLE.items()
+          for name, field in TABLE_SPECS[table].field_descriptors.items()
+          if field.get('dcterms:isVersionOf') == term and not name.endswith(('_pk', '_fk'))}
 DIMENSIONS = {
     'Taxonomic': 'taxon', 'Habitat': 'habitat', 'LifeStage': 'lifeStage',
     'DegreeOfEstablishment': 'degreeOfEstablishment', 'GrowthForm': 'growthForm',
@@ -27,6 +34,10 @@ SUPPLEMENTAL = {ECO + 'surveyID': _SURVEY_FIELDS['surveyID']}
 # Audited IRI alias: an agent IRI is an agent identifier, never the literal agent name.
 IRI_DIRECT = {ECOIRI + 'samplingPerformedBy': _SURVEY_FIELDS['samplingPerformedByID']}
 COPIED = {**DIRECT, **SUPPLEMENTAL, **IRI_DIRECT}
+TARGET_TABLE.update({term: 'survey' for term in (*SUPPLEMENTAL, *IRI_DIRECT)})
+# abundanceCap belongs to a survey target, which needs a completeness flag; one is made only from a reviewed scope.
+_NO_TARGET = ('The abundance cap describes a survey target, and a survey target is created only from a scope with a '
+              '"fully reported" answer, so this value stays only in your original files.')
 IRI_SCOPE_TERMS = {ECOIRI + stem + dimension + 'Scope' for stem in ('target', 'excluded') for dimension in
                    ('Taxonomic', 'Habitat', 'LifeStage', 'DegreeOfEstablishment', 'GrowthForm')}
 _IRI = re.compile(r'[A-Za-z][A-Za-z0-9+.-]*:[^\s<>"{}|\\^`]+')
@@ -111,7 +122,7 @@ def humboldt_targets(term, sources, blocked_counts=None):
             reason = ' '.join(filter(None, (f'{repeated} surveyID values appear on several rows, but separate surveys cannot share an '
                                             'identifier. Combine the rows into one survey per event (possible only when they are identical), '
                                             'or leave the column out of the Data Package.', reason)))
-    return ['survey.' + field['name']], reason
+    return [f"{TARGET_TABLE[term]}.{field['name']}"], reason
 
 
 def _repeated(values):
@@ -195,20 +206,22 @@ def emit_humboldt_records(source, mapped, event_key, survey_key, scope_decision=
     """Return records, consumed source terms, and explicit withheld-value reasons."""
     if not event_key or not survey_key:
         raise ImportFailure('Humboldt conversion requires a reviewed, emitted survey event.')
-    allowed = {field['name'] for field in COPIED.values()}
-    if set(mapped) - {'survey'} or set(mapped.get('survey', {})) - allowed:
+    allowed = {(TARGET_TABLE[term], field['name']) for term, field in COPIED.items()}
+    if set(mapped) - set(TARGET_TABLES) or {(table, name) for table, values in mapped.items() for name in values} - allowed:
         raise ImportFailure('Humboldt values contain an unaudited target.')
     blocked = blocked_fields(source)
     survey = {'survey_pk': survey_key, 'event_fk': event_key}
+    copied = {'survey': survey, 'event': {'event_pk': event_key}, 'survey-target': {}}
     consumed, withheld = set(), dict(blocked)
     for term, field in COPIED.items():
-        value = mapped.get('survey', {}).get(field['name'], '')
+        value = mapped.get(TARGET_TABLE[term], {}).get(field['name'], '')
         if value and term not in blocked:
             if source.get(term) != value:
                 raise ImportFailure('A Humboldt target differs from its approved source value.')
-            survey[field['name']] = value
+            copied[TARGET_TABLE[term]][field['name']] = value
             consumed.add(term)
-    records = [('survey', survey)]
+    # Event-level values describe the survey's own event, so they are written onto that event record.
+    records = [('survey', survey), *([('event', copied['event'])] if len(copied['event']) > 1 else [])]
     literal_scope_present = _literal_scope(source if original_source is None else original_source)
     dimensions, reason, convertible = scope_state(source, literal_scope_present=literal_scope_present)
     if dimensions and scope_decision != 'preserve':
@@ -221,7 +234,7 @@ def emit_humboldt_records(source, mapped, event_key, survey_key, scope_decision=
         else:
             raise ImportFailure('Unsupported survey scope decision.')
         target_key = str(uuid.uuid5(uuid.UUID(survey_key), 'survey-target'))
-        records += [('survey-target', {'surveyTarget_pk': target_key, 'isSurveyTargetFullyReported': flag}),
+        records += [('survey-target', {'surveyTarget_pk': target_key, 'isSurveyTargetFullyReported': flag, **copied['survey-target']}),
                     ('survey-survey-target', {'survey_fk': survey_key, 'surveyTarget_fk': target_key})]
         for dimension in dimensions:
             for mode in ('include', 'exclude'):
@@ -239,6 +252,11 @@ def emit_humboldt_records(source, mapped, event_key, survey_key, scope_decision=
                         withheld[term] = 'Original dimension flag retained; target flag is an explicit reviewed assertion.'
                     else:
                         consumed.add(term)
+    if copied['survey-target'] and not any(name == 'survey-target' for name, _ in records):
+        for term, table in TARGET_TABLE.items():
+            if table == 'survey-target' and term in consumed:
+                consumed.discard(term)
+                withheld[term] = _NO_TARGET
     for term in (SCOPE_TERMS | IRI_SCOPE_TERMS) - consumed:
         if source.get(term) and term not in withheld:
             withheld[term] = ('A row with both a text scope and a web-link (IRI) scope keeps only the text one; the link stays only in your original files.'
@@ -262,7 +280,7 @@ _TARGET_MODEL = ('These columns describe survey targets, which in a Data Package
 _NO_IRI_FIELD = ('The Data Package has only a text field for this, so web links (IRIs) are not copied into it and the values '
                  'are left out of the Data Package.')
 # Audit of current-vocabulary properties outside the registered 57-field XML (hc 2026-05-26 term list,
-# DwC-DP 76898192). Dispositions: imported, reviewed-import (column review required), preserved.
+# DwC-DP 1.0, rs.tdwg.org 88a4b91f). Dispositions: imported, reviewed-import (column review required), preserved.
 AUDIT = dict([
     _audit(ECO + 'surveyID', 'imported', 'survey.surveyID',
            'Exact term IRI in a Humboldt eco:Event extension row with a reviewed survey role. Distinct surveys must not share a value.',

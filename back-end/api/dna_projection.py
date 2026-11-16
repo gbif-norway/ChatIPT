@@ -1,13 +1,14 @@
 """Project DwC-DP nucleotide analyses into GBIF's DNA Derived Data extension.
 
-The links follow GBIF's own DwC-DP ingestion (gbif/pipelines NucleotideMapping, 8ff035d):
-an Occurrence core takes the analyses of its single evidence material
-(material.evidenceForOccurrenceID), and an Event core takes the analyses made directly on
-an event (event_fk set, materialEntity_fk blank). ChatIPT adds the one link metabarcoding
+The links follow GBIF's own DwC-DP ingestion (gbif/pipelines NucleotideMapping, 8ff035d, written
+for 1.0_DEV): an Occurrence core takes the analyses of its single evidence material
+(material.evidenceForOccurrence_fk in DwC-DP 1.0, evidenceForOccurrenceID before), and an Event
+core takes the analyses made directly on an event (event_fk set, materialEntity_fk blank). ChatIPT adds the one link metabarcoding
 needs and GBIF's DwC-DP path lacks: a detection is tied to its own analysis only by the
 identification based on it (identification.occurrence_fk with nucleotideAnalysis_fk). An
 analysis with such a link follows it alone, so the material fallback never also attaches it
-to the sample's evidence occurrence. No link is guessed.
+to the sample's evidence occurrence. No link is guessed. An analysis without a sequence (a
+qPCR/ddPCR result; nucleotideSequence_fk is optional in DwC-DP 1.0) projects its protocol facts.
 """
 
 from collections import Counter, defaultdict
@@ -25,8 +26,7 @@ ASSERTION_RESOURCES = ('nucleotide-analysis-assertion', 'molecular-protocol-asse
 # Analyses that produce no row, by reason; the wording is shown to the agent.
 REASONS = {
     'no_link': 'no identification, evidence material or event links them to a core record',
-    'ambiguous_material': ('their material is evidence for an occurrence that has several evidence materials, '
-                           'or for an occurrenceID that several occurrences share'),
+    'ambiguous_material': 'their material is evidence for an occurrence that has several evidence materials',
     'material_on_event_core': ('they belong to a material; an Event core holds only analyses made directly '
                                'on an event, while an Occurrence core keeps them'),
     'not_in_core': 'their linked core record is not in the core table',
@@ -46,7 +46,7 @@ _TERMS = _extension_terms()
 SEQUENCE_TERM = _TERMS[SEQUENCE_IRI]
 # molecular-protocol fields matched to extension terms by IRI, which also gives the renamed ones
 # (samp_collect_device -> samp_collec_device, associated_resource -> url). GBIF takes sequences only
-# from nucleotide-sequence, so the protocol's own DNA_sequence is left out.
+# from nucleotide-sequence, so the protocol's own sequence is left out.
 PROTOCOL_TERMS = {
     field['name']: _TERMS[field['dcterms:isVersionOf']]
     for field in TABLE_SPECS['molecular-protocol'].schema['fields']
@@ -56,9 +56,9 @@ PROTOCOL_TERMS = {
 UNREPRESENTABLE = {
     resource: [field['name'] for field in TABLE_SPECS[resource].schema['fields']
                if not field['name'].endswith(('_pk', '_fk')) and field['name'] not in mapped]
-    # The protocol's DNA_sequence is reported on its own as deliberately skipped.
+    # The protocol's sequence is reported on its own as deliberately skipped.
     for resource, mapped in (('nucleotide-analysis', ()), ('nucleotide-sequence', ('sequence',)),
-                             ('molecular-protocol', (*PROTOCOL_TERMS, 'DNA_sequence')))
+                             ('molecular-protocol', (*PROTOCOL_TERMS, 'sequence')))
 }
 
 
@@ -110,14 +110,12 @@ def _occurrence_links(resources, analysis_keys):
     material, occurrence = resources.get('material'), resources.get('occurrence')
     if material is not None and occurrence is not None:
         evidence = defaultdict(list)
-        for key, target in zip(_text(material, 'materialEntity_pk'), _text(material, 'evidenceForOccurrenceID')):
+        for key, target in zip(_text(material, 'materialEntity_pk'), _text(material, 'evidenceForOccurrence_fk')):
             if key and target:
                 evidence[target].append(key)
-        keys, publics = _text(occurrence, 'occurrence_pk'), _text(occurrence, 'occurrenceID')
-        shared = Counter(publics[keys.ne('')])
-        for key, public in zip(keys, publics):
-            materials = evidence.get(public, []) if key and public else []
-            if len(materials) == 1 and shared[public] == 1:
+        for key in _text(occurrence, 'occurrence_pk'):
+            materials = evidence.get(key, []) if key else []
+            if len(materials) == 1:
                 evidence_material[materials[0]] = key
             else:
                 ambiguous.update(materials)
@@ -163,7 +161,8 @@ def dna_derived_data(resources, core_type, core_ids, id_mode=None):
     core_type = DarwinCoreCoreType(core_type)
     analyses = resources.get('nucleotide-analysis')
     report = {'analyses': 0, 'rows': 0, 'core_records': 0, 'not_projected': {}, 'dropped_links': {},
-              'missing_references': {}, 'skipped_protocol_sequences': 0, 'kept_in_dwc_dp_only': {}, 'assertions': {}}
+              'missing_references': {}, 'without_sequence': 0, 'skipped_protocol_sequences': 0, 'kept_in_dwc_dp_only': {},
+              'assertions': {}}
     if analyses is None or analyses.empty:
         return None, report
     analysis_keys = set(_text(analyses, 'nucleotideAnalysis_pk')) - {''}
@@ -192,7 +191,7 @@ def dna_derived_data(resources, core_type, core_ids, id_mode=None):
             if key:
                 protocol_rows[key] = {term: row[field] for field, term in PROTOCOL_TERMS.items()
                                       if field in row.index and not pd.isna(row[field]) and str(row[field]).strip()}
-        report['skipped_protocol_sequences'] = int(_text(protocols, 'DNA_sequence').ne('').sum())
+        report['skipped_protocol_sequences'] = int(_text(protocols, 'sequence').ne('').sum())
 
     facts, missing = {}, Counter()
     for key, sequence_key, protocol_key in zip(_text(analyses, 'nucleotideAnalysis_pk'),
@@ -203,7 +202,10 @@ def dna_derived_data(resources, core_type, core_ids, id_mode=None):
         row = dict(protocol_rows.get(protocol_key, {}))
         if sequence_by_key.get(sequence_key):
             row[SEQUENCE_TERM] = sequence_by_key[sequence_key]
-        if sequence_key not in sequence_by_key:
+        if not sequence_key:
+            # No sequence link at all is a valid analysis without a sequence, not a broken reference.
+            report['without_sequence'] += 1
+        elif sequence_key not in sequence_by_key:
             missing['sequence'] += 1
         if protocol_key not in protocol_rows:
             missing['protocol'] += 1
@@ -255,8 +257,11 @@ def describe(report):
         lines.append(f"- {count} further link(s) of projected analyses were dropped: {REASONS[reason]}.")
     for reference, count in report['missing_references'].items():
         lines.append(f"- {count} analyses have no {reference} row to project (blank or unresolved reference).")
+    if report['without_sequence']:
+        lines.append(f"- {report['without_sequence']} analyses have no sequence (for example qPCR or ddPCR results); "
+                     "their rows carry only protocol facts.")
     if report['skipped_protocol_sequences']:
-        lines.append(f"- {report['skipped_protocol_sequences']} molecular-protocol DNA_sequence value(s) were not "
+        lines.append(f"- {report['skipped_protocol_sequences']} molecular-protocol sequence value(s) were not "
                      "projected: sequences are taken only from nucleotide-sequence.")
     if report['kept_in_dwc_dp_only']:
         fields = ', '.join(f'{field} ({count})' for field, count in report['kept_in_dwc_dp_only'].items())

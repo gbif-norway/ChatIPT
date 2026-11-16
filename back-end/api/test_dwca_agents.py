@@ -45,10 +45,12 @@ class AgentRoleTests(SimpleTestCase):
         plan = build_plan(archive)
         frames, report = convert(archive, plan, {issue['id']: issue['options'][0]['value'] for issue in plan['issues']})
         self.assertEqual(len(frames['agent']), 2)
-        self.assertEqual(len(frames['occurrence-agent-role']), 2)
-        self.assertEqual(report['agent_roles']['roles_created'], {'occurrence-agent-role': 2})
+        # DwC-DP 1.0 keeps recordedBy on the event and identifiedBy on the occurrence.
+        self.assertEqual(frames['event-agent-role']['agentRole'].tolist(), ['recordedBy'])
+        self.assertEqual(frames['occurrence-agent-role']['agentRole'].tolist(), ['identifiedBy'])
+        self.assertEqual(report['agent_roles']['roles_created'], {'event-agent-role': 1, 'occurrence-agent-role': 1})
         self.assertEqual(report['agent_roles']['agents_created'], {'name': 1, 'explicit_id': 0})
-        self.assertEqual(len([row for row in report['row_crosswalk'] if row['target_table'] == 'occurrence-agent-role']), 2)
+        self.assertEqual(len([row for row in report['row_crosswalk'] if row['target_table'].endswith('-agent-role')]), 2)
         self.assert_package_valid(frames)
 
     def test_exact_names_share_one_agent_by_default_and_can_be_kept_as_text(self):
@@ -70,18 +72,18 @@ class AgentRoleTests(SimpleTestCase):
         choices = {item['id']: item['options'][0]['value'] for item in plan['issues']}
         frames, report = convert(archive, plan, choices)
         self.assertEqual(sorted(frames['agent']['preferredAgentName']), ['Kari Nordmann', 'OceanPro AS'])
-        self.assertEqual(len(frames['occurrence-agent-role']), 6)
+        self.assertEqual(len(frames['event-agent-role']), 6)
         self.assertEqual(report['agent_roles']['agents_created'], {'name': 2, 'explicit_id': 0})
         self.assert_package_valid(frames)
         # Keeping one name as text only removes its agent and roles.
         one, one_report = convert(archive, plan, {**choices, share['id']: 'separate'})
         self.assertEqual(one['agent']['preferredAgentName'].tolist(), ['Kari Nordmann'])
-        self.assertEqual(len(one['occurrence-agent-role']), 1)
+        self.assertEqual(len(one['event-agent-role']), 1)
         self.assertEqual(one_report['agent_roles']['unlinked_name_only'], 5)
         # One control keeps every name without an identifier as text only.
         none, none_report = convert(archive, plan, {**choices, 'agent-names': 'text'})
         self.assertNotIn('agent', none)
-        self.assertNotIn('occurrence-agent-role', none)
+        self.assertNotIn('event-agent-role', none)
         self.assertEqual(none_report['agent_roles']['unlinked_name_only'], 6)
         self.assert_package_valid(none)
 
@@ -104,7 +106,7 @@ class AgentRoleTests(SimpleTestCase):
             b'o3,e3," Straumfors,  Per ",NTNU University Museum,2025-01-03,present\n')
         result = build_agent_roles(frames, lambda *parts: _key(archive, *parts))
         tables = result.tables()
-        roles = pd.DataFrame(tables['occurrence-agent-role'])
+        roles = pd.concat([pd.DataFrame(tables['event-agent-role']), pd.DataFrame(tables['occurrence-agent-role'])])
         self.assertEqual(sorted(agent['preferredAgentName'] for agent in tables['agent']),
                          ['NTNU University Museum', 'Straumfors, Per'])
         self.assertTrue(all(not agent.get('agentID') and agent['agentRemarks'] == NAME_AGENT_REMARK
@@ -112,12 +114,13 @@ class AgentRoleTests(SimpleTestCase):
         # Role rows stay per mention.
         self.assertEqual(Counter(roles['agentRole']), {'recordedBy': 3, 'identifiedBy': 3})
         self.assertEqual(set(roles['agentRoleOrder']), {1})
-        self.assertEqual(set(roles['occurrence_fk']), set(frames['occurrence']['occurrence_pk']))
+        self.assertEqual(set(roles['occurrence_fk'].dropna()), set(frames['occurrence']['occurrence_pk']))
+        self.assertEqual(set(roles['event_fk'].dropna()), set(frames['event']['event_pk']))
         self.assertEqual([(item['name'], item['mentions']) for item in result.report['repeated_names']],
                          [('NTNU University Museum', 3), ('Straumfors, Per', 3)])
         self.assertEqual(result.report['agents_created'], {'name': 2, 'explicit_id': 0})
         # The mapped name fields are unchanged and the result is deterministic.
-        self.assertEqual(frames['occurrence']['recordedBy'].tolist()[2], ' Straumfors,  Per ')
+        self.assertEqual(frames['event']['recordedBy'].tolist()[2], ' Straumfors,  Per ')
         self.assertEqual(build_agent_roles(frames, lambda *parts: _key(archive, *parts)).rows, result.rows)
         self.assert_package_valid(merged(frames, result))
 
@@ -151,10 +154,11 @@ class AgentRoleTests(SimpleTestCase):
         result = build_agent_roles(frames, lambda *parts: _key(archive, *parts))
         self.assertEqual(result.report['skipped'], {'comma_list': 1, 'conjunction': 1, 'delimited_list': 2,
                                                     'incomplete_group': 1, 'placeholder': 1})
-        self.assertEqual(result.report['fields']['occurrence.recordedBy']['name'], 3)
+        self.assertEqual(result.report['fields']['event.recordedBy']['name'], 3)
         skipped = {item['value']: (item['reason'], item['first_row']) for item in result.report['skipped_values']}
-        self.assertEqual(skipped['P. Hansen | K. Olsen'], ('delimited_list', 2))
-        self.assertEqual(skipped['Per Hansen, Kari Olsen'], ('comma_list', 4))
+        # Rows of the event table: the shared eventID's parent event comes first, then one event per occurrence row.
+        self.assertEqual(skipped['P. Hansen | K. Olsen'], ('delimited_list', 3))
+        self.assertEqual(skipped['Per Hansen, Kari Olsen'], ('comma_list', 5))
         # Spelling variants are surfaced for review but stay separate agents.
         self.assertEqual(sorted(agent['preferredAgentName'] for agent in result.tables()['agent']),
                          ['Hansen, P', 'Hansen, P.', 'P. Hansen'])
@@ -203,7 +207,7 @@ class AgentRoleTests(SimpleTestCase):
         self.assertEqual((names['count'], names['names']), (2, 1))
         frames, report = convert(archive, plan, {issue['id']: issue['options'][0]['value'] for issue in plan['issues']})
         self.assertEqual(frames['agent']['preferredAgentName'].tolist(), ['Ola Nordmann'])
-        self.assertEqual(len(frames['occurrence-agent-role']), 2)
+        self.assertEqual(len(frames['event-agent-role']), 2)
         self.assertEqual(report['agent_roles']['skipped'], {})
         self.assertEqual(report['agent_mapping']['non_single_id_cells'], 0)
 
@@ -242,9 +246,10 @@ class AgentRoleTests(SimpleTestCase):
         # With every name kept as text, nothing was linked and the notice is gone.
         self.assertEqual(notice_after({'agent-names': 'text'}), (0, None))
         # A column remapped to another agent role was counted too, so its names keep their choice.
-        other = next(option['value'] for option in recorded['options']
-                     if option['value'] != recorded['default'] and option['value'].endswith(('By', 'eventConductedBy')))
-        _, remapped_report = convert(archive, plan, {**choices, recorded['id']: other})
+        identified = next(column for column in plan['columns'] if column['term'].endswith('/identifiedBy'))
+        other = next(option['value'] for option in identified['options']
+                     if option['value'] != identified['default'] and option['value'].endswith('By'))
+        _, remapped_report = convert(archive, plan, {**choices, identified['id']: other})
         self.assertEqual(sum(stats['name'] for stats in remapped_report['agent_roles']['fields'].values()), names['count'])
 
     def test_explicit_ids_decide_identity_not_names(self):
@@ -261,7 +266,7 @@ class AgentRoleTests(SimpleTestCase):
         agents = frames['agent']
         self.assertEqual(sorted(agents['agentID']), ['', other, ORCID])
         self.assertEqual(set(agents['preferredAgentName']), {'Ola Nordmann'})
-        roles = frames['occurrence-agent-role']
+        roles = frames['event-agent-role']
         self.assertEqual(len(roles), 3)
         self.assertEqual(len(set(roles['agent_fk'])), 3)
         self.assertEqual(report['agent_roles']['agents_created']['name'], 1)
@@ -281,13 +286,13 @@ class AgentRoleTests(SimpleTestCase):
         key = lambda *parts: _key(archive, *parts)  # noqa: E731
         result = build_agent_roles(frames, key)
         self.assertNotIn('agent', result.tables())
-        roles = pd.DataFrame(result.tables()['occurrence-agent-role'])
+        roles = pd.DataFrame(result.tables()['event-agent-role'])
         self.assertEqual(roles['agent_fk'].tolist(), [alice, alice])
         self.assertEqual(result.report['explicit_id_agents_reused'], 1)
         self.assertEqual(result.report['skipped'], {'id_name_count_mismatch': 1, 'id_not_single_iri': 1})
         self.assert_package_valid(merged(frames, result))
         # Without the converter's rows, the same key yields the same agent and the unique safe name.
-        standalone = build_agent_roles({'occurrence': frames['occurrence']}, key)
+        standalone = build_agent_roles({'event': frames['event']}, key)
         self.assertEqual(standalone.tables()['agent'],
                          [{'agent_pk': alice, 'agentID': ORCID, 'preferredAgentName': 'Alice Smith'}])
         self.assertEqual(standalone.report['agents_created']['explicit_id'], 1)
@@ -317,19 +322,19 @@ class AgentRoleTests(SimpleTestCase):
         # Horvath stands alone in o1 and o9 (whitespace collapsed, so one name); Bryn and Liahjell never
         # stand alone, so they get no name.
         self.assertEqual(agents['preferredAgentName'].to_dict(), {horvath: 'Peter Horvath', bryn: '', liahjell: ''})
-        roles = frames['occurrence-agent-role']
-        occurrence = dict(zip(frames['occurrence']['occurrenceID'], frames['occurrence']['occurrence_pk']))
+        roles = frames['event-agent-role']
+        event = dict(zip(frames['event']['eventID'], frames['event']['event_pk']))
         # agentRoleOrder is the source ID order.
-        for source, expected in (('o2', [horvath, liahjell]), ('o3', [bryn, liahjell]), ('o5', [horvath, bryn])):
-            listed = roles[roles['occurrence_fk'] == occurrence[source]].sort_values('agentRoleOrder')
+        for source, expected in (('e2', [horvath, liahjell]), ('e3', [bryn, liahjell]), ('e5', [horvath, bryn])):
+            listed = roles[roles['event_fk'] == event[source]].sort_values('agentRoleOrder')
             self.assertEqual(listed['agent_fk'].tolist(), [agents.loc[identifier, 'agent_pk'] for identifier in expected])
             self.assertEqual(listed['agentRoleOrder'].astype(int).tolist(), [1, 2])
         agent_roles = report['agent_roles']
-        self.assertEqual(agent_roles['fields']['occurrence.recordedBy']['linked_by_id_list'], 3)
+        self.assertEqual(agent_roles['fields']['event.recordedBy']['linked_by_id_list'], 3)
         # A name list beside one ID, an empty segment, a repeated ID and bare ORCIDs are not split.
         self.assertEqual(agent_roles['skipped'], {'id_name_count_mismatch': 1, 'id_not_single_iri': 3})
-        for source in ('o4', 'o6', 'o7', 'o8'):
-            self.assertNotIn(occurrence[source], set(roles['occurrence_fk']))
+        for source in ('e4', 'e6', 'e7', 'e8'):
+            self.assertNotIn(event[source], set(roles['event_fk']))
         # Only the unsplit list cells count as non-single ID cells.
         self.assertEqual(report['agent_mapping']['non_single_id_cells'], 3)
         self.assert_package_valid(frames)
@@ -364,12 +369,13 @@ class AgentRoleTests(SimpleTestCase):
         self.assertNotIn('agentID', frames['agent'])
         self.assertEqual(sorted(frames['agent']['preferredAgentName']),
                          ['Anfinnsen, Martin T.', 'Collett, Robert', 'Perlini, Enrico Maria'])
-        self.assertEqual(Counter(frames['occurrence-agent-role']['agentRole']), {'recordedBy': 3, 'identifiedBy': 2})
+        self.assertEqual(Counter(frames['event-agent-role']['agentRole']), {'recordedBy': 3})
+        self.assertEqual(Counter(frames['occurrence-agent-role']['agentRole']), {'identifiedBy': 2})
         self.assert_package_valid(frames)
         with tempfile.TemporaryDirectory() as directory:
             descriptor = create_dwc_dp_archive(Path(directory) / 'ds568.tar.gz', frames, 'ds568', 'Agents', include_eml=False)
-        occurrence = next(resource for resource in descriptor['resources'] if resource['name'] == 'occurrence')
-        declared = [key['fields'] for keys in ('foreignKeys', 'weakForeignKeys') for key in occurrence['schema'].get(keys, [])]
+        declared = [key['fields'] for resource in descriptor['resources'] if resource['name'] in {'event', 'occurrence'}
+                    for keys in ('foreignKeys', 'weakForeignKeys') for key in resource['schema'].get(keys, [])]
         self.assertNotIn('recordedByID', declared)
         self.assertNotIn('identifiedByID', declared)
         # With every name kept as text there is no agent table, and the package is still valid.
@@ -382,12 +388,12 @@ class AgentRoleTests(SimpleTestCase):
             b'occurrenceID,eventID,recordedBy,recordedByID,eventDate,occurrenceStatus\n'
             b'o1,e1,Ola Nordmann,' + ORCID.encode() + b',2025-01-01,present\n')
         key = lambda *parts: _key(archive, *parts)  # noqa: E731
-        occurrence = frames['occurrence'].loc[0, 'occurrence_pk']
+        event = frames['event'].loc[0, 'event_pk']
         frames['agent'] = pd.concat([frames['agent'], pd.DataFrame([{'agent_pk': 'existing', 'preferredAgentName': 'Kari Nordmann'}])], ignore_index=True)
-        frames['occurrence-agent-role'] = pd.DataFrame([{'occurrence_fk': occurrence, 'agent_fk': 'existing',
-                                                         'agentRole': 'recordedBy', 'agentRoleOrder': 1}])
+        frames['event-agent-role'] = pd.DataFrame([{'event_fk': event, 'agent_fk': 'existing',
+                                                    'agentRole': 'recordedBy', 'agentRoleOrder': 1}])
         result = build_agent_roles(frames, key)
-        self.assertEqual([row['agentRoleOrder'] for row in result.tables()['occurrence-agent-role']], [2])
+        self.assertEqual([row['agentRoleOrder'] for row in result.tables()['event-agent-role']], [2])
         combined = merged(frames, result)
         self.assert_package_valid(combined)
         again = build_agent_roles(combined, key)
@@ -399,9 +405,9 @@ class AgentRoleTests(SimpleTestCase):
             b'occurrenceID,eventID,recordedBy,recordedByID,eventDate,occurrenceStatus\n'
             b'o1,e1,Ola Nordmann,' + ORCID.encode() + b',2025-01-01,present\n')
         combined = merged(frames, build_agent_roles(frames, lambda *parts: _key(archive, *parts)))
-        validation = validate_dwc_dp_resources({**combined, 'occurrence-agent-role':
-                                                combined['occurrence-agent-role'].drop(columns='agentRoleOrder')})
-        self.assertIn("Resource 'occurrence-agent-role' is missing required field 'agentRoleOrder'.",
+        validation = validate_dwc_dp_resources({**combined, 'event-agent-role':
+                                                combined['event-agent-role'].drop(columns='agentRoleOrder')})
+        self.assertIn("Resource 'event-agent-role' is missing required field 'agentRoleOrder'.",
                       validation['errors'])
 
     def test_role_fields_follow_the_vendored_role_tables(self):
@@ -409,7 +415,8 @@ class AgentRoleTests(SimpleTestCase):
                          RoleField('material', 'collectedBy', 'collectedByID', 'materialEntity_pk',
                                    'material-agent-role', 'materialEntity_fk', 'collectedBy'))
         self.assertIn(('identification', 'identifiedBy'), ROLE_FIELDS)
-        self.assertIn(('event', 'eventConductedBy'), ROLE_FIELDS)
+        self.assertIn(('event', 'recordedBy'), ROLE_FIELDS)
+        self.assertNotIn(('occurrence', 'recordedBy'), ROLE_FIELDS)
         # Assertion tables have no role table; their assertionBy stays a mapped value only.
         self.assertNotIn(('occurrence-assertion', 'assertionBy'), ROLE_FIELDS)
         with self.assertRaises(ValueError):

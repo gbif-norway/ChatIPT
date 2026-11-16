@@ -122,8 +122,8 @@ def render_table_manifest(spec, include_fields: bool = True, include_guidance: b
     schema = spec.schema or {}
     lines = [f"{spec.name} — {spec.title}: {spec.description}".rstrip()]
     if include_guidance:
-        if schema.get("comments"):
-            lines.append(f"Table guidance: {schema['comments']}")
+        if schema.get("notes"):
+            lines.append(f"Table guidance: {schema['notes']}")
         if schema.get("examples"):
             lines.append(f"Table examples: {schema['examples']}")
 
@@ -165,8 +165,8 @@ def render_field_details(spec, field_names: Iterable[str]) -> str:
     for name in known[:MAX_FIELD_DETAILS]:
         field = descriptors[name]
         lines.append(f"- {_field_token(field)}: {field.get('description', '')}")
-        if field.get("comments"):
-            lines.append(f"  Guidance: {field['comments']}")
+        if field.get("notes"):
+            lines.append(f"  Guidance: {field['notes']}")
         if field.get("examples"):
             lines.append(f"  Examples: {field['examples']}")
         if field.get("dcterms:isVersionOf"):

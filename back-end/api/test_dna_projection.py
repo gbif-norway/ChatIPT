@@ -18,7 +18,7 @@ DNA_FILE = 'dna_derived_data_2024-07-11.txt'
 PROTOCOL = {
     'molecularProtocol_pk': 'p12s', 'target_gene': '12S rRNA', 'pcr_primer_forward': 'GTCGGTAAAACTCGTGCCAGC',
     'samp_collect_device': 'swab', 'associated_resource': 'https://example.org/sop', 'assayType': 'metabarcoding',
-    'DNA_sequence': 'NNNN',
+    'sequence': 'NNNN',
 }
 
 
@@ -31,7 +31,7 @@ def metabarcoding():
     """One faecal sample (material m1, evidence for its host occurrence) with two DNA detections."""
     return {
         'event': pd.DataFrame([{'event_pk': 'e1', 'eventID': 'EV1'}]),
-        'material': pd.DataFrame([{'materialEntity_pk': 'm1', 'collectionEvent_fk': 'e1', 'evidenceForOccurrenceID': 'HOST'}]),
+        'material': pd.DataFrame([{'materialEntity_pk': 'm1', 'collectionEvent_fk': 'e1', 'evidenceForOccurrence_fk': 'o-host'}]),
         'occurrence': pd.DataFrame([
             {'occurrence_pk': 'o-host', 'occurrenceID': 'HOST', 'event_fk': 'e1'},
             {'occurrence_pk': 'o-a', 'occurrenceID': 'S1_ESV_1', 'event_fk': 'e1'},
@@ -150,8 +150,8 @@ class DnaDerivedDataTests(SimpleTestCase):
     def test_material_with_several_evidence_candidates_is_not_attached(self):
         resources = metabarcoding()
         del resources['identification']
-        resources['material'] = pd.DataFrame([{'materialEntity_pk': 'm1', 'evidenceForOccurrenceID': 'HOST'},
-                                              {'materialEntity_pk': 'm2', 'evidenceForOccurrenceID': 'HOST'}])
+        resources['material'] = pd.DataFrame([{'materialEntity_pk': 'm1', 'evidenceForOccurrence_fk': 'o-host'},
+                                              {'materialEntity_pk': 'm2', 'evidenceForOccurrence_fk': 'o-host'}])
 
         rows, report = dna_derived_data(resources, 'occurrence', CORE)
 
@@ -167,6 +167,19 @@ class DnaDerivedDataTests(SimpleTestCase):
         self.assertEqual(rows['DNA_sequence'].fillna('').tolist(), ['', 'TTGACC'])
         self.assertEqual(rows['target_gene'].tolist(), ['12S rRNA'] * 2)
         self.assertEqual(report['missing_references'], {'sequence': 1})
+
+    def test_analysis_without_a_sequence_projects_its_protocol_facts(self):
+        # A qPCR result has no sequence; DwC-DP 1.0 leaves nucleotideSequence_fk empty, which is not a broken link.
+        resources = metabarcoding()
+        resources['nucleotide-analysis'].loc[0, 'nucleotideSequence_fk'] = ''
+
+        rows, report = dna_derived_data(resources, 'occurrence', CORE)
+
+        self.assertEqual(rows['DNA_sequence'].fillna('').tolist(), ['', 'TTGACC'])
+        self.assertEqual(rows['target_gene'].tolist(), ['12S rRNA'] * 2)
+        self.assertEqual((report['missing_references'], report['without_sequence']), ({}, 1))
+        self.assertIn('1 analyses have no sequence', describe(report))
+        self.assertNotIn('Fix a missing DwC-DP link', describe(report))
 
     def test_no_analyses_give_no_rows(self):
         resources = metabarcoding()

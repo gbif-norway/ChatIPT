@@ -684,15 +684,12 @@ class Preflight:
     def molecular(self, t):
         table = self.archive.tables[t]
         column = self.column(t, SEQUENCE)
+        # Rows without a sequence convert with no sequence link (DwC-DP 1.0); supplied sequences must not be dropped from their analyses.
         if column is None or not any(row[column['column']].strip() for row in table.rows):
-            self.unavailable_tables[t] = ('The DNA row has no DNA sequence. ' if len(table.rows) == 1 else 'None of the DNA rows has a DNA sequence. ') + \
-                self.conversion.SEQUENCELESS_DNA.format(what='targeted test results, such as qPCR or ddPCR detections or Cq values, are') + \
-                ' The rest of your dataset is converted.'
             return
-        # Rows without a sequence have their own preserve-only row issues.
         self.require(f'table:{t}', 'molecular', _requirement(
             [{'type': 'target_in', 'column': column['id'], 'targets': ['nucleotide-sequence.sequence']}],
-            'Each DNA row needs its DNA sequence column converted.'))
+            'The DNA sequences need their column converted, so each analysis keeps the sequence it produced.'))
 
     def trait_link(self, t):
         decision = f'trait-link:{t}'

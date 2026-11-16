@@ -7,8 +7,11 @@ document retains the original broader design; its blanket confirmation language
 does not override the implemented distinction between interpretation and retention.
 Who may make each choice (interpretation, conventional default, new fact) is set out in §6.1.
 
-Target: ChatIPT's vendored TDWG DwC-DP `1.0_DEV` profile and 79 table schemas at
-`76898192fd298c2aa170a7059e1bdadf3ee2a828` (`back-end/api/templates/dwc-dp`).
+Target: written for ChatIPT's vendored TDWG DwC-DP `1.0_DEV` profile and 79 table schemas at
+`76898192fd298c2aa170a7059e1bdadf3ee2a828`. The converter now targets the final DwC-DP 1.0
+(81 table schemas, rs.tdwg.org `88a4b91f191849cd6dfb1aad78ed0510f1a47823`,
+`back-end/api/templates/dwc-dp`); the [fidelity audit](fidelity-audit.md#changes-from-10_dev-to-10)
+lists the schema changes, including `recordedBy` moving to `event`.
 Reference sources are pinned in
 `/Users/rukayasj/Projects/sandbox/dwc-dp-guides/PROVENANCE.md`. Mappings that only
 work with the newer GBIF `master` schemas (for example `recordedBy` on `event`)
@@ -245,7 +248,7 @@ Column targets that follow from an earlier answer are interpretations applied au
 ([streamlined review](streamlined-review.md#fewer-questions-and-plain-language)): specimen
 details follow the material answer, collectors (recordedBy, with recordedByID beside them)
 go to the specimen record when specimen records exist and each links to exactly one
-occurrence, and type status follows the specimen answer. They are visible automatic choices
+occurrence (otherwise to the event's `recordedBy`), and type status follows the specimen answer. They are visible automatic choices
 with a dataset-specific reason and can be changed. The material answer itself stays a new
 fact for the user.
 
@@ -417,8 +420,9 @@ parser.
   environment combination. Target `material-assertion`, gated by E3 on `materialSampleID`,
   with an E12 IRI split. This is what the prior upload did, and it is acceptable only with
   E3 evidence.
-- `molecular-protocol` also has a `DNA_sequence` field. Sequences must go to
-  `nucleotide-sequence.sequence` (997 distinct in the prior upload), not into the protocol.
+- `molecular-protocol` also has a sequence field (`DNA_sequence` in 1.0_DEV, `sequence` in 1.0).
+  Sequences must go to `nucleotide-sequence.sequence` (997 distinct in the prior upload), not into
+  the protocol.
 - `otu_seq_comp_appr` reads "UNOISE3 via vsearch; minimum identity 95%". Denoising and
   identity clustering are different approaches. Surface this and copy it verbatim; do not
   correct it.

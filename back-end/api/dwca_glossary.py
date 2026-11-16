@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 
-SCHEMA_REVISION = '76898192fd298c2aa170a7059e1bdadf3ee2a828'
+SCHEMA_REVISION = '88a4b91f191849cd6dfb1aad78ed0510f1a47823'
 
 # The kinds of record in a Data Package, in one line each.
 TABLES = {
@@ -68,14 +68,12 @@ COPY_NOTE = 'Nothing is reworded: whichever record you choose receives the value
 FIELD_LABELS = {
     'recordedBy': 'recorded by', 'recordedByID': 'recorded by (identifier)',
     'collectedBy': 'collected by', 'collectedByID': 'collected by (identifier)',
-    'eventConductedBy': 'fieldwork carried out by', 'eventConductedByID': 'fieldwork carried out by (identifier)',
     'scientificName': 'scientific name', 'scientificNameAuthorship': 'name author',
     'scientificNameID': 'scientific name identifier', 'taxonID': 'taxon identifier', 'taxonRank': 'taxon rank',
     'vernacularName': 'common name', 'verbatimIdentification': 'identification as written',
     'identifiedBy': 'identified by', 'identifiedByID': 'identified by (identifier)', 'dateIdentified': 'date identified',
     'identificationReferences': 'identification references', 'identificationRemarks': 'identification remarks',
     'identificationVerificationStatus': 'identification verification status',
-    'externalClassificationSource': 'name source',
     'typeStatus': 'type status', 'typeDesignationType': 'type designation',
     'occurrenceReferences': 'references', 'eventReferences': 'references', 'materialReferences': 'references',
     'dataGeneralizations': 'data generalizations', 'informationWithheld': 'information withheld',
@@ -83,7 +81,7 @@ FIELD_LABELS = {
     'catalogNumber': 'catalogue number', 'otherCatalogNumbers': 'other catalogue numbers',
     'institutionCode': 'institution code', 'institutionID': 'institution identifier',
     'ownerInstitutionCode': 'owner institution code', 'collectionCode': 'collection code',
-    'collectionID': 'collection identifier', 'collectorNumber': 'collector number',
+    'collectionID': 'collection identifier', 'collectorNumber': 'collector number', 'recordNumber': 'record number',
     'preparations': 'preparations', 'disposition': 'where the specimen is now',
     'associatedSequences': 'linked DNA sequences', 'digitalSpecimenID': 'digital specimen identifier',
     'discipline': 'discipline', 'materialEntityID': 'specimen identifier',
@@ -105,13 +103,6 @@ FIELD_LABELS = {
 # Targets that need their own explanation: the options of agent-role, type-status and
 # specimen-identity questions.
 TARGETS = {
-    'occurrence.recordedBy': {
-        'label': 'Who saw or recorded the organism',
-        'gloss': 'The people who observed or recorded this organism.',
-        'consequence': 'Stored on the observation record.',
-        'choose_when': 'Best for sightings, surveys and other records without a kept specimen.',
-        'decided': 'saved as who saw or recorded the organism, on each observation record',
-    },
     'material.collectedBy': {
         'label': 'Who collected the specimen',
         'gloss': 'The people who collected the physical specimen or sample.',
@@ -119,19 +110,12 @@ TARGETS = {
         'choose_when': 'Best for museum and herbarium specimens and other kept samples.',
         'decided': 'saved as who collected the specimen, on each specimen record',
     },
-    'event.eventConductedBy': {
-        'label': 'Who carried out the fieldwork',
-        'gloss': 'The people who carried out the visit or sampling.',
-        'consequence': 'Stored on the event record, so it applies to everything recorded during that visit.',
-        'choose_when': 'Best when the same people did the whole survey or sampling visit.',
-        'decided': 'saved as who carried out the fieldwork, on each event record',
-    },
-    'occurrence.recordedByID': {
-        'label': 'Identifier of who saw or recorded the organism',
-        'gloss': 'An identifier, such as an ORCID, for the people who observed or recorded this organism.',
-        'consequence': 'Stored on the observation record, next to the names.',
-        'choose_when': 'Follows where the names in recordedBy go.',
-        'decided': 'saved next to the recorders\' names, on each observation record',
+    'event.recordedBy': {
+        'label': 'Who recorded the event',
+        'gloss': 'The people who recorded the visit, sampling or sighting, and so the organisms recorded during it.',
+        'consequence': 'Stored on the event record, so it applies to everything recorded during that event.',
+        'choose_when': 'Best for sightings, surveys and other records without a kept specimen.',
+        'decided': 'saved as who recorded the event, on each event record',
     },
     'material.collectedByID': {
         'label': 'Identifier of who collected the specimen',
@@ -140,12 +124,26 @@ TARGETS = {
         'choose_when': 'Follows where the names in recordedBy go.',
         'decided': 'saved next to the collectors\' names, on each specimen record',
     },
-    'event.eventConductedByID': {
-        'label': 'Identifier of who carried out the fieldwork',
-        'gloss': 'An identifier, such as an ORCID, for the people who carried out the visit or sampling.',
+    'event.recordedByID': {
+        'label': 'Identifier of who recorded the event',
+        'gloss': 'An identifier, such as an ORCID, for the people who recorded the visit, sampling or sighting.',
         'consequence': 'Stored on the event record, next to the names.',
         'choose_when': 'Follows where the names in recordedBy go.',
-        'decided': 'saved next to the names, on each event record',
+        'decided': 'saved next to the recorders\' names, on each event record',
+    },
+    'occurrence.recordNumber': {
+        'label': 'Record number of the observation',
+        'gloss': 'A number given to the observation when it was recorded, such as a field note number.',
+        'consequence': 'Stored on the observation record.',
+        'choose_when': 'Usual choice when no specimen records are created.',
+        'decided': 'saved as the record number, on each observation record',
+    },
+    'material.collectorNumber': {
+        'label': 'Collector number of the specimen',
+        'gloss': 'The number the collector gave the specimen or sample when it was collected.',
+        'consequence': 'Stored on the specimen record, next to who collected it.',
+        'choose_when': 'Best when specimen records are created.',
+        'decided': 'saved as the collector number, on each specimen record',
     },
     'material.typeStatus': {
         'label': 'Type status of the specimen',
@@ -222,17 +220,16 @@ TARGETS = {
 # Fields that exist on several tables with the same meaning; the table says what the value is about.
 FAMILIES = {
     'agent-role': {
-        'fields': {'recordedBy', 'recordedByID', 'collectedBy', 'collectedByID', 'eventConductedBy', 'eventConductedByID'},
+        'fields': {'recordedBy', 'recordedByID', 'collectedBy', 'collectedByID'},
         'question': 'Who are the people in {column}?',
-        'reason': ('The names in this column could be the people who collected a specimen, who saw or recorded the '
-                   'organism, or who carried out the fieldwork. Choose what they did.'),
+        'reason': ('The names in this column could be the people who collected a specimen, or who recorded the event '
+                   '(the visit, sampling or sighting) in which the organism was recorded. Choose what they did.'),
         'summary': 'People',
     },
     'identification': {
         'fields': {'scientificName', 'scientificNameAuthorship', 'scientificNameID', 'taxonID', 'taxonRank',
                    'vernacularName', 'verbatimIdentification', 'identifiedBy', 'identifiedByID', 'dateIdentified',
-                   'identificationReferences', 'identificationRemarks', 'identificationVerificationStatus',
-                   'externalClassificationSource'},
+                   'identificationReferences', 'identificationRemarks', 'identificationVerificationStatus'},
         'question': 'Where should {column} go?',
         'reason': ('This column is part of the identification: what the organism is, and who decided. It can stay on the '
                    'observation record, become a separate identification record, or go on the specimen record.'),

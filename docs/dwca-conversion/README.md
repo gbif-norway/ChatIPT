@@ -1,8 +1,10 @@
 # Darwin Core Archive conversion
 
 This directory records the mapping audit for a separate DwC-A to DwC-DP workflow.
-The initial output target is ChatIPT's vendored TDWG `1.0_DEV` schemas at
-`76898192fd298c2aa170a7059e1bdadf3ee2a828`.
+The output target is ChatIPT's vendored final TDWG DwC-DP 1.0 schemas (rs.tdwg.org
+`88a4b91f191849cd6dfb1aad78ed0510f1a47823`). The catalogues and audits were first written for the
+`1.0_DEV` prerelease (`76898192fd298c2aa170a7059e1bdadf3ee2a828`); the
+[fidelity audit](fidelity-audit.md#changes-from-10_dev-to-10) lists what changed.
 
 Mapping research is divided between core terms, extension families, and semantic
 review policy. The implementation must preserve original files and metadata,
@@ -120,6 +122,25 @@ NBN dates) patch the eventID event, never a depth child. Material can be combine
 each identifier stays within one depth. Because it asserts that each depth is a separate sampling
 action, it is a confirmed choice.
 
+Rule version 31 moves the converter to the final DwC-DP 1.0 schemas (see the
+[fidelity audit](fidelity-audit.md#changes-from-10_dev-to-10) for every field change).
+- **DNA rows without a sequence.** A DNA Derived Data row without a `dna_sequence` (a qPCR/ddPCR
+  detection or Cq value) becomes a `nucleotide-analysis` and `molecular-protocol` with no
+  sequence link, because 1.0 makes `nucleotideSequence_fk` optional. A table with no sequences
+  at all converts the same way. One notice per table says how many rows have no sequence. No
+  stand-in sequence is made up, and leaving the table out keeps the rows only in the originals.
+  These analyses can also take a `dna-read-counts` read count.
+- **Recorders.** `recordedBy`/`recordedByID` on Occurrence cores go to `event.recordedBy`/
+  `recordedByID` (1.0 removes them from occurrence and renames `eventConductedBy`), with
+  `event-agent-role` rows. Specimen collectors still go to `material.collectedBy`.
+- **Specimen links.** `material.evidenceForOccurrence_fk` links a specimen to its one occurrence
+  by key, so a missing or repeated `occurrenceID` no longer blocks that link.
+- **Record numbers.** `recordNumber` goes to the new `occurrence.recordNumber`, or to
+  `material.collectorNumber` when specimen records are created.
+- **Humboldt.** Event duration, weather, extreme conditions and vegetation cover are written to
+  the survey's event. `abundanceCap` goes to a survey target when one is created from a scope;
+  otherwise it is withheld with a reason.
+
 Rule version 30 converts DNA Derived Data tables that have some rows without a `dna_sequence`.
 Previously one blank sequence left the whole DNA table out of the Data Package, with a generic notice.
 Each sequence-less row (typically a qPCR/ddPCR detection or Cq value) now stays in the originals
@@ -200,9 +221,9 @@ mapped values agree. Identification history is retained without inferring an
 accepted determination; repeated core/history classifications are not merged
 by name similarity. Identical sequence strings and complete protocol descriptions
 share target records, while analyses retain source row multiplicity. DNA rows
-without a sequence (qPCR/ddPCR results) stay in the originals with a notice,
-because the pinned DwC-DP 1.0_DEV links every analysis to a sequence; no
-stand-in sequence is created ([extension notes](extension-notes.md#dna-derived-data-and-ggbn)).
+without a sequence (qPCR/ddPCR results) become analyses with their protocol and no
+sequence link, with a notice; no stand-in sequence is created
+([extension notes](extension-notes.md#dna-derived-data-and-ggbn)).
 
 Before the questions are built, an [automatic tidy-up](tidy.md) rewrites obviously messy values in a
 view of the archive (country names to ISO codes, GBIF vocabulary terms such as `f` → `female`, life

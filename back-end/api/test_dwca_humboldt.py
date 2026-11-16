@@ -28,6 +28,10 @@ def choices(plan):
     return {item['id']: item['options'][0]['value'] for item in plan['issues']}
 
 
+def column(plan, term):
+    return next(item for item in plan['columns'] if item['term'] == term)
+
+
 class HumboldtConversionTests(SimpleTestCase):
     def test_all_57_terms_have_declared_direct_or_scope_paths(self):
         self.assertEqual(len(DIRECT), 43)
@@ -64,12 +68,30 @@ class HumboldtConversionTests(SimpleTestCase):
         source = archive([ECO + 'eventDurationValue', ECO + 'hasVouchers', ECO + 'voucherInstitutions', ECO + 'reportedWeather'],
                          [['e1', '2', 'false', 'Museum', 'Rain']])
         plan = build_plan(source); frames, report = convert(source, plan, choices(plan))
-        self.assertEqual(frames['survey'].iloc[0]['reportedWeather'], 'Rain')
-        self.assertNotIn('eventDurationValue', frames['survey'])
+        # DwC-DP 1.0 keeps weather and event duration on the survey's event.
+        self.assertEqual(frames['event'].iloc[0]['reportedWeather'], 'Rain')
+        self.assertNotIn('reportedWeather', frames['survey'])
+        self.assertNotIn('eventDurationValue', frames['event'])
         self.assertNotIn('hasVouchers', frames['survey'])
         self.assertNotIn('voucherInstitutions', frames['survey'])
         self.assertEqual(len(report['withheld_values']), 3)
         self.assertTrue(report['validation']['valid'])
+
+    def test_event_level_values_go_to_the_event_and_abundance_cap_needs_a_target(self):
+        source = archive([ECO + 'eventDurationValue', ECO + 'eventDurationUnit', ECO + 'abundanceCap'], [['e1', '2', 'hours', '50']])
+        plan = build_plan(source)
+        self.assertEqual(column(plan, ECO + 'eventDurationValue')['default'], 'event.eventDurationValue')
+        self.assertEqual(column(plan, ECO + 'abundanceCap')['default'], 'survey-target.abundanceCap')
+        frames, report = convert(source, plan, choices(plan))
+        self.assertTrue(report['validation']['valid'])
+        self.assertEqual((frames['event'].iloc[0]['eventDurationValue'], frames['event'].iloc[0]['eventDurationUnit']), ('2', 'hours'))
+        # No scope, so no survey target: the cap is withheld and disclosed, never put on an invented target.
+        self.assertNotIn('survey-target', frames)
+        self.assertEqual([(item['term'], item['value']) for item in report['withheld_values']], [(ECO + 'abundanceCap', '50')])
+        scoped = archive([ECO + 'abundanceCap', ECO + 'targetTaxonomicScope', ECO + 'isTaxonomicScopeFullyReported'], [['e1', '50', 'Aves', 'true']])
+        plan = build_plan(scoped); frames, report = convert(scoped, plan, choices(plan))
+        self.assertTrue(report['validation']['valid'])
+        self.assertEqual(frames['survey-target'].iloc[0]['abundanceCap'], '50')
 
     def test_habitat_requires_reviewed_completeness_never_defaults_it(self):
         source = archive([ECO + 'targetHabitatScope'], [['e1', 'oak savannah']])

@@ -66,8 +66,9 @@ claims without asking users to certify scientific validity.
   `nucleotide-analysis.readCount` when its occurrence has exactly one DNA row.
   This is the automatic choice and notice `dna-read-counts`, never a question;
   `preserve` keeps read counts only on the occurrences (see extension-notes.md).
-- A DNA row without a sequence stays in the originals through a preserve-only
-  row notice, because the pinned schema requires a sequence for every analysis.
+- A DNA row without a sequence becomes an analysis and protocol with no sequence
+  link (DwC-DP 1.0), never a question: one `sequenceless-dna:<t>` notice per table
+  gives the count. Leaving the table out keeps the rows only in the originals.
 - A nonnegative integer `individualCount` becomes `organismQuantity` with
   `organismQuantityType=individuals` on every converted occurrence, from an
   Occurrence core or an Occurrence extension, when the row supplies no quantity
@@ -117,7 +118,7 @@ what it decided, and words the remaining questions for non-experts.
 
 - **Specimen details follow the specimen answer.** A column whose only Data Package
   field is on the specimen (material) record — catalogNumber, institutionCode,
-  collectionCode, preparations, disposition, recordNumber, modified, … — is no longer
+  collectionCode, preparations, disposition, modified, … — is no longer
   asked about. It is stored on the specimen records when specimen records are created
   and stays in the original files when they are not. The column carries
   `follows: 'material:<t>'`; the specimen question (or automatic choice) lists these
@@ -133,14 +134,15 @@ what it decided, and words the remaining questions for non-experts.
   their own conditions.
 - **Collectors.** In an Occurrence core (or an Occurrence extension of an Event core)
   with possible specimen records, recordedBy goes to `material.collectedBy` when
-  specimen records are created and every specimen links to exactly one occurrenceID
-  that no other specimen uses; otherwise it stays on `occurrence.recordedBy`. GBIF reads
-  a specimen's collectors only through that unambiguous `evidenceForOccurrenceID`
-  link, and the converter writes the link only in that case. recordedByID follows the
-  names (`material.collectedByID`, `event.eventConductedByID` or
-  `occurrence.recordedByID`); a requirement refuses any choice that would put names and
-  identifiers on different records. Recording who carried out the fieldwork
-  (`event.eventConductedBy`) remains an option.
+  specimen records are created and every specimen stands for exactly one occurrence;
+  otherwise it goes to `event.recordedBy` (rule version 31: DwC-DP 1.0 has no
+  `occurrence.recordedBy`, and renames `event.eventConductedBy` to `event.recordedBy`).
+  GBIF reads a specimen's collectors only through one unambiguous link to its occurrence
+  (`evidenceForOccurrence_fk` in 1.0), and the converter writes the link only in that case.
+  recordedByID follows the names (`material.collectedByID` or `event.recordedByID`); a
+  requirement refuses any choice that would put names and identifiers on different records.
+- **Record numbers.** recordNumber goes to `occurrence.recordNumber`, or to
+  `material.collectorNumber` when specimen records are created (rule version 31).
 - **Type status.** typeStatus and typeDesignationType go to the specimen record when
   specimen records are created (combined specimens only when their values agree), and
   to the identification otherwise. Neither is asked any more.

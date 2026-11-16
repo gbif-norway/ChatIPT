@@ -8,6 +8,13 @@ differ in a way that matters (for example, `recordedBy` moves to `event` and an
 `event-usage-policy` table is added), the rule says so and keeps the 1.0_DEV
 placement.
 
+> **Since rule version 31 the converter targets the final DwC-DP 1.0.** It took over the changes
+> anticipated above. `recordedBy`/`recordedByID` now go to `event` (renamed from
+> `eventConductedBy`), and `material.evidenceForOccurrenceID` is replaced by
+> `evidenceForOccurrence_fk`, a key to `occurrence_pk`. These notes keep their 1.0_DEV wording as
+> the audit record. The [fidelity audit](fidelity-audit.md#changes-from-10_dev-to-10) lists every
+> 1.0 change and what the converter now does.
+
 Sources were used only for definitions:
 
 - the vendored table schemas and profile;

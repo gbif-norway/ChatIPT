@@ -359,9 +359,10 @@ def _fill_collectors(core, tables):
     """Fill empty recordedBy the way GBIF reads a DwC-DP occurrence.
 
     A specimen archive stores collectors on material.collectedBy. GBIF falls back to it only
-    through an unambiguous link (one material per occurrence via evidenceForOccurrenceID), and
-    then to ordered collector agent roles (gbif/pipelines OccurrenceDwcaMapping). No value is
-    joined from an ambiguous link.
+    through an unambiguous link (one material per occurrence via evidenceForOccurrence_fk, which
+    DwC-DP 1.0 points at occurrence_pk), and then to ordered collector agent roles
+    (gbif/pipelines OccurrenceDwcaMapping). No value is joined from an ambiguous link. The
+    event's recordedBy, where DwC-DP 1.0 keeps recorders, arrives with the event columns.
     """
     def blank():
         # Only rows with neither names nor identifiers are filled, so a name never sits beside another person's identifier.
@@ -370,13 +371,13 @@ def _fill_collectors(core, tables):
 
     material = tables.get('material')
     linked = pd.Series(pd.NA, index=core.index, dtype='object')
-    if (material is not None and 'evidenceForOccurrenceID' in material and 'materialEntity_pk' in material
-            and 'occurrenceID' in core):
-        material = material[~_blank(material['evidenceForOccurrenceID'])]
-        material = material[~material['evidenceForOccurrenceID'].duplicated(keep=False)]
-        ids = core['occurrenceID'].where(~_blank(core['occurrenceID']))
+    if (material is not None and 'evidenceForOccurrence_fk' in material and 'materialEntity_pk' in material
+            and 'occurrence_pk' in core):
+        material = material[~_blank(material['evidenceForOccurrence_fk'])]
+        material = material[~material['evidenceForOccurrence_fk'].duplicated(keep=False)]
+        ids = core['occurrence_pk'].where(~_blank(core['occurrence_pk']))
         unique = ids.notna() & ~ids.duplicated(keep=False)
-        by_occurrence = material.set_index('evidenceForOccurrenceID')
+        by_occurrence = material.set_index('evidenceForOccurrence_fk')
         linked = ids.where(unique).map(by_occurrence['materialEntity_pk'])
         if 'collectedBy' in by_occurrence:
             names = ids.where(unique).map(by_occurrence['collectedBy'])

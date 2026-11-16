@@ -221,30 +221,33 @@ class ProvisionalCoreTests(TestCase):
 
     def test_collectors_on_linked_specimens_fill_recorded_by(self):
         # A converted specimen archive (prod 568) stores collectors on material.collectedBy. GBIF reads them
-        # through one unambiguous evidenceForOccurrenceID link, then from ordered collector agent roles.
+        # through one unambiguous evidenceForOccurrence_fk link, then from ordered collector agent roles.
+        # DwC-DP 1.0 keeps the recorders of an occurrence on its event.
         import pandas as pd
         from api.models import Table
         from api.quality_report import provisional_core
 
         dataset = Dataset.objects.create(title="Specimens", description="Test")
         Table.objects.create(dataset=dataset, title="occurrence", df=pd.DataFrame([
-            {"occurrence_pk": "o1", "occurrenceID": "urn:1", "recordedBy": ""},
-            {"occurrence_pk": "o2", "occurrenceID": "urn:2", "recordedBy": "Own, Name"},
-            {"occurrence_pk": "o3", "occurrenceID": "urn:3", "recordedBy": ""},
-            {"occurrence_pk": "o4", "occurrenceID": "urn:4", "recordedBy": ""},
-            {"occurrence_pk": "o5", "occurrenceID": "urn:5", "recordedBy": ""},
+            {"occurrence_pk": f"o{n}", "occurrenceID": f"urn:{n}", "event_fk": f"e{n}"} for n in range(1, 7)]))
+        Table.objects.create(dataset=dataset, title="event", df=pd.DataFrame([
+            {"event_pk": "e1", "recordedBy": ""},
+            {"event_pk": "e2", "recordedBy": "Own, Name"},
+            {"event_pk": "e3", "recordedBy": ""},
+            {"event_pk": "e4", "recordedBy": ""},
+            {"event_pk": "e5", "recordedBy": ""},
             # An identifier without names: the specimen's collector would not match it, so nothing is filled.
-            {"occurrence_pk": "o6", "occurrenceID": "urn:6", "recordedBy": "", "recordedByID": "https://orcid.org/A"},
+            {"event_pk": "e6", "recordedBy": "", "recordedByID": "https://orcid.org/A"},
         ]))
         Table.objects.create(dataset=dataset, title="material", df=pd.DataFrame([
-            {"materialEntity_pk": "m1", "evidenceForOccurrenceID": "urn:1", "collectedBy": "Hagen, Yngvar", "collectedByID": "https://orcid.org/0000-0001"},
-            # The occurrence names its own recorder: the specimen's collector and identifier are not mixed in.
-            {"materialEntity_pk": "m2", "evidenceForOccurrenceID": "urn:2", "collectedBy": "Collett, Robert", "collectedByID": "https://orcid.org/0000-0002"},
+            {"materialEntity_pk": "m1", "evidenceForOccurrence_fk": "o1", "collectedBy": "Hagen, Yngvar", "collectedByID": "https://orcid.org/0000-0001"},
+            # The event names its own recorder: the specimen's collector and identifier are not mixed in.
+            {"materialEntity_pk": "m2", "evidenceForOccurrence_fk": "o2", "collectedBy": "Collett, Robert", "collectedByID": "https://orcid.org/0000-0002"},
             # Two materials name one occurrence: ambiguous, never joined.
-            {"materialEntity_pk": "m3a", "evidenceForOccurrenceID": "urn:3", "collectedBy": "A", "collectedByID": ""},
-            {"materialEntity_pk": "m3b", "evidenceForOccurrenceID": "urn:3", "collectedBy": "B", "collectedByID": ""},
-            {"materialEntity_pk": "m4", "evidenceForOccurrenceID": "urn:4", "collectedBy": "", "collectedByID": ""},
-            {"materialEntity_pk": "m6", "evidenceForOccurrenceID": "urn:6", "collectedBy": "Somebody, Else", "collectedByID": ""},
+            {"materialEntity_pk": "m3a", "evidenceForOccurrence_fk": "o3", "collectedBy": "A", "collectedByID": ""},
+            {"materialEntity_pk": "m3b", "evidenceForOccurrence_fk": "o3", "collectedBy": "B", "collectedByID": ""},
+            {"materialEntity_pk": "m4", "evidenceForOccurrence_fk": "o4", "collectedBy": "", "collectedByID": ""},
+            {"materialEntity_pk": "m6", "evidenceForOccurrence_fk": "o6", "collectedBy": "Somebody, Else", "collectedByID": ""},
         ]))
         Table.objects.create(dataset=dataset, title="agent", df=pd.DataFrame([
             {"agent_pk": "a1", "preferredAgentName": "Kjernslie, O.L."},

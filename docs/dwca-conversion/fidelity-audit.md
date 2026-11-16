@@ -113,13 +113,132 @@ validation. No EML version conversion or license inference is performed.
 
 ## Schema status
 
-The package remains pinned to the vendored TDWG `1.0_DEV` profile and its
-revision/hash in `dwcDpSchema`. The [DwC-DP guide](https://dwc.tdwg.org/dp/)
-refers to a versioned 1.0 profile, but the corresponding
-[`rs.tdwg.org` URL](https://rs.tdwg.org/dwc-dp/1.0/dwc-dp-profile.json)
-returned 404 when checked on 2026-10-05. The working `gbif/dwc-dp` profile
-is labeled `1.0-DEV` and differs in table and field coverage; it is not a
-ratified replacement for the pinned snapshot. Update the profile URL, complete
-table schemas, converter mappings, and tests together when a published 1.0
-artifact becomes available. A successful current export validates against the
-pinned prerelease, not against an unpublished final schema.
+Packages are pinned to the final DwC-DP 1.0, vendored from `tdwg/rs.tdwg.org`
+`dwc-dp/1.0` at commit `88a4b91f191849cd6dfb1aad78ed0510f1a47823` ("Publish
+Darwin Core 2026-10-13 schema artifacts"). The vendored profile and all 81 table
+schemas are byte-identical to `tdwg/dwc` `dwc-dp/` and to the files deployed at
+<https://rs.tdwg.org/dwc-dp/1.0/> (checked 2026-11-04). Descriptors reference
+`https://rs.tdwg.org/dwc-dp/1.0/dwc-dp-profile.json` and record the revision and
+content hash in `dwcDpSchema`. The local `index.json` and `version.json` are
+generated from the table metadata (version `1.0`, issued 2026-10-13); TDWG does
+not publish them.
+
+GBIF's DwC-DP ingestion (`gbif/pipelines` dev, last DwC-DP change 2026-10-01)
+still reads the 1.0_DEV names: `occurrence.recordedBy`,
+`event.eventConductedBy`, and `material.evidenceForOccurrenceID`. Until it is
+updated, GBIF may not pick up recorders or specimen links from a 1.0 package.
+ChatIPT's own provisional GBIF check reads the 1.0 names.
+
+### Changes from 1.0_DEV to 1.0
+
+This compares the previous snapshot (rs.tdwg.org `dwc` branch commit
+`76898192fd298c2aa170a7059e1bdadf3ee2a828`) with 1.0, field by field.
+
+**Profile.** The profile now declares JSON Schema 2020-12 (it was draft-04), with
+`$id` `https://rs.tdwg.org/dwc-dp/1.0/dwc-dp-profile.json` and
+`version` `http://rs.tdwg.org/dwc-dp/1.0`. The resource-name list adds
+`event-usage-policy` and `geological-material`. Field `dcterms:isVersionOf` must
+match `^https?://.+$` (it was `^http.*$`). `dcterms:references` is no longer
+constrained. The base Data Package `$ref` still resolves offline.
+
+**Metadata on every table.** Table identifiers move from
+`http://rs.tdwg.org/dwc/dwc-dp/<table>` to `http://rs.tdwg.org/dwc-dp/1.0/<table>`,
+and every table gains `dcterms:isPartOf` `http://www.tdwg.org/standards/450`.
+Tables and fields rename `comments` to `notes`. `rdfs:comment` and
+`dcterms:references` are dropped everywhere. The 1.0_DEV placeholder
+references (`"pending"`), which ChatIPT used to strip, are gone.
+
+**New tables.**
+
+| Table | Fields (required) | Links |
+| --- | --- | --- |
+| `event-usage-policy` | `event_fk` (required), `usagePolicy_fk` | event, usage-policy |
+| `geological-material` | `materialEntity_fk` (required), `mineralogicalAnalysisProtocol_fk` (required), `materialEntityID`, `geologicalMaterialNames`, `geologicMaterialNameID`, `geologicalMaterialNameTypes`, `classificationCodes`, `mineralSequence`, `measuredChemistry`, `measuredChemistrySource`, `mineralogicalAnalysisProtocol`, `chemistryRemarks` | material, protocol |
+
+No table was removed.
+
+**Changes to `required`.** One field changed:
+`nucleotide-analysis.nucleotideSequence_fk` is no longer required
+(tdwg/dwc#934). Every added field is optional, except in the new tables above.
+
+**Renamed, moved and removed fields.**
+
+| Table | Removed | Added or replacing |
+| --- | --- | --- |
+| `event` | `eventConductedBy`, `eventConductedByID` | `recordedBy`, `recordedByID`, `recordedBy_fk` (the same terms, renamed) |
+| `occurrence` | `recordedBy`, `recordedByID` | none: recorders belong to the event |
+| `occurrence` | `externalClassificationSource` | `classificationSystem` |
+| `identification`, `identification-taxon` | `geoName`, `geoClassificationCode`, `externalClassificationSource` | `geologicalMaterialNames`, `geologicalClassificationCodes`, `classificationSystem` |
+| `material` | `evidenceForOccurrenceID` | `evidenceForOccurrence_fk`, a foreign key to `occurrence.occurrence_pk` (not a weak key to `occurrenceID`) |
+| `material` | `geoName`, `geoClassificationCode`, `externalClassificationSource` | `classificationSystem` (the geological names move to `geological-material`) |
+| `molecular-protocol` | `DNA_sequence` (`gbif:dna_sequence`) | `sequence` (`dwc:sequence`) |
+| `survey` | `eventDurationValue`, `eventDurationUnit`, `isVegetationCoverReported`, `reportedWeather`, `reportedExtremeConditions` | the same fields on `event` |
+| `survey` | `abundanceCap` | `survey-target.abundanceCap` |
+| `resource-relationship`, `organism-relationship` | `relationshipOrder` | none |
+
+**Added fields.**
+
+- `nucleotide-analysis`: `rawTotalReadCount`.
+- `event`: `namedPlace`, `geologicalContext_fk`, `georeferencedBy_fk`, besides the moved fields above.
+- `occurrence`: `recordNumber`, `substrate`, `organism_fk`, `identifiedBy_fk`.
+- `material`: `derivedFromMaterialEntity_fk`, `isPartOfMaterialEntity_fk`, `derivationEventID`, `materialRole`, `materialProportion`, `sampledFeatureType`, `collectedBy_fk`, `identifiedBy_fk`, `measuredMassInGrams`, `verbatimMass`, `treatments`, `handlingRequirements`, `hazardType`, `hazardRemarks`, `damageRemarks`, `materialDescription`, `owner`, `owner_fk`, `license`.
+- `media`: `derivedFromMedia_fk`, `isPartOfMedia_fk`, `commenter_fk`, `reviewer_fk`, `owner`, `owner_fk`, `license`.
+- `molecular-protocol`: `source_mat_fk`.
+- `geological-context`: `geologicEvent`, `geologicProvince`, `lithodemicUnit`, `tectonicUnits`.
+- `chronometric-age`: `materialDated_fk`, `chronometricAgeDeterminedBy_fk`.
+- `bibliographic-resource`: `isPartOfReference_fk`, `bibliographicIdentifier`, `bibliographicIdentifierType`, `author_fk`, `editor_fk`, `publisher_fk`.
+- `provenance`: `datasetName`, `fundingAttribution_fk`, `creator_fk`, `provider_fk`, `metadataCreator_fk`, `metadataProvider_fk`.
+- `usage-policy`: `rightsHolder_fk`, `owner_fk`.
+- `survey`: `surveySiteType`, `identifiedBy_fk`, `samplingPerformedBy_fk`.
+- `organism-interaction`: `relatedOccurrence_fk`. `organism-relationship`: `relatedOrganism_fk`, `relationshipAccordingTo_fk`.
+- Every `*-assertion` table: `assertionBy_fk`.
+
+Each new `*_fk` comes with a matching foreign key, beside the existing weak
+`*ID` key where there is one (for example `occurrence.organism_fk` beside
+`organismID`). The `event_fk` predicate of `occurrence`, `survey` and
+`organism-interaction` now reads "has context" (it was "happened during"), and
+`identification.materialEntity_fk` reads "of a".
+
+**Changed term IRIs (`dcterms:isVersionOf`).**
+
+- `*-agent-role.agentRoleDate`: `dwc:relationshipEstablishedDate` → `dwc:assertionEffectiveDate`.
+- `*-media.subjectCategoryIRI` and `media.subjectCategoryIRI`: `ac:CVterm` → `Iptc4xmpExt:CVterm`.
+- `organism-interaction.subjectOrganismPart`, `relatedOrganismPart`: `ac:subjectPart` → `dwc:organismPart`.
+- `*.provenance_fk` → `dwc:provenanceID`; `*.usagePolicy_fk` and `usage-policy.usagePolicyID` → `dwc:usagePolicyID` (all were `dcterms:identifier`).
+- `material.isPartOfMaterialEntityID`: `dwc:materialEntityID` → `dwc:isPartOfMaterialEntityID`.
+
+No field changed its `type`, `format` or other constraints, apart from the one
+`required` change above.
+
+### What the converter does with them (rule version 31)
+
+- **Recorders.** `recordedBy` and `recordedByID` from an Occurrence core go to
+  `event.recordedBy` and `event.recordedByID`, with `event-agent-role` rows.
+  Specimen rows still default to `material.collectedBy`. When occurrences
+  share an event, recorders who disagree make the combined event conflict,
+  like any other event detail. Each row can then get its own event instead.
+  Occurrence extensions of an Event core take recorders through the existing
+  "event details on occurrence rows" choice.
+- **Specimen links.** `material.evidenceForOccurrence_fk` holds the occurrence's
+  key, set when the material is evidence for exactly one occurrence. A
+  missing or repeated `occurrenceID` no longer stops collectors defaulting to
+  the specimen record. That still happens only when each specimen record
+  stands for one row.
+- **Record numbers.** `recordNumber` defaults to `occurrence.recordNumber`, and
+  to `material.collectorNumber` when specimen records are created.
+  `material.derivationEventID` shares the `dwc:eventID` IRI, but is never offered
+  for a row's own `eventID`.
+- **Humboldt.** The event-level Humboldt properties are written onto the
+  survey's event. `abundanceCap` goes to the survey target. A survey target is
+  created only from a reviewed scope with a completeness flag, so otherwise the
+  cap is withheld and reported.
+- **DNA.** A DNA Derived Data row without a sequence becomes a
+  `nucleotide-analysis` and `molecular-protocol` with no sequence link. No
+  stand-in sequence is created (see [extension notes](extension-notes.md)).
+  `rawTotalReadCount` stays unmapped: no DwC-A term or source column supplies it.
+- **Media rights.** `xmpRights:Owner` and `dcterms:license` match both `media` and
+  `usage-policy` in 1.0. They stay on the usage policy with the other rights.
+- The other added fields have no DwC-A source in the registry, or are keys that
+  the converter does not fill. A source column whose only target was a removed
+  field, such as `relationshipOrder` or `externalClassificationSource`, now stays
+  only in the originals.
