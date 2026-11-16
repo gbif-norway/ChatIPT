@@ -602,8 +602,13 @@ class RecordAndApplyTests(TestCase):
         self.table.save()
         with self.assertRaises(taxon_matching.MatchScopeError):
             taxon_matching.apply_decisions(self.dataset, self.table, "verbatimIdentification", "block")
+        rematched, finished = taxon_matching.record_matches(
+            self.dataset, "occurrence", self.table.df, "verbatimIdentification", "block",
+        )
+        self.assertTrue(finished)
+        self.assertTrue(all(row.decision == TaxonNameMatch.Decision.PENDING for row in rematched))
         with self.assertRaises(taxon_matching.MatchScopeError):
-            taxon_matching.record_matches(self.dataset, "occurrence", self.table.df, "verbatimIdentification", "block")
+            taxon_matching.apply_decisions(self.dataset, self.table, "verbatimIdentification")
         # A working table that was never matched gets nothing applied.
         working = Table.objects.create(dataset=self.dataset, title="species labels", df=self.table.df.copy())
         result = taxon_matching.apply_decisions(self.dataset, working, "verbatimIdentification")
@@ -739,6 +744,89 @@ class TaxonToolTests(TestCase):
         self.assertNotIn('"N_silvestris", 1 rows', result)  # exact after interpretation
         row = TaxonNameMatch.objects.get(verbatim_label="N_silvestris")
         self.assertEqual(row.query, {"kingdom": "Animalia", "scientificName": "Nothrus silvestris", "family": "Nothridae"})
+
+    def test_rematch_splits_broad_label_by_source_scientific_name(self, match_col, aids, release):
+        self.table.title = "identification"
+        self.table.df = pd.DataFrame({
+            "verbatimIdentification": ["Phycomycetes"] * 5,
+            "scientificName": ["Taxon A", "Taxon B", "Taxon C", "Taxon D", "Taxon E"],
+        })
+        self.table.save()
+        original = self.table.df.copy()
+        first = MatchTaxonNames(
+            agent_id=self.agent.id, table_id=self.table.id,
+            interpretations=[{"verbatim_label": "Phycomycetes", "query_name": "Nothrus silvestris",
+                              "note": "Earlier broad interpretation"}],
+        ).run()
+        self.assertIn("1 distinct labels, 5 rows", first)
+        old = TaxonNameMatch.objects.get(dataset=self.dataset)
+        taxon_matching.decide(old, TaxonNameMatch.Decision.CORRECTED, scientific_name="Old interpretation")
+        result = MatchTaxonNames(
+            agent_id=self.agent.id, table_id=self.table.id, context_column="scientificName",
+            interpretations=[{"verbatim_label": "Phycomycetes", "context_key": "Taxon A",
+                              "query_name": "Araneae", "note": "Source evidence for this group only"}],
+        ).run()
+        self.assertIn("5 distinct labels, 5 rows", result)
+        old.refresh_from_db()
+        self.assertEqual(old.record_count, 0)
+        self.assertEqual(old.decision, TaxonNameMatch.Decision.CORRECTED)
+        rows = list(TaxonNameMatch.objects.filter(dataset=self.dataset, record_count__gt=0))
+        self.assertEqual({row.context_key for row in rows}, set(original.scientificName))
+        self.assertTrue(all(row.decision == TaxonNameMatch.Decision.PENDING for row in rows))
+        self.assertEqual({row.context_key: row.query["scientificName"] for row in rows}, {
+            "Taxon A": "Araneae", **{f"Taxon {letter}": "Phycomycetes" for letter in "BCDE"},
+        })
+        self.table.refresh_from_db()
+        pd.testing.assert_frame_equal(self.table.df, original)
+        # A later switch back must not revive the old broad interpretation or decision.
+        result = MatchTaxonNames(agent_id=self.agent.id, table_id=self.table.id).run()
+        self.assertIn("1 distinct labels, 5 rows", result)
+        old.refresh_from_db()
+        self.assertEqual(old.decision, TaxonNameMatch.Decision.PENDING)
+        self.assertEqual(old.query, {"scientificName": "Phycomycetes"})
+        self.assertEqual(old.preprocessing_note, "")
+        self.assertEqual(TaxonNameMatch.objects.filter(dataset=self.dataset, record_count__gt=0).count(), 1)
+
+    def test_changed_context_resumes_after_a_service_failure(self, match_col, aids, release):
+        MatchTaxonNames(agent_id=self.agent.id, table_id=self.table.id).run()
+        rematch = MatchTaxonNames(
+            agent_id=self.agent.id, table_id=self.table.id, context_column="scientificName",
+        )
+        match_col.side_effect = taxon_matching.TaxonServiceError("down")
+        self.assertIn("service is unavailable", rematch.run())
+        active = TaxonNameMatch.objects.filter(dataset=self.dataset, record_count__gt=0)
+        self.assertEqual(set(active.values_list("context_column", flat=True)), {"scientificName"})
+        self.assertTrue(all(row.matched_at is None for row in active))
+        match_col.side_effect = fake_match
+        self.assertIn("3 distinct labels, 3 rows", rematch.run())
+        self.assertTrue(taxon_matching.matching_complete(list(active.all())))
+        # Correcting a named context also retires its grouping.
+        self.table.df["block"] = "source block"
+        self.table.save()
+        result = MatchTaxonNames(
+            agent_id=self.agent.id, table_id=self.table.id, context_column="block",
+        ).run()
+        self.assertIn("3 distinct labels, 3 rows", result)
+        self.assertEqual(set(active.values_list("context_column", flat=True)), {"block"})
+
+    def test_context_switch_preserves_an_open_user_review(self, match_col, aids, release):
+        MatchTaxonNames(agent_id=self.agent.id, table_id=self.table.id).run()
+        self.agent.pause_for_taxon_review("Review names", {"source_table": "occurrence", "context_column": ""})
+        result = MatchTaxonNames(
+            agent_id=self.agent.id, table_id=self.table.id, context_column="scientificName",
+        ).run()
+        self.assertIn("Only the user closes it", result)
+        self.assertEqual(set(TaxonNameMatch.objects.filter(record_count__gt=0)
+                             .values_list("context_column", flat=True)), {""})
+        self.agent.refresh_from_db()
+        self.assertEqual(self.agent.open_taxon_review, {"source_table": "occurrence", "context_column": ""})
+
+    def test_invalid_context_does_not_retire_existing_matches(self, match_col, aids, release):
+        MatchTaxonNames(agent_id=self.agent.id, table_id=self.table.id).run()
+        with self.assertRaises(KeyError):
+            taxon_matching.record_matches(self.dataset, "occurrence", self.table.df,
+                                          "verbatimIdentification", "missing")
+        self.assertEqual(TaxonNameMatch.objects.filter(record_count__gt=0).count(), 3)
 
     def test_apply_tool_reports_pending_labels(self, match_col, aids, release):
         MatchTaxonNames(agent_id=self.agent.id, table_id=self.table.id).run()

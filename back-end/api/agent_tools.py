@@ -2611,7 +2611,9 @@ class MatchTaxonNames(OpenAIBaseModel):
     Each interpretation gives `verbatim_label` exactly as in the table, `query_name` (the scientific
     name to match, with authorship when the label has it), optional classification hints (kingdom,
     phylum, class, order, family, genus) that you are sure of, and a `note` with the evidence.
-    Labels matched before keep their interpretation unless you send a new one.
+    Labels matched before keep their interpretation unless you send a new one. You can correct
+    `context_column` after the first match: this starts a fresh review of the new groups, without
+    carrying over earlier interpretations or decisions. Finish or skip an open user review first.
 
     The verbatim column is only read. Suggestions are not written to the data: the user reviews
     them, then ApplyTaxonDecisions writes the reviewed names.

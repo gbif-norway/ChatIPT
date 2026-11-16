@@ -21,6 +21,7 @@ from collections import defaultdict
 import pandas as pd
 import requests
 from django.conf import settings
+from django.db import transaction
 
 logger = logging.getLogger(__name__)
 
@@ -999,60 +1000,90 @@ def record_matches(dataset, source_table, df, verbatim_column, context_column=No
 
     ``overrides`` maps (label, context_key) to {"query": {...}, "note": str} for labels whose
     matchable name differs from the label (vernacular, abbreviated genus, typo). A new
-    interpretation of a reviewed label reopens it for review. Matching stops at the time budget;
-    unmatched rows are matched by the next call. Returns (rows for the current labels, finished).
+    interpretation of a reviewed label reopens it for review. Changing the context column retires
+    the old grouping and starts a fresh review without changing source data. Matching stops at the
+    time budget; unmatched rows are matched by the next call. Returns (current rows, finished).
     """
     from django.utils import timezone
-    from api.models import TaxonNameMatch
+    from api.models import Agent, Dataset, TaxonNameMatch
 
     context_column = context_column or ""
-    _check_single_context_configuration(dataset, source_table, context_column)
     overrides = overrides or {}
     hints = {rank: value for rank, value in (hints or {}).items() if rank in HINT_RANKS and value}
     counts = distinct_labels(df, verbatim_column, context_column)
     supplied = supplied_context(df, verbatim_column, context_column)
-    existing = {(row.verbatim_label, row.context_key): row for row in _scope(dataset, source_table, context_column)}
+    # The review endpoints take this same lock. Retire the old grouping and prepare
+    # the new rows atomically, then release the lock before calling taxon services.
+    with transaction.atomic():
+        Dataset.objects.select_for_update().get(pk=dataset.pk)
+        other = TaxonNameMatch.objects.filter(
+            dataset=dataset, source_table=source_table, record_count__gt=0,
+        ).exclude(context_column=context_column)
+        context_changed = other.exists()
+        if context_changed:
+            reviewing = Agent.objects.filter(
+                dataset=dataset, completed_at__isnull=True,
+                open_taxon_review__source_table=source_table,
+            ).first()
+            if reviewing:
+                raise MatchScopeError(open_review_error(reviewing, "change the taxon matching context"))
+            # Keep the old suggestions and decisions for provenance, outside the active review.
+            other.update(record_count=0)
+        existing = {(row.verbatim_label, row.context_key): row for row in _scope(dataset, source_table, context_column)}
 
-    to_match = []
-    current = []
-    for key, count in counts.items():
-        label, context_key = key
-        row = existing.get(key) or TaxonNameMatch(
-            dataset=dataset, source_table=source_table, context_column=context_column,
-            verbatim_label=label, context_key=context_key,
-        )
-        row.record_count = count
-        # A decision was made on labels read from one column; the same text elsewhere is new evidence.
-        column_changed = row.pk is not None and row.verbatim_column != verbatim_column
-        row.verbatim_column = verbatim_column
-        row.identification_qualifier = default_query(label)[1] or ""
-        context = supplied.get(key, {})
-        previous_hints = set((row.supplied or {}).get('hints') or {})
-        supplied_changed = bool(row.supplied) and context != row.supplied
-        row.supplied = context
-        if key in overrides:
-            query, note = {**hints, **overrides[key]["query"]}, overrides[key].get("note") or ""
-        elif row.query:
-            query = {**{field: value for field, value in row.query.items() if field not in previous_hints},
-                     **hints, **context.get('hints', {})}
-            note = row.preprocessing_note
-        else:
-            query, note = {**hints, **context.get("hints", {}), **default_query(label)[0]}, ""
-        if row.decision != TaxonNameMatch.Decision.PENDING and (column_changed or supplied_changed or query != row.decided_query):
-            # The reviewer decided on a different interpretation or column; ask again.
-            _reset_decision(row)
-            row.review_meta = {}
-        changed = query != row.query or supplied_changed or not row.matched_at
-        row.query, row.preprocessing_note = query, note
-        if changed:
-            row.matched_at = None
-            to_match.append(row)
-        row.save()
-        current.append(row)
+        to_match = []
+        current = []
+        for key, count in counts.items():
+            label, context_key = key
+            row = existing.get(key) or TaxonNameMatch(
+                dataset=dataset, source_table=source_table, context_column=context_column,
+                verbatim_label=label, context_key=context_key,
+            )
+            if context_changed:
+                # A returning configuration is a fresh review, not permission to revive a
+                # broad interpretation or decisions from an earlier grouping.
+                _reset_decision(row)
+                row.query = {}
+                row.preprocessing_note = ""
+                row.review_meta = {}
+                row.match = {}
+                row.parsed = {}
+                row.review_aids = {}
+                row.col_release = {}
+                row.matched_at = None
+                row.applied_at = None
+            row.record_count = count
+            # A decision was made on labels read from one column; the same text elsewhere is new evidence.
+            column_changed = row.pk is not None and row.verbatim_column != verbatim_column
+            row.verbatim_column = verbatim_column
+            row.identification_qualifier = default_query(label)[1] or ""
+            context = supplied.get(key, {})
+            previous_hints = set((row.supplied or {}).get('hints') or {})
+            supplied_changed = bool(row.supplied) and context != row.supplied
+            row.supplied = context
+            if key in overrides:
+                query, note = {**hints, **overrides[key]["query"]}, overrides[key].get("note") or ""
+            elif row.query:
+                query = {**{field: value for field, value in row.query.items() if field not in previous_hints},
+                         **hints, **context.get('hints', {})}
+                note = row.preprocessing_note
+            else:
+                query, note = {**hints, **context.get("hints", {}), **default_query(label)[0]}, ""
+            if row.decision != TaxonNameMatch.Decision.PENDING and (column_changed or supplied_changed or query != row.decided_query):
+                # The reviewer decided on a different interpretation or column; ask again.
+                _reset_decision(row)
+                row.review_meta = {}
+            changed = query != row.query or supplied_changed or not row.matched_at
+            row.query, row.preprocessing_note = query, note
+            if changed:
+                row.matched_at = None
+                to_match.append(row)
+            row.save()
+            current.append(row)
 
-    stale = [row.id for key, row in existing.items() if key not in counts]
-    if stale:
-        TaxonNameMatch.objects.filter(id__in=stale).update(record_count=0)
+        stale = [row.id for key, row in existing.items() if key not in counts]
+        if stale:
+            TaxonNameMatch.objects.filter(id__in=stale).update(record_count=0)
 
     deadline = time.monotonic() + budget_seconds
     # Rows matched by an earlier call whose review aids did not finish.
@@ -1276,7 +1307,10 @@ def apply_decisions(dataset, table, verbatim_column, context_column=None):
 
     written = {"rows_updated": 0, "labels_applied": 0, "pending_labels": 0, "pending_rows": 0,
                "kept_labels": 0, "unmatched_labels": 0, "skipped_columns": set(), "qualifiers_not_written": 0}
-    rows = {(row.verbatim_label, row.context_key): row for row in _scope(dataset, source_table, context_column)}
+    rows = {
+        (row.verbatim_label, row.context_key): row
+        for row in _scope(dataset, source_table, context_column).filter(record_count__gt=0)
+    }
     applied = []
     for key, row_positions in positions.items():
         row = rows.get(key)
