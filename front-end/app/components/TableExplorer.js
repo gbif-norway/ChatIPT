@@ -1,8 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import config from '../config.js'
-import { pluralize } from '../utils/datasetPresentation'
+import { formatCount } from '../utils/columnStats.mjs'
 import {
   VIEW_COLUMNS,
   VIEW_ROWS,
@@ -11,6 +11,7 @@ import {
   nodeForTable,
   outgoingByColumn,
   showRowsWithFilter,
+  tableExamples,
 } from '../utils/explorerState.mjs'
 import { cellText, isBlankValue, normalizeFilters } from '../utils/rowFilters.mjs'
 import { apiErrorMessage, columnStatsUrl, tableLineageUrl } from '../utils/tableApi.mjs'
@@ -18,7 +19,6 @@ import TableColumnsView from './TableColumnsView'
 import TableRowsView from './TableRowsView'
 import '../table-explorer.css'
 
-const LONG_DESCRIPTION = 180
 const VIEW_MEMORY_KEY = 'chatipt.tableExplorer.view'
 let sessionView = null
 
@@ -76,29 +76,62 @@ function useTableResource(url, key, enabled = true) {
   return { ...state, status, retry }
 }
 
-function TableDescription({ text }) {
+// A "?" next to the table name: hovering or focusing it shows what the table holds and a few examples.
+// The tip stays open while the pointer is over it, and Escape closes it without closing an enclosing modal.
+function TableAbout({ title, description, examples }) {
+  const rootRef = useRef(null)
+  const tipId = useId()
   const [open, setOpen] = useState(false)
-  if (!text) return null
-  const long = text.length > LONG_DESCRIPTION
+
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root || !open) return undefined
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setOpen(false)
+    }
+    root.addEventListener('keydown', onKeyDown)
+    return () => root.removeEventListener('keydown', onKeyDown)
+  }, [open])
+
+  if (!description && !examples.length) return null
   return (
-    <p className={`te-description${long && !open ? ' is-clamped' : ''}`}>
-      <span>{text}</span>
-      {long && (
-        <button type="button" className="btn btn-link btn-sm te-description-toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-          {open ? 'Less' : 'More'}
-        </button>
-      )}
-    </p>
+    <span
+      ref={rootRef}
+      className="te-about"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        className="te-about-button"
+        aria-label={`About the ${title} table`}
+        aria-describedby={tipId}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onClick={() => setOpen(true)}
+      >
+        <i className="bi bi-question-circle" aria-hidden="true"></i>
+      </button>
+      <span id={tipId} role="tooltip" className="te-about-tip" hidden={!open}>
+        {description && <span className="te-about-description">{description}</span>}
+        {examples.length > 0 && <span className="te-about-examples">E.g. {examples.join('; ')}.</span>}
+      </span>
+    </span>
   )
 }
 
 /**
- * The one table viewer: header, a Columns | Rows switch and the chosen view.
+ * The one table viewer: a pinned bar (table name with a "?" for what it holds, the open view's search box
+ * and a Columns | Rows switch carrying the counts) above the chosen view.
  *
  * table: {id, title, row_count, columns, updated_at, description, is_dwc_dp}
  * state: {view, column, filters} for this table, controlled by the parent through onStateChange.
- * packageModel: the package-explorer model, when known, for field descriptions, key badges, link health
- *   and linked records. Source tables have no node in it and simply get no schema information.
+ * packageModel: the package-explorer model, when known, for the table's description and examples, field
+ *   descriptions, key badges, link health and linked records. Source tables have no node in it and simply
+ *   get no schema information.
  * onOpenRelated({tableId, filters}): the parent shows that table in Rows with those filters.
  * onAsk(text): optional; when absent the "Ask ChatIPT" buttons are hidden.
  * focusRequest: when it changes to a new truthy value (and on mount with one), focus moves to the table's
@@ -113,8 +146,6 @@ export default function TableExplorer({
   onAsk,
   picker = null,
   kicker = null,
-  actions = null,
-  headerExtra = null,
   headingLevel = 2,
   focusRequest = null,
 }) {
@@ -127,6 +158,7 @@ export default function TableExplorer({
   const relations = useMemo(() => buildTableRelations(packageModel, tableId), [packageModel, tableId])
   const title = node?.title || table.title || 'Table'
   const description = node?.description || table.description || ''
+  const examples = useMemo(() => tableExamples(node?.examples), [node?.examples])
   const columns = useMemo(() => (Array.isArray(table.columns) ? table.columns : []), [table.columns])
   const view = state?.view === VIEW_ROWS ? VIEW_ROWS : VIEW_COLUMNS
   const filters = useMemo(() => normalizeFilters(state?.filters), [state?.filters])
@@ -146,9 +178,11 @@ export default function TableExplorer({
     ? lineageResource.data.columns || null
     : null
 
-  // The pinned bar's height, so each view's search box can pin itself directly underneath it.
+  // The pinned bar's height, so each view's toolbar can pin itself directly underneath it.
   const sectionRef = useRef(null)
   const barRef = useRef(null)
+  // The open view puts its search box here, in the pinned bar; each view keeps its own search.
+  const [searchSlot, setSearchSlot] = useState(null)
   useEffect(() => {
     const bar = barRef.current
     const section = sectionRef.current
@@ -212,8 +246,8 @@ export default function TableExplorer({
     <section className="te" ref={sectionRef} aria-label={`${title} table`} data-table-id={tableId}>
       {/* Pinned while the panel scrolls: which table, and which view. */}
       <div className="te-bar" ref={barRef}>
+        {kicker && <div className="te-kicker">{kicker}</div>}
         <div className="te-heading">
-          {kicker && <div className="te-kicker">{kicker}</div>}
           {picker ? (
             <>
               <Heading ref={headingRef} tabIndex={-1} className="visually-hidden">{title}</Heading>
@@ -222,53 +256,44 @@ export default function TableExplorer({
           ) : (
             <Heading ref={headingRef} tabIndex={-1} className="te-title">{title}</Heading>
           )}
+          <TableAbout key={tableId} title={title} description={description} examples={examples} />
         </div>
-        <div className="te-header-side">
-          <div className="te-view-toggle" role="group" aria-label="Show this table as">
-            <button
-              type="button"
-              className={view === VIEW_COLUMNS ? 'is-active' : ''}
-              aria-pressed={view === VIEW_COLUMNS}
-              onClick={() => setView(VIEW_COLUMNS)}
-              title="One line per column: how filled it is and which values it holds"
-            >
-              <i className="bi bi-layout-three-columns me-1" aria-hidden="true"></i>Columns
-            </button>
-            <button
-              type="button"
-              className={view === VIEW_ROWS ? 'is-active' : ''}
-              aria-pressed={view === VIEW_ROWS}
-              onClick={() => setView(VIEW_ROWS)}
-              title="The records themselves, with search and filters"
-            >
-              <i className="bi bi-table me-1" aria-hidden="true"></i>Rows
-              {filters.length > 0 && (
-                <span className="te-filter-count">
-                  {filters.length}
-                  <span className="visually-hidden"> {filters.length === 1 ? 'filter' : 'filters'} on</span>
-                </span>
-              )}
-            </button>
-          </div>
-          {actions}
+        <div className="te-search" ref={setSearchSlot}></div>
+        <div className="te-view-toggle" role="group" aria-label="Show this table as">
+          <button
+            type="button"
+            className={view === VIEW_COLUMNS ? 'is-active' : ''}
+            aria-pressed={view === VIEW_COLUMNS}
+            onClick={() => setView(VIEW_COLUMNS)}
+            title="One line per column: how filled it is and which values it holds"
+          >
+            <i className="bi bi-layout-three-columns me-1" aria-hidden="true"></i>Columns
+            <span className="te-view-count">{formatCount(columns.length)}</span>
+          </button>
+          <button
+            type="button"
+            className={view === VIEW_ROWS ? 'is-active' : ''}
+            aria-pressed={view === VIEW_ROWS}
+            onClick={() => setView(VIEW_ROWS)}
+            title="The records themselves, with search and filters"
+          >
+            <i className="bi bi-table me-1" aria-hidden="true"></i>Rows
+            <span className="te-view-count">{formatCount(rowCount)}</span>
+            {filters.length > 0 && (
+              <span className="te-filter-count">
+                {filters.length}
+                <span className="visually-hidden"> {filters.length === 1 ? 'filter' : 'filters'} on</span>
+              </span>
+            )}
+          </button>
         </div>
       </div>
-      <header className="te-header">
-        <div className="te-meta">
-          <span>{pluralize(rowCount, 'row')}</span>
-          <span aria-hidden="true">·</span>
-          <span>{pluralize(columns.length, 'column')}</span>
-          <span aria-hidden="true">·</span>
-          <span>{table.is_dwc_dp ? 'Published table' : 'Source file'}</span>
-        </div>
-        <TableDescription key={tableId} text={description} />
-        {headerExtra}
-      </header>
 
       <div className="te-view" hidden={view !== VIEW_COLUMNS}>
         <TableColumnsView
           tableId={tableId}
           tableTitle={title}
+          searchSlot={view === VIEW_COLUMNS ? searchSlot : null}
           stats={stats}
           statsLoading={statsLoading}
           statsError={statsError}
@@ -288,6 +313,7 @@ export default function TableExplorer({
             key={tableId}
             tableId={tableId}
             tableTitle={title}
+            searchSlot={view === VIEW_ROWS ? searchSlot : null}
             columns={columns}
             totalRows={table.row_count}
             version={table.updated_at || ''}

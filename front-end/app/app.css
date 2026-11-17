@@ -733,36 +733,6 @@ code { margin-bottom: 10px; font-size: 0.7em !important; }
     margin: 1rem 0;
 }
 
-.package-examples {
-    background: var(--bs-tertiary-bg);
-    border-left: 3px solid var(--bs-success);
-    border-radius: 0 8px 8px 0;
-    color: var(--bs-secondary-color);
-    font-size: 0.8rem;
-    margin-top: 0.6rem;
-    max-width: 70ch;
-    padding: 0.5rem 0.75rem;
-}
-
-.package-examples strong {
-    color: var(--bs-body-color);
-    display: block;
-    font-size: 0.72rem;
-    margin-bottom: 0.2rem;
-    text-transform: uppercase;
-}
-
-.table-rows-toolbar {
-    align-items: center;
-    display: flex;
-    gap: 0.75rem;
-    margin-bottom: 0.5rem;
-}
-
-.table-rows-toolbar .input-group {
-    max-width: 420px;
-}
-
 .rdt_TableRow.table-row-linked {
     box-shadow: inset 3px 0 0 var(--bs-success);
     background-color: color-mix(in srgb, var(--bs-success) 12%, transparent) !important;

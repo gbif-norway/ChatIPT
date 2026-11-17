@@ -1,6 +1,7 @@
 'use client'
 
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import ColumnValueBreakdown, { ColumnHistogram } from './ColumnValueBreakdown'
 import '../table-columns.css'
 import {
@@ -328,10 +329,14 @@ function SkeletonRows({ names }) {
  * Columns view of the table explorer: one row per column with how filled it is and how many
  * different values it holds, and a value breakdown for the selected column (beside the list
  * when the container is wide, under the selected row when narrow).
+ *
+ * searchSlot: the element in the explorer's pinned bar that shows the "Find a column" box while this view is
+ * open; null while it is not (the search is kept).
  */
 export default function TableColumnsView({
   tableId,
   tableTitle = '',
+  searchSlot = null,
   stats = null,
   statsLoading = false,
   statsError = '',
@@ -365,6 +370,7 @@ export default function TableColumnsView({
   )
   const rowCount = Number(stats?.row_count) || 0
   const selected = allColumns.find((column) => column.name === selectedColumn) || null
+  const narrowed = visibleColumns.length !== allColumns.length
 
   const select = useCallback(
     (name) => onSelectColumn?.(name === selectedColumn ? null : name),
@@ -426,39 +432,30 @@ export default function TableColumnsView({
         {rowCount === 0 && (
           <p className="tcv-empty-state">This table has no rows yet, so every column is empty.</p>
         )}
-        <div className="tcv-toolbar">
-          <div className="tcv-find">
-            <i className="bi bi-search" aria-hidden="true"></i>
-            <input
-              type="search"
-              className="form-control form-control-sm"
-              placeholder="Find a column…"
-              aria-label="Find a column"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
+        {(emptyCount > 0 || narrowed) && (
+          <div className="tcv-toolbar">
+            {emptyCount > 0 && (
+              <div className="form-check form-switch tcv-hide-empty">
+                <input
+                  className="form-check-input"
+                  type="checkbox"
+                  role="switch"
+                  id={`${headingId}-hide-empty`}
+                  checked={hideEmpty}
+                  onChange={(event) => setHideEmpty(event.target.checked)}
+                />
+                <label className="form-check-label" htmlFor={`${headingId}-hide-empty`}>
+                  Hide {pluralize(emptyCount, 'empty column')}
+                </label>
+              </div>
+            )}
+            {narrowed && (
+              <small className="tcv-muted tcv-count">
+                {`${formatCount(visibleColumns.length)} of ${pluralize(allColumns.length, 'column')}`}
+              </small>
+            )}
           </div>
-          {emptyCount > 0 && (
-            <div className="form-check form-switch tcv-hide-empty">
-              <input
-                className="form-check-input"
-                type="checkbox"
-                role="switch"
-                id={`${headingId}-hide-empty`}
-                checked={hideEmpty}
-                onChange={(event) => setHideEmpty(event.target.checked)}
-              />
-              <label className="form-check-label" htmlFor={`${headingId}-hide-empty`}>
-                Hide {pluralize(emptyCount, 'empty column')}
-              </label>
-            </div>
-          )}
-          <small className="tcv-muted tcv-count" aria-live="polite">
-            {visibleColumns.length === allColumns.length
-              ? `${pluralize(allColumns.length, 'column')} · ${pluralize(rowCount, 'row')}`
-              : `${formatCount(visibleColumns.length)} of ${pluralize(allColumns.length, 'column')}`}
-          </small>
-        </div>
+        )}
 
         <div className="tcv-list-header">
           <div className="tcv-cell-name">
@@ -504,9 +501,29 @@ export default function TableColumnsView({
     )
   }
 
+  const search = searchSlot ? createPortal(
+    <div className="input-group input-group-sm">
+      <span className="input-group-text"><i className="bi bi-search" aria-hidden="true"></i></span>
+      <input
+        type="search"
+        className="form-control"
+        placeholder="Find a column…"
+        aria-label="Find a column"
+        value={query}
+        disabled={!allColumns.length && !query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      <span className="visually-hidden" aria-live="polite">
+        {narrowed ? `${formatCount(visibleColumns.length)} of ${pluralize(allColumns.length, 'column')} shown` : ''}
+      </span>
+    </div>,
+    searchSlot,
+  ) : null
+
   const showSide = wide && stats && allColumns.length > 0
   return (
     <div ref={rootRef} className={`tcv ${wide ? 'is-wide' : 'is-narrow'}`}>
+      {search}
       <div className={showSide ? 'tcv-layout' : ''}>
         <div className="tcv-main">{body}</div>
         {showSide && (

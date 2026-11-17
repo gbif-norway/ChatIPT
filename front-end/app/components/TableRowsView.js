@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import DataTable from 'react-data-table-component'
 import config from '../config.js'
 import { pluralize } from '../utils/datasetPresentation'
@@ -149,9 +150,12 @@ function AddFilterForm({ columns, emptyColumns, statsLookup, defaultColumn, onAd
  * Remount with a new `key` to start from a different `initialFilter`
  * (for example `{ search: 'ev-1', column: 'eventID', exact: true }`).
  * Column filters are controlled when `filters` is passed (with `onFiltersChange`), otherwise kept here.
+ * searchSlot: the element in the explorer's pinned bar that shows the search box while this view is open;
+ * null while it is not (the search is kept).
  */
 export default function TableRowsView({
   tableId,
+  searchSlot = null,
   columns,
   totalRows,
   initialFilter = null,
@@ -500,43 +504,41 @@ export default function TableRowsView({
   ) : <div className="table-rows-empty" role="status">This table has no rows.</div>
   const showEmptyState = hasLoaded && !loading && !error && rows.length === 0
 
+  const searchBox = searchSlot ? createPortal(
+    <div className="input-group input-group-sm">
+      <span className="input-group-text"><i className="bi bi-search" aria-hidden="true"></i></span>
+      <input
+        type="search"
+        className="form-control"
+        placeholder={scope ? `Search ${scope.column}…` : 'Search rows…'}
+        aria-label="Search rows"
+        value={searchText}
+        maxLength={SEARCH_MAX_LENGTH}
+        onChange={(event) => setSearchText(event.target.value)}
+      />
+      {scope && (
+        <button
+          type="button"
+          className="btn btn-outline-secondary"
+          onClick={() => setScope(null)}
+          title="Search every column"
+        >
+          {scope.exact ? `${scope.column} =` : `in ${scope.column}`}
+          <i className="bi bi-x ms-1" aria-hidden="true"></i>
+        </button>
+      )}
+      {(searchText || scope) && (
+        <button type="button" className="btn btn-outline-secondary" onClick={clearSearch}>
+          Clear
+        </button>
+      )}
+    </div>,
+    searchSlot,
+  ) : null
+
   return (
     <div className="table-rows-view" ref={rootRef}>
-      <div className="table-rows-toolbar">
-        <div className="input-group input-group-sm">
-          <span className="input-group-text"><i className="bi bi-search" aria-hidden="true"></i></span>
-          <input
-            type="search"
-            className="form-control"
-            placeholder={scope ? `Search ${scope.column}…` : 'Search rows…'}
-            aria-label="Search rows"
-            value={searchText}
-            maxLength={SEARCH_MAX_LENGTH}
-            onChange={(event) => setSearchText(event.target.value)}
-          />
-          {scope && (
-            <button
-              type="button"
-              className="btn btn-outline-secondary"
-              onClick={() => setScope(null)}
-              title="Search every column"
-            >
-              {scope.exact ? `${scope.column} =` : `in ${scope.column}`}
-              <i className="bi bi-x ms-1" aria-hidden="true"></i>
-            </button>
-          )}
-          {(searchText || scope) && (
-            <button type="button" className="btn btn-outline-secondary" onClick={clearSearch}>
-              Clear
-            </button>
-          )}
-        </div>
-        {isFiltering && !loading && !error && (
-          <small className="text-muted text-nowrap" aria-live="polite">
-            {matchingRowsLabel(count, total)}
-          </small>
-        )}
-      </div>
+      {searchBox}
 
       {recordNotice && (
         <div className="alert alert-info d-flex align-items-center gap-2 py-2 small table-rows-notice" role="status">
@@ -583,6 +585,9 @@ export default function TableRowsView({
             Clear all
           </button>
         )}
+        <small className="text-muted text-nowrap table-rows-matching" aria-live="polite">
+          {isFiltering && !loading && !error ? matchingRowsLabel(count, total) : ''}
+        </small>
         {canHideEmpty && (
           <button
             type="button"

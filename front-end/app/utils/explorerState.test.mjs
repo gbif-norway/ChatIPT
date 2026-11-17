@@ -22,6 +22,7 @@ import {
   selectTable,
   setExplorerView,
   showRowsWithFilter,
+  tableExamples,
 } from './explorerState.mjs'
 
 const tables = [
@@ -234,4 +235,21 @@ test('opens a package-explorer table on the main page with only what that table 
   assert.equal(openTableWithState(current, tables, 999, { view: 'rows' }), current)
   // No state: a plain table switch.
   assert.deepEqual(openTableWithState(current, tables, 318), { tableId: 318, view: 'columns', column: null, filters: [] })
+})
+
+test('tableExamples reads the backtick-quoted examples, whatever separates them', () => {
+  assert.deepEqual(
+    tableExamples('`a wolf pack on the shore of Kluane Lake in 1988`; `a virus in a plant leaf`; `a fungus in Central Park`'),
+    ['a wolf pack on the shore of Kluane Lake in 1988', 'a virus in a plant leaf'],
+  )
+  assert.deepEqual(
+    tableExamples('`all bird species`; `Oncorhynchus mykiss (only)`, `all total lengths except < 12 inches`', 5),
+    ['all bird species', 'Oncorhynchus mykiss (only)', 'all total lengths except < 12 inches'],
+  )
+})
+
+test('tableExamples splits unquoted text on semicolons and ignores blanks', () => {
+  assert.deepEqual(tableExamples('a bird observation; ; a camera trap image capture'), ['a bird observation', 'a camera trap image capture'])
+  assert.deepEqual(tableExamples(''), [])
+  assert.deepEqual(tableExamples(null), [])
 })

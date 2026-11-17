@@ -196,6 +196,15 @@ export const nodeForTable = (model, tableId) => (
   (model?.nodes || []).find((node) => sameId(node.tableId, tableId)) || null
 )
 
+// A table's examples from the standard ("`a`; `b`, `c`") as plain text, the first `limit` of them.
+// Each example is quoted in backticks; text without backticks is split on semicolons.
+export const tableExamples = (value, limit = 2) => {
+  const text = String(value || '')
+  const quoted = [...text.matchAll(/`([^`]+)`/g)].map((match) => match[1])
+  const examples = quoted.length ? quoted : text.split(';')
+  return examples.map((example) => example.trim()).filter(Boolean).slice(0, limit)
+}
+
 const nodeById = (model) => new Map((model?.nodes || []).map((node) => [node.id, node]))
 
 const singleField = (fields) => (Array.isArray(fields) && fields.length === 1 ? fields[0] : null)
