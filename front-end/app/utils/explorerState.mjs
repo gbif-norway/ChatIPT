@@ -122,37 +122,6 @@ export const resolveExplorerState = (decoded, tables, fallbackView = DEFAULT_VIE
   }
 }
 
-// After the table list is refreshed: keep the open table when it still exists (dropping a column or
-// filters it no longer has, and keeping the same object when nothing changed), otherwise open the first table.
-export const explorerAfterTablesChange = (current, nextTables) => {
-  if (current.tableId !== null && current.tableId !== undefined) {
-    const kept = resolveExplorerState({ ...current, tableId: String(current.tableId) }, nextTables, current.view)
-    if (kept) {
-      const unchanged = kept.column === current.column
-        && JSON.stringify(kept.filters) === JSON.stringify(normalizeFilters(current.filters))
-      return unchanged ? current : { ...current, column: kept.column, filters: kept.filters }
-    }
-  }
-  return selectTable(current, orderTables(nextTables)[0]?.id ?? null)
-}
-
-// "Open on main page" from the package explorer: show that table with the view, column and filters it had there,
-// keeping only a column and filters the main page's copy of the table has. When the main page does not know the
-// table (its list is out of date), nothing changes.
-export const openTableWithState = (current, tables, tableId, state = null) => {
-  const base = current || emptyExplorerState()
-  if (tableId === null || tableId === undefined) return base
-  const resolved = resolveExplorerState({
-    tableId: String(tableId),
-    view: isExplorerView(state?.view) ? state.view : null,
-    column: state?.column ?? null,
-    filters: Array.isArray(state?.filters) ? state.filters : [],
-  }, tables, base.view)
-  if (!resolved) return base
-  if (!state) return selectTable(base, resolved.tableId)
-  return { ...base, ...resolved }
-}
-
 // Writes the explorer state into a query string, keeping unrelated parameters. Returns the new string without "?".
 export const explorerSearchString = (currentSearch, state) => {
   const params = new URLSearchParams(currentSearch || '')
@@ -290,4 +259,79 @@ export const appendToComposer = (current, text) => {
   if (!addition) return current || ''
   const existing = String(current || '').replace(/\s+$/, '')
   return existing ? `${existing}\n\n${addition}` : addition
+}
+
+// Package explorer modal: which table is open as the package model and the source tables change, and
+// what an openPackageExplorer() request opens.
+
+// The linked table the modal opens first: the standard's usual order, then by title.
+export const firstPackageTableId = (model) => {
+  const nodes = [...(model?.nodes || [])].sort((a, b) => {
+    const aIndex = TABLE_PRIORITY.indexOf(a.id)
+    const bIndex = TABLE_PRIORITY.indexOf(b.id)
+    if (aIndex === -1 && bIndex === -1) return String(a.title).localeCompare(String(b.title))
+    if (aIndex === -1) return 1
+    if (bIndex === -1) return -1
+    return aIndex - bIndex
+  })
+  return nodes[0]?.tableId ?? null
+}
+
+const isSource = (sourceTables, tableId) => (sourceTables || []).some((table) => sameId(table.id, tableId))
+
+// The tables the modal can show, with their columns: the package's (from the model) and the source tables.
+const explorerTables = (model, sourceTables) => [
+  ...(model?.nodes || []).map((node) => ({ id: node.tableId, columns: (node.fields || []).map((field) => field.name) })),
+  ...(sourceTables || []),
+]
+
+// After the package model or the source tables change. The open table stays while it exists, losing a column
+// or filters on columns it no longer has; otherwise the first linked table opens (the first source table while
+// there is no package). `pending` is a request still waiting for the package model ({tableId} or
+// {focus: 'package'}); `waiting` says the model it waits for has not arrived yet. The modal forgets a
+// pending request as soon as the person opens a table themselves.
+export const reconcileExplorer = (current, { model = null, sourceTables = [], pending = null, waiting = false } = {}) => {
+  if (pending?.focus === 'package' && !waiting) {
+    const first = firstPackageTableId(model)
+    if (first !== null) return selectTable(current, first)
+  }
+  if (current.tableId !== null && current.tableId !== undefined) {
+    const kept = resolveExplorerState({ ...current, tableId: String(current.tableId) }, explorerTables(model, sourceTables), current.view)
+    if (kept) {
+      const unchanged = kept.column === current.column
+        && JSON.stringify(kept.filters) === JSON.stringify(normalizeFilters(current.filters))
+      return unchanged ? current : { ...current, column: kept.column, filters: kept.filters }
+    }
+    // A package table asked for before the model knew it stays chosen until that model arrives.
+    if (waiting && pending?.tableId !== undefined && pending?.tableId !== null && sameId(pending.tableId, current.tableId)) {
+      return current
+    }
+  }
+  return selectTable(current, firstPackageTableId(model) ?? sourceTables[0]?.id ?? null)
+}
+
+// What openPackageExplorer({tableId, state} | {focus}) opens, and the part that has to wait for the package
+// model: a table the current model does not know yet, or the linked tables before the model has any (Explore
+// is only offered once linked tables exist, so a model with them is on its way even when none is loading).
+// modelSettled: the model is loaded and no newer one is loading, so an unknown table is not worth waiting for.
+export const explorerForRequest = (current, request, { model = null, sourceTables = [], modelSettled = false } = {}) => {
+  const { tableId = null, state = null, focus = null } = request || {}
+  if (tableId !== null && tableId !== undefined) {
+    const known = Boolean(nodeForTable(model, tableId)) || isSource(sourceTables, tableId)
+    if (!known && modelSettled) {
+      return { explorer: reconcileExplorer(current, { model, sourceTables }), pending: null }
+    }
+    const explorer = state ? { ...current, ...state, tableId } : selectTable(current, tableId)
+    return { explorer, pending: known ? null : { tableId } }
+  }
+  if (focus === 'package') {
+    if (nodeForTable(model, current.tableId)) return { explorer: current, pending: null }
+    const first = firstPackageTableId(model)
+    if (first !== null) return { explorer: selectTable(current, first), pending: null }
+    return { explorer: current, pending: { focus: 'package' } }
+  }
+  if (focus === 'sources' && sourceTables.length && !isSource(sourceTables, current.tableId)) {
+    return { explorer: selectTable(current, sourceTables[0].id), pending: null }
+  }
+  return { explorer: current, pending: null }
 }

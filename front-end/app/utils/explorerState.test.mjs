@@ -9,12 +9,10 @@ import {
   decodeFilters,
   emptyExplorerState,
   encodeFilters,
-  explorerAfterTablesChange,
   explorerSearchString,
   groupTables,
   nodeForTable,
   openRelatedState,
-  openTableWithState,
   orderTables,
   outgoingByColumn,
   publishedTablesKey,
@@ -206,35 +204,6 @@ test('appends asked-about text to what is already typed', () => {
   assert.equal(appendToComposer('Hello  \n', ' Why? '), 'Hello\n\nWhy?')
   assert.equal(appendToComposer('Hello', '   '), 'Hello')
   assert.equal(appendToComposer(undefined, 'Hi'), 'Hi')
-})
-
-test('a refresh keeps the open table, view and filters, and copes with a table disappearing', () => {
-  const state = { tableId: 322, view: 'rows', column: 'sex', filters: [{ column: 'sex', op: 'is', value: 'female' }] }
-  const refreshed = tables.map((table) => ({ ...table, updated_at: 'later' }))
-  assert.equal(explorerAfterTablesChange(state, refreshed), state)
-  const fewerColumns = refreshed.map((table) => (table.id === 322 ? { ...table, columns: ['occurrence_pk'] } : table))
-  assert.deepEqual(explorerAfterTablesChange(state, fewerColumns), { tableId: 322, view: 'rows', column: null, filters: [] })
-  const without = refreshed.filter((table) => table.id !== 322)
-  assert.deepEqual(explorerAfterTablesChange(state, without), { tableId: 315, view: 'rows', column: null, filters: [] })
-  assert.deepEqual(explorerAfterTablesChange(state, []), { tableId: null, view: 'rows', column: null, filters: [] })
-  assert.equal(explorerAfterTablesChange(emptyExplorerState(), tables).tableId, 315)
-})
-
-test('opens a package-explorer table on the main page with only what that table has', () => {
-  const current = { tableId: 315, view: 'columns', column: 'eventID', filters: [] }
-  assert.deepEqual(
-    openTableWithState(current, tables, 322, {
-      view: 'rows',
-      column: 'gone',
-      filters: [{ column: 'sex', op: 'is', value: 'female' }, { column: 'gone', op: 'blank' }],
-    }),
-    { tableId: 322, view: 'rows', column: null, filters: [{ column: 'sex', op: 'is', value: 'female' }] },
-  )
-  assert.deepEqual(openTableWithState(current, tables, '322', { view: 'rows', column: 'sex', filters: [] }).column, 'sex')
-  // Unknown table: nothing changes.
-  assert.equal(openTableWithState(current, tables, 999, { view: 'rows' }), current)
-  // No state: a plain table switch.
-  assert.deepEqual(openTableWithState(current, tables, 318), { tableId: 318, view: 'columns', column: null, filters: [] })
 })
 
 test('tableExamples reads the backtick-quoted examples, whatever separates them', () => {

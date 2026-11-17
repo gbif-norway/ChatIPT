@@ -6,10 +6,9 @@ import { useDataset } from '../contexts/DatasetContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useGbifStatus } from '../contexts/GbifStatusContext';
 import Agent from './Agent';
-import DatasetPackageOverview, { PublicationPackageCards } from './DatasetPackageOverview';
-import PackageExplorer from './PackageExplorer';
-import TableExplorer, { rememberedView } from './TableExplorer';
-import TableList from './TableList';
+import DatasetPanel from './DatasetPanel';
+import PackageExplorer, { openPackageExplorer } from './PackageExplorer';
+import { rememberedView } from './TableExplorer';
 import TreeVisualization from './TreeVisualization';
 import { getDatasetStatus, getStatusMeta, pluralize } from '../utils/datasetPresentation';
 import { datasetIsActivelyProcessing } from '../utils/workflowState.mjs';
@@ -21,16 +20,10 @@ import { publishableEmail } from '../utils/creatorEmail.mjs';
 import { apiErrorMessage, normalizeTableList } from '../utils/tableApi.mjs';
 import {
   decodeExplorerState,
-  emptyExplorerState,
-  explorerAfterTablesChange,
   explorerSearchString,
-  nodeForTable,
-  openRelatedState,
-  orderTables,
   publishedTablesKey,
   resolveExplorerState,
   sameId,
-  selectTable,
 } from '../utils/explorerState.mjs';
 
 // The package model computes link coverage, so it is refetched only after the tables settle,
@@ -126,22 +119,21 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   const [tables, setTables] = useState([]);
   const [tablesLoading, setTablesLoading] = useState(true);
   const [tablesError, setTablesError] = useState('');
-  // Which table the explorer shows, and its view, selected column and filters. Mirrored in the address.
-  const [explorer, setExplorer] = useState(() => emptyExplorerState(rememberedView()));
-  const activeTableId = explorer.tableId;
-  const setActiveTableId = useCallback((tableId) => {
-    setExplorer((current) => selectTable(current, tableId));
-  }, []);
+  // The table, view, column and filters open in the package explorer modal (null while it is closed),
+  // mirrored in the address so a view can be shared or reloaded.
+  const [addressState, setAddressState] = useState(null);
+  // The address is only written once it has been read: until the tables load, it may name a table to open.
+  const [addressRead, setAddressRead] = useState(false);
+  // The dataset whose tables this page shows; a table request for any other dataset is stale.
+  const shownDatasetRef = useRef(null);
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  // Read when the tables load; otherwise the address only follows the explorer, never the other way round.
+  // Read when the tables load; otherwise the address only follows the modal, never the other way round.
   const searchParamsRef = useRef(searchParams);
-  // One package model for the whole page, shared by the table explorer and the package explorer modal.
+  // One package model for the whole page, used by the package explorer modal.
   const [packageModelState, setPackageModelState] = useState({ datasetId: null, model: null, loading: false, error: '' });
   const modelRequestRef = useRef({ datasetId: null, inFlightKey: null, pendingKey: null, loadedKey: null, controller: null });
   const agentBusyRef = useRef(false);
-  // Set when a link from a record opens a table, so that table's heading gets focus.
-  const [explorerFocus, setExplorerFocus] = useState(null);
   const [composerAgentIds, setComposerAgentIds] = useState([]);
   const [askRequest, setAskRequest] = useState(null);
   const processingRefreshStartedRef = useRef(null);
@@ -211,50 +203,67 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     }
   };
 
+  // Tables that arrive after the page has moved on to another dataset (or left) are dropped.
   const loadTablesForDataset = useCallback(async (datasetId) => {
     console.log('loading tables for dataset', datasetId);
     setTablesLoading(true);
     setTablesError('');
+    setAddressRead(false);
+    let nextTables = null;
     try {
-      const payload = await fetchData(`${config.baseUrl}/api/tables?dataset=${datasetId}`);
-      const nextTables = normalizeTableList(payload);
+      nextTables = normalizeTableList(await fetchData(`${config.baseUrl}/api/tables?dataset=${datasetId}`));
+    } catch (error) {
+      console.error('Error loading tables:', error);
+    }
+    if (!sameId(shownDatasetRef.current, datasetId)) return;
+    if (nextTables) {
       setTables(nextTables);
-      // Loading restores a table, view, column and filters from a shared address when they still fit.
+      // A shared or reloaded address opens the explorer on its table, view, column and filters when they still fit.
       const restored = resolveExplorerState(
         decodeExplorerState(searchParamsRef.current),
         nextTables,
         rememberedView(),
       );
-      setExplorer((current) => restored || selectTable(
-        { ...current, tableId: null },
-        orderTables(nextTables)[0]?.id ?? null,
-      ));
-    } catch (error) {
-      console.error('Error loading tables:', error);
+      if (restored) {
+        // The address already says this; keeping it while the modal opens means it is never cleared meanwhile.
+        setAddressState(restored);
+        openPackageExplorer({
+          tableId: restored.tableId,
+          state: restored,
+          isCurrent: () => sameId(shownDatasetRef.current, datasetId),
+        });
+      }
+      setAddressRead(true);
+    } else {
+      // The address keeps any table it names, for the retry below or a reload.
       setTables([]);
-      setActiveTableId(null);
       setTablesError('Tables could not be loaded. Please retry.');
-    } finally {
-      setTablesLoading(false);
     }
-  }, [setActiveTableId]);
+    setTablesLoading(false);
+  }, []);
 
   const refreshTables = useCallback(async () => {
     console.log('refreshing tables');
+    const datasetId = currentDatasetId;
     setTablesLoading(true);
     setTablesError('');
+    let nextTables = null;
     try {
-      const payload = await fetchData(`${config.baseUrl}/api/tables?dataset=${currentDatasetId}`);
-      const nextTables = normalizeTableList(payload);
-      setTables(nextTables);
-      setExplorer((current) => explorerAfterTablesChange(current, nextTables));
+      nextTables = normalizeTableList(await fetchData(`${config.baseUrl}/api/tables?dataset=${datasetId}`));
     } catch (error) {
       console.error('Error refreshing tables:', error);
-      setTablesError('Tables could not be refreshed. Please retry.');
-    } finally {
-      setTablesLoading(false);
     }
+    if (!sameId(shownDatasetRef.current, datasetId)) return;
+    if (nextTables) setTables(nextTables);
+    else setTablesError('Tables could not be refreshed. Please retry.');
+    setTablesLoading(false);
   }, [currentDatasetId]);
+
+  // Reloads the tables (after agent changes, or Retry). While the first load has not succeeded it loads again
+  // from scratch, so a table named in the address still opens.
+  const reloadTables = useCallback(() => (
+    addressRead ? refreshTables() : loadTablesForDataset(currentDatasetId)
+  ), [addressRead, refreshTables, loadTablesForDataset, currentDatasetId]);
 
 
   const handleVisualizeTreeClick = () => {
@@ -270,6 +279,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   }, []);
 
   useEffect(() => {
+    shownDatasetRef.current = currentDatasetId ?? null;
     if (currentDatasetId) {
       loadTablesForDataset(currentDatasetId);
     } else {
@@ -277,27 +287,30 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       setTables([]);
       setTablesLoading(false);
       setTablesError('');
-      setActiveTableId(null);
     }
-  }, [currentDatasetId, loadTablesForDataset, setActiveTableId]);
+    return () => {
+      shownDatasetRef.current = null;
+    };
+  }, [currentDatasetId, loadTablesForDataset]);
 
   useEffect(() => {
     searchParamsRef.current = searchParams;
   }, [searchParams]);
 
-  // The address follows the explorer (replace, never push), so a view can be shared or reloaded.
+  // The address follows the explorer modal (replace, never push), so a view can be shared or reloaded;
+  // closing the modal takes the table out of it again.
   // history.replaceState rather than router.replace: no request to the Next server (whose logs would
   // otherwise hold filter values), and Next keeps useSearchParams in step with it.
   useEffect(() => {
-    if (explorer.tableId === null || explorer.tableId === undefined) return undefined;
+    if (!addressRead) return undefined;
     const timeout = window.setTimeout(() => {
       const current = window.location.search.replace(/^\?/, '');
-      const next = explorerSearchString(current, explorer);
+      const next = explorerSearchString(current, addressState);
       if (next === current) return;
       window.history.replaceState(null, '', `${pathname}${next ? `?${next}` : ''}${window.location.hash}`);
     }, URL_UPDATE_DELAY_MS);
     return () => window.clearTimeout(timeout);
-  }, [explorer, pathname]);
+  }, [addressState, addressRead, pathname]);
 
   // Field descriptions, key badges, link health and linked records for the DwC-DP tables come from
   // the package model. Loaded only when such tables exist, and refetched (debounced) when they change.
@@ -375,13 +388,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
   }, [currentDatasetId, publishedKey, fetchPackageModel]);
   const modelIsCurrent = sameId(packageModelState.datasetId, currentDatasetId);
   const sharedPackageModel = modelIsCurrent ? packageModelState.model : null;
-  const packageModel = publishedKey ? sharedPackageModel : null;
-  // The picker shows the standard's titles ("Material Assertion") for DwC-DP tables once the model is known.
-  const pickerTables = useMemo(() => tables.map((table) => {
-    const node = table.is_dwc_dp ? nodeForTable(packageModel, table.id) : null;
-    return node ? { ...table, title: node.title, resource: table.title } : table;
-  }), [tables, packageModel]);
-
   // "Ask ChatIPT" puts text into the chat box of the agent whose box is shown right now.
   const handleComposerAvailability = useCallback((agentId, available) => {
     setComposerAgentIds((ids) => {
@@ -400,22 +406,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     setAskRequest({ id: `${Date.now()}-${Math.random()}`, agentId: askAgentId, text });
   }, [askAgentId]);
   const onAsk = askAgentId !== null ? handleAsk : undefined;
-
-  const handleExplorerChange = useCallback((next) => {
-    setExplorer((current) => (sameId(current.tableId, next.tableId) ? next : current));
-  }, []);
-
-  const handleOpenRelated = useCallback(({ tableId, filters }) => {
-    const target = tables.find((table) => sameId(table.id, tableId));
-    if (!target) return;
-    setExplorer((current) => openRelatedState(current, { tableId: target.id, filters }));
-    setExplorerFocus((current) => ({ tableId: target.id, request: (current?.request || 0) + 1 }));
-  }, [tables]);
-
-  const handlePickTable = useCallback((tableId) => {
-    setExplorerFocus(null);
-    setActiveTableId(tableId);
-  }, [setActiveTableId]);
 
   useEffect(() => {
     if (currentDatasetId && datasetIsActivelyProcessing(currentDataset)
@@ -474,7 +464,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       users: prev.users.filter((_, personIndex) => personIndex !== index),
     }));
   };
-
 
   // Dataset.js should only be shown when there's a currentDatasetId
   // The upload flow is now handled in page.js
@@ -760,38 +749,19 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       setIsSavingMetadata(false);
     }
   };
-  const pdfFiles = Array.isArray(currentDataset?.user_files)
-    ? currentDataset.user_files.filter((file) => {
-        const fileType = String(file?.file_type || '').toLowerCase();
-        return fileType.includes('pdf');
-      })
-    : [];
   const uploadedFiles = Array.isArray(currentDataset?.user_files) ? currentDataset.user_files : [];
   const datasetStatus = getDatasetStatus(currentDataset, gbifPaused);
   const statusMeta = getStatusMeta(datasetStatus);
   const normalizedStructureNotes = String(currentDataset.structure_notes || '').replace(/\\n/g, '\n');
 
-  const activeTable = tables.find((table) => sameId(table.id, activeTableId)) || null;
-
-  // Secondary actions live in one menu so the header keeps a single main button.
+  // Secondary actions live in one menu so the header keeps a single main button. The GBIF link, the
+  // uploaded files and their notes are in the panel beside the chat.
   const moreActions = [
-    currentDataset.published_at && currentDataset.gbif_url && {
-      label: 'View on GBIF (sandbox)',
-      item: <a className="dropdown-item" href={currentDataset.gbif_url} target="_blank" rel="noopener noreferrer"><i className="bi bi-globe me-2" aria-hidden="true"></i>View on GBIF (sandbox)</a>
-    },
-    (currentDataset.structure_notes || uploadedFiles.length > 0) && {
-      label: 'Uploaded files and notes',
-      item: <button type="button" className="dropdown-item" data-bs-toggle="modal" data-bs-target="#structureNotesModal"><i className="bi bi-files me-2" aria-hidden="true"></i>Uploaded files and notes</button>
-    },
     currentDataset.can_visualize_tree && {
       label: 'View phylogenetic tree',
       item: <button type="button" className="dropdown-item" data-bs-toggle="modal" data-bs-target="#treeVisualizationModal" onClick={handleVisualizeTreeClick}><i className="bi bi-diagram-3 me-2" aria-hidden="true"></i>View phylogenetic tree</button>
     },
   ].filter(Boolean);
-
-  const getPdfStatusBadge = () => {
-    return { label: 'Available to model', className: 'text-bg-success' };
-  };
 
   return (
     <div className="container publication-workspace">
@@ -842,32 +812,10 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
           {currentDataset.description && (
             <p className="mb-3">{currentDataset.description}</p>
           )}
-          <DatasetPackageOverview
-            dataset={currentDataset}
-            tables={tables}
-            tablesLoading={tablesLoading}
-          />
-          {pdfFiles.length > 0 && (
-            <div className="mb-3">
-              <div className="d-flex flex-wrap gap-2">
-                {pdfFiles.map((pdfFile) => {
-                  const badge = getPdfStatusBadge(pdfFile);
-                  return (
-                    <span key={pdfFile.id} className={`badge ${badge.className} d-inline-flex align-items-center gap-1`}>
-                      <i className="bi bi-file-earmark-pdf" aria-hidden="true"></i>
-                      <span>{pdfFile.filename}</span>
-                      <span>•</span>
-                      <span>{badge.label}</span>
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </div>
       </div>
       <div className="row mx-auto px-4 pb-4 pt-2 no-left-padding">
-        <div className="col-12 col-lg-6">
+        <div className="col-12 col-lg-8">
           {Array.isArray(currentDataset.visible_agent_set) && currentDataset.visible_agent_set.length > 0 ? (
             <Accordion activeKey={activeAgentKey} onSelect={(key) => setActiveAgentKey(key)}>
               {currentDataset.visible_agent_set.map(agent => (
@@ -876,7 +824,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
                   agent={agent}
                   refreshDataset={() => refreshDataset(currentDatasetId)}
                   currentDatasetId={currentDatasetId}
-                  refreshTables={refreshTables}
+                  refreshTables={reloadTables}
                   showMetadataEditLink={METADATA_EDIT_TASKS.has(agent.task.name)}
                   onEditMetadata={handleStartMetadataEdit}
                   askRequest={askRequest?.agentId === agent.id ? askRequest : null}
@@ -907,71 +855,17 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
               )}
             </div>
           )}
-          {currentDataset.published_at != null && (
-            <div className="message final-message">
-              <div className="alert alert-success" role="alert">
-                <strong>Published to the GBIF sandbox</strong>
-                <hr />
-                <a href={currentDataset.gbif_url} className="btn btn-outline-primary" role="button" aria-pressed="true" target="_blank" rel="noopener noreferrer">View on GBIF (sandbox)</a>
-                <a href={productionPublishMailto} className="btn btn-success" role="button" aria-pressed="true">Request publication to GBIF</a>
-              </div>
-            </div>
-          )}
-          <PublicationPackageCards
-            dataset={currentDataset}
-            tables={tables}
-          />
         </div>
-        <div className="col-12 col-lg-6 mt-4 mt-lg-0">
-          <div className="dataset-table-panel">
-            {tablesLoading && tables.length === 0 ? (
-              <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '200px' }}>
-                <div className="spinner-border" role="status">
-                  <span className="visually-hidden">Loading tables...</span>
-                </div>
-              </div>
-            ) : tablesError && tables.length === 0 ? (
-              <div className="alert alert-danger" role="alert">
-                <strong>{tablesError}</strong>
-                <div className="mt-2">
-                  <button type="button" className="btn btn-sm btn-outline-danger" onClick={refreshTables}>
-                    Retry
-                  </button>
-                </div>
-              </div>
-            ) : activeTable ? (
-              <>
-                {tablesError && (
-                  <div className="alert alert-warning d-flex align-items-center gap-2 py-2 small" role="alert">
-                    <span>{tablesError} Showing the tables as they were.</span>
-                    <button type="button" className="btn btn-sm btn-outline-secondary ms-auto" onClick={refreshTables}>
-                      Retry
-                    </button>
-                  </div>
-                )}
-                <TableExplorer
-                  key={activeTable.id}
-                  table={activeTable}
-                  state={explorer}
-                  onStateChange={handleExplorerChange}
-                  packageModel={packageModel}
-                  onOpenRelated={handleOpenRelated}
-                  onAsk={onAsk}
-                  focusRequest={explorerFocus && sameId(explorerFocus.tableId, activeTable.id) ? explorerFocus.request : null}
-                  picker={tables.length > 1 ? (
-                    <TableList tables={pickerTables} selectedId={activeTable.id} onSelect={handlePickTable} />
-                  ) : null}
-                />
-              </>
-            ) : (
-              <div className="alert alert-info">
-                <strong>No tables to display yet.</strong>
-                <div className="small">
-                  If you uploaded only PDFs, review extraction status above and upload raw biodiversity tables when needed.
-                </div>
-              </div>
-            )}
-          </div>
+        <div className="col-12 col-lg-4 mt-4 mt-lg-0">
+          <DatasetPanel
+            dataset={currentDataset}
+            status={datasetStatus}
+            tables={tables}
+            tablesLoading={tablesLoading}
+            tablesError={tablesError}
+            onRetryTables={reloadTables}
+            productionPublishMailto={currentDataset.published_at ? productionPublishMailto : ''}
+          />
         </div>
       </div>
 
@@ -988,6 +882,8 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
         modelLoading={modelIsCurrent && packageModelState.loading}
         modelError={modelIsCurrent ? packageModelState.error : ''}
         onReloadModel={reloadPackageModel}
+        sourceTables={tables}
+        onExplorerStateChange={setAddressState}
       />
 
       <div className="modal fade" id="datasetMetadataModal" tabIndex="-1" aria-labelledby="datasetMetadataModalLabel" aria-hidden="true">

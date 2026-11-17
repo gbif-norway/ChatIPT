@@ -271,6 +271,7 @@ class DatasetSerializer(serializers.ModelSerializer):
     can_visualize_tree = serializers.SerializerMethodField()
     package_ready = serializers.BooleanField(read_only=True)
     dwc_dp_standard = serializers.SerializerMethodField()
+    dwca_summary = serializers.SerializerMethodField()
 
     class Meta:
         model = Dataset
@@ -298,6 +299,7 @@ class DatasetSerializer(serializers.ModelSerializer):
             'user_files',
             'can_visualize_tree',
             'package_ready',
+            'dwca_summary',
         ]
         read_only_fields = [
             'created_at',
@@ -339,6 +341,11 @@ class DatasetSerializer(serializers.ModelSerializer):
     def get_can_visualize_tree(self, dataset):
         """Check if tree visualization is available for this dataset"""
         return dataset.can_visualize_tree()
+
+    def get_dwca_summary(self, dataset):
+        from api.dwca_summary import dwca_summary
+
+        return dwca_summary(dataset.dwca_url, dataset.dwca_validation, dataset.dwca_row_types)
 
     def get_dwc_dp_standard(self, dataset):
         from api.dwc_dp_specs import DWC_DP_PROFILE_URL, dwc_dp_schema_snapshot

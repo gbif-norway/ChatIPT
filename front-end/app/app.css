@@ -147,84 +147,6 @@ code { margin-bottom: 10px; font-size: 0.7em !important; }
 .whats-new-month ul { margin-bottom: 0; padding-left: 1.2rem; }
 .whats-new-month li { padding-bottom: 0.25rem; }
 
-.dataset-overview {
-    position: relative;
-}
-
-.dataset-overview-line {
-    align-items: center;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.45rem 0.75rem;
-}
-
-.dataset-overview-tooltip {
-    cursor: help;
-    outline: none;
-    position: relative;
-}
-
-.dataset-overview-tooltip h3 {
-    border-bottom: 1px dotted currentColor;
-}
-
-.dataset-overview-tooltip-content {
-    background: #212529;
-    border-radius: 6px;
-    bottom: calc(100% + 8px);
-    color: #fff;
-    font-size: 0.78rem;
-    font-weight: 400;
-    left: 0;
-    line-height: 1.4;
-    max-width: min(360px, 80vw);
-    opacity: 0;
-    padding: 0.55rem 0.7rem;
-    pointer-events: none;
-    position: absolute;
-    transition: opacity 0.15s ease;
-    visibility: hidden;
-    width: max-content;
-    z-index: 1080;
-}
-
-.dataset-overview-tooltip-content::after {
-    border-left: 6px solid transparent;
-    border-right: 6px solid transparent;
-    border-top: 6px solid #212529;
-    content: "";
-    left: 18px;
-    position: absolute;
-    top: 100%;
-}
-
-.dataset-overview-tooltip:hover .dataset-overview-tooltip-content,
-.dataset-overview-tooltip:focus .dataset-overview-tooltip-content,
-.dataset-overview-tooltip:focus-within .dataset-overview-tooltip-content {
-    opacity: 1;
-    visibility: visible;
-}
-
-.publication-packages {
-    scroll-margin-top: 1rem;
-}
-
-.publication-output-card {
-    background: var(--bs-body-bg);
-}
-
-@media (min-width: 992px) {
-    /* Sticky beside the chat, scrolling on its own so the bottom of a long table stays reachable. */
-    .dataset-table-panel {
-        max-height: 100vh;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-        padding: 0 0.25rem 0.5rem;
-        position: sticky;
-        top: 0;
-    }
-}
-
 /* Light theme styles */
 .light .rdt_Pagination svg { fill: #000 !important; }
 
@@ -435,20 +357,6 @@ code { margin-bottom: 10px; font-size: 0.7em !important; }
 }
 
 /* Darwin Core Data Package explorer */
-.dataset-overview-explore {
-    border-radius: 999px;
-    line-height: 1.2;
-    padding: 0.24rem 0.65rem;
-}
-
-.package-download-menu {
-    max-width: min(22rem, 90vw);
-}
-
-.package-download-menu .dropdown-item {
-    white-space: normal;
-}
-
 .package-explorer-dialog {
     --bs-modal-width: min(96vw, 1680px);
     height: min(92vh, 940px);
@@ -535,6 +443,11 @@ code { margin-bottom: 10px; font-size: 0.7em !important; }
 
 .package-explorer-workspace.is-map-expanded {
     grid-template-columns: minmax(260px, 62%) minmax(0, 1fr);
+}
+
+/* No package yet, only source tables: the table viewer takes the whole width. */
+.package-explorer-workspace.is-sources-only {
+    grid-template-columns: minmax(0, 1fr);
 }
 
 @media (prefers-reduced-motion: reduce) {

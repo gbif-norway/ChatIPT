@@ -1,0 +1,232 @@
+/* The right-hand panel of the dataset page (DatasetPanel.js). */
+
+.dataset-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+@media (min-width: 992px) {
+    /* Sticky beside the chat, scrolling on its own when it is taller than the window. */
+    .dataset-panel {
+        max-height: 100vh;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 0 0.25rem 0.75rem;
+        position: sticky;
+        top: 0;
+    }
+}
+
+.dataset-panel h2 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.dataset-panel h3 {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.dataset-panel-section {
+    background: var(--bs-body-bg);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.5rem;
+    padding: 0.85rem 1rem;
+}
+
+/* What is happening now: a coloured edge says whether ChatIPT or the person is next. */
+.dataset-panel-now {
+    border-left: 4px solid var(--panel-tone, var(--bs-primary));
+}
+
+.dataset-panel-now.is-primary { --panel-tone: var(--bs-primary); }
+.dataset-panel-now.is-warning { --panel-tone: var(--bs-warning); }
+.dataset-panel-now.is-secondary { --panel-tone: var(--bs-secondary); }
+.dataset-panel-now.is-danger { --panel-tone: var(--bs-danger); }
+.dataset-panel-now.is-success { --panel-tone: var(--bs-success); }
+
+.dataset-panel-now-title {
+    align-items: center;
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+
+.dataset-panel-now-title .bi {
+    color: var(--panel-tone, var(--bs-primary));
+}
+
+.dataset-panel-now.is-primary .dataset-panel-now-title .bi {
+    animation: dataset-panel-spin 2.4s linear infinite;
+}
+
+@keyframes dataset-panel-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .dataset-panel-now.is-primary .dataset-panel-now-title .bi {
+        animation: none;
+    }
+}
+
+.dataset-panel-notify:not(:empty) {
+    margin-top: 0.6rem;
+}
+
+.dataset-panel-heading {
+    align-items: center;
+    display: flex;
+    gap: 0.4rem;
+    margin-bottom: 0.65rem;
+}
+
+.dataset-panel-card {
+    border-top: 1px solid var(--bs-border-color-translucent);
+    padding: 0.7rem 0;
+}
+
+.dataset-panel-card:last-child {
+    padding-bottom: 0;
+}
+
+.dataset-panel-card-head {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-bottom: 0.35rem;
+}
+
+.dataset-panel-card-head .dataset-panel-state {
+    margin-left: auto;
+}
+
+.dataset-panel-state {
+    align-items: center;
+    border-radius: 999px;
+    display: inline-flex;
+    font-size: 0.72rem;
+    font-weight: 600;
+    gap: 0.3rem;
+    line-height: 1;
+    padding: 0.3rem 0.55rem;
+    white-space: nowrap;
+}
+
+.dataset-panel-state .spinner-border-sm {
+    border-width: 0.12em;
+    height: 0.7rem;
+    width: 0.7rem;
+}
+
+.dataset-panel-state.is-success { background: var(--bs-success-bg-subtle); color: var(--bs-success-text-emphasis); }
+.dataset-panel-state.is-danger { background: var(--bs-danger-bg-subtle); color: var(--bs-danger-text-emphasis); }
+.dataset-panel-state.is-info { background: var(--bs-info-bg-subtle); color: var(--bs-info-text-emphasis); }
+.dataset-panel-state.is-warning { background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); }
+.dataset-panel-state.is-secondary { background: var(--bs-secondary-bg); color: var(--bs-secondary-color); }
+
+.dataset-panel-tip {
+    background: none;
+    border: 0;
+    color: var(--bs-secondary-color);
+    cursor: help;
+    font-size: 0.8rem;
+    line-height: 1;
+    padding: 0.15rem;
+}
+
+.dataset-panel-tip:hover,
+.dataset-panel-tip:focus-visible {
+    color: var(--bs-body-color);
+}
+
+.dataset-panel-actions {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.dataset-panel-meta {
+    color: var(--bs-secondary-color);
+    font-size: 0.75rem;
+    margin: 0.5rem 0 0;
+}
+
+.dataset-panel-list {
+    font-size: 0.85rem;
+    list-style: none;
+    margin: 0 0 0.6rem;
+    padding: 0;
+}
+
+.dataset-panel-list li {
+    padding: 0.1rem 0;
+}
+
+.dataset-panel-list li::before {
+    color: var(--bs-secondary-color);
+    content: "▸";
+    font-size: 0.7rem;
+    margin-right: 0.4rem;
+}
+
+.dataset-panel-files summary {
+    align-items: center;
+    cursor: pointer;
+    display: flex;
+    gap: 0.45rem;
+    list-style: none;
+}
+
+.dataset-panel-files summary::-webkit-details-marker {
+    display: none;
+}
+
+.dataset-panel-files summary::after {
+    color: var(--bs-secondary-color);
+    content: "\F282"; /* bi-chevron-down */
+    font-family: bootstrap-icons;
+    font-size: 0.75rem;
+    margin-left: auto;
+    transition: transform 150ms ease;
+}
+
+.dataset-panel-files[open] summary::after {
+    transform: rotate(180deg);
+}
+
+.dataset-panel-files[open] summary {
+    margin-bottom: 0.6rem;
+}
+
+.dataset-panel-file-list {
+    font-size: 0.85rem;
+    list-style: none;
+    margin: 0 0 0.65rem;
+    padding: 0;
+}
+
+.dataset-panel-file-list li {
+    align-items: baseline;
+    display: flex;
+    gap: 0.45rem;
+    min-width: 0;
+    padding: 0.15rem 0;
+}
+
+.dataset-panel-file-list .bi {
+    color: var(--bs-secondary-color);
+    flex: 0 0 auto;
+}
+
+.dataset-panel-file-list a,
+.dataset-panel-file-list span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

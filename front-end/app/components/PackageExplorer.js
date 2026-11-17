@@ -6,10 +6,11 @@ import config from '../config.js'
 import { useTheme } from '../contexts/ThemeContext'
 import { pluralize } from '../utils/datasetPresentation'
 import {
-  TABLE_PRIORITY,
   emptyExplorerState,
+  explorerForRequest,
   nodeForTable,
   openRelatedState,
+  reconcileExplorer,
   sameId,
   selectTable,
 } from '../utils/explorerState.mjs'
@@ -56,15 +57,6 @@ const graphPalette = (isDark) => ({
   selected: isDark ? '#ffffff' : '#15251d',
 })
 
-const firstNode = (nodes) => [...(nodes || [])].sort((a, b) => {
-  const aIndex = TABLE_PRIORITY.indexOf(a.id)
-  const bIndex = TABLE_PRIORITY.indexOf(b.id)
-  if (aIndex === -1 && bIndex === -1) return a.title.localeCompare(b.title)
-  if (aIndex === -1) return 1
-  if (bIndex === -1) return -1
-  return aIndex - bIndex
-})[0] || null
-
 // The package model describes a node; the explorer wants a table. The node's own save time is its
 // version (stats are matched to it); the model's reload counter is only a fallback for old payloads.
 const tableFromNode = (node, version) => ({
@@ -103,10 +95,26 @@ async function getModal() {
   return modalElement ? { element: modalElement, modal: bootstrap.Modal.getOrCreateInstance(modalElement) } : null
 }
 
+const OPEN_REQUEST_EVENT = 'package-explorer:open'
+
 // Opens the explorer modal mounted by <PackageExplorer>. The dataset page and the conversion page both use it.
-export async function openPackageExplorer() {
-  const found = await getModal()
-  found?.modal.show()
+// Optionally on a table: {tableId, state: {view, column, filters}}, or {focus: 'package'} for the linked tables
+// and {focus: 'sources'} for the source tables (each keeps the open table when it is already of that kind).
+// isCurrent(), when given, is asked again once Bootstrap has loaded: a request that went stale meanwhile (the
+// page moved on to another dataset) is dropped, as is one whose modal left the page.
+// Used directly as a click handler too, so anything else (such as a click event) opens it as it was.
+export async function openPackageExplorer(request) {
+  const element = document.getElementById('packageExplorerModal')
+  if (!element) return
+  const isCurrent = typeof request?.isCurrent === 'function' ? request.isCurrent : null
+  const bootstrap = await import('bootstrap/dist/js/bootstrap.bundle.min.js')
+  if (!element.isConnected || (isCurrent && !isCurrent())) return
+  const wanted = request && typeof request === 'object' && (request.tableId != null || request.focus)
+  if (wanted) {
+    const { tableId = null, state = null, focus = null } = request
+    element.dispatchEvent(new CustomEvent(OPEN_REQUEST_EVENT, { detail: { tableId, state, focus } }))
+  }
+  bootstrap.Modal.getOrCreateInstance(element).show()
 }
 
 /**
@@ -114,6 +122,9 @@ export async function openPackageExplorer() {
  * one: then pass `model` (null while there is none yet) with `modelLoading`, `modelError` and `onReloadModel`,
  * and it uses that instead of fetching the same heavy model again.
  * publishedUrl: the dataset's GBIF Sandbox page once it is published; the summary links to it.
+ * sourceTables: the dataset's other tables ({id, title, row_count, columns, updated_at, description}), listed
+ *   under "Your source files" and shown without the map while there is no package yet.
+ * onExplorerStateChange(state): the open table, view, column and filters while the modal is open; null once closed.
  */
 export default function PackageExplorer({
   datasetId,
@@ -123,6 +134,8 @@ export default function PackageExplorer({
   modelLoading = false,
   modelError = '',
   onReloadModel,
+  sourceTables: sourceTablesProp,
+  onExplorerStateChange,
 }) {
   const graphRef = useRef(null)
   const cyRef = useRef(null)
@@ -141,6 +154,8 @@ export default function PackageExplorer({
   const [modelVersion, setModelVersion] = useState(0)
   const [seenModel, setSeenModel] = useState(null)
   const [visible, setVisible] = useState(false)
+  // Open from the moment the modal starts showing until it has hidden (visible waits for the animation).
+  const [open, setOpen] = useState(false)
   // A chosen relationship replaces the table on the right until a table is chosen again.
   const [edgeId, setEdgeId] = useState(null)
   const [explorer, setExplorer] = useState(() => emptyExplorerState(rememberedView()))
@@ -148,19 +163,34 @@ export default function PackageExplorer({
   const [mapExpanded, setMapExpanded] = useState(false)
   // Set when a link from a record opens a table, so that table's heading gets focus.
   const [focus, setFocus] = useState(null)
+  const sourceTables = useMemo(
+    () => (Array.isArray(sourceTablesProp) ? sourceTablesProp.filter((table) => !table.is_dwc_dp) : []),
+    [sourceTablesProp]
+  )
+  const sourceKey = sourceTables.map((table) => `${table.id}:${table.updated_at || ''}`).join('|')
+  const [seenSourceKey, setSeenSourceKey] = useState(null)
+  // An openPackageExplorer() request still waiting for the package model (see explorerForRequest).
+  const [pending, setPending] = useState(null)
+  const latestRef = useRef({ model, sourceTables, loading, explorer })
+  useEffect(() => {
+    latestRef.current = { model, sourceTables, loading, explorer }
+  })
 
-  // A new model: the tables shown are a new version, and a chosen relationship or table that left the package
-  // is dropped (reopening keeps the table that was open, as long as it is still in the package).
+  // A new model: the tables shown are a new version, and a chosen relationship is dropped when it left the
+  // package. A new model or new source tables: the open table stays as long as it still exists.
   if (model !== seenModel) {
     setSeenModel(model)
     if (model) {
       setModelVersion((value) => value + 1)
       setEdgeId((current) => (current && (model.edges || []).some((edge) => edge.id === current) ? current : null))
-      setExplorer((current) => {
-        if (nodeForTable(model, current.tableId)) return current
-        return selectTable(current, firstNode(model.nodes)?.tableId ?? null)
-      })
     }
+  }
+  if (model !== seenModel || sourceKey !== seenSourceKey) {
+    const modelArrived = model !== seenModel && Boolean(model)
+    setSeenSourceKey(sourceKey)
+    setExplorer((current) => reconcileExplorer(current, { model, sourceTables, pending, waiting: !modelArrived }))
+    // A model answers a request for a table; Explore keeps waiting until a model has linked tables.
+    if (modelArrived && pending && !(pending.focus === 'package' && !model.nodes?.length)) setPending(null)
   }
 
   const nodeMap = useMemo(
@@ -174,18 +204,27 @@ export default function PackageExplorer({
     : selectedNode ? { type: 'node', id: selectedNode.id } : null
   const highlightKey = highlight ? `${highlight.type}:${highlight.id}` : ''
 
-  const showNode = useCallback((nodeId) => {
-    const node = nodeMap.get(nodeId)
-    if (!node) return
+  // Opening a table or relationship yourself cancels an openPackageExplorer() request still waiting for the model.
+  const pickTable = useCallback((tableId) => {
+    setPending(null)
     setEdgeId(null)
     setFocus(null)
-    setExplorer((current) => selectTable(current, node.tableId))
-  }, [nodeMap])
+    setExplorer((current) => selectTable(current, tableId))
+  }, [])
 
-  const showEdge = useCallback((id) => setEdgeId(id), [])
+  const showNode = useCallback((nodeId) => {
+    const node = nodeMap.get(nodeId)
+    if (node) pickTable(node.tableId)
+  }, [nodeMap, pickTable])
+
+  const showEdge = useCallback((id) => {
+    setPending(null)
+    setEdgeId(id)
+  }, [])
 
   const openRelated = useCallback(({ tableId, filters }) => {
     if (!nodeForTable(model, tableId)) return
+    setPending(null)
     setEdgeId(null)
     setExplorer((current) => openRelatedState(current, { tableId, filters }))
     setFocus((current) => ({ tableId, request: (current?.request || 0) + 1 }))
@@ -239,22 +278,54 @@ export default function PackageExplorer({
   useEffect(() => {
     const modal = document.getElementById('packageExplorerModal')
     if (!modal) return undefined
-    const onShow = () => onShowRef.current?.()
+    const onShow = () => {
+      setOpen(true)
+      onShowRef.current?.()
+    }
     const onShown = () => setVisible(true)
     const onHidden = () => {
+      setOpen(false)
       setVisible(false)
       setHoveredNodeId(null)
+    }
+    // openPackageExplorer({tableId, state} | {focus}) chooses what opens.
+    const onOpenRequest = (event) => {
+      const { model: currentModel, sourceTables: currentSources, loading: modelBusy, explorer: current } = latestRef.current
+      const next = explorerForRequest(current, event.detail, {
+        model: currentModel,
+        sourceTables: currentSources,
+        modelSettled: Boolean(currentModel) && !modelBusy,
+      })
+      setEdgeId(null)
+      setFocus(null)
+      setPending(next.pending)
+      setExplorer(next.explorer)
     }
     modal.addEventListener('show.bs.modal', onShow)
     modal.addEventListener('shown.bs.modal', onShown)
     modal.addEventListener('hidden.bs.modal', onHidden)
+    modal.addEventListener(OPEN_REQUEST_EVENT, onOpenRequest)
     return () => {
       modal.removeEventListener('show.bs.modal', onShow)
       modal.removeEventListener('shown.bs.modal', onShown)
       modal.removeEventListener('hidden.bs.modal', onHidden)
+      modal.removeEventListener(OPEN_REQUEST_EVENT, onOpenRequest)
       loadControllerRef.current?.abort()
     }
   }, [loadModel])
+
+  // Reports the open table while the modal is open, and null once when it closes; changes while it is closed
+  // (new tables, a new model) are not reported, so they cannot clear an address the page is restoring.
+  const reportedOpenRef = useRef(false)
+  useEffect(() => {
+    if (open) {
+      reportedOpenRef.current = true
+      onExplorerStateChange?.(explorer)
+    } else if (reportedOpenRef.current) {
+      reportedOpenRef.current = false
+      onExplorerStateChange?.(null)
+    }
+  }, [open, explorer, onExplorerStateChange])
 
   useEffect(() => {
     highlightRef.current = highlight
@@ -447,17 +518,26 @@ export default function PackageExplorer({
   const hoveredNode = hoveredNodeId ? nodeMap.get(hoveredNodeId) : null
   const totalRows = (model?.nodes || []).reduce((sum, node) => sum + node.rowCount, 0)
   const taxonomyOnly = model?.packageType === 'taxonomy-data-package'
-  const pickerTables = useMemo(() => (model?.nodes || []).map((node) => ({
-    id: node.tableId,
-    title: node.title,
-    resource: node.id,
-    row_count: node.rowCount,
-    is_dwc_dp: true,
-  })), [model])
+  const pickerTables = useMemo(() => [
+    ...(model?.nodes || []).map((node) => ({
+      id: node.tableId,
+      title: node.title,
+      resource: node.id,
+      row_count: node.rowCount,
+      is_dwc_dp: true,
+    })),
+    ...sourceTables.map((table) => ({ ...table, is_dwc_dp: false })),
+  ], [model, sourceTables])
+  const selectedSource = selectedNode
+    ? null
+    : sourceTables.find((table) => sameId(table.id, explorer.tableId)) || null
   const selectedTable = useMemo(
-    () => (selectedNode ? tableFromNode(selectedNode, String(modelVersion)) : null),
-    [selectedNode, modelVersion]
+    () => (selectedNode ? tableFromNode(selectedNode, String(modelVersion)) : selectedSource),
+    [selectedNode, selectedSource, modelVersion]
   )
+  const hasPackage = (model?.nodes?.length || 0) > 0
+  const sourcesOnly = !hasPackage && sourceTables.length > 0
+  const showWorkspace = (!error && hasPackage) || (sourcesOnly && Boolean(selectedSource))
   const titleOf = (id) => nodeMap.get(id)?.title || formatResourceName(id)
 
   const renderEdge = (edge) => {
@@ -546,14 +626,18 @@ export default function PackageExplorer({
         <div className="modal-content package-explorer-modal">
           <div className="modal-header package-explorer-header">
             <div>
-              <div className="package-explorer-kicker">{taxonomyOnly ? 'Taxonomy data package' : 'Darwin Core Data Package'}</div>
-              <h5 className="modal-title" id="packageExplorerModalLabel">How the tables connect</h5>
+              <div className="package-explorer-kicker">
+                {sourcesOnly ? 'Your data' : taxonomyOnly ? 'Taxonomy data package' : 'Darwin Core Data Package'}
+              </div>
+              <h5 className="modal-title" id="packageExplorerModalLabel">
+                {sourcesOnly ? 'Your tables' : 'How the tables connect'}
+              </h5>
             </div>
             <button type="button" className="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
 
           <div className="modal-body package-explorer-body">
-            {loading && !model && (
+            {loading && !model && !selectedSource && (
               <div className="package-explorer-state">
                 <div className="spinner-border text-success" role="status">
                   <span className="visually-hidden">Loading package explorer…</span>
@@ -573,9 +657,17 @@ export default function PackageExplorer({
                 </button>
               </div>
             )}
-            {!loading && !error && model?.nodes?.length === 0 && (
+            {!loading && !error && model?.nodes?.length === 0 && !sourcesOnly && (
               <div className="package-explorer-state">
                 Package resources will appear here once ChatIPT has organised the source data.
+              </div>
+            )}
+            {sourcesOnly && selectedSource && (
+              <div className="package-explorer-summary">
+                <div>
+                  <strong>{pluralize(sourceTables.length, 'table')} from your uploads</strong>
+                  <span>The linked Darwin Core tables and their map will appear here once ChatIPT has organised your data.</span>
+                </div>
               </div>
             )}
             {!error && model?.nodes?.length > 0 && (
@@ -611,64 +703,69 @@ export default function PackageExplorer({
                     </span>
                   )}
                 </div>
-
-                <div className={`package-explorer-workspace${mapExpanded ? ' is-map-expanded' : ''}`}>
-                  <section className="package-graph-panel" aria-label="Package relationship map">
-                    <div className="package-graph-toolbar">
-                      <div className="package-graph-legend" aria-label="Table type legend">
-                        <span><i className="legend-dot legend-records"></i>{taxonomyOnly ? 'Checklist' : 'Core records'}</span>
-                        <span><i className="legend-dot legend-evidence"></i>{taxonomyOnly ? 'Attached tables' : 'Evidence'}</span>
-                        {!taxonomyOnly && <>
-                          <span><i className="legend-dot legend-context"></i>Context</span>
-                          <span><i className="legend-dot legend-claims"></i>Claims</span>
-                        </>}
-                      </div>
-                      <div className="package-graph-actions">
-                        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={fitGraph} title="Fit the whole map in view">
-                          <i className="bi bi-bullseye me-1" aria-hidden="true"></i>
-                          Fit
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-secondary"
-                          aria-pressed={mapExpanded}
-                          onClick={() => setMapExpanded((value) => !value)}
-                          title={mapExpanded ? 'Give the table more room again' : 'Make the map bigger'}
-                        >
-                          <i className={`bi ${mapExpanded ? 'bi-arrows-angle-contract' : 'bi-arrows-angle-expand'} me-1`} aria-hidden="true"></i>
-                          {mapExpanded ? 'Shrink' : 'Expand'}
-                        </button>
-                      </div>
-                    </div>
-                    <div className="package-graph-stage">
-                      <div ref={graphRef} className="package-graph-canvas" />
-                      {hoveredNode && hoveredNode.id !== selectedNode?.id && (
-                        <div className="package-graph-hover-card" aria-hidden="true">
-                          <strong>{hoveredNode.title}</strong>
-                          <span>{pluralize(hoveredNode.rowCount, 'row')}</span>
-                          <small>{hoveredNode.description}</small>
+              </>
+            )}
+            {showWorkspace && (
+              <>
+                <div className={`package-explorer-workspace${mapExpanded ? ' is-map-expanded' : ''}${hasPackage ? '' : ' is-sources-only'}`}>
+                  {hasPackage && (
+                    <section className="package-graph-panel" aria-label="Package relationship map">
+                      <div className="package-graph-toolbar">
+                        <div className="package-graph-legend" aria-label="Table type legend">
+                          <span><i className="legend-dot legend-records"></i>{taxonomyOnly ? 'Checklist' : 'Core records'}</span>
+                          <span><i className="legend-dot legend-evidence"></i>{taxonomyOnly ? 'Attached tables' : 'Evidence'}</span>
+                          {!taxonomyOnly && <>
+                            <span><i className="legend-dot legend-context"></i>Context</span>
+                            <span><i className="legend-dot legend-claims"></i>Claims</span>
+                          </>}
                         </div>
-                      )}
-                    </div>
-                    <details className="package-relationship-list">
-                      <summary>Relationships as a list</summary>
-                      <ul>
-                        {model.edges.map((edge) => (
-                          <li key={edge.id}>
-                            <button
-                              type="button"
-                              aria-current={edge.id === selectedEdge?.id ? 'true' : undefined}
-                              onClick={() => showEdge(edge.id)}
-                            >
-                              {titleOf(edge.source)}{' '}
-                              <strong>{edge.predicate}</strong>{' '}
-                              {titleOf(edge.target)}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  </section>
+                        <div className="package-graph-actions">
+                          <button type="button" className="btn btn-sm btn-outline-secondary" onClick={fitGraph} title="Fit the whole map in view">
+                            <i className="bi bi-bullseye me-1" aria-hidden="true"></i>
+                            Fit
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-secondary"
+                            aria-pressed={mapExpanded}
+                            onClick={() => setMapExpanded((value) => !value)}
+                            title={mapExpanded ? 'Give the table more room again' : 'Make the map bigger'}
+                          >
+                            <i className={`bi ${mapExpanded ? 'bi-arrows-angle-contract' : 'bi-arrows-angle-expand'} me-1`} aria-hidden="true"></i>
+                            {mapExpanded ? 'Shrink' : 'Expand'}
+                          </button>
+                        </div>
+                      </div>
+                      <div className="package-graph-stage">
+                        <div ref={graphRef} className="package-graph-canvas" />
+                        {hoveredNode && hoveredNode.id !== selectedNode?.id && (
+                          <div className="package-graph-hover-card" aria-hidden="true">
+                            <strong>{hoveredNode.title}</strong>
+                            <span>{pluralize(hoveredNode.rowCount, 'row')}</span>
+                            <small>{hoveredNode.description}</small>
+                          </div>
+                        )}
+                      </div>
+                      <details className="package-relationship-list">
+                        <summary>Relationships as a list</summary>
+                        <ul>
+                          {model.edges.map((edge) => (
+                            <li key={edge.id}>
+                              <button
+                                type="button"
+                                aria-current={edge.id === selectedEdge?.id ? 'true' : undefined}
+                                onClick={() => showEdge(edge.id)}
+                              >
+                                {titleOf(edge.source)}{' '}
+                                <strong>{edge.predicate}</strong>{' '}
+                                {titleOf(edge.target)}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    </section>
+                  )}
 
                   <div className="package-inspector">
                     {selectedEdge && renderEdge(selectedEdge)}
@@ -683,18 +780,19 @@ export default function PackageExplorer({
                         onAsk={onAsk ? askFromModal : undefined}
                         headingLevel={3}
                         focusRequest={focus && sameId(focus.tableId, selectedTable.id) ? focus.request : null}
-                        kicker={(
+                        kicker={selectedNode ? (
                           <>
                             <i className={`legend-dot legend-${graphCategory(selectedNode.id)}`} aria-hidden="true"></i>
                             {selectedNode.id}
                           </>
+                        ) : (
+                          <span title="A working copy of what you uploaded. ChatIPT may have tidied it; your original files stay unchanged.">
+                            <i className="bi bi-file-earmark-spreadsheet me-1" aria-hidden="true"></i>
+                            Working table
+                          </span>
                         )}
                         picker={pickerTables.length > 1 ? (
-                          <TableList tables={pickerTables} selectedId={selectedTable.id} onSelect={(tableId) => {
-                            setEdgeId(null)
-                            setFocus(null)
-                            setExplorer((current) => selectTable(current, tableId))
-                          }} />
+                          <TableList tables={pickerTables} selectedId={selectedTable.id} onSelect={pickTable} />
                         ) : null}
                       />
                     )}
