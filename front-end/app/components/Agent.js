@@ -20,6 +20,10 @@ import {
 } from '../utils/uploadConstraints.js';
 import { exceedsUploadLimit, formatFileSize, oversizedFilesError, sendUpload } from '../utils/uploadSize.mjs';
 import { useTheme } from '../contexts/ThemeContext.js';
+import { appendToComposer } from '../utils/explorerState.mjs';
+
+// The accordion body can still be opening when a question arrives; focus again once it has.
+const COMPOSER_FOCUS_RETRY_MS = 400;
 
 const normalizeMessageContent = (content) => {
   if (!content) {
@@ -67,8 +71,13 @@ const Agent = ({
   refreshTables,
   showMetadataEditLink = false,
   onEditMetadata,
+  askRequest = null,
+  onComposerAvailabilityChange,
 }) => {
   const [userInput, setUserInput] = useState("");
+  const composerInputRef = useRef(null);
+  const handledAskRef = useRef(null);
+  const onComposerAvailabilityChangeRef = useRef(onComposerAvailabilityChange);
   const [isLoading, setIsLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState(getLoadingText({ phase: 'working' }));
   const [isUserSending, setIsUserSending] = useState(false);
@@ -533,6 +542,47 @@ const Agent = ({
     isDark ? 'bg-dark border-secondary text-light' : 'bg-light'
   ].join(' ');
   const showSendTooltip = selectedFiles.length > 0 && !isUserSending;
+  // The chat box is shown only when the assistant is explicitly waiting for a user reply.
+  const composerVisible = Boolean(
+    !agent.completed_at && !isLoading && !isUserSending && !agent.busy_thinking && assistantWaitingForReply
+  );
+
+  useEffect(() => {
+    onComposerAvailabilityChangeRef.current = onComposerAvailabilityChange;
+  }, [onComposerAvailabilityChange]);
+
+  // Tells the page whether "Ask ChatIPT" can put text into this agent's chat box right now.
+  useEffect(() => {
+    onComposerAvailabilityChangeRef.current?.(agent.id, composerVisible);
+  }, [agent.id, composerVisible]);
+
+  useEffect(() => {
+    const agentId = agent.id;
+    return () => onComposerAvailabilityChangeRef.current?.(agentId, false);
+  }, [agent.id]);
+
+  // A question from the table explorer: appended to what is typed, focused, never sent automatically.
+  useEffect(() => {
+    if (!askRequest || askRequest.agentId !== agent.id || handledAskRef.current === askRequest.id) {
+      return undefined;
+    }
+    handledAskRef.current = askRequest.id;
+    setUserInput((current) => appendToComposer(current, askRequest.text));
+    const focusComposer = () => {
+      const input = composerInputRef.current;
+      if (!input) return;
+      input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      input.focus({ preventScroll: true });
+      const end = input.value.length;
+      input.setSelectionRange?.(end, end);
+    };
+    const first = window.setTimeout(focusComposer, 30);
+    const second = window.setTimeout(focusComposer, COMPOSER_FOCUS_RETRY_MS);
+    return () => {
+      window.clearTimeout(first);
+      window.clearTimeout(second);
+    };
+  }, [askRequest, agent.id]);
 
   return (
     <>
@@ -631,7 +681,7 @@ const Agent = ({
           )}
 
           {/* Only show the chat input when the assistant is explicitly waiting for a user reply */}
-          {!agent.completed_at && !isLoading && !isUserSending && !agent.busy_thinking && assistantWaitingForReply && (
+          {composerVisible && (
             <form className={composerClassName} onSubmit={handleSubmit}>
               <div className="d-flex flex-wrap align-items-start gap-2">
                 <button
@@ -646,6 +696,7 @@ const Agent = ({
                 </button>
                 <div className="flex-grow-1">
                   <textarea
+                    ref={composerInputRef}
                     rows={2}
                     className="form-control user-input"
                     value={userInput}

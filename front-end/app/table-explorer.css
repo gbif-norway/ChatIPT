@@ -1,0 +1,299 @@
+/* Table explorer shell (TableExplorer + TableList). Theme tokens come from refresh.css. */
+.te {
+  color: var(--app-ink);
+  min-width: 0;
+}
+
+.te :is(button, summary):focus-visible {
+  outline: 3px solid var(--app-accent);
+  outline-offset: 2px;
+}
+
+/* Pinned bar: table picker and Columns/Rows switch stay in view while the panel scrolls.
+   Each view's search row pins directly underneath it using --te-bar-h. */
+.te {
+  --te-sticky-bg: var(--bs-body-bg);
+}
+
+.te-bar {
+  align-items: center;
+  background: var(--te-sticky-bg);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  justify-content: space-between;
+  /* Covers the scroll container's top padding, which sticky positioning leaves uncovered. */
+  box-shadow: 0 -1.5rem 0 var(--te-sticky-bg);
+  padding: 0.5rem 0 0.4rem;
+  position: sticky;
+  top: 0;
+  z-index: 6;
+}
+
+.te-header {
+  border-bottom: 1px solid var(--app-border);
+  margin-bottom: 0.85rem;
+  padding-bottom: 0.75rem;
+}
+
+.te-heading {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Search rows of both views, pinned under the bar. */
+.te .tcv-toolbar,
+.te .table-rows-toolbar {
+  background: var(--te-sticky-bg);
+  border-bottom: 1px solid var(--app-border);
+  padding: 0.35rem 0 0.5rem;
+  position: sticky;
+  top: var(--te-bar-h, 0px);
+  z-index: 5;
+}
+
+.te .tcv-side {
+  max-height: calc(100vh - var(--te-bar-h, 0px) - 2rem);
+  top: calc(var(--te-bar-h, 0px) + 0.75rem);
+}
+
+.te-kicker {
+  align-items: center;
+  color: var(--app-muted);
+  display: flex;
+  font-family: var(--bs-font-monospace);
+  font-size: 0.7rem;
+  gap: 0.4rem;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.15rem;
+}
+
+.te-title {
+  font-size: 1.15rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.te-meta {
+  color: var(--app-muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  gap: 0.1rem 0.4rem;
+  margin-top: 0.15rem;
+}
+
+.te-description {
+  color: var(--app-ink);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin: 0.45rem 0 0;
+  max-width: 70ch;
+}
+
+.te-description.is-clamped > span {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  display: -webkit-box;
+  overflow: hidden;
+}
+
+.te-description-toggle {
+  font-size: 0.78rem;
+  padding: 0;
+  vertical-align: baseline;
+}
+
+.te-header-side {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+/* Columns | Rows switch */
+.te-view-toggle {
+  background: var(--app-soft);
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  display: inline-flex;
+  padding: 0.18rem;
+}
+
+.te-view-toggle button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: var(--app-muted);
+  display: inline-flex;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.3rem 0.85rem;
+  white-space: nowrap;
+}
+
+.te-view-toggle button:hover {
+  color: var(--app-ink);
+}
+
+.te-view-toggle button.is-active {
+  background: var(--app-surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  color: var(--app-accent);
+}
+
+.te-filter-count {
+  background: var(--app-accent);
+  border-radius: 999px;
+  color: var(--app-surface);
+  font-size: 0.68rem;
+  line-height: 1;
+  margin-left: 0.35rem;
+  padding: 0.2rem 0.4rem;
+}
+
+.te-view[hidden] {
+  display: none !important;
+}
+
+.te-fk-link {
+  font-size: inherit;
+  text-align: left;
+  vertical-align: baseline;
+}
+
+/* Table picker */
+.te-picker {
+  max-width: 100%;
+  position: relative;
+}
+
+.te-picker-toggle {
+  align-items: baseline;
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  color: var(--app-ink);
+  column-gap: 0.5rem;
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  max-width: 100%;
+  padding: 0.35rem 0.7rem 0.4rem;
+  text-align: left;
+}
+
+.te-picker-toggle:hover {
+  border-color: color-mix(in srgb, var(--app-accent) 50%, var(--app-border));
+}
+
+.te-picker-label {
+  color: var(--app-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  grid-column: 1 / -1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.te-picker-current {
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.te-picker-chevron {
+  color: var(--app-muted);
+  font-size: 0.85rem;
+}
+
+.te-picker-panel {
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  box-shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.18);
+  left: 0;
+  max-height: min(60vh, 520px);
+  max-width: min(30rem, calc(100vw - 2rem));
+  min-width: min(20rem, calc(100vw - 2rem));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.35rem;
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  z-index: 1060;
+}
+
+.te-picker-group + .te-picker-group {
+  border-top: 1px solid var(--app-border);
+  margin-top: 0.3rem;
+  padding-top: 0.3rem;
+}
+
+.te-picker-heading {
+  color: var(--app-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 0.35rem 0.6rem 0.2rem;
+  text-transform: uppercase;
+}
+
+.te-picker-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.te-picker-item {
+  align-items: baseline;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--app-ink);
+  display: flex;
+  font-size: 0.86rem;
+  gap: 0.75rem;
+  padding: 0.38rem 0.6rem;
+  text-align: left;
+  width: 100%;
+}
+
+.te-picker-item:hover,
+.te-picker-item:focus-visible {
+  background: var(--app-soft);
+}
+
+.te-picker-item:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: -2px;
+}
+
+.te-picker-item.is-active {
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+  font-weight: 600;
+}
+
+.te-picker-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.te-picker-count {
+  color: var(--app-muted);
+  flex: 0 0 auto;
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.te-picker-check {
+  flex: 0 0 auto;
+}

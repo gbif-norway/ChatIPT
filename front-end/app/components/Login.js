@@ -39,33 +39,26 @@ const Login = () => {
   }
 
   return (
-    <div className="container login-page">
-      <div className="login-layout">
-        <section className="login-intro">
-          <Brand />
-          <h1>Good data.<br />Greater discoveries.</h1>
-          <p>Turn your biodiversity data into something the world can build on. We’ll help you clean it, connect it, and prepare it for GBIF.</p>
-          <svg className="login-botanical" viewBox="0 0 380 170" fill="none" aria-hidden="true">
-            <path d="M15 150h350M95 150V65m95 85V30m95 120V80" stroke="currentColor" strokeWidth="1.5" opacity=".4" />
-            <path d="M95 110C49 112 46 81 47 63c30-3 51 15 48 47Zm0-25c-2-36 22-57 51-55 2 30-17 55-51 55Zm95 22c-39 1-62-26-62-56 40 0 64 19 62 56Zm0-40c0-37 21-56 48-57 1 33-16 58-48 57Zm95 64c-37 2-49-21-51-45 31-1 52 16 51 45Zm0-28c-1-31 16-53 45-55 2 34-14 53-45 55Z" fill="currentColor" opacity=".2" />
-            <circle cx="348" cy="27" r="10" fill="currentColor" opacity=".2" />
-          </svg>
-        </section>
-        <section className="login-form" aria-labelledby="signin-heading">
-          <span className="eyebrow">Let’s get started</span>
-          <h2 id="signin-heading">Welcome to ChatIPT</h2>
-          <p>A guided workspace for students and researchers. Sign in to start a dataset or pick up where you left off.</p>
-          {errorMessage && <div className="alert alert-warning" role="alert"><strong>Sign-in issue:</strong> {errorMessage}</div>}
-          <button onClick={login} className="btn btn-primary"><i className="bi bi-person-circle me-2" aria-hidden="true" />Sign in with ORCID<i className="bi bi-arrow-right ms-2" aria-hidden="true" /></button>
-          <div className="login-orcid-note">
-            <h3 className="h6">One research identity, fewer passwords</h3>
-            <p>ORCID is a free identifier for researchers. ChatIPT uses your public ORCID profile to connect your name and institution to your account.</p>
-            <a href="https://orcid.org" target="_blank" rel="noopener noreferrer" className="small">Learn about ORCID<i className="bi bi-arrow-up-right ms-1" aria-hidden="true" /></a>
-          </div>
-        </section>
-      </div>
-      <p className="login-footnote">From spreadsheets to connected biodiversity data.</p>
-    </div>
+    <main className="login-page">
+      <Brand />
+      <h1>Publish biodiversity data to GBIF</h1>
+      <p className="login-lead">ChatIPT is for students and researchers who publish data only now and then. You upload your spreadsheets and a chatbot works through them with you.</p>
+      <ol className="login-steps">
+        <li>Upload one or more data files.</li>
+        <li>Clean and standardise the data by answering questions in a chat.</li>
+        <li>Fill in the dataset description.</li>
+        <li>Get a Darwin Core package that is ready for GBIF.</li>
+      </ol>
+      {errorMessage && <div className="alert alert-warning" role="alert"><strong>Sign-in issue:</strong> {errorMessage}</div>}
+      <button onClick={login} className="btn btn-primary login-button">
+        <svg className="login-orcid-mark" viewBox="0 0 256 256" aria-hidden="true">
+          <path fill="#A6CE39" d="M256 128c0 70.7-57.3 128-128 128S0 198.7 0 128 57.3 0 128 0s128 57.3 128 128z" />
+          <path fill="#fff" d="M86.3 186.2H70.9V79.1h15.4v107.1zM108.9 79.1h41.6c39.6 0 57 28.3 57 53.6 0 27.5-21.5 53.6-56.8 53.6h-41.8V79.1zm15.4 93.3h24.5c34.9 0 42.9-26.5 42.9-39.7 0-21.5-13.7-39.7-43.7-39.7h-23.7v79.4zM88.7 56.8c0 5.5-4.5 10.1-10.1 10.1s-10.1-4.6-10.1-10.1c0-5.6 4.5-10.1 10.1-10.1s10.1 4.6 10.1 10.1z" />
+        </svg>
+        Sign in with ORCID
+      </button>
+      <p className="login-orcid-note">ORCID is a free identifier for researchers. ChatIPT reads your public ORCID record to connect your name and institution to your account. <a href="https://orcid.org" target="_blank" rel="noopener noreferrer">About ORCID</a></p>
+    </main>
   )
 }
 

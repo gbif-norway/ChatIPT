@@ -5,7 +5,7 @@ import DwcConversion from '../../components/DwcConversion'
 import ProtectedRoute from '../../components/ProtectedRoute'
 import { DatasetProvider, useDataset } from '../../contexts/DatasetContext'
 import { useNavigation } from '../../components/HeaderWrapper'
-import { useCallback, useEffect } from 'react'
+import { Suspense, useCallback, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 
 const DatasetRouteContent = () => {
@@ -96,10 +96,27 @@ const DatasetRouteContent = () => {
   )
 }
 
+const DatasetRouteLoading = () => (
+  <main>
+    <div className="container p-4">
+      <div className="message assistant-message">
+        <div className="inner-message d-flex align-items-center gap-3">
+          <div className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+          <strong>Loading dataset…</strong>
+        </div>
+      </div>
+    </div>
+  </main>
+)
+
+// The dataset page reads the table explorer state from the query string (useSearchParams),
+// which needs a Suspense boundary in the app router.
 const DatasetRoutePage = () => {
   return (
     <DatasetProvider>
-      <DatasetRouteContent />
+      <Suspense fallback={<DatasetRouteLoading />}>
+        <DatasetRouteContent />
+      </Suspense>
     </DatasetProvider>
   )
 }

@@ -12,8 +12,54 @@ export const tableRowsUrl = (baseUrl, tableId, page, pageSize, filter = {}) => {
     if (filter.column) params.set('column', filter.column)
     if (filter.exact) params.set('exact', 'true')
   }
+  const filters = Array.isArray(filter.filters) ? filter.filters.filter(Boolean) : []
+  if (filters.length) params.set('filters', JSON.stringify(filters))
+  if (filter.sort) {
+    params.set('sort', filter.sort)
+    params.set('order', filter.order === 'desc' ? 'desc' : 'asc')
+  }
   return `${baseUrl}/api/tables/${tableId}/rows/?${params}`
 }
+
+const capitalize = (text) => (text ? text.charAt(0).toUpperCase() + text.slice(1) : text)
+
+const messagesOf = (value) => (Array.isArray(value) ? value : [value])
+  .flatMap((item) => (item && typeof item === 'object' && !Array.isArray(item) ? Object.values(item) : [item]))
+  .filter((item) => typeof item === 'string' && item.trim())
+
+// A readable message from an API error body: DRF's {detail}, field errors ({search: ["..."]}),
+// non_field_errors, a list or plain text. Falls back to the HTTP status.
+export const apiErrorMessage = (payload, status) => {
+  if (typeof payload === 'string' && payload.trim()) return payload.trim()
+  if (Array.isArray(payload)) {
+    const messages = messagesOf(payload)
+    if (messages.length) return messages.join(' ')
+  } else if (payload && typeof payload === 'object') {
+    if (typeof payload.detail === 'string' && payload.detail.trim()) return payload.detail.trim()
+    const parts = Object.entries(payload).flatMap(([field, value]) => {
+      const messages = messagesOf(value)
+      if (!messages.length) return []
+      if (field === 'non_field_errors' || field === 'detail' || field === 'error') return [messages.join(' ')]
+      return [`${capitalize(field)}: ${messages.join(' ')}`]
+    })
+    if (parts.length) return parts.join(' ')
+  }
+  return `HTTP error! status: ${status}`
+}
+
+export const columnStatsUrl = (baseUrl, tableId) => `${baseUrl}/api/tables/${tableId}/column-stats/`
+
+export const columnValuesUrl = (baseUrl, tableId, { column, search, offset, limit, sort } = {}) => {
+  const params = new URLSearchParams({ column: String(column ?? '') })
+  const searchText = String(search || '').trim()
+  if (searchText) params.set('search', searchText)
+  if (offset !== undefined && offset !== null) params.set('offset', String(Math.max(Number(offset) || 0, 0)))
+  if (limit !== undefined && limit !== null) params.set('limit', String(Math.max(Number(limit) || 1, 1)))
+  if (sort) params.set('sort', sort)
+  return `${baseUrl}/api/tables/${tableId}/column-values/?${params}`
+}
+
+export const tableLineageUrl = (baseUrl, tableId) => `${baseUrl}/api/tables/${tableId}/lineage/`
 
 // DwC-DP resource tables come first; source and working tables keep their order after them.
 export const normalizeTableList = (payload) => {

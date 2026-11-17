@@ -9,7 +9,7 @@ import os
 import tarfile
 import tempfile
 import threading
-from collections import Counter
+from collections import Counter, OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, Mapping
 
+import numpy as np
 import pandas as pd
 from frictionless import Package, Schema
 from jsonschema.exceptions import best_match
@@ -282,16 +283,258 @@ def _explorer_join_keys(df: pd.DataFrame, fields: list[str]) -> list[tuple[str, 
     return keys
 
 
+# Fields the package explorer joins on: relationship fields of every DwC-DP table and the
+# columns the taxonomy conversion links on.
+TAXONOMY_JOIN_FIELDS = ("archive_taxon_id", "archive_join_id", "occurrence_fk", "occurrence_pk")
+_join_field_names: set[str] | None = None
+
+
+def explorer_join_field_names() -> set[str]:
+    global _join_field_names
+    if _join_field_names is None:
+        names = set(TAXONOMY_JOIN_FIELDS)
+        for spec in TABLE_SPECS.values():
+            for relationship in [*spec.foreign_keys, *spec.weak_foreign_keys]:
+                names.update(_as_field_list(relationship.get("fields")))
+                names.update(_as_field_list((relationship.get("reference") or {}).get("fields")))
+        _join_field_names = names
+    return _join_field_names
+
+
+JOIN_HASH_CACHE_SECONDS = 24 * 60 * 60
+# Memory bounds for relationship coverage. The in-process cache of per-table join hashes holds
+# at most JOIN_HASH_CACHE_BYTES (entries over JOIN_HASH_ENTRY_BYTES are not cached), and one
+# build holds at most JOIN_HASH_BUILD_BYTES of hashes at a time; a relationship that would
+# need more is reported with coverage "skipped" instead of counts.
+JOIN_HASH_CACHE_BYTES = 128 * 2 ** 20
+JOIN_HASH_ENTRY_BYTES = 32 * 2 ** 20
+JOIN_HASH_BUILD_BYTES = 256 * 2 ** 20
+
+
+def _entry_bytes(entry: Dict[str, Any]) -> int:
+    return sum(hashes.nbytes + filled.nbytes for hashes, filled in entry["columns"].values())
+
+
+class JoinHashCache:
+    """In-process LRU of per-table join hashes, one entry per table, bounded by bytes and age.
+
+    Entries are kept as read-only arrays (no serialised copy, unlike the Django cache)."""
+
+    def __init__(self, max_bytes=JOIN_HASH_CACHE_BYTES, max_entry_bytes=JOIN_HASH_ENTRY_BYTES, ttl=JOIN_HASH_CACHE_SECONDS):
+        self.max_bytes, self.max_entry_bytes, self.ttl = max_bytes, max_entry_bytes, ttl
+        self._entries: "OrderedDict[int, tuple]" = OrderedDict()
+        self._bytes = 0
+        self._lock = threading.Lock()
+
+    def get(self, table_id: int, version: str):
+        import time
+
+        with self._lock:
+            item = self._entries.get(table_id)
+            if item is None:
+                return None
+            stored_at, stored_version, entry, size = item
+            if stored_version != version or time.monotonic() - stored_at > self.ttl:
+                self._drop(table_id)  # a superseded version is released, not kept beside the new one
+                return None
+            self._entries.move_to_end(table_id)
+            return entry
+
+    def set(self, table_id: int, version: str, entry: Dict[str, Any]) -> None:
+        import time
+
+        size = _entry_bytes(entry)
+        with self._lock:
+            if table_id in self._entries:
+                self._drop(table_id)
+            if size > self.max_entry_bytes:
+                return
+            for hashes, filled in entry["columns"].values():
+                hashes.setflags(write=False)
+                filled.setflags(write=False)
+            self._entries[table_id] = (time.monotonic(), version, entry, size)
+            self._bytes += size
+            while self._bytes > self.max_bytes:
+                self._drop(next(iter(self._entries)))
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+            self._bytes = 0
+
+    def _drop(self, table_id: int) -> None:
+        self._bytes -= self._entries.pop(table_id)[3]
+
+
+join_hash_cache = JoinHashCache()
+
+
+def _join_column_hashes(df: pd.DataFrame) -> Dict[str, Any]:
+    """{'rows': n, 'columns': {name: (uint64 hash per row, bool filled per row)}} for the join
+    columns of one table. Cell text is compared as ``_explorer_join_value`` reads it."""
+    columns = {}
+    for name in df.columns:
+        if name not in explorer_join_field_names() or name in columns:
+            continue
+        series = df[name]
+        if isinstance(series, pd.DataFrame):  # duplicate labels: the first, as df[fields] would
+            series = series.iloc[:, 0]
+        texts = [_explorer_join_value(value) for value in series.tolist()]
+        filled = np.fromiter((text is not None for text in texts), dtype=bool, count=len(texts))
+        hashes = pd.util.hash_array(np.asarray([text or "" for text in texts], dtype=object)) if texts else np.array([], dtype=np.uint64)
+        columns[str(name)] = (hashes, filled)
+    return {"rows": int(len(df.index)), "columns": columns}
+
+
+def _join_estimate(row_count: Any, columns: Iterable[Any]) -> int:
+    """Bytes of join hashes a table needs, from stored metadata: 9 per row per join column."""
+    join_columns = sum(1 for column in (columns or []) if column in explorer_join_field_names())
+    return 9 * int(row_count or 0) * join_columns
+
+
+def explorer_join_hashes(table_id: int, updated_at: Any, load_snapshot, fits=None) -> Dict[str, Any] | None:
+    """The join-column hashes of one table, cached with its version so saving one table does
+    not re-read the others.
+
+    On a miss ``load_snapshot()`` returns a table with ``df``, ``updated_at``, ``row_count`` and
+    ``columns`` read in one query, so the hashes are filed under the version they were computed
+    from even if the table was saved meanwhile. ``fits(row_count, columns)`` can refuse that
+    snapshot (None is returned) before any hashing; the DataFrame is released straight away.
+    """
+    version = updated_at.isoformat() if updated_at else ""
+    entry = join_hash_cache.get(table_id, version)
+    if entry is not None:
+        return entry
+    snapshot = load_snapshot()
+    if fits is not None and not fits(snapshot.row_count, snapshot.columns):
+        del snapshot
+        return None
+    version = snapshot.updated_at.isoformat() if snapshot.updated_at else ""
+    df = snapshot.df
+    del snapshot
+    entry = {"version": version, **_join_column_hashes(df)}
+    del df
+    join_hash_cache.set(table_id, version, entry)
+    return entry
+
+
+_HASH_MIX = np.uint64(0x9E3779B97F4A7C15)
+
+
+def _explorer_join_hashes(entry: Dict[str, Any], fields: list[str]) -> "np.ndarray | None":
+    """64-bit hashes of the populated join keys (rows with every field filled); None when a
+    field is missing or the table has no rows."""
+    if not fields or entry["rows"] == 0 or any(field not in entry["columns"] for field in fields):
+        return None
+    combined = None
+    filled = np.ones(entry["rows"], dtype=bool)
+    with np.errstate(over="ignore"):
+        for field in fields:
+            hashes, column_filled = entry["columns"][field]
+            filled &= column_filled
+            combined = hashes.copy() if combined is None else (combined * _HASH_MIX) ^ hashes
+    return combined[filled]
+
+
+def _edges_with_coverage(dataset: Any, pending: list) -> list[Dict[str, Any]]:
+    """Fill in linked/unmatched/blank counts for each collected relationship, in order.
+
+    A relationship whose fields are missing (or whose tables have no rows) is left out, as
+    before. Each table's hashes are held only while a later relationship still needs them, and
+    never more than JOIN_HASH_BUILD_BYTES at once: past that, coverage is "skipped" (counts are
+    null), which the UI shows as not checked rather than as zero matches.
+    """
+    remaining = Counter()
+    for _edge, source_table, _sf, target_table, _tf in pending:
+        remaining[source_table["id"]] += 1
+        remaining[target_table["id"]] += 1
+    held: Dict[int, Dict[str, Any]] = {}
+    held_bytes = 0
+    edges = []
+
+    def entry_for(table: Dict[str, Any]):
+        nonlocal held_bytes
+        table_id = table["id"]
+        if table_id in held:
+            return held[table_id]
+        # Checked from stored metadata before anything is read, and again on the snapshot that
+        # is actually read (the table may have grown since the metadata was fetched).
+        if held_bytes + _join_estimate(table["row_count"], table["columns"]) > JOIN_HASH_BUILD_BYTES:
+            return None
+        entry = explorer_join_hashes(
+            table_id, table.get("updated_at"),
+            lambda: dataset.table_set.only("df", "updated_at", "row_count", "columns").get(id=table_id),
+            fits=lambda rows, columns: held_bytes + _join_estimate(rows, columns) <= JOIN_HASH_BUILD_BYTES,
+        )
+        if entry is None:
+            return None
+        size = _entry_bytes(entry)
+        if held_bytes + size > JOIN_HASH_BUILD_BYTES:
+            return None
+        held[table_id] = entry
+        held_bytes += size
+        return entry
+
+    def coverage_of(edge, source_table, source_fields, target_table, target_fields):
+        """The edge with its coverage, or None to leave it out. Its arrays are local to this call,
+        so nothing outlives the relationship once its tables are released."""
+        source_entry = entry_for(source_table)
+        target_entry = entry_for(target_table) if source_entry is not None else None
+        if source_entry is None or target_entry is None:
+            # Columns are known without hashes: leave out relationships that cannot apply.
+            available = set(source_table["columns"]), set(target_table["columns"])
+            if source_table["row_count"] and target_table["row_count"] and \
+                    set(source_fields) <= available[0] and set(target_fields) <= available[1]:
+                return {**edge, "coverage": "skipped", "populatedRows": None, "linkedRows": None,
+                        "unmatchedRows": None, "blankRows": None}
+            return None
+        source = _explorer_join_hashes(source_entry, source_fields)
+        target = _explorer_join_hashes(target_entry, target_fields)
+        if source is None or target is None:
+            return None
+        populated_rows = len(source)
+        linked_rows = int(np.isin(source, target).sum())
+        # Every count comes from the same snapshot of the source table (it may have been saved
+        # since the metadata was read), so they always add up.
+        source_rows = int(source_entry["rows"])
+        return {**edge, "coverage": "checked", "sourceRows": source_rows, "populatedRows": populated_rows,
+                "linkedRows": linked_rows, "unmatchedRows": populated_rows - linked_rows,
+                "blankRows": source_rows - populated_rows}
+
+    def release(table: Dict[str, Any]) -> None:
+        nonlocal held_bytes
+        table_id = table["id"]
+        remaining[table_id] -= 1
+        if remaining[table_id] <= 0 and table_id in held:
+            held_bytes -= _entry_bytes(held.pop(table_id))
+
+    for edge, source_table, source_fields, target_table, target_fields in pending:
+        result = coverage_of(edge, source_table, source_fields, target_table, target_fields)
+        if result is not None:
+            edges.append(result)
+        release(source_table)
+        release(target_table)
+    return edges
+
+
 def build_dwc_dp_explorer_model(dataset: Any) -> Dict[str, Any]:
     """Build the explorer model for standard and converted taxonomy resources."""
     resource_tables = {
         table["title"]: table
         for table in dataset.table_set.filter(title__in=RESERVED_TABLE_NAMES)
         .order_by("title", "id")
-        .values("id", "title", "row_count", "columns")
+        .values("id", "title", "row_count", "columns", "updated_at")
     }
     nodes: list[Dict[str, Any]] = []
     edges: list[Dict[str, Any]] = []
+
+    # Relationships are collected first and their coverage computed afterwards, so each table's
+    # join hashes (read at most once per version, the DataFrame released straight away) are
+    # dropped as soon as no remaining relationship needs them.
+    pending: list[tuple[Dict[str, Any], Dict[str, Any], list[str], Dict[str, Any], list[str]]] = []
+
+    def add_edge(edge: Dict[str, Any], source_table, source_fields, target_table, target_fields) -> None:
+        pending.append((edge, source_table, source_fields, target_table, target_fields))
 
     for name, table in resource_tables.items():
         spec = TABLE_SPECS[name]
@@ -319,6 +562,7 @@ def build_dwc_dp_explorer_model(dataset: Any) -> Dict[str, Any]:
                 "comments": spec.schema.get("comments") or "",
                 "examples": spec.schema.get("examples") or "",
                 "rowCount": table["row_count"],
+                "updatedAt": table["updated_at"].isoformat().replace("+00:00", "Z") if table["updated_at"] else "",
                 "columnCount": len(available_fields),
                 "primaryKey": spec.primary_key,
                 "weakPrimaryKey": spec.weak_primary_key,
@@ -344,25 +588,13 @@ def build_dwc_dp_explorer_model(dataset: Any) -> Dict[str, Any]:
 
             source_fields = _as_field_list(relationship.get("fields"))
             target_fields = _as_field_list(reference.get("fields"))
-            source_df = dataset.table_set.only("df").get(id=source_table["id"]).df
-            source_keys = _explorer_join_keys(source_df, source_fields)
-            del source_df
-            target_df = dataset.table_set.only("df").get(id=target_table["id"]).df
-            target_keys = _explorer_join_keys(target_df, target_fields)
-            del target_df
-            if not source_keys or not target_keys:
-                continue
-
-            populated_keys = [key for key in source_keys if key is not None]
-            target_key_set = {key for key in target_keys if key is not None}
-            linked_rows = sum(key in target_key_set for key in populated_keys)
             predicate = (
                 relationship.get("predicate")
                 or relationship.get("relationship")
                 or relationship.get("predicateLabel")
                 or "relates to"
             )
-            edges.append(
+            add_edge(
                 {
                     "id": f"{source_name}:{kind}:{index}:{target_name}",
                     "source": source_name,
@@ -372,11 +604,8 @@ def build_dwc_dp_explorer_model(dataset: Any) -> Dict[str, Any]:
                     "sourceFields": source_fields,
                     "targetFields": target_fields,
                     "sourceRows": source_table["row_count"],
-                    "populatedRows": len(populated_keys),
-                    "linkedRows": linked_rows,
-                    "unmatchedRows": len(populated_keys) - linked_rows,
-                    "blankRows": source_table["row_count"] - len(populated_keys),
-                }
+                },
+                source_table, source_fields, target_table, target_fields,
             )
 
     conversion = getattr(dataset, "conversion", None) if dataset.workflow_type == dataset.WorkflowType.DWCA_CONVERSION else None
@@ -385,7 +614,7 @@ def build_dwc_dp_explorer_model(dataset: Any) -> Dict[str, Any]:
             table["title"]: table
             for table in dataset.table_set.filter(title__startswith="taxonomy-")
             .order_by("title", "id")
-            .values("id", "title", "row_count", "columns")
+            .values("id", "title", "row_count", "columns", "updated_at")
         }
         source_tables = conversion.plan.get("tables", [])
         for name, table in taxonomy_tables.items():
@@ -409,6 +638,7 @@ def build_dwc_dp_explorer_model(dataset: Any) -> Dict[str, Any]:
                           "description": (f"Original {source_name} table retained in the package."
                                           if source_name else "Explicit links between checklist and occurrence records."),
                           "comments": "", "examples": "", "rowCount": table["row_count"],
+                          "updatedAt": table["updated_at"].isoformat().replace("+00:00", "Z") if table["updated_at"] else "",
                           "columnCount": len(table["columns"]), "primaryKey": [primary_key] if primary_key else [],
                           "weakPrimaryKey": [], "fields": fields})
 
@@ -417,21 +647,11 @@ def build_dwc_dp_explorer_model(dataset: Any) -> Dict[str, Any]:
             target_table = taxonomy_tables.get(target_name) or resource_tables.get(target_name)
             if not source_table or not target_table:
                 return
-            source_df = dataset.table_set.only("df").get(id=source_table["id"]).df
-            target_df = dataset.table_set.only("df").get(id=target_table["id"]).df
-            source_keys = _explorer_join_keys(source_df, [source_field])
-            target_keys = _explorer_join_keys(target_df, [target_field])
-            if not source_keys or not target_keys:
-                return
-            populated_keys = [key for key in source_keys if key is not None]
-            target_key_set = {key for key in target_keys if key is not None}
-            linked_rows = sum(key in target_key_set for key in populated_keys)
-            edges.append({"id": f"{source_name}:foreign:{target_name}",
-                          "source": source_name, "target": target_name, "predicate": predicate,
-                          "kind": "foreign", "sourceFields": [source_field], "targetFields": [target_field],
-                          "sourceRows": source_table["row_count"], "populatedRows": len(populated_keys),
-                          "linkedRows": linked_rows, "unmatchedRows": len(populated_keys) - linked_rows,
-                          "blankRows": source_table["row_count"] - len(populated_keys)})
+            add_edge({"id": f"{source_name}:foreign:{target_name}",
+                      "source": source_name, "target": target_name, "predicate": predicate,
+                      "kind": "foreign", "sourceFields": [source_field], "targetFields": [target_field],
+                      "sourceRows": source_table["row_count"]},
+                     source_table, [source_field], target_table, [target_field])
 
         for name, table in taxonomy_tables.items():
             if name != "taxonomy-taxon" and "archive_taxon_id" in table["columns"]:
@@ -439,12 +659,60 @@ def build_dwc_dp_explorer_model(dataset: Any) -> Dict[str, Any]:
         if "taxonomy-occurrence-links" in taxonomy_tables:
             add_taxonomy_link("taxonomy-occurrence-links", "occurrence", "occurrence_fk", "occurrence_pk", "identifies occurrence")
 
+    edges.extend(_edges_with_coverage(dataset, pending))
     return {
         "schema": dwc_dp_schema_snapshot(),
         "packageType": "taxonomy-data-package" if conversion and conversion.report.get("output_format") == "taxonomy-data-package" else "dwc-dp",
         "nodes": nodes,
         "edges": edges,
     }
+
+
+EXPLORER_MODEL_CACHE_SECONDS = 60 * 60
+
+
+def explorer_model_cache_key(dataset: Any) -> str:
+    """Changes whenever a package or taxonomy table, or the dataset's conversion, changes."""
+    from django.db.models import Q
+
+    digest = hashlib.sha256(f"{dataset.pk}|{dataset.workflow_type}\n".encode())
+    tables = (
+        dataset.table_set.filter(Q(title__in=RESERVED_TABLE_NAMES) | Q(title__startswith="taxonomy-"))
+        .order_by("id")
+        .values_list("id", "title", "updated_at")
+    )
+    for table_id, title, updated_at in tables:
+        digest.update(f"t{table_id}|{title}|{updated_at.isoformat() if updated_at else ''}\n".encode())
+    if dataset.workflow_type == dataset.WorkflowType.DWCA_CONVERSION:
+        from api.models import DwcConversion
+
+        conversion = DwcConversion.objects.filter(dataset=dataset).only("id", "status", "updated_at").first()
+        if conversion:
+            digest.update(f"c{conversion.pk}|{conversion.status}|{conversion.updated_at.isoformat()}\n".encode())
+    return f"dwc-dp-explorer-model:v1:{dataset.pk}:{digest.hexdigest()[:32]}"
+
+
+def cached_dwc_dp_explorer_model(dataset: Any) -> Dict[str, Any]:
+    """The explorer model, cached per version of the tables it reads.
+
+    The dataset page asks for it on every load and after table saves; relationship coverage
+    reads whole tables, so it is computed once per version (and once per process when
+    requests arrive together).
+    """
+    from django.core.cache import cache
+
+    from api import column_stats
+
+    key = explorer_model_cache_key(dataset)
+    model = cache.get(key)
+    if model is not None:
+        return model
+    with column_stats.single_flight(key):
+        model = cache.get(key)
+        if model is None:
+            model = build_dwc_dp_explorer_model(dataset)
+            cache.set(key, model, EXPLORER_MODEL_CACHE_SECONDS)
+    return model
 
 
 def normalize_resource_name(value: str) -> str:

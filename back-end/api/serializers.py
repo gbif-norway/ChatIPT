@@ -1,3 +1,4 @@
+from api.column_stats import MAX_LABEL_CHARS
 from api.models import Dataset, Table, Agent, Message, OpenAIUsage, Task, TaxonNameMatch, UserFile
 from django.db import transaction
 from rest_framework import serializers
@@ -87,8 +88,20 @@ class TablePageQuerySerializer(serializers.Serializer):
     offset = serializers.IntegerField(default=0, min_value=0)
     limit = serializers.IntegerField(default=50, min_value=1, max_value=200)
     search = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True, max_length=200)
-    column = serializers.CharField(required=False, allow_blank=False, max_length=500)
+    # Column labels are compared exactly: a spreadsheet header " Species " is not "Species".
+    column = serializers.CharField(required=False, allow_blank=False, trim_whitespace=False, max_length=MAX_LABEL_CHARS)
     exact = serializers.BooleanField(default=False)
+    filters = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True, max_length=200000)
+    sort = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False, max_length=MAX_LABEL_CHARS)
+    order = serializers.ChoiceField(choices=['asc', 'desc'], default='asc')
+
+
+class ColumnValuesQuerySerializer(serializers.Serializer):
+    column = serializers.CharField(allow_blank=False, trim_whitespace=False, max_length=MAX_LABEL_CHARS)
+    search = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True, max_length=200)
+    offset = serializers.IntegerField(default=0, min_value=0)
+    limit = serializers.IntegerField(default=50, min_value=1, max_value=200)
+    sort = serializers.ChoiceField(choices=['count', 'value'], default='count')
 
 
 class MessageSerializer(serializers.ModelSerializer):

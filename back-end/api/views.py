@@ -1,6 +1,6 @@
 from rest_framework import serializers, viewsets, status
 from rest_framework.exceptions import ValidationError
-from api.serializers import DatasetSerializer, DatasetListSerializer, OpenAIUsageSerializer, TablePageQuerySerializer, TableSerializer, MessageSerializer, AgentSerializer, TaskSerializer, TaxonDecisionSerializer, TaxonNameMatchSerializer, UserFileSerializer
+from api.serializers import DatasetSerializer, DatasetListSerializer, OpenAIUsageSerializer, ColumnValuesQuerySerializer, TablePageQuerySerializer, TableSerializer, MessageSerializer, AgentSerializer, TaskSerializer, TaxonDecisionSerializer, TaxonNameMatchSerializer, UserFileSerializer
 from api.models import Dataset, Table, Message, Agent, Task, TaxonNameMatch, UserFile
 from rest_framework.response import Response
 from rest_framework.decorators import action, api_view, permission_classes
@@ -823,10 +823,10 @@ class DatasetViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], url_path='package-explorer')
     def package_explorer(self, request, *args, **kwargs):
         """Return the current dataset's DwC-DP resources and schema relationships."""
-        from api.dwc_dp_specs import build_dwc_dp_explorer_model
+        from api.dwc_dp_specs import cached_dwc_dp_explorer_model
 
         dataset = self.get_object()
-        return Response(build_dwc_dp_explorer_model(dataset))
+        return Response(cached_dwc_dp_explorer_model(dataset))
 
     @action(detail=True, methods=['get'])
     def tree_files(self, request, *args, **kwargs):
@@ -1106,28 +1106,58 @@ class TableViewSet(viewsets.ReadOnlyModelViewSet):
         """Return one bounded row page for a table."""
         query = TablePageQuerySerializer(data=request.query_params)
         query.is_valid(raise_exception=True)
-        table = self.get_object()
+        # One consistent read: cached row positions are keyed by the version they were computed on.
+        table = self.get_object().load_snapshot()
         offset = query.validated_data['offset']
         limit = query.validated_data['limit']
-        search = query.validated_data.get('search', '')
-        rows = None
-        if search:
-            try:
-                rows = table.search_rows(
-                    search,
-                    column=query.validated_data.get('column'),
-                    exact=query.validated_data['exact'],
-                )
-            except ValueError as exc:
-                return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        data = query.validated_data
+        try:
+            positions = table.query_row_positions(
+                data.get('search', ''),
+                column=data.get('column'),
+                exact=data['exact'],
+                filters=data.get('filters', ''),
+                sort=data.get('sort', ''),
+                order=data['order'],
+            )
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        if positions is None:
+            count, results = table.row_count, table.row_page(offset, limit)
+        else:
+            page = table.df.iloc[positions[offset:offset + limit]]
+            count, results = len(positions), table.row_page(0, limit, page)
         return Response({
-            'count': table.row_count if rows is None else len(rows.index),
+            'count': count,
             'total': table.row_count,
             'offset': offset,
             'limit': limit,
             'columns': table.columns,
-            'results': table.row_page(offset, limit, rows),
+            'results': results,
         })
+
+    @action(detail=True, methods=['get'], url_path='column-stats')
+    def column_stats(self, request, *args, **kwargs):
+        """Per-column populated/unique counts and value summaries, cached per table version."""
+        return Response(self.get_object().column_stats())
+
+    @action(detail=True, methods=['get'])
+    def lineage(self, request, *args, **kwargs):
+        """Which source column each published column came from (recorded or matched by values)."""
+        from api.table_lineage import table_lineage
+
+        return Response(table_lineage(self.get_object()))
+
+    @action(detail=True, methods=['get'], url_path='column-values')
+    def column_values(self, request, *args, **kwargs):
+        """One page of a column's distinct values with their row counts."""
+        query = ColumnValuesQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        table = self.get_object().load_snapshot()
+        try:
+            return Response(table.column_values(**query.validated_data))
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class UserFileViewSet(viewsets.ModelViewSet):

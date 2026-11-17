@@ -1,0 +1,438 @@
+/* Table explorer Rows view and record panel. Uses Bootstrap CSS variables so light and dark themes both work. */
+
+.table-rows-view {
+  min-width: 0;
+}
+
+.table-rows-toolbar {
+  flex-wrap: wrap;
+}
+
+/* Filter bar */
+.table-rows-filterbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.table-rows-chips {
+  display: contents;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.table-rows-chip {
+  align-items: center;
+  background: var(--bs-success-bg-subtle);
+  border: 1px solid var(--bs-success-border-subtle);
+  border-radius: 999px;
+  color: var(--bs-success-text-emphasis);
+  display: inline-flex;
+  font-size: 0.8rem;
+  gap: 0.15rem;
+  max-width: 100%;
+  padding: 0.1rem 0.15rem 0.1rem 0.6rem;
+}
+
+.table-rows-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-rows-chip-remove {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: inherit;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 1.4rem;
+  justify-content: center;
+  padding: 0;
+  width: 1.4rem;
+}
+
+.table-rows-chip-remove:hover {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.table-rows-chip-remove:focus-visible,
+.table-rows-sort:focus-visible,
+.table-rows-open:focus-visible {
+  outline: 2px solid var(--bs-primary);
+  outline-offset: 1px;
+}
+
+.table-rows-empty-toggle {
+  white-space: nowrap;
+}
+
+.table-rows-filter-form {
+  align-items: center;
+  background: var(--bs-tertiary-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+  padding: 0.5rem;
+}
+
+.table-rows-filter-form .form-select,
+.table-rows-filter-form .form-control {
+  flex: 1 1 9rem;
+  min-width: 0;
+  width: auto;
+}
+
+.table-rows-filter-form-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+/* Grid. Widths are set here, not through the grid library's column props, which leak onto DOM elements. */
+.table-rows-grid .rdt_TableCol:not([data-column-id="__open"]),
+.table-rows-grid .rdt_TableCell:not([data-column-id="__open"]) {
+  max-width: 24rem;
+  min-width: 7.5rem;
+}
+
+.table-rows-grid .rdt_TableCol {
+  padding-left: 0.3rem;
+  padding-right: 0.3rem;
+}
+
+.table-rows-grid .rdt_TableCell {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+
+.table-rows-grid .rdt_TableCol > div,
+.table-rows-grid .rdt_TableCol_Sortable {
+  min-width: 0;
+  width: 100%;
+}
+
+.table-rows-sort {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--bs-border-radius-sm);
+  color: inherit;
+  display: flex;
+  font: inherit;
+  font-weight: 600;
+  gap: 0.3rem;
+  min-width: 0;
+  padding: 0.15rem 0.2rem;
+  text-align: left;
+  width: 100%;
+}
+
+.table-rows-sort.is-number {
+  flex-direction: row-reverse;
+  text-align: right;
+}
+
+.table-rows-sort-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-rows-sort-icon {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  opacity: 0;
+}
+
+.table-rows-sort:hover .table-rows-sort-icon,
+.table-rows-sort:focus-visible .table-rows-sort-icon {
+  opacity: 0.45;
+}
+
+.table-rows-sort.is-sorted {
+  color: var(--bs-primary);
+}
+
+.table-rows-sort.is-sorted .table-rows-sort-icon {
+  opacity: 1;
+}
+
+.table-rows-cell {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.table-rows-cell.is-number {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.table-rows-cell.is-blank {
+  color: var(--bs-secondary-color);
+  opacity: 0.45;
+}
+
+.table-rows-open {
+  border: 0;
+  color: var(--bs-secondary-color);
+  line-height: 1;
+  padding: 0.2rem 0.3rem;
+}
+
+.table-rows-open:hover {
+  color: var(--bs-primary);
+}
+
+.table-rows-grid .rdt_TableBody .rdt_TableRow:focus-visible {
+  outline: 2px solid var(--bs-primary);
+  outline-offset: -2px;
+}
+
+.rdt_TableRow.table-row-open {
+  box-shadow: inset 3px 0 0 var(--bs-primary);
+  background-color: color-mix(in srgb, var(--bs-primary) 10%, transparent) !important;
+}
+
+.table-rows-empty {
+  align-items: center;
+  border: 1px dashed var(--bs-border-color);
+  border-radius: var(--bs-border-radius);
+  color: var(--bs-secondary-color);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.875rem;
+  gap: 0.6rem;
+  padding: 1rem;
+}
+
+/* Record panel: an in-page side panel (not a second Bootstrap modal). */
+.record-view-layer {
+  inset: 0;
+  position: fixed;
+  z-index: 1070;
+}
+
+.record-view-backdrop {
+  background: rgba(0, 0, 0, 0.28);
+  inset: 0;
+  position: absolute;
+}
+
+.record-view {
+  background: var(--bs-body-bg);
+  border-left: 1px solid var(--bs-border-color);
+  bottom: 0;
+  box-shadow: -0.5rem 0 1.5rem rgba(0, 0, 0, 0.18);
+  color: var(--bs-body-color);
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: min(34rem, 100vw);
+}
+
+.record-view:focus {
+  outline: none;
+}
+
+.record-view-header {
+  align-items: flex-start;
+  border-bottom: 1px solid var(--bs-border-color);
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  padding: 0.9rem 1rem 0.7rem;
+}
+
+.record-view-title {
+  min-width: 0;
+}
+
+.record-view-kicker {
+  color: var(--bs-secondary-color);
+  display: block;
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.record-view-title h2 {
+  font-size: 1.05rem;
+  margin: 0.1rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.record-view-key {
+  font-weight: 600;
+}
+
+.record-view-nav {
+  align-items: center;
+  border-bottom: 1px solid var(--bs-border-color);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+}
+
+.record-view-position {
+  color: var(--bs-secondary-color);
+  font-size: 0.8rem;
+}
+
+.record-view-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.75rem 1rem 1.5rem;
+}
+
+.record-fields {
+  margin: 0;
+}
+
+.record-field {
+  border-bottom: 1px solid var(--bs-border-color);
+  display: grid;
+  gap: 0.15rem 0.9rem;
+  grid-template-columns: minmax(8rem, 38%) 1fr;
+  padding: 0.45rem 0;
+}
+
+.record-field dt {
+  font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.record-field dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.record-field-uri {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 400;
+}
+
+.record-field-description {
+  color: var(--bs-secondary-color);
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 400;
+  margin-top: 0.1rem;
+}
+
+.record-field.is-blank dt {
+  color: var(--bs-secondary-color);
+}
+
+.record-blank {
+  color: var(--bs-secondary-color);
+  font-style: italic;
+}
+
+.record-links {
+  margin-top: 1.25rem;
+}
+
+.record-links h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.record-links ul {
+  display: grid;
+  gap: 0.6rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.record-link {
+  background: var(--bs-tertiary-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius);
+  padding: 0.6rem 0.75rem;
+}
+
+.record-link-heading {
+  align-items: baseline;
+  display: flex;
+  font-size: 0.85rem;
+  gap: 0.4rem;
+  margin-bottom: 0.35rem;
+  overflow-wrap: anywhere;
+}
+
+.record-link-summary {
+  font-size: 0.8rem;
+  margin: 0 0 0.5rem;
+}
+
+.record-link-summary > div {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: minmax(6rem, 38%) 1fr;
+}
+
+.record-link-summary dt {
+  color: var(--bs-secondary-color);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.record-link-summary dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.record-link-quiet {
+  color: var(--bs-secondary-color);
+  font-size: 0.8rem;
+  margin: 0 0 0.4rem;
+}
+
+.record-link-missing {
+  color: var(--bs-warning-text-emphasis);
+  font-size: 0.8rem;
+  margin: 0 0 0.4rem;
+}
+
+.record-link-count {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+
+@media (max-width: 480px) {
+  .record-field,
+  .record-link-summary > div {
+    grid-template-columns: 1fr;
+  }
+}

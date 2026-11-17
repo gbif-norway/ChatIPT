@@ -5,25 +5,23 @@ import cytoscape from 'cytoscape'
 import config from '../config.js'
 import { useTheme } from '../contexts/ThemeContext'
 import { pluralize } from '../utils/datasetPresentation'
-import TableRowsView from './TableRowsView'
+import {
+  TABLE_PRIORITY,
+  emptyExplorerState,
+  nodeForTable,
+  openRelatedState,
+  sameId,
+  selectTable,
+} from '../utils/explorerState.mjs'
+import TableExplorer, { rememberedView } from './TableExplorer'
+import TableList from './TableList'
 
-const NODE_PRIORITY = [
-  'event',
-  'occurrence',
-  'taxonomy-taxon',
-  'material',
-  'identification',
-  'organism',
-  'survey',
-  'media',
-  'agent',
-]
+const GRAPH_PADDING = 40
 
 const formatResourceName = (name) => String(name || '')
   .split('-')
   .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
   .join(' ')
-
 
 const graphCategory = (name) => {
   if (name === 'taxonomy-occurrence-links') return 'claims'
@@ -63,54 +61,142 @@ const graphPalette = (isDark) => ({
   selected: isDark ? '#ffffff' : '#15251d',
 })
 
-// Opens the explorer modal mounted by <PackageExplorer>. The dataset page and the conversion page both use it.
-export async function openPackageExplorer() {
-  const bootstrap = await import('bootstrap/dist/js/bootstrap.bundle.min.js')
-  const modalElement = document.getElementById('packageExplorerModal')
-  if (modalElement) bootstrap.Modal.getOrCreateInstance(modalElement).show()
+const firstNode = (nodes) => [...(nodes || [])].sort((a, b) => {
+  const aIndex = TABLE_PRIORITY.indexOf(a.id)
+  const bIndex = TABLE_PRIORITY.indexOf(b.id)
+  if (aIndex === -1 && bIndex === -1) return a.title.localeCompare(b.title)
+  if (aIndex === -1) return 1
+  if (bIndex === -1) return -1
+  return aIndex - bIndex
+})[0] || null
+
+// The package model describes a node; the explorer wants a table. The node's own save time is its
+// version (stats are matched to it); the model's reload counter is only a fallback for old payloads.
+const tableFromNode = (node, version) => ({
+  id: node.tableId,
+  title: node.title,
+  row_count: node.rowCount,
+  columns: (node.fields || []).map((field) => field.name),
+  updated_at: node.updatedAt || version,
+  description: node.description,
+  is_dwc_dp: true,
+})
+
+// Dims everything except the open table (and its neighbours) or the chosen relationship.
+const highlightGraph = (cy, target) => {
+  if (!cy) return
+  cy.elements().removeClass('is-muted is-path').unselect()
+  if (target?.type === 'node') {
+    const node = cy.getElementById(target.id)
+    if (node.empty()) return
+    cy.elements().addClass('is-muted')
+    node.closedNeighborhood().removeClass('is-muted')
+    node.select()
+  } else if (target?.type === 'edge') {
+    const edge = cy.getElementById(target.id)
+    if (edge.empty()) return
+    cy.elements().addClass('is-muted')
+    edge.removeClass('is-muted')
+    edge.connectedNodes().removeClass('is-muted')
+    edge.select()
+  }
 }
 
-export default function PackageExplorer({ datasetId, onOpenTable }) {
+async function getModal() {
+  const bootstrap = await import('bootstrap/dist/js/bootstrap.bundle.min.js')
+  const modalElement = document.getElementById('packageExplorerModal')
+  return modalElement ? { element: modalElement, modal: bootstrap.Modal.getOrCreateInstance(modalElement) } : null
+}
+
+// Opens the explorer modal mounted by <PackageExplorer>. The dataset page and the conversion page both use it.
+export async function openPackageExplorer() {
+  const found = await getModal()
+  found?.modal.show()
+}
+
+/**
+ * The package explorer modal. It loads the package model itself when it opens, unless the page already has
+ * one: then pass `model` (null while there is none yet) with `modelLoading`, `modelError` and `onReloadModel`,
+ * and it uses that instead of fetching the same heavy model again.
+ */
+export default function PackageExplorer({
+  datasetId,
+  onOpenTable,
+  onAsk,
+  model: sharedModel,
+  modelLoading = false,
+  modelError = '',
+  onReloadModel,
+}) {
   const graphRef = useRef(null)
   const cyRef = useRef(null)
+  const highlightRef = useRef(null)
   const loadControllerRef = useRef(null)
+  const onShowRef = useRef(null)
   const { isDark } = useTheme()
-  const [model, setModel] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const shared = sharedModel !== undefined
+  const [ownModel, setOwnModel] = useState(null)
+  const [ownLoading, setOwnLoading] = useState(false)
+  const [ownError, setOwnError] = useState('')
+  const model = shared ? sharedModel : ownModel
+  const loading = shared ? Boolean(modelLoading) : ownLoading
+  // A failed refresh of a shared model keeps showing the model it already has.
+  const error = shared ? (sharedModel ? '' : modelError || '') : ownError
+  const [modelVersion, setModelVersion] = useState(0)
+  const [seenModel, setSeenModel] = useState(null)
   const [visible, setVisible] = useState(false)
-  const [selection, setSelection] = useState(null)
+  // A chosen relationship replaces the table on the right until a table is chosen again.
+  const [edgeId, setEdgeId] = useState(null)
+  const [explorer, setExplorer] = useState(() => emptyExplorerState(rememberedView()))
   const [hoveredNodeId, setHoveredNodeId] = useState(null)
-  // Set when a foreign-key value is followed, so the target table opens filtered to that record.
-  const [linkFilter, setLinkFilter] = useState(null)
+  const [mapExpanded, setMapExpanded] = useState(false)
+  // Set when a link from a record opens a table, so that table's heading gets focus.
+  const [focus, setFocus] = useState(null)
+
+  // A new model: the tables shown are a new version, and a chosen relationship or table that left the package
+  // is dropped (reopening keeps the table that was open, as long as it is still in the package).
+  if (model !== seenModel) {
+    setSeenModel(model)
+    if (model) {
+      setModelVersion((value) => value + 1)
+      setEdgeId((current) => (current && (model.edges || []).some((edge) => edge.id === current) ? current : null))
+      setExplorer((current) => {
+        if (nodeForTable(model, current.tableId)) return current
+        return selectTable(current, firstNode(model.nodes)?.tableId ?? null)
+      })
+    }
+  }
 
   const nodeMap = useMemo(
     () => new Map((model?.nodes || []).map((node) => [node.id, node])),
     [model]
   )
-  const selectedNode = selection?.type === 'node' ? nodeMap.get(selection.id) : null
-  const foreignKeys = useMemo(() => {
-    const links = new Map()
-    for (const edge of model?.edges || []) {
-      if (edge.source !== selectedNode?.id || edge.sourceFields.length !== 1) continue
-      if (!links.has(edge.sourceFields[0])) links.set(edge.sourceFields[0], edge)
-    }
-    return links
-  }, [model, selectedNode?.id])
+  const selectedNode = nodeForTable(model, explorer.tableId)
+  const selectedEdge = edgeId ? model?.edges?.find((edge) => edge.id === edgeId) || null : null
+  const highlight = selectedEdge
+    ? { type: 'edge', id: selectedEdge.id }
+    : selectedNode ? { type: 'node', id: selectedNode.id } : null
+  const highlightKey = highlight ? `${highlight.type}:${highlight.id}` : ''
 
-  const selectFromGraph = useCallback((nextSelection) => {
-    setLinkFilter(null)
-    setSelection(nextSelection)
-  }, [])
+  const showNode = useCallback((nodeId) => {
+    const node = nodeMap.get(nodeId)
+    if (!node) return
+    setEdgeId(null)
+    setFocus(null)
+    setExplorer((current) => selectTable(current, node.tableId))
+  }, [nodeMap])
 
-  const followForeignKey = useCallback((edge, value) => {
-    setLinkFilter({
-      key: Date.now(),
-      search: String(value).trim(),
-      column: edge.targetFields[0],
-      exact: true,
-    })
-    setSelection({ type: 'node', id: edge.target })
+  const showEdge = useCallback((id) => setEdgeId(id), [])
+
+  const openRelated = useCallback(({ tableId, filters }) => {
+    if (!nodeForTable(model, tableId)) return
+    setEdgeId(null)
+    setExplorer((current) => openRelatedState(current, { tableId, filters }))
+    setFocus((current) => ({ tableId, request: (current?.request || 0) + 1 }))
+  }, [model])
+
+  const onExplorerChange = useCallback((next) => {
+    setExplorer((current) => (sameId(current.tableId, next.tableId) ? next : current))
   }, [])
 
   const loadModel = useCallback(() => {
@@ -121,8 +207,8 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
     loadControllerRef.current = controller
 
     const load = async () => {
-      setLoading(true)
-      setError('')
+      setOwnLoading(true)
+      setOwnError('')
       try {
         const response = await fetch(`${config.baseUrl}/api/datasets/${datasetId}/package-explorer/`, {
           credentials: 'include',
@@ -133,34 +219,31 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
           throw new Error(data?.detail || data?.error || 'The package model could not be loaded.')
         }
         if (controller.signal.aborted) return
-
-        setModel(data)
-        const firstNode = [...(data.nodes || [])].sort((a, b) => {
-          const aIndex = NODE_PRIORITY.indexOf(a.id)
-          const bIndex = NODE_PRIORITY.indexOf(b.id)
-          if (aIndex === -1 && bIndex === -1) return a.title.localeCompare(b.title)
-          if (aIndex === -1) return 1
-          if (bIndex === -1) return -1
-          return aIndex - bIndex
-        })[0]
-        setLinkFilter(null)
-        setSelection(firstNode ? { type: 'node', id: firstNode.id } : null)
+        setOwnModel(data)
       } catch (loadError) {
         if (loadError.name !== 'AbortError' && loadControllerRef.current === controller) {
-          setError(loadError.message)
+          setOwnError(loadError.message)
         }
       } finally {
-        if (loadControllerRef.current === controller) setLoading(false)
+        if (loadControllerRef.current === controller) setOwnLoading(false)
       }
     }
 
     load()
   }, [datasetId])
 
+  // Opening the modal loads its own model, or with a shared one asks for it only when there is none yet.
+  useEffect(() => {
+    onShowRef.current = () => {
+      if (!shared) loadModel()
+      else if (!sharedModel && !modelLoading) onReloadModel?.()
+    }
+  })
+
   useEffect(() => {
     const modal = document.getElementById('packageExplorerModal')
     if (!modal) return undefined
-    const onShow = () => loadModel()
+    const onShow = () => onShowRef.current?.()
     const onShown = () => setVisible(true)
     const onHidden = () => {
       setVisible(false)
@@ -176,6 +259,10 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
       loadControllerRef.current?.abort()
     }
   }, [loadModel])
+
+  useEffect(() => {
+    highlightRef.current = highlight
+  })
 
   useEffect(() => {
     if (!visible || !graphRef.current || !model?.nodes?.length) return undefined
@@ -204,7 +291,7 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
     const cy = cytoscape({
       container: graphRef.current,
       elements,
-      minZoom: 0.35,
+      minZoom: 0.25,
       maxZoom: 2.5,
       wheelSensitivity: 0.18,
       style: [
@@ -215,16 +302,16 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
             'border-color': palette.background,
             'border-width': 3,
             color: '#ffffff',
-            'font-size': 11,
-            'font-weight': 500,
-            height: 56,
+            'font-size': 18,
+            'font-weight': 600,
+            height: 64,
             label: 'data(label)',
             shape: 'roundrectangle',
             'text-halign': 'center',
-            'text-max-width': 130,
+            'text-max-width': 150,
             'text-wrap': 'wrap',
             'text-valign': 'center',
-            width: 148,
+            width: 168,
           },
         },
         { selector: 'node[category = "evidence"]', style: { 'background-color': palette.evidence } },
@@ -234,7 +321,7 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
           selector: 'edge',
           style: {
             'curve-style': 'bezier',
-            'font-size': 9,
+            'font-size': 13,
             label: 'data(label)',
             'line-color': palette.edge,
             'target-arrow-color': palette.edge,
@@ -248,11 +335,18 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
           },
         },
         { selector: 'edge[kind = "weak"]', style: { 'line-style': 'dashed', opacity: 0.7 } },
+        // Tables not linked to the open one stay readable: a pale tint of their colour with dark text.
         {
-          selector: '.is-muted',
+          selector: 'node.is-muted',
           style: {
-            opacity: 0.16,
-            'text-opacity': 0.08,
+            'background-opacity': 0.22,
+            color: palette.foreground,
+          },
+        },
+        {
+          selector: 'edge.is-muted',
+          style: {
+            opacity: 0.35,
           },
         },
         {
@@ -279,6 +373,14 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
             'border-width': 5,
           },
         },
+        {
+          selector: 'edge:selected',
+          style: {
+            'line-color': palette.selected,
+            'target-arrow-color': palette.selected,
+            width: 3,
+          },
+        },
       ],
       layout: {
         name: model.nodes.length <= 14 ? 'concentric' : 'cose',
@@ -288,103 +390,154 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
         concentric: (node) => node.degree(),
         idealEdgeLength: 72,
         levelWidth: () => 2,
-        minNodeSpacing: 80,
+        minNodeSpacing: 36,
         nodeRepulsion: 95000,
-        padding: 55,
+        padding: GRAPH_PADDING,
         randomize: true,
-        spacingFactor: 1.15,
+        spacingFactor: 0.9,
       },
     })
 
-    cy.on('tap', 'node', (event) => {
-      selectFromGraph({ type: 'node', id: event.target.id() })
-    })
-    cy.on('tap', 'edge', (event) => {
-      selectFromGraph({ type: 'edge', id: event.target.id() })
-    })
+    cy.on('tap', 'node', (event) => showNode(event.target.id()))
+    cy.on('tap', 'edge', (event) => showEdge(event.target.id()))
     cy.on('mouseover', 'node', (event) => setHoveredNodeId(event.target.id()))
     cy.on('mouseout', 'node', () => setHoveredNodeId(null))
     cyRef.current = cy
-    requestAnimationFrame(() => {
+    highlightGraph(cy, highlightRef.current)
+
+    // The map panel changes size (Expand, window size, fullscreen on small screens): redraw and refit.
+    let frame = 0
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        cy.resize()
+        cy.fit(cy.elements(), GRAPH_PADDING)
+      })
+    })
+    observer?.observe(graphRef.current)
+    frame = window.requestAnimationFrame(() => {
       cy.resize()
-      cy.fit(cy.elements(), 55)
+      cy.fit(cy.elements(), GRAPH_PADDING)
     })
 
     return () => {
+      window.cancelAnimationFrame(frame)
+      observer?.disconnect()
       cy.destroy()
       cyRef.current = null
     }
-  }, [visible, model, isDark, selectFromGraph])
+  }, [visible, model, isDark, showNode, showEdge])
 
   useEffect(() => {
-    const cy = cyRef.current
-    if (!cy) return
-    cy.elements().removeClass('is-muted is-path')
-
-    if (selection?.type === 'node') {
-      const node = cy.getElementById(selection.id)
-      cy.elements().addClass('is-muted')
-      node.closedNeighborhood().removeClass('is-muted')
-      node.select()
-    } else if (selection?.type === 'edge') {
-      const edge = cy.getElementById(selection.id)
-      cy.elements().addClass('is-muted')
-      edge.removeClass('is-muted')
-      edge.connectedNodes().removeClass('is-muted')
-      edge.select()
-    }
-  }, [selection])
+    highlightGraph(cyRef.current, highlightRef.current)
+  }, [highlightKey])
 
   const fitGraph = useCallback(() => {
     const cy = cyRef.current
-    if (cy) cy.animate({ fit: { eles: cy.elements(':visible'), padding: 55 }, duration: 250 })
+    if (cy) cy.animate({ fit: { eles: cy.elements(), padding: GRAPH_PADDING }, duration: 250 })
   }, [])
 
-  const selectedEdge = selection?.type === 'edge'
-    ? model?.edges?.find((edge) => edge.id === selection.id)
-    : null
+  // Asking from inside the modal: close it first, then put the question in the chat box it was covering.
+  const askFromModal = useCallback(async (text) => {
+    const found = await getModal()
+    if (!found) {
+      onAsk?.(text)
+      return
+    }
+    found.element.addEventListener('hidden.bs.modal', () => onAsk?.(text), { once: true })
+    found.modal.hide()
+  }, [onAsk])
+
   const hoveredNode = hoveredNodeId ? nodeMap.get(hoveredNodeId) : null
-  const fieldsByName = new Map((selectedNode?.fields || []).map((field) => [field.name, field]))
-
-  const renderFieldHeader = (column) => {
-    const field = fieldsByName.get(column)
-    const link = foreignKeys.get(column)
-    return (
-      <span title={field?.description || column}>
-        {column.startsWith('http') ? field?.title || column : column}
-        {(field?.primary || field?.weakPrimary) && (
-          <i
-            className={`bi ${field.primary ? 'bi-key-fill' : 'bi-key'} ms-1`}
-            aria-label={field.primary ? 'Primary key' : 'Public identifier'}
-          ></i>
-        )}
-        {link && (
-          <i
-            className="bi bi-link-45deg ms-1"
-            aria-label={`Links to ${nodeMap.get(link.target)?.title || link.target}`}
-          ></i>
-        )}
-      </span>
-    )
-  }
-
-  const renderLinkedCell = (column, value) => {
-    const link = foreignKeys.get(column)
-    if (!link || value === null || value === undefined || String(value).trim() === '') return null
-    return (
-      <button
-        type="button"
-        className="btn btn-link btn-sm p-0 package-fk-link"
-        title={`Open ${nodeMap.get(link.target)?.title || link.target} ${link.targetFields[0]} = ${value}`}
-        onClick={() => followForeignKey(link, value)}
-      >
-        {String(value)}
-      </button>
-    )
-  }
   const totalRows = (model?.nodes || []).reduce((sum, node) => sum + node.rowCount, 0)
   const taxonomyOnly = model?.packageType === 'taxonomy-data-package'
   const examples = selectedNode ? parseExamples(selectedNode.examples).slice(0, 2) : []
+  const pickerTables = useMemo(() => (model?.nodes || []).map((node) => ({
+    id: node.tableId,
+    title: node.title,
+    resource: node.id,
+    row_count: node.rowCount,
+    is_dwc_dp: true,
+  })), [model])
+  const selectedTable = useMemo(
+    () => (selectedNode ? tableFromNode(selectedNode, String(modelVersion)) : null),
+    [selectedNode, modelVersion]
+  )
+  const titleOf = (id) => nodeMap.get(id)?.title || formatResourceName(id)
+
+  const renderEdge = (edge) => {
+    const sourceNode = nodeMap.get(edge.source)
+    const sourceField = edge.sourceFields.length === 1 ? edge.sourceFields[0] : null
+    return (
+      <div className="package-edge-detail">
+        <div className="package-edge-heading">
+          <span>Relationship</span>
+          <h3 className="h6">
+            {titleOf(edge.source)}{' '}
+            <em>{edge.predicate}</em>{' '}
+            {titleOf(edge.target)}
+          </h3>
+        </div>
+        <div className="package-edge-route">
+          <code>{edge.source}.{edge.sourceFields.join(', ')}</code>
+          <i className="bi bi-arrow-right" aria-hidden="true"></i>
+          <code>{edge.target}.{edge.targetFields.join(', ')}</code>
+        </div>
+        <p className="package-inspector-description">
+          Rows in {titleOf(edge.source)} use these fields to connect to {titleOf(edge.target)}.
+        </p>
+        {edge.coverage === 'skipped' ? (
+          <div className="alert alert-secondary small">
+            These links were not checked: the package is too large to compare every row here.
+            {edge.kind === 'weak' && ' This is an optional weak relationship in the standard.'}
+          </div>
+        ) : (
+        <>
+        <div className="package-link-coverage">
+          <div>
+            <strong>{edge.linkedRows.toLocaleString()}</strong>
+            <span>linked rows</span>
+          </div>
+          <div>
+            <strong>{edge.unmatchedRows.toLocaleString()}</strong>
+            <span>unmatched</span>
+          </div>
+          <div>
+            <strong>{edge.blankRows.toLocaleString()}</strong>
+            <span>without a link</span>
+          </div>
+        </div>
+        <div className={`alert ${edge.unmatchedRows > 0 ? 'alert-warning' : 'alert-success'} small`}>
+          {edge.unmatchedRows > 0
+            ? `${pluralize(edge.unmatchedRows, 'populated reference')} could not be matched in the related table.`
+            : `Every populated reference matches a record in ${titleOf(edge.target)}.`}
+          {edge.kind === 'weak' && ' This is an optional weak relationship in the standard.'}
+        </div>
+        </>
+        )}
+        <div className="package-edge-actions">
+          <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => showNode(edge.source)}>
+            <i className="bi bi-table me-1" aria-hidden="true"></i>Open {titleOf(edge.source)}
+          </button>
+          <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => showNode(edge.target)}>
+            <i className="bi bi-table me-1" aria-hidden="true"></i>Open {titleOf(edge.target)}
+          </button>
+          {sourceField && edge.blankRows > 0 && sourceNode && (
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-secondary"
+              onClick={() => openRelated({
+                tableId: sourceNode.tableId,
+                filters: [{ column: sourceField, op: 'blank' }],
+              })}
+            >
+              Show the {pluralize(edge.blankRows, `${titleOf(edge.source)} row`)} without a link
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div
@@ -405,7 +558,7 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
           </div>
 
           <div className="modal-body package-explorer-body">
-            {loading && (
+            {loading && !model && (
               <div className="package-explorer-state">
                 <div className="spinner-border text-success" role="status">
                   <span className="visually-hidden">Loading package explorer…</span>
@@ -414,14 +567,23 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
               </div>
             )}
             {!loading && error && (
-              <div className="alert alert-danger m-3" role="alert">{error}</div>
+              <div className="alert alert-danger m-3 d-flex align-items-center gap-2" role="alert">
+                <span>{error}</span>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-danger ms-auto"
+                  onClick={() => (shared ? onReloadModel?.() : loadModel())}
+                >
+                  Retry
+                </button>
+              </div>
             )}
             {!loading && !error && model?.nodes?.length === 0 && (
               <div className="package-explorer-state">
                 Package resources will appear here once ChatIPT has organised the source data.
               </div>
             )}
-            {!loading && !error && model?.nodes?.length > 0 && (
+            {!error && model?.nodes?.length > 0 && (
               <>
                 <div className="package-explorer-summary">
                   <div>
@@ -432,14 +594,21 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
                       {pluralize(model.edges.length, 'table relationship')}{taxonomyOnly ? '' : ` · DwC-DP schema ${model.schema?.version || 'Unknown'}`}
                     </span>
                   </div>
-                  <span className="badge text-bg-success">
-                    <i className="bi bi-check-circle me-1" aria-hidden="true"></i>
-                    Current package
-                  </span>
+                  {loading ? (
+                    <span className="badge text-bg-secondary">
+                      <span className="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                      Updating…
+                    </span>
+                  ) : (
+                    <span className="badge text-bg-success">
+                      <i className="bi bi-check-circle me-1" aria-hidden="true"></i>
+                      Current package
+                    </span>
+                  )}
                 </div>
 
-                <div className="package-explorer-workspace">
-                  <section className="package-graph-panel" aria-label="Interactive package relationship map">
+                <div className={`package-explorer-workspace${mapExpanded ? ' is-map-expanded' : ''}`}>
+                  <section className="package-graph-panel" aria-label="Package relationship map">
                     <div className="package-graph-toolbar">
                       <div className="package-graph-legend" aria-label="Table type legend">
                         <span><i className="legend-dot legend-records"></i>{taxonomyOnly ? 'Checklist' : 'Core records'}</span>
@@ -449,10 +618,22 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
                           <span><i className="legend-dot legend-claims"></i>Claims</span>
                         </>}
                       </div>
-                      <button type="button" className="btn btn-sm btn-outline-secondary" onClick={fitGraph}>
-                        <i className="bi bi-arrows-fullscreen me-1" aria-hidden="true"></i>
-                        Fit
-                      </button>
+                      <div className="package-graph-actions">
+                        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={fitGraph} title="Fit the whole map in view">
+                          <i className="bi bi-bullseye me-1" aria-hidden="true"></i>
+                          Fit
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-secondary"
+                          aria-pressed={mapExpanded}
+                          onClick={() => setMapExpanded((value) => !value)}
+                          title={mapExpanded ? 'Give the table more room again' : 'Make the map bigger'}
+                        >
+                          <i className={`bi ${mapExpanded ? 'bi-arrows-angle-contract' : 'bi-arrows-angle-expand'} me-1`} aria-hidden="true"></i>
+                          {mapExpanded ? 'Shrink' : 'Expand'}
+                        </button>
+                      </div>
                     </div>
                     <div className="package-graph-stage">
                       <div ref={graphRef} className="package-graph-canvas" />
@@ -471,11 +652,12 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
                           <li key={edge.id}>
                             <button
                               type="button"
-                              onClick={() => selectFromGraph({ type: 'edge', id: edge.id })}
+                              aria-current={edge.id === selectedEdge?.id ? 'true' : undefined}
+                              onClick={() => showEdge(edge.id)}
                             >
-                              {nodeMap.get(edge.source)?.title || formatResourceName(edge.source)}{' '}
+                              {titleOf(edge.source)}{' '}
                               <strong>{edge.predicate}</strong>{' '}
-                              {nodeMap.get(edge.target)?.title || formatResourceName(edge.target)}
+                              {titleOf(edge.target)}
                             </button>
                           </li>
                         ))}
@@ -483,122 +665,55 @@ export default function PackageExplorer({ datasetId, onOpenTable }) {
                     </details>
                   </section>
 
-                  <aside className="package-inspector" aria-live="polite">
-                    {selectedNode && (
-                      <>
-                        <div className="package-inspector-heading">
-                          <div className={`package-node-mark package-node-${graphCategory(selectedNode.id)}`}>
-                            <i className="bi bi-table" aria-hidden="true"></i>
-                          </div>
-                          <div>
-                            <span>{selectedNode.id}</span>
-                            <h6>{selectedNode.title}</h6>
-                            <small>
-                              {pluralize(selectedNode.rowCount, 'row')} · {pluralize(selectedNode.columnCount, 'column')}
-                            </small>
-                          </div>
-                        </div>
-                        <p className="package-inspector-description">{selectedNode.description}</p>
-                        {examples.length > 0 && (
+                  <div className="package-inspector">
+                    {selectedEdge && renderEdge(selectedEdge)}
+                    {!selectedEdge && selectedTable && visible && (
+                      <TableExplorer
+                        key={selectedTable.id}
+                        table={selectedTable}
+                        state={explorer}
+                        onStateChange={onExplorerChange}
+                        packageModel={model}
+                        onOpenRelated={openRelated}
+                        onAsk={onAsk ? askFromModal : undefined}
+                        headingLevel={3}
+                        focusRequest={focus && sameId(focus.tableId, selectedTable.id) ? focus.request : null}
+                        kicker={(
+                          <>
+                            <i className={`legend-dot legend-${graphCategory(selectedNode.id)}`} aria-hidden="true"></i>
+                            {selectedNode.id}
+                          </>
+                        )}
+                        picker={pickerTables.length > 1 ? (
+                          <TableList tables={pickerTables} selectedId={selectedTable.id} onSelect={(tableId) => {
+                            setEdgeId(null)
+                            setFocus(null)
+                            setExplorer((current) => selectTable(current, tableId))
+                          }} />
+                        ) : null}
+                        headerExtra={examples.length > 0 ? (
                           <div className="package-examples">
                             <strong>For example</strong>
                             {examples.join('; ')}.
                           </div>
-                        )}
-
-                        <div className="package-inspector-section">
-                          <div className="package-inspector-section-title">
-                            <strong>Rows</strong>
-                            {onOpenTable && (
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-link"
-                                data-bs-dismiss="modal"
-                                onClick={() => onOpenTable(selectedNode.tableId)}
-                              >
-                                Open on main page
-                              </button>
-                            )}
-                          </div>
-                          {foreignKeys.size > 0 && (
-                            <p className="package-preview-hint mt-0 mb-2">
-                              <i className="bi bi-link-45deg" aria-hidden="true"></i>{' '}
-                              Click a linked value to open the record it points to.
-                            </p>
-                          )}
-                          {visible && (
-                            <TableRowsView
-                              key={`${selectedNode.tableId}:${linkFilter?.key || ''}`}
-                              tableId={selectedNode.tableId}
-                              columns={selectedNode.fields.map((field) => field.name)}
-                              totalRows={selectedNode.rowCount}
-                              initialFilter={linkFilter}
-                              renderHeader={renderFieldHeader}
-                              renderCell={renderLinkedCell}
-                            />
-                          )}
-                        </div>
-
-                        <details className="package-field-guide">
-                          <summary>Fields in this table</summary>
-                          <dl>
-                            {selectedNode.fields.map((field) => (
-                              <div key={field.name}>
-                                <dt>
-                                  {field.name.startsWith('http') ? field.title : field.name}
-                                  {field.primary && <span className="badge text-bg-success ms-2">Primary key</span>}
-                                  {field.weakPrimary && <span className="badge text-bg-secondary ms-2">Public ID</span>}
-                                </dt>
-                                <dd>{field.description || field.title}</dd>
-                              </div>
-                            ))}
-                          </dl>
-                        </details>
-                      </>
+                        ) : null}
+                        actions={onOpenTable ? (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-link"
+                            data-bs-dismiss="modal"
+                            onClick={() => onOpenTable(selectedTable.id, {
+                              view: explorer.view,
+                              column: explorer.column,
+                              filters: explorer.filters,
+                            })}
+                          >
+                            Open on main page
+                          </button>
+                        ) : null}
+                      />
                     )}
-
-                    {selectedEdge && (
-                      <>
-                        <div className="package-edge-heading">
-                          <span>Relationship</span>
-                          <h6>
-                            {nodeMap.get(selectedEdge.source)?.title}{' '}
-                            <em>{selectedEdge.predicate}</em>{' '}
-                            {nodeMap.get(selectedEdge.target)?.title}
-                          </h6>
-                        </div>
-                        <div className="package-edge-route">
-                          <code>{selectedEdge.source}.{selectedEdge.sourceFields.join(', ')}</code>
-                          <i className="bi bi-arrow-right" aria-hidden="true"></i>
-                          <code>{selectedEdge.target}.{selectedEdge.targetFields.join(', ')}</code>
-                        </div>
-                        <p className="package-inspector-description">
-                          Rows in {nodeMap.get(selectedEdge.source)?.title} use these fields to connect to{' '}
-                          {nodeMap.get(selectedEdge.target)?.title}.
-                        </p>
-                        <div className="package-link-coverage">
-                          <div>
-                            <strong>{selectedEdge.linkedRows.toLocaleString()}</strong>
-                            <span>linked rows</span>
-                          </div>
-                          <div>
-                            <strong>{selectedEdge.unmatchedRows.toLocaleString()}</strong>
-                            <span>unmatched</span>
-                          </div>
-                          <div>
-                            <strong>{selectedEdge.blankRows.toLocaleString()}</strong>
-                            <span>without a link</span>
-                          </div>
-                        </div>
-                        <div className={`alert ${selectedEdge.unmatchedRows > 0 ? 'alert-warning' : 'alert-success'} small`}>
-                          {selectedEdge.unmatchedRows > 0
-                            ? `${pluralize(selectedEdge.unmatchedRows, 'populated reference')} could not be matched in the related table.`
-                            : `Every populated reference matches a record in ${nodeMap.get(selectedEdge.target)?.title}.`}
-                          {selectedEdge.kind === 'weak' && ' This is an optional weak relationship in the standard.'}
-                        </div>
-                      </>
-                    )}
-                  </aside>
+                  </div>
                 </div>
               </>
             )}

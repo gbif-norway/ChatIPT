@@ -1398,6 +1398,10 @@ class Table(models.Model):
             update_fields = kwargs.get('update_fields')
             if update_fields and 'df' in update_fields:
                 kwargs['update_fields'] = set(update_fields) | {'row_count', 'columns'}
+        update_fields = kwargs.get('update_fields')
+        if update_fields and 'df' in update_fields:
+            # updated_at versions caches of the DataFrame (column stats, row positions).
+            kwargs['update_fields'] = set(update_fields) | {'updated_at'}
         result = super().save(*args, **kwargs)
         if is_authoritative:
             self.dataset.invalidate_publication_artifacts()
@@ -1405,9 +1409,25 @@ class Table(models.Model):
             self.dataset.invalidate_dwca_artifacts()
         return result
 
+    SNAPSHOT_FIELDS = ('df', 'updated_at', 'columns', 'row_count')
+
+    def load_snapshot(self):
+        """Reload the DataFrame with its version, labels and row count in one query.
+
+        A table fetched with ``defer('df')`` loads the DataFrame lazily, in a later query; if the
+        table was saved in between, ``updated_at`` (a cache key) and ``columns`` would describe a
+        different version than ``df``. Call this before using the DataFrame with either.
+        """
+        if self.pk:
+            self.refresh_from_db(fields=list(self.SNAPSHOT_FIELDS))
+        return self
+
     def search_rows(self, search, column=None, exact=False):
         """Return the rows whose cell text contains (or, when exact, equals) the search text."""
         df = self.df
+        return df[self._search_mask(df, search, column=column, exact=exact)]
+
+    def _search_mask(self, df, search, column=None, exact=False):
         labels = self.columns or self.display_columns(df.columns)
         if column is None:
             positions = range(len(labels))
@@ -1424,7 +1444,94 @@ class Table(models.Model):
             else:
                 matches = text.str.casefold().str.contains(needle, regex=False)
             mask |= matches.to_numpy(dtype=bool, na_value=False)
-        return df[mask]
+        return mask
+
+    def query_row_positions(self, search='', column=None, exact=False, filters=None, sort=None, order='asc'):
+        """Positions of rows matching search and explorer filters (ANDed), optionally sorted.
+
+        Returns None when nothing narrows or reorders the table. ``filters`` is the raw JSON text
+        from the rows API. Results are cached briefly per table version, so paging through a
+        filtered view does not refilter. Raises ValueError for bad input.
+        """
+        from api import column_stats
+
+        if not (search or filters or sort):
+            return None
+        labels = self.columns or self.display_columns(self.df.columns)
+        parsed = column_stats.parse_filters(filters, labels) if filters else []
+        if sort and sort not in labels:
+            raise ValueError(f"Unknown sort column: {sort}")
+        if search and column is not None and column not in labels:
+            raise ValueError(f"Unknown column: {column}")
+        key = (self.pk, self.updated_at.isoformat() if self.updated_at else '',
+               column_stats.canonical_query(search, column, exact, parsed, sort, order))
+        positions = column_stats.row_positions_cache.get(key) if self.pk else None
+        if positions is not None:
+            return positions
+        df = self.df
+        mask = None
+        if search:
+            mask = self._search_mask(df, search, column=column, exact=exact)
+        if parsed:
+            filtered = column_stats.filter_mask(df, parsed)
+            mask = filtered if mask is None else mask & filtered
+        if sort:
+            positions = column_stats.sort_positions(df, labels.index(sort), order, mask)
+        elif mask is not None:
+            positions = np.flatnonzero(mask)
+        else:
+            positions = np.arange(len(df.index))
+        positions = column_stats.compact_positions(positions, len(df.index))
+        if self.pk:
+            column_stats.row_positions_cache.set(key, positions)
+        return positions
+
+    def column_stats(self):
+        """The column-stats payload, cached per (table id, updated_at).
+
+        The cache is checked before ``self.df`` is touched, so a hit on a table loaded with
+        ``defer('df')`` never unpickles the DataFrame. Concurrent cold requests in one process
+        compute once; the others wait and read the cached result.
+        """
+        from django.core.cache import cache
+
+        from api import column_stats
+
+        key = column_stats.cache_key(self.pk, self.updated_at)
+        payload = cache.get(key)
+        if payload is not None:
+            return payload
+        with column_stats.single_flight(key):
+            payload = cache.get(key)
+            if payload is None:
+                # The table may have been saved since it was loaded: read the DataFrame with its
+                # own version and file the result under that version.
+                self.load_snapshot()
+                fresh_key = column_stats.cache_key(self.pk, self.updated_at)
+                payload = cache.get(fresh_key) if fresh_key != key else None
+                if payload is None:
+                    df = self.df
+                    labels = self.columns or self.display_columns(df.columns)
+                    payload = {
+                        'table': self.pk,
+                        'version': column_stats.version(self.updated_at),
+                        **column_stats.column_stats(df, labels),
+                    }
+                    cache.set(fresh_key, payload, column_stats.CACHE_TIMEOUT_SECONDS)
+        return payload
+
+    def column_values(self, column, search='', offset=0, limit=50, sort='count'):
+        """One page of a column's distinct values with counts. Raises ValueError for unknown columns."""
+        from api import column_stats
+
+        df = self.df
+        labels = self.columns or self.display_columns(df.columns)
+        if column not in labels:
+            raise ValueError(f"Unknown column: {column}")
+        page = column_stats.column_values(
+            df.iloc[:, labels.index(column)], search=search, offset=offset, limit=limit, sort=sort,
+        )
+        return {'column': column, **page}
 
     def row_page(self, offset, limit, rows=None):
         """Serialize one bounded DataFrame slice without copying the full table."""
