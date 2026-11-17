@@ -64,6 +64,21 @@ const getComparableMessageText = (content) => {
   return main.trim();
 };
 
+// Whether the server's messages already include a user message with the optimistic message's text.
+const serverHasUserMessage = (messageSet, optimisticMessage) => {
+  if (!messageSet?.length) {
+    return false;
+  }
+  const optimisticComparable = getComparableMessageText(optimisticMessage.openai_obj?.content);
+  return messageSet.some((message) => {
+    if (message.role !== 'user') {
+      return false;
+    }
+    const comparable = getComparableMessageText(message.openai_obj?.content);
+    return comparable === optimisticComparable && comparable.length > 0;
+  });
+};
+
 const Agent = ({
   agent,
   refreshDataset,
@@ -79,7 +94,7 @@ const Agent = ({
   const handledAskRef = useRef(null);
   const onComposerAvailabilityChangeRef = useRef(onComposerAvailabilityChange);
   const [isLoading, setIsLoading] = useState(true);
-  const [loadingMessage, setLoadingMessage] = useState(getLoadingText({ phase: 'working' }));
+  const [stillWorkingMessage, setStillWorkingMessage] = useState(null);
   const [isUserSending, setIsUserSending] = useState(false);
   const [optimisticMessage, setOptimisticMessage] = useState(null);
   const [selectedFiles, setSelectedFiles] = useState([]);
@@ -149,34 +164,22 @@ const Agent = ({
       isLoading: isLoading
     });
     
-    // Clear optimistic message if the server data now contains a user message with the same content
-    if (optimisticMessage && agent.message_set?.length > 0) {
-      const optimisticComparable = getComparableMessageText(optimisticMessage.openai_obj?.content);
-
-      const hasMatchingUserMessage = agent.message_set.some((message) => {
-        if (message.role !== 'user') {
-          return false;
-        }
-        const comparable = getComparableMessageText(message.openai_obj?.content);
-        return comparable === optimisticComparable && comparable.length > 0;
-      });
-      
-      if (hasMatchingUserMessage) {
-        console.log(`[${timestamp}] ✅ Found matching user message in server data - clearing optimistic message`);
-        setOptimisticMessage(null);
-      }
-    }
-    
-    // If agent is completed or has new assistant messages, clear loading
-    // BUT don't interfere if user is currently sending a message
-    if (!isUserSending && (agent.completed_at !== null || 
-        (agent.message_set?.length > 0 && agent.message_set.at(-1).role === 'assistant' && !agent.busy_thinking))) {
-      if (isLoading) {
-        console.log(`[${timestamp}] ✅ Agent ${agent.id} appears complete - clearing loading state`);
-        setIsLoading(false);
-      }
-    }
   }, [agent.id, agent.completed_at, agent.message_set, agent.busy_thinking, isLoading, isUserSending, optimisticMessage]);
+
+  // These two follow the server data while rendering, so the screen never shows a stale state first.
+  // Clear optimistic message if the server data now contains a user message with the same content
+  if (optimisticMessage && serverHasUserMessage(agent.message_set, optimisticMessage)) {
+    console.log(`[${new Date().toISOString()}] ✅ Found matching user message in server data - clearing optimistic message`);
+    setOptimisticMessage(null);
+  }
+
+  // If agent is completed or has new assistant messages, clear loading
+  // BUT don't interfere if user is currently sending a message
+  if (isLoading && !isUserSending && (agent.completed_at !== null ||
+      (agent.message_set?.length > 0 && agent.message_set.at(-1).role === 'assistant' && !agent.busy_thinking))) {
+    console.log(`[${new Date().toISOString()}] ✅ Agent ${agent.id} appears complete - clearing loading state`);
+    setIsLoading(false);
+  }
 
   // Watch for new Python tool results and refresh tables when they arrive
   useEffect(() => {
@@ -215,36 +218,36 @@ const Agent = ({
     }
   }, [agent.message_set, refreshTables]);
 
+  // Any change to what the loader reflects starts the wait again: back to the first message, then
+  // "Still working" after 4 seconds (the timer is in the effect below).
+  const loaderInputs = [isLoading, isUserSending, agent.busy_thinking, agent.message_set, agent.completed_at];
+  const [lastLoaderInputs, setLastLoaderInputs] = useState(loaderInputs);
+  if (loaderInputs.some((value, index) => !Object.is(value, lastLoaderInputs[index]))) {
+    setLastLoaderInputs(loaderInputs);
+    setStillWorkingMessage(null);
+  }
+  const loadingMessage = stillWorkingMessage || getLoadingText({ phase: 'working' });
+
   // Handle loading message timeout - change message after 4 seconds
   useEffect(() => {
-    let timeoutId;
-    
     // Determine if we're showing the loading spinner (same logic as in the render)
     const lastMessage = (agent.message_set && agent.message_set.length > 0) ? agent.message_set[agent.message_set.length - 1] : null;
     const assistantWaitingForReply = lastMessage && lastMessage.role === 'assistant' && (!lastMessage.openai_obj.tool_calls || lastMessage.openai_obj.tool_calls.length === 0);
     const lastAssistantHasGbifValidation = lastMessage && lastMessage.role === 'assistant' && Array.isArray(lastMessage.openai_obj?.tool_calls) && lastMessage.openai_obj.tool_calls.some(tc => tc.function?.name === 'ValidateDwCA');
     const showingLoader = isLoading || isUserSending || agent.busy_thinking || (!assistantWaitingForReply && !agent.completed_at);
     
-    if (showingLoader) {
-      // Reset to initial message when loading starts
-      setLoadingMessage(getLoadingText({ phase: 'working' }));
-      
-      // Set timeout to change message after 4 seconds
-      timeoutId = setTimeout(() => {
-        const ctx = lastAssistantHasGbifValidation ? 'waiting for the GBIF validator' : null;
-        setLoadingMessage(getLoadingText({ phase: 'still', context: ctx, long: !!ctx }));
-      }, 4000);
-    } else {
-      // Reset to initial message when not loading
-      setLoadingMessage(getLoadingText({ phase: 'working' }));
+    if (!showingLoader) {
+      return undefined;
     }
-    
+
+    // Set timeout to change message after 4 seconds
+    const timeoutId = setTimeout(() => {
+      const ctx = lastAssistantHasGbifValidation ? 'waiting for the GBIF validator' : null;
+      setStillWorkingMessage(getLoadingText({ phase: 'still', context: ctx, long: !!ctx }));
+    }, 4000);
+
     // Cleanup timeout on dependency change or unmount
-    return () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    };
+    return () => clearTimeout(timeoutId);
   }, [isLoading, isUserSending, agent.busy_thinking, agent.message_set, agent.completed_at]);
 
   const resetFileInput = () => {

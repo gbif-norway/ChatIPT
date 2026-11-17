@@ -37,6 +37,7 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset, onConvertArc
   // Statuses come from the server, which reports working datasets as paused during a GBIF outage.
   const { paused: gbifPaused } = useGbifStatus()
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads the list; the refreshing flag is meant to show during the load
     fetchDatasets()
   }, [gbifPaused])
 

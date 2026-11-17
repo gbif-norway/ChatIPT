@@ -10,12 +10,12 @@ export default function TaxonSearch({ onPick, disabled }) {
   const [searching, setSearching] = useState(false)
   const [error, setError] = useState(null)
 
+  // Under three letters there is no search, and no results are left over from the last one.
+  if (text.trim().length < 3 && results.length > 0) setResults([])
+
   useEffect(() => {
     const query = text.trim()
-    if (query.length < 3) {
-      setResults([])
-      return undefined
-    }
+    if (query.length < 3) return undefined
     const controller = new AbortController()
     const timer = setTimeout(async () => {
       setSearching(true)

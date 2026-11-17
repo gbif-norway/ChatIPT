@@ -174,15 +174,24 @@ export default function DwcConversion() {
   const [answeredHere, setAnsweredHere] = useState([])
   const saves = useRef(0)
   const saving = useRef(Promise.resolve())
+  // The ref is what the save chain checks (it runs across awaits); the state is what the page shows.
   const saveFailed = useRef(false)
+  const [saveFailedShown, setSaveFailedShown] = useState(false)
+  const markSaveFailed = useCallback((failed) => { saveFailed.current = failed; setSaveFailedShown(failed) }, [])
   const refreshedTitleFor = useRef(null)
   const datasetId = currentDataset?.id
   const url = `${config.baseUrl}/api/datasets/${datasetId}/conversion/`
   const load = useCallback(async () => {
-    try { const data = await request(url); saveFailed.current = false; setState(data); setError('') } catch (err) { setError(err.message) }
-  }, [url])
+    try { const data = await request(url); markSaveFailed(false); setState(data); setError('') } catch (err) { setError(err.message) }
+  }, [url, markSaveFailed])
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- loads the conversion; load() sets state only after its request answers
   useEffect(() => { if (datasetId) load() }, [datasetId, load])
-  useEffect(() => { setDecisions(state?.decisions || {}) }, [state?.plan?.id, state?.decisions])
+  // The form shows the server's choices again whenever a new plan or newly saved choices arrive.
+  const [decisionsFrom, setDecisionsFrom] = useState({ planId: undefined, decisions: undefined })
+  if (decisionsFrom.planId !== state?.plan?.id || decisionsFrom.decisions !== state?.decisions) {
+    setDecisionsFrom({ planId: state?.plan?.id, decisions: state?.decisions })
+    setDecisions(state?.decisions || {})
+  }
   // The server fills an empty title from the archive's metadata once the files are inspected. Fetch it once per plan.
   useEffect(() => {
     const planId = state?.plan?.id
@@ -225,14 +234,14 @@ export default function DwcConversion() {
     saving.current = saving.current.then(async () => {
       try {
         const saved = await request(url, { action: 'save', plan_id: state?.plan?.id, changes, ...extra })
-        saveFailed.current = false
+        markSaveFailed(false)
         if (sequence === saves.current) { setState(saved); setError('') }
       } catch (err) {
         // Show the server's choices again, so the form never displays an unsaved change as current.
         // Converting stays blocked until the form shows what the server holds.
-        saveFailed.current = true
+        markSaveFailed(true)
         setError(err.message)
-        try { setState(await request(url)); saveFailed.current = false } catch { /* Stay blocked until a reload succeeds. */ }
+        try { setState(await request(url)); markSaveFailed(false) } catch { /* Stay blocked until a reload succeeds. */ }
       } finally { setPendingSaves(count => count - 1) }
     })
   }
@@ -384,8 +393,8 @@ export default function DwcConversion() {
       </details>
       <div className="conversion-action-bar">
         <div role="status" aria-live="polite"><strong>{pendingSaves ? 'Saving your answer…' : outstanding > 0 ? `${outstanding} ${outstanding === 1 ? 'choice' : 'choices'} remaining` : blockers.length ? `${blockers.length} AI ${blockers.length === 1 ? 'choice' : 'choices'} to check` : 'Ready for the next step'}</strong>
-          <small>{saveFailed.current ? 'Could not save. Reload to try again.' : outstanding > 0 || blockers.length ? 'Answer the questions above to continue.' : 'Create and validate your converted package.'}</small></div>
-        <button className="btn btn-primary" disabled={startDisabled || pendingSaves > 0 || saveFailed.current || outstanding > 0 || blockers.length > 0} onClick={() => perform('convert')}>Convert my data<i className="bi bi-arrow-right ms-2" aria-hidden="true" /></button>
+          <small>{saveFailedShown ? 'Could not save. Reload to try again.' : outstanding > 0 || blockers.length ? 'Answer the questions above to continue.' : 'Create and validate your converted package.'}</small></div>
+        <button className="btn btn-primary" disabled={startDisabled || pendingSaves > 0 || saveFailedShown || outstanding > 0 || blockers.length > 0} onClick={() => perform('convert')}>Convert my data<i className="bi bi-arrow-right ms-2" aria-hidden="true" /></button>
       </div>
     </section>}
     {state?.status === 'complete' && <div className="card card-body">

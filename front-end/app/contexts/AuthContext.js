@@ -49,6 +49,7 @@ export const AuthProvider = ({ children }) => {
 
   const login = () => {
     // Redirect to our custom OAuth2 endpoint which will redirect to ORCID
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- the API host, not a Next.js page
     window.location.href = `${config.baseUrl}/api/auth/orcid/login/`
   }
 
@@ -68,6 +69,7 @@ export const AuthProvider = ({ children }) => {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- checkAuthStatus() sets state only after its request answers
     checkAuthStatus()
   }, [])
 

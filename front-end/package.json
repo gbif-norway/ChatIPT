@@ -14,7 +14,7 @@
     "bootstrap-icons": "^1.11.3",
     "cytoscape": "^3.34.0",
     "eslint": "^9.39.4",
-    "eslint-config-next": "^16.2.4",
+    "eslint-config-next": "^16.4.6",
     "next": "^16.4.6",
     "next-themes": "^0.4.4",
     "react": "^18.2.0",

@@ -34,6 +34,7 @@ export default function TaxonReviewModal({ datasetId, scope, show, onClose, onDo
   useEffect(() => {
     if (!show) return undefined
     const controller = new AbortController()
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads the names when the modal opens; the loading flag is meant to show straight away
     load(controller.signal)
     return () => controller.abort()
   }, [show, load])

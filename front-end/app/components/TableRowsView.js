@@ -230,14 +230,33 @@ export default function TableRowsView({
     return () => window.clearTimeout(timeout)
   }, [searchText])
 
-  useEffect(() => {
+  // A new search, scope, filter or sort starts again on the first page. This happens while rendering, so the
+  // old page is never requested with the new query.
+  const [pageResetInputs, setPageResetInputs] = useState({ search, scope, filtersJson, sortColumn, sortOrder })
+  if (
+    pageResetInputs.search !== search
+    || pageResetInputs.scope !== scope
+    || pageResetInputs.filtersJson !== filtersJson
+    || pageResetInputs.sortColumn !== sortColumn
+    || pageResetInputs.sortOrder !== sortOrder
+  ) {
+    setPageResetInputs({ search, scope, filtersJson, sortColumn, sortOrder })
     setPage(1)
     setResetPage((value) => !value)
-  }, [search, scope, filtersJson, sortColumn, sortOrder])
+  }
 
   useEffect(() => {
     latestRef.current = { rows, record, columns: allColumns, fields }
   })
+
+  const focusRow = useCallback((index) => {
+    const rowElements = [...(rootRef.current?.querySelectorAll(ROW_SELECTOR) || [])]
+    const target = rowElements.find((element) => rowIndexOf(element) === index)
+    if (!target) return
+    activeRowRef.current = rowElements.indexOf(target)
+    rowElements.forEach((element) => { element.tabIndex = element === target ? 0 : -1 })
+    target.focus()
+  }, [])
 
   const queryKey = JSON.stringify([tableId, page, pageSize, search, scope, filtersJson, sortColumn, sortOrder, reloadToken])
 
@@ -333,15 +352,6 @@ export default function TableRowsView({
       element.tabIndex = index === active ? 0 : -1
     })
   })
-
-  const focusRow = useCallback((index) => {
-    const rowElements = [...(rootRef.current?.querySelectorAll(ROW_SELECTOR) || [])]
-    const target = rowElements.find((element) => rowIndexOf(element) === index)
-    if (!target) return
-    activeRowRef.current = rowElements.indexOf(target)
-    rowElements.forEach((element) => { element.tabIndex = element === target ? 0 : -1 })
-    target.focus()
-  }, [])
 
   const setFilters = useCallback((next) => {
     if (!isControlled) setOwnFilters(next)
