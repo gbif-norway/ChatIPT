@@ -44,11 +44,6 @@ const graphCategory = (name) => {
   return 'records'
 }
 
-const parseExamples = (value) => String(value || '')
-  .split(';')
-  .map((example) => example.replaceAll('`', '').trim())
-  .filter(Boolean)
-
 const graphPalette = (isDark) => ({
   background: isDark ? '#181c20' : '#f7f9f8',
   foreground: isDark ? '#f3f5f4' : '#1d2823',
@@ -118,10 +113,11 @@ export async function openPackageExplorer() {
  * The package explorer modal. It loads the package model itself when it opens, unless the page already has
  * one: then pass `model` (null while there is none yet) with `modelLoading`, `modelError` and `onReloadModel`,
  * and it uses that instead of fetching the same heavy model again.
+ * publishedUrl: the dataset's GBIF Sandbox page once it is published; the summary links to it.
  */
 export default function PackageExplorer({
   datasetId,
-  onOpenTable,
+  publishedUrl = null,
   onAsk,
   model: sharedModel,
   modelLoading = false,
@@ -451,7 +447,6 @@ export default function PackageExplorer({
   const hoveredNode = hoveredNodeId ? nodeMap.get(hoveredNodeId) : null
   const totalRows = (model?.nodes || []).reduce((sum, node) => sum + node.rowCount, 0)
   const taxonomyOnly = model?.packageType === 'taxonomy-data-package'
-  const examples = selectedNode ? parseExamples(selectedNode.examples).slice(0, 2) : []
   const pickerTables = useMemo(() => (model?.nodes || []).map((node) => ({
     id: node.tableId,
     title: node.title,
@@ -589,6 +584,16 @@ export default function PackageExplorer({
                   <div>
                     <strong>
                       {pluralize(model.nodes.length, 'linked table')} containing {pluralize(totalRows, 'package row')}
+                      {publishedUrl && (
+                        <>
+                          ,{' '}
+                          <a href={publishedUrl} target="_blank" rel="noopener noreferrer">
+                            published on the GBIF Sandbox
+                            <i className="bi bi-box-arrow-up-right ms-1" aria-hidden="true"></i>
+                            <span className="visually-hidden"> (opens in a new tab)</span>
+                          </a>
+                        </>
+                      )}
                     </strong>
                     <span>
                       {pluralize(model.edges.length, 'table relationship')}{taxonomyOnly ? '' : ` · DwC-DP schema ${model.schema?.version || 'Unknown'}`}
@@ -690,26 +695,6 @@ export default function PackageExplorer({
                             setFocus(null)
                             setExplorer((current) => selectTable(current, tableId))
                           }} />
-                        ) : null}
-                        headerExtra={examples.length > 0 ? (
-                          <div className="package-examples">
-                            <strong>For example</strong>
-                            {examples.join('; ')}.
-                          </div>
-                        ) : null}
-                        actions={onOpenTable ? (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-link"
-                            data-bs-dismiss="modal"
-                            onClick={() => onOpenTable(selectedTable.id, {
-                              view: explorer.view,
-                              column: explorer.column,
-                              filters: explorer.filters,
-                            })}
-                          >
-                            Open on main page
-                          </button>
                         ) : null}
                       />
                     )}

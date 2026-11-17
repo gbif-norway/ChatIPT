@@ -26,7 +26,6 @@ import {
   explorerSearchString,
   nodeForTable,
   openRelatedState,
-  openTableWithState,
   orderTables,
   publishedTablesKey,
   resolveExplorerState,
@@ -475,19 +474,6 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       users: prev.users.filter((_, personIndex) => personIndex !== index),
     }));
   };
-
-  // From the package explorer: open that table here, in the same view and with the same filters, keeping
-  // only a column and filters this page's copy of the table has (and nothing changes for a table it does not know).
-  const handleOpenPackageTable = useCallback((tableId, state = null) => {
-    setExplorerFocus(null);
-    setExplorer((current) => openTableWithState(current, tables, tableId, state));
-    window.setTimeout(() => {
-      document.querySelector('.dataset-table-panel')?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'start',
-      });
-    }, 250);
-  }, [tables]);
 
 
   // Dataset.js should only be shown when there's a currentDatasetId
@@ -1019,7 +1005,7 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
       {/* Dataset Metadata Modal */}
       <PackageExplorer
         datasetId={currentDatasetId}
-        onOpenTable={handleOpenPackageTable}
+        publishedUrl={currentDataset?.published_at ? currentDataset.gbif_url || null : null}
         onAsk={onAsk}
         model={sharedPackageModel}
         modelLoading={modelIsCurrent && packageModelState.loading}

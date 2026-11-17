@@ -52,9 +52,6 @@
   gap: 0.5rem 1rem;
   margin-bottom: 0.6rem;
 }
-.tcv-find { flex: 1 1 200px; max-width: 320px; position: relative; }
-.tcv-find > i { color: var(--app-muted); font-size: 0.8rem; left: 0.7rem; position: absolute; top: 50%; transform: translateY(-50%); }
-.tcv-find input { padding: 0.35rem 0.6rem 0.35rem 1.9rem; font-size: 0.8rem; }
 .tcv-hide-empty { font-size: 0.8rem; margin: 0; }
 .tcv-count { margin-left: auto; white-space: nowrap; }
 .tcv-empty-state { border: 1px dashed var(--app-border); border-radius: 10px; color: var(--app-muted); margin: 0 0 0.75rem; padding: 1rem; }

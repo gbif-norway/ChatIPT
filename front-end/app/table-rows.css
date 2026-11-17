@@ -4,10 +4,6 @@
   min-width: 0;
 }
 
-.table-rows-toolbar {
-  flex-wrap: wrap;
-}
-
 /* Filter bar */
 .table-rows-filterbar {
   align-items: center;

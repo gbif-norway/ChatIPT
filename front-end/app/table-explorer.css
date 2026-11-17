@@ -9,8 +9,8 @@
   outline-offset: 2px;
 }
 
-/* Pinned bar: table picker and Columns/Rows switch stay in view while the panel scrolls.
-   Each view's search row pins directly underneath it using --te-bar-h. */
+/* Pinned bar: table picker, the open view's search box and the Columns/Rows switch stay in view while
+   the panel scrolls. Each view's toolbar pins directly underneath it using --te-bar-h. */
 .te {
   --te-sticky-bg: var(--bs-body-bg);
 }
@@ -18,32 +18,44 @@
 .te-bar {
   align-items: center;
   background: var(--te-sticky-bg);
+  border-bottom: 1px solid var(--app-border);
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem 1rem;
-  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+  margin-bottom: 0.75rem;
   /* Covers the scroll container's top padding, which sticky positioning leaves uncovered. */
   box-shadow: 0 -1.5rem 0 var(--te-sticky-bg);
-  padding: 0.5rem 0 0.4rem;
+  padding: 0.5rem 0 0.6rem;
   position: sticky;
   top: 0;
   z-index: 6;
 }
 
-.te-header {
-  border-bottom: 1px solid var(--app-border);
-  margin-bottom: 0.85rem;
-  padding-bottom: 0.75rem;
-}
-
 .te-heading {
-  flex: 1 1 auto;
+  align-items: center;
+  display: flex;
+  flex: 0 1 auto;
+  gap: 0.25rem;
   min-width: 0;
 }
 
-/* Search rows of both views, pinned under the bar. */
-.te .tcv-toolbar,
-.te .table-rows-toolbar {
+/* The open view's search box. */
+.te-search {
+  flex: 1 1 14rem;
+  max-width: 26rem;
+  min-width: min(12rem, 100%);
+}
+
+.te-search .input-group {
+  flex-wrap: nowrap;
+}
+
+.te-search .input-group > .form-control {
+  min-width: 6rem;
+}
+
+/* The columns view's toolbar, pinned under the bar. */
+.te .tcv-toolbar {
   background: var(--te-sticky-bg);
   border-bottom: 1px solid var(--app-border);
   padding: 0.35rem 0 0.5rem;
@@ -61,11 +73,11 @@
   align-items: center;
   color: var(--app-muted);
   display: flex;
+  flex-basis: 100%;
   font-family: var(--bs-font-monospace);
   font-size: 0.7rem;
   gap: 0.4rem;
   letter-spacing: 0.04em;
-  margin-bottom: 0.15rem;
 }
 
 .te-title {
@@ -74,46 +86,75 @@
   overflow-wrap: anywhere;
 }
 
-.te-meta {
-  color: var(--app-muted);
-  display: flex;
-  flex-wrap: wrap;
-  font-size: 0.8rem;
-  gap: 0.1rem 0.4rem;
-  margin-top: 0.15rem;
+/* "?" beside the table name and the tip it opens: what the table holds, with examples. */
+.te-about {
+  display: inline-flex;
+  flex: 0 0 auto;
+  position: relative;
 }
 
-.te-description {
+.te-about-button {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: var(--app-muted);
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.3rem;
+}
+
+.te-about-button:hover,
+.te-about-button:focus-visible {
+  color: var(--app-accent);
+}
+
+.te-about-tip {
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  box-shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.18);
   color: var(--app-ink);
   font-size: 0.82rem;
+  left: -0.5rem;
   line-height: 1.5;
-  margin: 0.45rem 0 0;
-  max-width: 70ch;
+  max-height: 50vh;
+  max-width: min(26rem, 80vw);
+  overflow-y: auto;
+  padding: 0.6rem 0.75rem;
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  width: max-content;
+  z-index: 20;
 }
 
-.te-description.is-clamped > span {
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  display: -webkit-box;
-  overflow: hidden;
+/* Bridges the gap above the tip, so the pointer can move onto it without closing it. */
+.te-about-tip::before {
+  content: '';
+  height: 0.4rem;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: -0.4rem;
 }
 
-.te-description-toggle {
-  font-size: 0.78rem;
-  padding: 0;
-  vertical-align: baseline;
+.te-about-tip[hidden] {
+  display: none;
 }
 
-.te-header-side {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  justify-content: flex-end;
+.te-about-description,
+.te-about-examples {
+  display: block;
+}
+
+.te-about-examples {
+  color: var(--app-muted);
+  margin-top: 0.35rem;
 }
 
 /* Columns | Rows switch */
 .te-view-toggle {
+  flex: 0 0 auto;
+  margin-left: auto;
   background: var(--app-soft);
   border: 1px solid var(--app-border);
   border-radius: 999px;
@@ -142,6 +183,13 @@
   background: var(--app-surface);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
   color: var(--app-accent);
+}
+
+.te-view-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  margin-left: 0.4rem;
+  opacity: 0.8;
 }
 
 .te-filter-count {
