@@ -148,7 +148,8 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
           onRejected={(message) => message && setError(message)}
           extensions={ALLOWED_FILE_EXTENSIONS}
           disabled={isSubmitting}
-          hint={`Data files, tree files or manuscript PDFs, up to ${config.maxUploadMB} MB in total.`}
+          limitMB={config.maxUploadMB}
+          hint={`Data files, tree files or manuscript PDFs, up to ${config.maxUploadMB} MB in total`}
           details={<>
             <p className="mb-1">Spreadsheets and tables in any layout: {TABLE_FILE_EXTENSIONS.join(', ')}.</p>
             <p className="mb-1">Phylogenetic trees: {TREE_FILE_EXTENSIONS.join(', ')}.</p>
@@ -178,7 +179,7 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
           </div>
         ))}
 
-        <button type="submit" className="btn btn-primary align-self-start" disabled={isSubmitting || Boolean(sizeError) || gbifPaused}>
+        <button type="submit" className="btn btn-primary align-self-start" disabled={isSubmitting || !selectedFiles.length || Boolean(sizeError) || gbifPaused}>
           {isSubmitting ? (
             <>
               <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>

@@ -56,8 +56,8 @@ export function ConversionUpload({ onDatasetCreated }) {
       <p>Upload a Darwin Core Archive. ChatIPT will convert its fields, help you review any ambiguous choices, and create a checked Data Package.</p></header>
     <form onSubmit={submit} className="card card-body gap-3">
       <FileDropZone files={files} onChange={next => { setFiles(next); setError('') }} onRejected={message => message && setError(message)}
-        extensions={ARCHIVE_FILE_EXTENSIONS} disabled={busy}
-        hint={`A ZIP archive, or all of the archive’s files selected together. Up to ${config.maxUploadMB} MB.`}
+        extensions={ARCHIVE_FILE_EXTENSIONS} disabled={busy} limitMB={config.maxUploadMB}
+        hint={`A ZIP archive, or all of the archive’s files together, up to ${config.maxUploadMB} MB`}
         details={<>
           <p className="mb-1">Archives built around events, occurrences or taxa (a species checklist). A checklist on its own produces a taxonomy data package; occurrence records can also be converted to the Data Package standard after you review them.</p>
           <p className="mb-1">For loose files, include meta.xml and eml.xml if you have them. Without meta.xml, name the main table occurrence.csv, event.csv or taxon.csv.</p>
