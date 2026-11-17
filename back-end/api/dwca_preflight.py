@@ -254,7 +254,8 @@ class Preflight:
             for target, sharing in by_target.items():
                 for i, first in enumerate(sharing):
                     for second in sharing[i + 1:]:
-                        bad = [n + 1 for n, row in enumerate(rows) if (a := self.copied(t, target, row[first['column']]))
+                        # Rows that always stay in the originals are never copied, so they cannot conflict.
+                        bad = [n + 1 for n, row in enumerate(rows) if not self.preserved_row(t, n) and (a := self.copied(t, target, row[first['column']]))
                                and (b := self.copied(t, target, row[second['column']])) and a != b]
                         if not bad:
                             continue
@@ -683,13 +684,12 @@ class Preflight:
     def molecular(self, t):
         table = self.archive.tables[t]
         column = self.column(t, SEQUENCE)
-        missing = [n + 1 for n, row in enumerate(table.rows) if column is None or not row[column['column']]]
-        if missing:
-            self.block(f'table:{t}', 'molecular', f'{_n(len(missing), "row has", "rows have")} no DNA sequence.', {'source_rows': missing[:EXAMPLES]})
-        else:
-            self.require(f'table:{t}', 'molecular', _requirement(
-                [{'type': 'target_in', 'column': column['id'], 'targets': ['nucleotide-sequence.sequence']}],
-                'Each DNA row needs its DNA sequence column converted.'))
+        # Rows without a sequence convert with no sequence link (DwC-DP 1.0); supplied sequences must not be dropped from their analyses.
+        if column is None or not any(row[column['column']].strip() for row in table.rows):
+            return
+        self.require(f'table:{t}', 'molecular', _requirement(
+            [{'type': 'target_in', 'column': column['id'], 'targets': ['nucleotide-sequence.sequence']}],
+            'The DNA sequences need their column converted, so each analysis keeps the sequence it produced.'))
 
     def trait_link(self, t):
         decision = f'trait-link:{t}'

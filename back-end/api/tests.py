@@ -121,8 +121,7 @@ class DwcDpSpecTests(SimpleTestCase):
         )
         self.assertEqual(
             descriptor['profile'],
-            'https://dwc-prerelease.rs.tdwg.org/'
-            'dwc-dp/1.0_DEV/dwc-dp-profile.json',
+            'https://rs.tdwg.org/dwc-dp/1.0/dwc-dp-profile.json',
         )
         self.assertEqual(descriptor['dwcDpSchema']['revision'], DWC_DP_SCHEMA_REVISION)
         self.assertEqual(len(descriptor['dwcDpSchema']['sha256']), 64)
@@ -168,9 +167,11 @@ class DwcDpSpecTests(SimpleTestCase):
 
     def test_vendored_snapshot_has_all_post_review_schemas(self):
         self.assertEqual(VENDORED_SCHEMA_ERRORS, ())
-        self.assertEqual(len(RESERVED_TABLE_NAMES), 79)
+        self.assertEqual(len(RESERVED_TABLE_NAMES), 81)
         self.assertIn('survey-survey-target', RESERVED_TABLE_NAMES)
         self.assertIn('survey-target-descriptor', RESERVED_TABLE_NAMES)
+        self.assertIn('event-usage-policy', RESERVED_TABLE_NAMES)
+        self.assertIn('geological-material', RESERVED_TABLE_NAMES)
 
     def test_rejects_old_identifier_based_relationship_shape(self):
         resources = {
@@ -238,7 +239,7 @@ class DwcDpSpecTests(SimpleTestCase):
 
         self.assertEqual(len(unlinked), 2)
         self.assertIn("resource 'agent' has 1 row(s) that no other resource references (agent_pk: a3)", unlinked[0])
-        self.assertIn('occurrence.recordedByID', unlinked[0])
+        self.assertIn('event.recordedByID', unlinked[0])
         self.assertIn("resource 'protocol' has 1 row(s)", unlinked[1])
         self.assertIn('event.eventProtocol_fk', unlinked[1])
 
@@ -264,7 +265,7 @@ class DwcDpSpecTests(SimpleTestCase):
             {
                 'event_pk': 'event-1',
                 'eventCategory': 'occurrence',
-                'eventConductedByID': 'external-agent-id',
+                'recordedByID': 'external-agent-id',
             },
         ])
         self.assertTrue(validate_dwc_dp_resources({'event': event})['valid'])
@@ -284,7 +285,7 @@ class DwcDpSpecTests(SimpleTestCase):
                     'event_pk': 'event-1',
                     'eventID': 'source-event-1',
                     'eventCategory': 'occurrence',
-                    'eventConductedByID': 'source-agent-1',
+                    'recordedByID': 'source-agent-1',
                 },
             ]),
         }
@@ -294,7 +295,7 @@ class DwcDpSpecTests(SimpleTestCase):
 
         self.assertEqual(event['schema']['weakPrimaryKey'], 'eventID')
         weak_fk = event['schema']['weakForeignKeys'][0]
-        self.assertEqual(weak_fk['fields'], 'eventConductedByID')
+        self.assertEqual(weak_fk['fields'], 'recordedByID')
         self.assertEqual(weak_fk['reference']['fields'], 'agentID')
 
     def test_creates_rooted_archive_with_plain_csv_resources(self):
@@ -4881,7 +4882,7 @@ class DatasetSummarySerializerTests(TestCase):
             for edge in model["edges"]
             if edge["source"] == "occurrence" and edge["target"] == "event"
         )
-        self.assertEqual(relationship["predicate"], "happened during")
+        self.assertEqual(relationship["predicate"], "has context")
         self.assertEqual(relationship["sourceFields"], ["event_fk"])
         self.assertEqual(relationship["targetFields"], ["event_pk"])
         self.assertEqual(relationship["populatedRows"], 2)
@@ -4988,10 +4989,9 @@ class DatasetSummarySerializerTests(TestCase):
         self.assertTrue(detail_data["package_ready"])
         self.assertEqual(
             detail_data["dwc_dp_standard"]["profile"],
-            "https://dwc-prerelease.rs.tdwg.org/"
-            "dwc-dp/1.0_DEV/dwc-dp-profile.json",
+            "https://rs.tdwg.org/dwc-dp/1.0/dwc-dp-profile.json",
         )
-        self.assertEqual(detail_data["dwc_dp_standard"]["schema"]["version"], "1.0_DEV")
+        self.assertEqual(detail_data["dwc_dp_standard"]["schema"]["version"], "1.0")
 
     def test_status_distinguishes_preparing_from_needs_input(self):
         task = Task.objects.create(name="Data exploration", text="Explore", order=1)

@@ -45,15 +45,13 @@ _EML_XSD = _BASE_DIR / "templates" / "xsd" / "eml-2.2.0" / "eml.xsd"
 # Cap on reported errors per resource or file, so one systematic problem stays readable.
 _REPORTED_ERRORS_PER_SOURCE = 10
 
-DWC_DP_SCHEMA_REVISION = "76898192fd298c2aa170a7059e1bdadf3ee2a828"
+# rs.tdwg.org master commit that published DwC-DP 1.0 (Darwin Core 2026-10-13 release).
+DWC_DP_SCHEMA_REVISION = "88a4b91f191849cd6dfb1aad78ed0510f1a47823"
 DWC_DP_SCHEMA_REPOSITORY = "https://github.com/tdwg/rs.tdwg.org"
 
-# Use TDWG's deployed prerelease until the final profile is available.
-# profile in descriptors, while recording the immutable source revision and
-# vendored content hash separately for reproducibility.
-DWC_DP_PROFILE_URL = (
-    "https://dwc-prerelease.rs.tdwg.org/dwc-dp/1.0_DEV/dwc-dp-profile.json"
-)
+# TDWG's deployed DwC-DP 1.0 profile. Descriptors also record the immutable
+# source revision and vendored content hash for reproducibility.
+DWC_DP_PROFILE_URL = "https://rs.tdwg.org/dwc-dp/1.0/dwc-dp-profile.json"
 
 
 def _load_json(path: Path) -> Dict[str, Any]:
@@ -92,10 +90,7 @@ def dwc_dp_schema_snapshot() -> Dict[str, str]:
         "issued": DWC_DP_SCHEMA_ISSUED,
         "revision": DWC_DP_SCHEMA_REVISION,
         "sha256": DWC_DP_SCHEMA_SHA256,
-        "source": (
-            f"{DWC_DP_SCHEMA_REPOSITORY}/tree/{DWC_DP_SCHEMA_REVISION}/"
-            "dwc-dp/1.0_DEV"
-        ),
+        "source": f"{DWC_DP_SCHEMA_REPOSITORY}/tree/{DWC_DP_SCHEMA_REVISION}/dwc-dp/1.0",
     }
 
 
@@ -137,24 +132,10 @@ class DwcDpTableSpec:
         return list(self.schema.get("weakForeignKeys") or [])
 
 
-def _drop_placeholder_references(schema: Dict[str, Any]) -> Dict[str, Any]:
-    """Drop dcterms:references placeholders such as 'pending' that the DwC-DP profile rejects.
-
-    The 1.0_DEV table schemas mark some fields' references as 'pending', but the profile
-    requires the property to be an http URI when present. The vendored files stay
-    untouched so the snapshot hash still identifies the upstream revision.
-    """
-    for field in schema.get("fields") or []:
-        reference = field.get("dcterms:references")
-        if reference is not None and not str(reference).startswith("http"):
-            del field["dcterms:references"]
-    return schema
-
-
 def load_dwc_dp_table_specs() -> Dict[str, DwcDpTableSpec]:
     specs: Dict[str, DwcDpTableSpec] = {}
     for path in sorted(_TABLE_SCHEMA_ROOT.glob("*.json")):
-        schema = _drop_placeholder_references(_load_json(path))
+        schema = _load_json(path)
         name = path.stem
         specs[name] = DwcDpTableSpec(
             name=name,
@@ -559,7 +540,7 @@ def build_dwc_dp_explorer_model(dataset: Any) -> Dict[str, Any]:
                 "tableId": table["id"],
                 "title": spec.title,
                 "description": spec.description,
-                "comments": spec.schema.get("comments") or "",
+                "comments": spec.schema.get("notes") or "",
                 "examples": spec.schema.get("examples") or "",
                 "rowCount": table["row_count"],
                 "updatedAt": table["updated_at"].isoformat().replace("+00:00", "Z") if table["updated_at"] else "",

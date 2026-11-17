@@ -127,21 +127,24 @@ without a queued job by the earlier browser-driven implementation.
 ## DwC-DP schema snapshot
 
 ChatIPT vendors the complete DwC-DP profile and table schemas under
-`back-end/api/templates/dwc-dp`. The current snapshot is the DwC-DP 1.0
-prerelease (`1.0_DEV`) from TDWG's `rs.tdwg.org` `dwc` branch at commit
-`76898192fd298c2aa170a7059e1bdadf3ee2a828`. Package descriptors reference
-TDWG's deployed prerelease profile at
-`https://dwc-prerelease.rs.tdwg.org/dwc-dp/1.0_DEV/dwc-dp-profile.json` and
-record the immutable source revision and a content hash so exported datasets
-remain reproducible while the deployed profile is a prerelease.
+`back-end/api/templates/dwc-dp`. The current snapshot is the final DwC-DP 1.0,
+from TDWG's `rs.tdwg.org` `master` branch (`dwc-dp/1.0`) at commit
+`88a4b91f191849cd6dfb1aad78ed0510f1a47823`. It is identical to `tdwg/dwc`
+`dwc-dp/` and to the files deployed at <https://rs.tdwg.org/dwc-dp/1.0/>.
+Package descriptors reference
+`https://rs.tdwg.org/dwc-dp/1.0/dwc-dp-profile.json`, and record the immutable
+source revision and a content hash so exported datasets stay reproducible.
+`index.json` and `version.json` are local metadata generated from the table
+schemas: TDWG does not publish them.
 
 When updating the snapshot, replace the profile and complete `table-schemas`
-directory together, update the local index/version metadata and
-`DWC_DP_SCHEMA_REVISION` in `back-end/api/dwc_dp_specs.py`, then run the backend
-tests in Docker. Once a final DwC-DP 1.0 profile is published and accessible,
-update the snapshot and profile URL atomically from `1.0_DEV` to the final
-versioned release. The [conversion fidelity audit](docs/dwca-conversion/fidelity-audit.md)
-records the current schema status and value-level checks.
+directory together, regenerate the local index/version metadata, update
+`DWC_DP_SCHEMA_REVISION`, `DWC_DP_PROFILE_URL` and the source path in
+`back-end/api/dwc_dp_specs.py` and `SCHEMA_REVISION` in
+`back-end/api/dwca_glossary.py`, then run the backend tests in Docker. Diff the
+old and new table schemas field by field first. The
+[conversion fidelity audit](docs/dwca-conversion/fidelity-audit.md) records the
+current schema status, the 1.0_DEV → 1.0 differences and value-level checks.
 
 Exported packages are validated offline with checks ported from GBIF's
 [dwc-dp-analyser](https://github.com/gbif/dwc-dp-analyser): the descriptor against

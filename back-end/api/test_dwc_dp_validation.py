@@ -141,7 +141,6 @@ class DwcDpProfileValidationTests(SimpleTestCase):
 
 
     def test_every_vendored_table_schema_matches_profile(self):
-        # identification-taxon.taxonSortOrder upstream has "dcterms:references": "pending".
         for name, spec in TABLE_SPECS.items():
             descriptor = {
                 "profile": DWC_DP_PROFILE_URL,
@@ -159,13 +158,13 @@ class DwcDpProfileValidationTests(SimpleTestCase):
 
     def test_reports_the_failing_field_rather_than_the_whole_resource(self):
         descriptor = build_datapackage_descriptor(_resources())
-        _field(_resource(descriptor, "event"), "eventDate")["dcterms:references"] = "pending"
+        _field(_resource(descriptor, "event"), "eventDate")["dcterms:isVersionOf"] = "pending"
 
         errors = validate_datapackage_descriptor(descriptor)
 
         self.assertIn(
             "Descriptor does not match the DwC-DP profile at "
-            "'/resources/0/schema/fields/3/dcterms:references': 'pending' does not match '^http.*$'",
+            "'/resources/0/schema/fields/3/dcterms:isVersionOf': 'pending' does not match '^https?://.+$'",
             errors,
         )
 

@@ -1,27 +1,25 @@
 {
-  "identifier": "http://rs.tdwg.org/dwc/dwc-dp/bibliographic-resource",
+  "identifier": "http://rs.tdwg.org/dwc-dp/1.0/bibliographic-resource",
+  "dcterms:isPartOf": "http://www.tdwg.org/standards/450",
   "url": "table-schemas/bibliographic-resource.json",
   "name": "bibliographic-resource",
   "title": "Bibliographic Resource",
   "description": "A book, article, or other documentary resource.",
-  "comments": "",
+  "notes": "",
   "examples": "",
   "namespace": "dcterms",
   "dcterms:isVersionOf": "http://purl.org/dc/terms/BibliographicResource",
-  "rdfs:comment": "A book, article, or other documentary resource.",
   "fields": [
     {
       "name": "reference_pk",
       "title": "Reference (Primary Key)",
       "description": "A unique identifier for a dcterms:BibliographicResource.",
-      "comments": "The value in this field MAY be changed in aggregation to guarantee uniqueness.",
+      "notes": "The value in this field MAY be changed in aggregation to guarantee uniqueness.",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "dwc",
       "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/referenceID",
-      "dcterms:references": "http://rs.tdwg.org/dwc/terms/version/referenceID-2026-05-26",
-      "rdfs:comment": "An identifier for a dcterms:BibliographicResource.",
       "constraints": {
         "required": true,
         "unique": true
@@ -31,27 +29,38 @@
       "name": "referenceID",
       "title": "Reference ID",
       "description": "An identifier for a dcterms:BibliographicResource.",
-      "comments": "The value in this field MUST be preserved in aggregation. Recommended best practice is to use a globally unique identifier.",
+      "notes": "The value in this field MUST be preserved in aggregation. Recommended best practice is to use a globally unique identifier.",
+      "examples": "",
+      "type": "string",
+      "format": "default",
+      "namespace": "dwc",
+      "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/referenceID"
+    },
+    {
+      "name": "isPartOfReference_fk",
+      "title": "Is Part Of Reference (Foreign Key)",
+      "description": "An identifier for a dcterms:BibliographicResource that this dcterms:BibliographicResource is a part of.",
+      "notes": "The value in this field MAY be changed in aggregation to preserve the relationship to the related primary key.",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "dwc",
       "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/referenceID",
-      "dcterms:references": "http://rs.tdwg.org/dwc/terms/version/referenceID-2026-05-26",
-      "rdfs:comment": "An identifier for a dcterms:BibliographicResource."
+      "constraints": {
+        "required": false,
+        "unique": false
+      }
     },
     {
       "name": "isPartOfReferenceID",
       "title": "Is Part Of Reference ID",
       "description": "An identifier for a dcterms:BibliographicResource that this dcterms:BibliographicResource is a part of.",
-      "comments": "The value in this field MAY refer to a dcterms:BibliographicResource within or external to the dataset in which this record originated.",
+      "notes": "The value in this field MAY refer to a dcterms:BibliographicResource within or external to the dataset in which this record originated.",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "dwc",
       "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/referenceID",
-      "dcterms:references": "http://rs.tdwg.org/dwc/terms/version/referenceID-2026-05-26",
-      "rdfs:comment": "An identifier for a dcterms:BibliographicResource.",
       "constraints": {
         "required": false,
         "unique": false
@@ -61,63 +70,93 @@
       "name": "referenceType",
       "title": "Reference Type",
       "description": "A category that best matches the nature of a dcterms:BibliographicResource.",
-      "comments": "Recommended best practice is to use a controlled vocabulary.",
+      "notes": "Recommended best practice is to use a controlled vocabulary.",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "dwc",
-      "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/referenceType",
-      "dcterms:references": "http://rs.tdwg.org/dwc/terms/version/referenceType-2026-05-26",
-      "rdfs:comment": "A category that best matches the nature of a dcterms:BibliographicResource."
+      "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/referenceType"
     },
     {
       "name": "bibliographicCitation",
       "title": "Bibliographic Citation",
       "description": "A bibliographic reference for a dcterms:BibliographicResource.",
-      "comments": "Recommended practice is to include sufficient bibliographic detail to identify the resource as unambiguously as possible. The intended usage of this term in Darwin Core is to provide the preferred way to cite the resource itself. Note that the intended usage of dcterms:references in Darwin Core, by contrast, is to point to the definitive source representation of the resource, if one is available.",
+      "notes": "Recommended practice is to include sufficient bibliographic detail to identify the resource as unambiguously as possible. The intended usage of this term in Darwin Core is to provide the preferred way to cite the resource itself. Note that the intended usage of dcterms:references in Darwin Core, by contrast, is to point to the definitive source representation of the resource, if one is available.",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "dcterms",
-      "dcterms:isVersionOf": "http://purl.org/dc/terms/bibliographicCitation",
-      "rdfs:comment": "A bibliographic reference for the resource."
+      "dcterms:isVersionOf": "http://purl.org/dc/terms/bibliographicCitation"
+    },
+    {
+      "name": "bibliographicIdentifier",
+      "title": "Bibliographic Identifier",
+      "description": "A number or symbol to uniquely identify a dcterms:BibliographicResource.",
+      "notes": "Recommended best practice is to use a globally unique identifier issued by recognizable authority (e.g., International ISBN Agency, International DOI Foundation).",
+      "examples": "`978-0565095024`; `10998406`; `10.1046/j.1420-9101.1997.10010039.x`",
+      "type": "string",
+      "format": "default",
+      "namespace": "dwc",
+      "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/bibliographicIdentifier"
+    },
+    {
+      "name": "bibliographicIdentifierType",
+      "title": "Bibliographic Identifier Type",
+      "description": "A code that best matches the nature of an identifier for a dcterms:BibliographicResource.",
+      "notes": "Recommended best practice is to use a limited, tightly controlled vocabulary of identifier issuers. This term has an equivalent in the dwciri: namespace that allows only an IRI as a value, whereas this term allows for any string literal value.",
+      "examples": "`ISBN`; `DOI`; `ISSN`; `OCN`",
+      "type": "string",
+      "format": "default",
+      "namespace": "dwc",
+      "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/bibliographicIdentifierType"
     },
     {
       "name": "title",
       "title": "Title",
       "description": "A name given to a resource.",
-      "comments": "Typically, a dc:title will be a name by which the resource is formally known.",
+      "notes": "Typically, a dc:title will be a name by which the resource is formally known.",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "dcterms",
-      "dcterms:isVersionOf": "http://purl.org/dc/terms/title",
-      "rdfs:comment": "A name given to the resource."
+      "dcterms:isVersionOf": "http://purl.org/dc/terms/title"
     },
     {
       "name": "author",
       "title": "Author",
       "description": "A name of a dcterms:Agent primarily responsible for creating a dcterms:BibliographicResource.",
-      "comments": "",
+      "notes": "",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "dc",
-      "dcterms:isVersionOf": "http://purl.org/dc/elements/1.1/creator",
-      "rdfs:comment": "An entity primarily responsible for making the resource."
+      "dcterms:isVersionOf": "http://purl.org/dc/elements/1.1/creator"
     },
     {
-      "name": "authorID",
-      "title": "Author ID",
+      "name": "author_fk",
+      "title": "Author (Foreign Key)",
       "description": "An identifier for a dcterms:Agent primarily responsible for making a dcterms:BibliographicResource.",
-      "comments": "The value in this field MAY refer to a dcterms:Agent within or external to the dataset in which this record originated.",
+      "notes": "The value in this field MAY be changed in aggregation to preserve the relationship to the related primary key.",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "dwc",
       "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/agentID",
-      "dcterms:references": "http://rs.tdwg.org/dwc/terms/version/agentID-2026-05-26",
-      "rdfs:comment": "An identifier for a dcterms:Agent.",
+      "constraints": {
+        "required": false,
+        "unique": false
+      }
+    },
+    {
+      "name": "authorID",
+      "title": "Author ID",
+      "description": "An identifier for a dcterms:Agent primarily responsible for making a dcterms:BibliographicResource.",
+      "notes": "The value in this field MAY refer to a dcterms:Agent within or external to the dataset in which this record originated.",
+      "examples": "`https://orcid.org/0000-0002-1825-0097`",
+      "type": "string",
+      "format": "default",
+      "namespace": "dwc",
+      "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/agentID",
       "constraints": {
         "required": false,
         "unique": false
@@ -127,26 +166,38 @@
       "name": "editor",
       "title": "Editor",
       "description": "A name of a dcterms:Agent having managerial and sometimes policy-making responsibility for the editorial part of a publishing firm or of a newspaper, magazine, or other publication.",
-      "comments": "",
+      "notes": "",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "bibo",
-      "dcterms:isVersionOf": "http://purl.org/ontology/bibo/editor",
-      "rdfs:comment": "A person having managerial and sometimes policy-making responsibility for the editorial part of a publishing firm or of a newspaper, magazine, or other publication."
+      "dcterms:isVersionOf": "http://purl.org/ontology/bibo/editor"
     },
     {
-      "name": "editorID",
-      "title": "Editor ID",
+      "name": "editor_fk",
+      "title": "Editor (Foreign Key)",
       "description": "An identifier for a dcterms:Agent having managerial and sometimes policy-making responsibility for the editorial part of a publishing firm or of a newspaper, magazine, or other publication.",
-      "comments": "The value in this field MAY refer to a dcterms:Agent within or external to the dataset in which this record originated.",
+      "notes": "The value in this field MAY be changed in aggregation to preserve the relationship to the related primary key.",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "dwc",
       "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/agentID",
-      "dcterms:references": "http://rs.tdwg.org/dwc/terms/version/agentID-2026-05-26",
-      "rdfs:comment": "An identifier for a dcterms:Agent.",
+      "constraints": {
+        "required": false,
+        "unique": false
+      }
+    },
+    {
+      "name": "editorID",
+      "title": "Editor ID",
+      "description": "An identifier for a dcterms:Agent having managerial and sometimes policy-making responsibility for the editorial part of a publishing firm or of a newspaper, magazine, or other publication.",
+      "notes": "The value in this field MAY refer to a dcterms:Agent within or external to the dataset in which this record originated.",
+      "examples": "`https://orcid.org/0000-0002-1825-0097`",
+      "type": "string",
+      "format": "default",
+      "namespace": "dwc",
+      "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/agentID",
       "constraints": {
         "required": false,
         "unique": false
@@ -156,26 +207,38 @@
       "name": "publisher",
       "title": "Publisher",
       "description": "A name of a dcterms:Agent responsible for making a dcterms:BibliographicResource available.",
-      "comments": "Examples of a dcterms:publisher include a person, an organization, or a service. Typically, the name of a dcterms:publisher should be used to indicate the entity.",
+      "notes": "Examples of a dcterms:publisher include a person, an organization, or a service. Typically, the name of a dcterms:publisher should be used to indicate the entity.",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "dc",
-      "dcterms:isVersionOf": "http://purl.org/dc/elements/1.1/publisher",
-      "rdfs:comment": "An entity responsible for making the resource available."
+      "dcterms:isVersionOf": "http://purl.org/dc/elements/1.1/publisher"
     },
     {
-      "name": "publisherID",
-      "title": "Publisher ID",
+      "name": "publisher_fk",
+      "title": "Publisher (Foreign Key)",
       "description": "An identifier for a dcterms:Agent responsible for making a Reference available.",
-      "comments": "The value in this field MAY refer to a dcterms:Agent within or external to the dataset in which this record originated.",
+      "notes": "The value in this field MAY be changed in aggregation to preserve the relationship to the related primary key.",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "dwc",
       "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/agentID",
-      "dcterms:references": "http://rs.tdwg.org/dwc/terms/version/agentID-2026-05-26",
-      "rdfs:comment": "An identifier for a dcterms:Agent.",
+      "constraints": {
+        "required": false,
+        "unique": false
+      }
+    },
+    {
+      "name": "publisherID",
+      "title": "Publisher ID",
+      "description": "An identifier for a dcterms:Agent responsible for making a Reference available.",
+      "notes": "The value in this field MAY refer to a dcterms:Agent within or external to the dataset in which this record originated.",
+      "examples": "`https://orcid.org/0000-0002-1825-0097`",
+      "type": "string",
+      "format": "default",
+      "namespace": "dwc",
+      "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/agentID",
       "constraints": {
         "required": false,
         "unique": false
@@ -185,114 +248,138 @@
       "name": "volume",
       "title": "Volume",
       "description": "A volume number of a dcterms:BibliographicResource.",
-      "comments": "",
+      "notes": "",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "bibo",
-      "dcterms:isVersionOf": "http://purl.org/ontology/bibo/volume",
-      "rdfs:comment": "A volume number."
+      "dcterms:isVersionOf": "http://purl.org/ontology/bibo/volume"
     },
     {
       "name": "issue",
       "title": "Issue",
       "description": "An issue number of a dcterms:BibliographicResource.",
-      "comments": "",
+      "notes": "",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "bibo",
-      "dcterms:isVersionOf": "http://purl.org/ontology/bibo/issue",
-      "rdfs:comment": "An issue number."
+      "dcterms:isVersionOf": "http://purl.org/ontology/bibo/issue"
     },
     {
       "name": "edition",
       "title": "Edition",
       "description": "An edition of a dcterms:BibliographicResource.",
-      "comments": "",
+      "notes": "",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "bibo",
-      "dcterms:isVersionOf": "http://purl.org/ontology/bibo/edition",
-      "rdfs:comment": "The name defining a special edition of a document."
+      "dcterms:isVersionOf": "http://purl.org/ontology/bibo/edition"
     },
     {
       "name": "pages",
       "title": "Pages",
       "description": "A range of pages within a dcterms:BibliographicResource.",
-      "comments": "",
+      "notes": "",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "bibo",
-      "dcterms:isVersionOf": "http://purl.org/ontology/bibo/pages",
-      "rdfs:comment": "A string of non-contiguous page spans that locate a Document within a Collection. Example: 23-25, 34, 54-56. For continuous page ranges, use the pageStart and pageEnd properties."
+      "dcterms:isVersionOf": "http://purl.org/ontology/bibo/pages"
     },
     {
       "name": "version",
       "title": "Version",
       "description": "A version number of a dcterms:BibliographicResource.",
-      "comments": "",
+      "notes": "",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "bibo",
-      "dcterms:isVersionOf": "http://purl.org/pav/version",
-      "rdfs:comment": "The version number of a resource. This is a freetext string, typical values are \"1.5\" or \"21\". The URI identifying the previous version can be provided using prov:previousVersion."
+      "dcterms:isVersionOf": "http://purl.org/pav/version"
     },
     {
       "name": "issued",
       "title": "Issued",
       "description": "Date of formal issuance of a dcterms:BibliographicResource.",
-      "comments": "Recommended best practice is to use a date that conforms to ISO 8601-1:2019.",
+      "notes": "Recommended best practice is to use a date that conforms to ISO 8601-1:2019.",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "dcterms",
-      "dcterms:isVersionOf": "http://purl.org/dc/terms/issued",
-      "rdfs:comment": "Date of formal issuance of the resource."
+      "dcterms:isVersionOf": "http://purl.org/dc/terms/issued"
     },
     {
       "name": "accessed",
       "title": "Accessed",
       "description": "The resource is related to a source which was originally accessed or consulted on the given date as part of creating or authoring the resource. The source(s) should be specified using pav:sourceAccessedAt.",
-      "comments": "",
+      "notes": "",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "bibo",
-      "dcterms:isVersionOf": "http://purl.org/pav/sourceAccessedOn",
-      "rdfs:comment": "The resource is related to a source which was originally accessed or consulted on the given date as part of creating or authoring the resource. The source(s) should be specified using pav:sourceAccessedAt."
+      "dcterms:isVersionOf": "http://purl.org/pav/sourceAccessedOn"
     },
     {
       "name": "peerReviewStatus",
       "title": "Peer Review Status",
       "description": "An indication of whether a dcterms:BibliographicResource was peer reviewed.",
-      "comments": "",
+      "notes": "",
       "examples": "",
       "type": "boolean",
       "format": "default",
       "namespace": "bibo",
-      "dcterms:isVersionOf": "http://purl.org/ontology/bibo/status",
-      "rdfs:comment": "The publication status of (typically academic) content."
+      "dcterms:isVersionOf": "http://purl.org/ontology/bibo/status"
     },
     {
       "name": "referenceRemarks",
       "title": "Reference Remarks",
       "description": "Comments or notes about a dcterms:BibliographicResource.",
-      "comments": "",
+      "notes": "",
       "examples": "",
       "type": "string",
       "format": "default",
       "namespace": "dwc",
-      "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/referenceRemarks",
-      "dcterms:references": "http://rs.tdwg.org/dwc/terms/version/referenceRemarks-2026-05-26",
-      "rdfs:comment": "Comments or notes about a dcterms:BibliographicResource."
+      "dcterms:isVersionOf": "http://rs.tdwg.org/dwc/terms/referenceRemarks"
     }
   ],
   "primaryKey": "reference_pk",
   "weakPrimaryKey": "referenceID",
+  "foreignKeys": [
+    {
+      "fields": "isPartOfReference_fk",
+      "predicate": "part of",
+      "reference": {
+        "resource": "",
+        "fields": "reference_pk"
+      }
+    },
+    {
+      "fields": "author_fk",
+      "predicate": "authored by",
+      "reference": {
+        "resource": "agent",
+        "fields": "agent_pk"
+      }
+    },
+    {
+      "fields": "editor_fk",
+      "predicate": "edited by",
+      "reference": {
+        "resource": "agent",
+        "fields": "agent_pk"
+      }
+    },
+    {
+      "fields": "publisher_fk",
+      "predicate": "published by",
+      "reference": {
+        "resource": "agent",
+        "fields": "agent_pk"
+      }
+    }
+  ],
   "weakForeignKeys": [
     {
       "fields": "isPartOfReferenceID",

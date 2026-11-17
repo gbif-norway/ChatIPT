@@ -59,8 +59,11 @@ class ConversionQuestionTests(SimpleTestCase):
             column = column_by_term[name]
             self.assertNotIn(column['id'], asked_ids)
         self.assertTrue(all(column_by_term[name]['follows'] == 'material:0' for name in
-                            ('institutionCode', 'collectionCode', 'catalogNumber', 'recordNumber',
+                            ('institutionCode', 'collectionCode', 'catalogNumber',
                              'preparations', 'disposition', 'modified', 'materialSampleID')))
+        # DwC-DP 1.0 has occurrence.recordNumber, so the collector number goes to specimens only when they are created.
+        self.assertEqual(column_by_term['recordNumber']['default'], 'occurrence.recordNumber')
+        self.assertEqual({branch['value'] for branch in column_by_term['recordNumber']['default_when']}, {'material.collectorNumber'})
         self.assertIn(column_by_term['recordedBy']['id'], automatic_ids)
         self.assertIn(column_by_term['recordedByID']['id'], automatic_ids)
         self.assertIn(column_by_term['typeStatus']['id'], automatic_ids)
@@ -68,20 +71,20 @@ class ConversionQuestionTests(SimpleTestCase):
         self.assertEqual([option['label'] for option in material['options'] if option['value'] == 'per_row'],
                          ['Yes: one specimen record per row'])
         self.assertEqual(material['followers'], [column['id'] for column in plan['columns'] if column['term'].rsplit('/', 1)[-1] in
-            ('institutionCode', 'collectionCode', 'catalogNumber', 'recordNumber', 'preparations', 'disposition', 'modified', 'materialSampleID')])
+            ('institutionCode', 'collectionCode', 'catalogNumber', 'preparations', 'disposition', 'modified', 'materialSampleID')])
         self.assertIn('If yes, these details are stored on the specimen records:', material['reason'])
         recorded = next(choice for choice in plan['automatic_choices'] if choice['id'] == column_by_term['recordedBy']['id'])
         options = {option['value']: option for option in recorded['options']}
-        self.assertEqual(options['occurrence.recordedBy']['label'], 'Who saw or recorded the organism')
-        self.assertEqual(options['event.eventConductedBy']['label'], 'Who carried out the fieldwork')
-        self.assertIn('technical', options['event.eventConductedBy'])
-        self.assertEqual(recorded['option_notes']['event.eventConductedBy'],
+        self.assertEqual(set(options), {'material.collectedBy', 'event.recordedBy', 'preserve'})
+        self.assertEqual(options['event.recordedBy']['label'], 'Who recorded the event')
+        self.assertIn('technical', options['event.recordedBy'])
+        self.assertEqual(recorded['option_notes']['event.recordedBy'],
                          'Each of your rows has its own event, so here this works like "Who saw or recorded the organism".')
         self.assertEqual(column_by_term['recordedBy']['option_notes'], recorded['option_notes'])
         targets = plan['glossary']['targets']
-        for target in ('material.collectedBy', 'occurrence.recordedBy', 'event.eventConductedBy', 'material.catalogNumber'):
+        for target in ('material.collectedBy', 'event.recordedBy', 'material.catalogNumber'):
             self.assertIn(target, targets)
-        for target in ('material.collectedBy', 'occurrence.recordedBy', 'event.eventConductedBy'):
+        for target in ('material.collectedBy', 'event.recordedBy'):
             self.assertTrue({'gloss', 'consequence', 'definition', 'decided'} <= set(targets[target]))
         self.assertEqual(targets['material.catalogNumber']['field_label'], 'catalogue number')
 
@@ -127,9 +130,10 @@ class ConversionQuestionTests(SimpleTestCase):
         self.assertEqual(frames['material']['collectorNumber'].tolist(), ['R-1', '', 'R-3'])
         self.assertTrue('recordedBy' not in frames['occurrence'] or not frames['occurrence']['recordedBy'].fillna('').any())
         self.assertEqual(frames['material-agent-role']['agentRole'].tolist(), ['collectedBy'] * 3)
-        self.assertNotIn('recordedBy', set(frames.get('occurrence-agent-role', {}).get('agentRole', [])))
-        self.assertEqual(frames['material']['evidenceForOccurrenceID'].tolist(), [
-            'urn:catalog:O:L:1', 'urn:catalog:O:L:2', 'urn:catalog:O:L:3'])
+        self.assertNotIn('recordedBy', set(frames.get('event-agent-role', {}).get('agentRole', [])))
+        self.assertNotIn('recordedBy', frames['event'])
+        # DwC-DP 1.0 links each specimen to its occurrence by the occurrence's key.
+        self.assertEqual(frames['material']['evidenceForOccurrence_fk'].tolist(), frames['occurrence']['occurrence_pk'].tolist())
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'specimens.tar.gz'
             create_dwc_dp_archive(output, frames, 'Specimens', 'Test fixture', include_eml=False,
@@ -139,15 +143,16 @@ class ConversionQuestionTests(SimpleTestCase):
             self.assertTrue(validate_dwc_dp_archive(output, require_eml=False)['valid'])
         self.assertEqual(effective[column_by_term_id(plan, 'recordedBy')], 'material.collectedBy')
 
-    def test_preserve_keeps_material_columns_in_originals_and_agents_on_occurrence(self):
+    def test_preserve_keeps_material_columns_in_originals_and_recorders_on_the_event(self):
         archive = specimen_archive(recorded_ids=True)
         plan = build_plan(archive)
         decisions = {issue['id']: issue['options'][0]['value'] for issue in plan['issues']}
         decisions['material:0'] = 'preserve'
         frames, report = convert(archive, plan, decisions)
         self.assertTrue(report['validation']['valid'])
-        self.assertEqual(frames['occurrence']['recordedBy'].tolist(), ['Hagen, Yngvar', 'Collett, Robert', 'Kjernslie, O.L.'])
-        self.assertEqual(frames['occurrence']['recordedByID'].tolist(), [
+        # DwC-DP 1.0 records who recorded an occurrence on its event; each row here has its own event.
+        self.assertEqual(frames['event']['recordedBy'].tolist(), ['Hagen, Yngvar', 'Collett, Robert', 'Kjernslie, O.L.'])
+        self.assertEqual(frames['event']['recordedByID'].tolist(), [
             'https://orcid.org/0000-0001', 'https://orcid.org/0000-0002', 'https://orcid.org/0000-0003'])
         self.assertEqual(frames['identification']['typeStatus'].tolist(), ['Holotype of Aus bus'])
         self.assertNotIn('material', frames)
@@ -163,22 +168,23 @@ class ConversionQuestionTests(SimpleTestCase):
         self.assertIn('who collected the specimen', resolved[by_term['recordedBy']['id']]['reason'])
         self.assertEqual(effective_decisions(plan, decisions)[by_term['recordedByID']['id']], 'material.collectedByID')
         fallback = conditional_defaults(plan, {'material:0': 'preserve'})
-        self.assertEqual(fallback[by_term['recordedBy']['id']], {'value': 'occurrence.recordedBy', 'reason': None})
-        explicit = {'material:0': 'per_row', by_term['recordedBy']['id']: 'event.eventConductedBy'}
-        self.assertEqual(effective_decisions(plan, explicit)[by_term['recordedByID']['id']], 'event.eventConductedByID')
-        explicit[by_term['recordedByID']['id']] = 'occurrence.recordedByID'
-        self.assertEqual(effective_decisions(plan, explicit)[by_term['recordedByID']['id']], 'occurrence.recordedByID')
+        self.assertEqual(fallback[by_term['recordedBy']['id']], {'value': 'event.recordedBy', 'reason': None})
+        explicit = {'material:0': 'per_row', by_term['recordedBy']['id']: 'event.recordedBy'}
+        self.assertEqual(effective_decisions(plan, explicit)[by_term['recordedByID']['id']], 'event.recordedByID')
+        explicit[by_term['recordedByID']['id']] = 'material.collectedByID'
+        self.assertEqual(effective_decisions(plan, explicit)[by_term['recordedByID']['id']], 'material.collectedByID')
         # An explicit choice that would split names from their identifiers is refused, and the option shows why.
         status = option_status(plan, explicit)[by_term['recordedByID']['id']]
-        self.assertFalse(status['occurrence.recordedByID']['available'])
-        self.assertTrue(status['event.eventConductedByID']['available'])
+        self.assertFalse(status['material.collectedByID']['available'])
+        self.assertTrue(status['event.recordedByID']['available'])
         answers = {issue['id']: issue['options'][0]['value'] for issue in plan['issues']}
         with self.assertRaises(ConversionError) as raised:
             validate_decisions(plan, {**answers, **explicit})
         self.assertIn(by_term['recordedBy']['id'], raised.exception.decision_ids)
 
-    def test_repeated_occurrence_ids_keep_collectors_on_the_observation(self):
-        # Two specimens naming one occurrenceID give GBIF no unambiguous link, so collectors stay on the occurrence.
+    def test_repeated_occurrence_ids_still_link_collectors_to_their_specimens(self):
+        # DwC-DP 1.0 links a specimen to its occurrence by the occurrence's key, so a repeated occurrenceID
+        # no longer makes the link ambiguous.
         terms = ['occurrenceID', 'basisOfRecord', 'materialSampleID', 'recordedBy', 'occurrenceStatus']
         meta = ('<archive xmlns="http://rs.tdwg.org/dwc/text/"><core rowType="' + DWC + 'Occurrence" fieldsTerminatedBy="," '
                 'ignoreHeaderLines="1"><files><location>occ.csv</location></files><id index="0"/>'
@@ -189,13 +195,12 @@ class ConversionQuestionTests(SimpleTestCase):
             'r2,urn:catalog:1,PreservedSpecimen,urn:uuid:m2,Collett,present\n').encode())]))
         column_id = column_by_term_id(plan, 'recordedBy')
         self.assertEqual([branch['value'] for branch in next(column for column in plan['columns'] if column['id'] == column_id)['default_when']],
-                         ['occurrence.recordedBy'])
+                         ['material.collectedBy', 'material.collectedBy', 'event.recordedBy'])
         for material in ('per_row', 'by_id'):
             resolved = conditional_defaults(plan, {'material:0': material})[column_id]
-            self.assertEqual(resolved['value'], 'occurrence.recordedBy')
-            self.assertIn('some occurrenceIDs repeat', resolved['reason'])
+            self.assertEqual(resolved['value'], 'material.collectedBy')
 
-    def test_two_material_identifier_columns_keep_combined_collectors_on_the_observation(self):
+    def test_two_material_identifier_columns_keep_combined_collectors_on_the_event(self):
         # by_id may combine on either identifier, so collectors go to specimens only when each row is its own specimen.
         plan = build_plan(read_inputs([('occurrence.csv', (
             'occurrenceID,basisOfRecord,materialSampleID,materialEntityID,recordedBy,occurrenceStatus\n'
@@ -204,7 +209,7 @@ class ConversionQuestionTests(SimpleTestCase):
         column_id = column_by_term_id(plan, 'recordedBy')
         self.assertEqual(conditional_defaults(plan, {'material:0': 'per_row'})[column_id]['value'], 'material.collectedBy')
         combined = conditional_defaults(plan, {'material:0': 'by_id'})[column_id]
-        self.assertEqual(combined['value'], 'occurrence.recordedBy')
+        self.assertEqual(combined['value'], 'event.recordedBy')
 
     def test_by_id_reasons_say_rows_are_combined(self):
         plan = build_plan(specimen_archive())
@@ -240,19 +245,17 @@ class ConversionQuestionTests(SimpleTestCase):
         self.assertEqual(frames['material']['collectedByID'].tolist(), ['https://orcid.org/0000-0001', ''])
         self.assertTrue(report['validation']['valid'])
 
-    def test_missing_occurrence_id_prevents_collector_link_default(self):
+    def test_missing_occurrence_id_does_not_block_the_collector_link(self):
+        # The specimen links to its occurrence by the occurrence's key, which every converted occurrence has.
         plan = build_plan(specimen_archive(missing_occurrence=True))
         column_id = column_by_term_id(plan, 'recordedBy')
-        branch = next(branch for branch in next(column for column in plan['columns'] if column['id'] == column_id)['default_when']
-                      if branch['value'] == 'occurrence.recordedBy')
-        self.assertIn('some rows have no usable occurrenceID', branch['reason'])
         defaults = conditional_defaults(plan, {'material:0': 'per_row'})
-        self.assertEqual(defaults[column_id]['value'], 'occurrence.recordedBy')
+        self.assertEqual(defaults[column_id]['value'], 'material.collectedBy')
 
     def test_by_id_availability_recomputes_conditional_column_targets(self):
         source_plan = build_plan(specimen_archive(shared=True))
         recorded = next(column for column in source_plan['columns'] if column['term'] == DWC + 'recordedBy')
-        combined = next(branch for branch in recorded['default_when'] if branch['value'] == 'occurrence.recordedBy')
+        combined = next(branch for branch in recorded['default_when'] if branch['value'] == 'event.recordedBy')
         self.assertIn('combined by identifier', combined['reason'])
         plan = {'tables': [{'core': True}], 'columns': [
             {'id': 'column:0:0', 'table': 0, 'default': 'occurrence.recordedBy', 'default_when': [

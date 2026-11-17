@@ -24,13 +24,13 @@ from api.dwca_legacy import (LEGACY_FAMILIES, LEGACY_DERIVED_TERMS, BMDE, NXF, G
                             legacy_targets, legacy_row_review, nbn_event_date, emit_legacy_records)
 from api.dwc_dp_specs import TABLE_SPECS, dwc_dp_schema_snapshot, validate_dwc_dp_resources
 from api import dwca_glossary
-from api.dwca_preflight import preflight
+from api.dwca_preflight import SEQUENCE, preflight
 from api.dwca_review import (apply_policy, effective_decisions, failed_requirements, group_rows,  # noqa: F401
                              option_status, remove_unavailable, violations, conditional_defaults, asked)
 from api.dwca_semantic_audit import ASSERTION_IRI_FIELDS, is_age_like_remark, semantic_target_rejection
 from api.dwca_agents import ROLE_FIELDS, agent_name, build_agent_roles, composite_name_reason, split_agent_ids
 
-RULE_VERSION = "29"
+RULE_VERSION = "31"
 DERIVED_VALUE_EXAMPLE_LIMIT = 20
 ECO_SURVEY_ID = 'http://rs.tdwg.org/eco/terms/surveyID'
 REGISTERED_TERMS = {term for terms in REGISTRY['terms'].values() for term in terms}
@@ -88,6 +88,11 @@ TABLE_REASONS = {
                         'as a method description for the whole dataset, not attached to any particular record.'),
     'germplasm-trial': 'This table describes the field trial each event belongs to, such as its year, location and report.',
 }
+# DwC-DP 1.0 makes nucleotide-analysis.nucleotideSequence_fk optional (tdwg/dwc#934). A row without a sequence,
+# typically a targeted qPCR/ddPCR result, becomes an analysis and its protocol with no sequence link; none is made up.
+SEQUENCELESS_DNA = ('{rows} in {table} {verb} no DNA sequence, as for a targeted test such as qPCR or ddPCR. Each becomes a DNA analysis '
+                    'with its method, without a sequence; no sequence is made up. Leave the table out of the Data Package if these rows '
+                    'should stay only in your original files.')
 NAMESPACE = uuid.UUID("7750ccce-e9f9-4fd1-b9d8-a02a9747cae9")
 PRESERVE = {"value": "preserve", "label": dwca_glossary.PRESERVE['label']}
 PARENT = DWC + "parentEventID"
@@ -135,6 +140,7 @@ def _reviewed_value_id(kind, t, c, value):
 
 
 AGENT_NAMES_ID = 'agent-names'
+READ_COUNTS_ID = 'dna-read-counts'
 
 
 def _agent_names_warnings(warnings, roles):
@@ -174,9 +180,10 @@ def _key(archive, *parts):
 def _candidates(term, tables):
     if term not in REGISTERED_TERMS:
         return []
+    # material.derivationEventID shares dwc:eventID, but names the event a material was derived during, not the row's event.
     return [f"{name}.{field['name']}" for name in tables for field in TABLE_SPECS[name].schema["fields"]
             if field.get("dcterms:isVersionOf") == term and not field["name"].endswith(("_pk", "_fk"))
-            and field['name'] != 'evidenceForOccurrenceID']
+            and field['name'] != 'derivationEventID']
 
 
 def _choice(target):
@@ -326,6 +333,24 @@ def _individual_count(source):
     if quantity_type.casefold() == 'individuals' and re.fullmatch(r'\+?\d+', quantity) and int(quantity) == int(count):
         return 'supplied', count
     return 'assertion', count
+
+
+def _read_count(quantity, quantity_type):
+    """organismQuantity as a whole number of DNA sequence reads (readCount), or None."""
+    quantity = quantity.strip()
+    if quantity_type.strip().casefold() != 'dna sequence reads' or not re.fullmatch(r'\+?\d+', quantity):
+        return None
+    return str(int(quantity))
+
+
+def _dna_rows(archive):
+    """{core id: DNA Derived Data rows linked to it across all DNA tables}, converted or not.
+
+    An occurrence's read count belongs to its analysis only when it has exactly one: with several
+    (markers, say), the count cannot be split, and preserving one row must not move it to another.
+    """
+    return Counter(source_id for table in archive.tables if not table.is_core
+                   and SUPPORTED_EXTENSIONS.get(table.row_type) == 'molecular' for source_id in table.ids)
 
 
 def _words_at(text, words):
@@ -598,15 +623,9 @@ def _material_modes(table, material_column, comparison_term=None, recorded=False
     by_id needs a usable material identifier on every row, and the column's values (comparison_term)
     must agree within each identifier, or combining would conflict. With recorded=True the column
     names collectors, which GBIF reads from a specimen only through one unambiguous link: each
-    material must name exactly one occurrenceID, used by no other material (as convert() sets
-    evidenceForOccurrenceID).
+    material must be evidence for exactly one occurrence (convert() sets evidenceForOccurrence_fk
+    only then), so by_id also needs one row per identifier.
     """
-    occurrence_col = table.terms.index(DWC + 'occurrenceID') if DWC + 'occurrenceID' in table.terms else None
-    occurrence_ids = [row[occurrence_col] for row in table.rows] if occurrence_col is not None else []
-    linked = bool(occurrence_ids) and all(value and not missing_reference(value, ()) for value in occurrence_ids)
-    # A repeated occurrenceID names several converted occurrences, so no specimen links to just one.
-    if recorded and (not linked or len(set(occurrence_ids)) != len(occurrence_ids)):
-        return []
     modes = ['per_row']
     if material_column is None:
         return modes
@@ -620,10 +639,8 @@ def _material_modes(table, material_column, comparison_term=None, recorded=False
         column = table.terms.index(comparison_term)
         if any(len({row[column] for row in rows}) > 1 for rows in groups.values()):
             return modes
-    if recorded:
-        per_group = [{row[occurrence_col] for row in rows} for rows in groups.values()]
-        if any(len(ids) != 1 for ids in per_group) or len({next(iter(ids)) for ids in per_group}) != len(per_group):
-            return modes
+    if recorded and any(len(rows) > 1 for rows in groups.values()):
+        return modes
     return [*modes, 'by_id']
 
 
@@ -760,6 +777,14 @@ def _streamline_plan(archive, core, plan, warnings):
                       "listed once as a person or organization and linked to all its mentions. Choose 'Keep all names without "
                       "identifiers as text only' if the same name may stand for different people or organizations. Names with an "
                       "identifier are linked by that identifier.")
+        elif issue['id'] == READ_COUNTS_ID:
+            default = 'copy'
+            # A converted DNA table, sequence and quantity columns are needed too; the report gives what was copied.
+            reason = (f"Up to {issue['count']:,} {'occurrence gives its' if issue['count'] == 1 else 'occurrences give their'} organismQuantity "
+                      f"in DNA sequence reads and {'has' if issue['count'] == 1 else 'have'} one DNA row each, so each count is also recorded "
+                      "as the read count of that DNA analysis. The occurrence keeps it too. Occurrences with several DNA rows keep "
+                      "their count only on the occurrence, because it cannot be split between analyses. Choose 'Keep read counts only "
+                      "on the occurrences' to leave the DNA analyses without one.")
         elif issue['id'].startswith('agent-share:'):
             default = 'shared'
             reason = (f"The {issue['count']:,} mentions of {issue['source_value'][:100]!r} are linked to one person or "
@@ -813,7 +838,7 @@ def _streamline_plan(archive, core, plan, warnings):
             columns[issue['id']]['review'] = False
         # Unmapped columns are summarised from the column list, so they need no separate notice.
         if ((default == 'preserve' and not issue['id'].startswith('column:')) or (issue['id'] == 'event-grain' and default == 'per_row')
-                or issue.get('convention') or issue['id'] == AGENT_NAMES_ID):
+                or issue.get('convention') or issue['id'] in {AGENT_NAMES_ID, READ_COUNTS_ID}):
             notice = {**issue, 'reason': reason, **({'title': issue['convention']['title']} if issue.get('convention') else {})}
             warnings.append({key: value for key, value in notice.items() if key != 'options'})
     plan['issues'] = required
@@ -1037,11 +1062,8 @@ def build_plan(archive):
             if term == DWC + 'recordedBy' and has_material and occurrence_context and 'material.collectedBy' in options:
                 n, d = len(values), len(set(values))
                 ex = _example_values(values)
-                occurrence_col = table.terms.index(DWC + 'occurrenceID') if DWC + 'occurrenceID' in table.terms else None
                 identifier_col = _material_identifier_column(table)
                 modes = _material_modes(table, identifier_col, term, recorded=True)
-                link_condition = ([{'type': 'target_in', 'column': _column_id(t, occurrence_col),
-                                    'targets': ['occurrence.occurrenceID']}] if occurrence_col is not None else [])
                 basis_values = [row[table.terms.index(DWC + 'basisOfRecord')] for row in table.rows
                                 if DWC + 'basisOfRecord' in table.terms and row[table.terms.index(DWC + 'basisOfRecord')]]
                 basis = ('your rows are specimens or samples (' + ' / '.join(list(dict.fromkeys(basis_values))[:4]) + ') and '
@@ -1054,53 +1076,52 @@ def build_plan(archive):
                     created = ('a specimen record is created for each row' if mode == 'per_row' else
                                'rows that share a specimen identifier become one specimen record, linked to one observation')
                     default_when.append({'value': 'material.collectedBy',
-                        'when': [{'type': 'decision_in', 'id': f'material:{t}', 'values': [mode]}, *link_condition],
+                        'when': [{'type': 'decision_in', 'id': f'material:{t}', 'values': [mode]}],
                         'reason': f"{n:,} rows name people in recordedBy ({d:,} different names, e.g. {ex}). They are saved as who collected the specimen, on each specimen record. "
                                   f"Why: {basis}{created}, and in specimen collections this column names the collector.{rn}"})
                 # GBIF reads collectors from a specimen only through one unambiguous link to its observation.
-                occurrence_ids = [row[occurrence_col] for row in table.rows] if occurrence_col is not None else None
-                if occurrence_ids is None:
-                    why = "no occurrenceID column links specimen records to their observations"
-                elif not all(value and not missing_reference(value, ()) for value in occurrence_ids):
-                    why = "some rows have no usable occurrenceID, so a specimen record could not be linked to its observation"
-                elif len(set(occurrence_ids)) != len(occurrence_ids):
-                    why = "some occurrenceIDs repeat, so a specimen record could not be linked to just one observation"
-                else:
-                    why = "when specimen records are combined by identifier, some would not link to exactly one observation"
-                ambiguous_reason = (f"{n:,} rows name people in recordedBy ({d:,} different names, e.g. {ex}). They are saved as who saw or recorded the organism, on each observation record. "
-                                    f"Why: {why}, and GBIF reads collectors from the observation record in that case.")
-                default_when.append({'value': 'occurrence.recordedBy',
+                ambiguous_reason = (f"{n:,} rows name people in recordedBy ({d:,} different names, e.g. {ex}). They are saved as who recorded the event, on the event record of each observation. "
+                                    "Why: when specimen records are combined by identifier, a combined record could not be linked to just one observation, "
+                                    "and a Data Package records who recorded an observation on its event.")
+                default_when.append({'value': 'event.recordedBy',
                     'when': [{'type': 'decision_in', 'id': f'material:{t}', 'values': ['per_row', 'by_id']}],
                     'reason': ambiguous_reason})
-                fallback_reason = (f"{n:,} rows name people in recordedBy ({d:,} different names, e.g. {ex}). They are saved as who saw or recorded the organism, on each observation record. Why: no specimen records are created for these rows.")
+                fallback_reason = (f"{n:,} rows name people in recordedBy ({d:,} different names, e.g. {ex}). They are saved as who recorded the event, on the event record of each observation. "
+                                   "Why: no specimen records are created for these rows, and a Data Package records who recorded an observation on its event.")
                 automatic_family, automatic_reason = 'agent-role', fallback_reason
-                # The usual occurrence target remains the plain fallback.
-                special_chosen = 'occurrence.recordedBy'
+                # The event target remains the plain fallback.
+                special_chosen = 'event.recordedBy'
             if term == DWC + 'recordedByID' and occurrence_context:
                 recorded_col = table.terms.index(DWC + 'recordedBy') if DWC + 'recordedBy' in table.terms else None
                 if recorded_col is not None:
                     name_options = _candidates(DWC + 'recordedBy', target_tables)
-                    if has_material and 'material.collectedBy' in name_options:
-                        name_options = ['occurrence.recordedBy', *[target for target in name_options if target != 'occurrence.recordedBy']]
                     partners = {}
                     for (resource, name_field), role in ROLE_FIELDS.items():
                         partners[f'{resource}.{name_field}'] = f'{resource}.{role.id_field}'
                     options = list(dict.fromkeys(partners[target] for target in name_options if target in partners))
                     default_when = []
                     for target in name_options:
-                        if target not in partners or target == 'occurrence.recordedBy':
+                        if target not in partners or target == 'event.recordedBy':
                             continue
                         record_kind = {'material': 'specimen', 'event': 'event', 'occurrence': 'observation'}[target.split('.')[0]]
                         default_when.append({'value': partners[target],
                             'when': [{'type': 'target_in', 'column': _column_id(t, recorded_col), 'targets': [target]}],
                             'reason': f"Identifiers in recordedByID follow the names in recordedBy, so each name keeps its identifier: on each {record_kind} record."})
-                    special_chosen = 'occurrence.recordedByID'
+                    special_chosen = 'event.recordedByID'
                     follows_names = {'column': _column_id(t, recorded_col),
                                      'targets': {partners[target]: target for target in name_options if target in partners}}
-                    automatic_family, automatic_reason, glance = 'agent-role', 'Identifiers in recordedByID follow the names in recordedBy, so each name keeps its identifier: on each observation record.', False
+                    automatic_family, automatic_reason, glance = 'agent-role', 'Identifiers in recordedByID follow the names in recordedBy, so each name keeps its identifier: on each event record.', False
                 else:
-                    options = ['occurrence.recordedByID']
-                    special_chosen = 'occurrence.recordedByID'
+                    options = ['event.recordedByID']
+                    special_chosen = 'event.recordedByID'
+            if term == DWC + 'recordNumber' and has_material and occurrence_context and 'material.collectorNumber' in options:
+                # A collector number belongs to the specimen once one is created; otherwise it is the occurrence's recordNumber.
+                modes = _material_modes(table, _material_identifier_column(table), term)
+                default_when = [{'value': 'material.collectorNumber', 'when': [{'type': 'decision_in', 'id': f'material:{t}', 'values': [mode]}],
+                                 'reason': f"{len(values):,} rows give a recordNumber (e.g. {_example_values(values)}). It is saved as the collector number of each specimen record, because "
+                                           + ('a specimen record is created for each row.' if mode == 'per_row' else
+                                              'rows that share a specimen identifier become one specimen record, and they agree on it.')}
+                                for mode in modes]
             if term in {DWC + 'typeStatus', DWC + 'typeDesignationType'} and occurrence_context:
                 field = term.rsplit('/', 1)[-1]
                 special_chosen = f'identification.{field}'
@@ -1184,12 +1205,12 @@ def build_plan(archive):
             glossary_family = dwca_glossary.family_of(first_field) if first_field else None
             option_notes = None
             if (table.is_core and core.row_type == DWC + 'Occurrence' and term == DWC + 'recordedBy' and
-                    'event.eventConductedBy' in options):
+                    'event.recordedBy' in options):
                 event_id = DWC + 'eventID'
                 event_values = [row[table.terms.index(event_id)].strip() for row in table.rows] if event_id in table.terms else []
                 nonempty_event_ids = [value for value in event_values if value]
                 if not event_values or len(set(nonempty_event_ids)) == len(nonempty_event_ids):
-                    option_notes = {'event.eventConductedBy': 'Each of your rows has its own event, so here this works like "Who saw or recorded the organism".'}
+                    option_notes = {'event.recordedBy': 'Each of your rows has its own event, so here this works like "Who saw or recorded the organism".'}
             generic_reason = ('This column could describe more than one thing, for example the occurrence or its identification. '
                               'Choose where it belongs, or leave it out of the Data Package.')
             item = {"id": _column_id(t, c), "table": t, "column": c, "term": term,
@@ -1354,6 +1375,16 @@ def build_plan(archive):
                     reason = 'This trait row has no name, method, source or remarks, so there is nothing to describe the trait. It is left out of the Data Package.'
                 if missing:
                     row_issues.append(_issue(f'row:{t}:{n}', f'{table.name}, row {n + 1}: incomplete description', reason, [PRESERVE], table=t, row=n + 1))
+        if family == 'molecular':
+            # Rows without a sequence become analyses with no sequence link, disclosed here.
+            sequence = table.terms.index(SEQUENCE) if SEQUENCE in table.terms else None
+            missing = sum(sequence is None or not row[sequence].strip() for row in table.rows)
+            if missing:
+                warnings.append({'id': f'sequenceless-dna:{t}', 'title': f'{table.name}: DNA rows without a sequence', 'table': t, 'count': missing,
+                                 'reason': SEQUENCELESS_DNA.format(rows='The DNA row' if len(table.rows) == 1 else
+                                                                   f'{missing:,} of {len(table.rows):,} DNA rows' if missing < len(table.rows) else
+                                                                   f'All {missing:,} DNA rows', table=table.name,
+                                                                   verb='has' if missing == 1 else 'have')})
         if family == 'eol-media':
             for n, source in enumerate(sources):
                 reason = eol_media_row_review(source)
@@ -1455,6 +1486,20 @@ def build_plan(archive):
             [{'value': 'shared', 'label': 'Link every mention to one person or organization'},
              {'value': 'separate', 'label': 'Keep this name as text only'}],
             kind='agent-identity', source_value=name, count=count))
+    if core.row_type == DWC + 'Occurrence' and {DWC + 'organismQuantity', DWC + 'organismQuantityType'} <= set(core.terms):
+        # Occurrences with a single DNA row, which becomes their one analysis, with or without a sequence.
+        dna_rows = _dna_rows(archive)
+        quantity, quantity_type = core.terms.index(DWC + 'organismQuantity'), core.terms.index(DWC + 'organismQuantityType')
+        reads = sum(dna_rows[source_id] == 1 and _read_count(row[quantity], row[quantity_type]) is not None
+                    for source_id, row in zip(core.ids, core.rows))
+        if reads:
+            issues.append(_issue(READ_COUNTS_ID, 'DNA read counts',
+                f'{reads:,} {"occurrence gives its" if reads == 1 else "occurrences give their"} organismQuantity in DNA sequence reads and '
+                f'{"has" if reads == 1 else "have"} one DNA row each. Each count can also be recorded as the read count of that DNA analysis; '
+                'the occurrence keeps it either way.',
+                [{'value': 'copy', 'label': 'Also record each count as the read count of its DNA analysis'},
+                 {**PRESERVE, 'label': 'Keep read counts only on the occurrences'}],
+                count=reads))
     for t in range(len(archive.tables)):
         followers = [column['id'] for column in columns if column['table'] == t and column.get('follows') == f'material:{t}' and column['nonempty'] > 0]
         material_issue = next((issue for issue in issues if issue['id'] == f'material:{t}'), None)
@@ -1697,6 +1742,8 @@ def convert(archive, plan, decisions):
     events_by_key = {}; supplied_categories = set(); humboldt_groups = {}; column_consumption = defaultdict(set); withheld_values = []; preserved_rows = []
     materials_by_source = {}; material_identifiers = defaultdict(set); trait_protocols = defaultdict(list); skipped_by_table = defaultdict(set); extension_subjects = []; typed_withheld = defaultdict(set)
     reviewed_target_rows = defaultdict(set)
+    # Read counts of core occurrences with exactly one DNA row, by core id; analyses that received one.
+    dna_rows = _dna_rows(archive); read_counts = {}; copied_read_counts = 0
     # Missing-value tokens (NA, null, ...) in identifier fields are empty cells, counted once per column, not withheld values.
     placeholder_rows = defaultdict(set); qualifier_retained = defaultdict(Counter)
     core = archive.tables[core_index]; event_keys = {}; occurrence_keys = {}
@@ -1875,6 +1922,11 @@ def convert(archive, plan, decisions):
         occurrence.update(occurrence_pk=_key(archive, "occurrence", t, source_id), event_fk=event_key)
         if not occurrence.get("occurrenceStatus"):
             occurrence["occurrenceStatus"] = decisions.get(f"status:{t}", "")
+        if t == core_index and decisions.get(READ_COUNTS_ID) == 'copy' and dna_rows[source_id] == 1:
+            # From the converted pair, so a quantity column left out of the package is not copied either.
+            reads = _read_count(occurrence.get('organismQuantity', ''), occurrence.get('organismQuantityType', ''))
+            if reads is not None:
+                read_counts[source_id] = reads
         occurrence_keys[source_id] = occurrence["occurrence_pk"]
         if occurrence.get('occurrenceID') and not missing_reference(occurrence['occurrenceID'], ()):
             occurrences_by_identifier[occurrence['occurrenceID']].append((occurrence['occurrence_pk'], event_key))
@@ -1889,8 +1941,6 @@ def convert(archive, plan, decisions):
             if not group[1] or (decisions[f'material:{t}'] == 'by_id' and missing_reference(group[1], ())):
                 raise ConversionError('To combine specimen records by identifier, every row needs a specimen identifier. Choose one specimen record per row instead, or fill in the missing identifiers.', category='decision',
                                       decision_ids=[f'material:{t}'])
-            # evidenceForOccurrenceID shares a source IRI with occurrenceID, but is a relationship, not a copied identifier.
-            material.pop('evidenceForOccurrenceID', None)
             material.update(materialEntity_pk=_key(archive, 'material', *group), collectionEvent_fk=event_key)
             if group in material_groups and material_groups[group] != material:
                 raise ConversionError(f'Rows with specimen identifier {group[1]!r} disagree about the specimen or where it was collected. Choose one specimen record per row, or correct your files.',
@@ -1900,8 +1950,7 @@ def convert(archive, plan, decisions):
                 material_groups[group] = material; add('material', material, t, n)
             else:
                 trace('material', {'materialEntity_pk': material['materialEntity_pk']}, t, n)
-            if occurrence.get('occurrenceID') and not missing_reference(occurrence['occurrenceID'], ()):
-                material_evidence[group].add(occurrence['occurrenceID'])
+            material_evidence[group].add(occurrence['occurrence_pk'])
             materials_by_source[source_id] = material
             if material.get('materialEntityID'):
                 material_identifiers[material['materialEntity_pk']].add(material['materialEntityID'])
@@ -2142,7 +2191,7 @@ def convert(archive, plan, decisions):
                             keys = TABLE_SPECS[name].primary_key or [field for field in record if field.endswith('_fk')]
                             trace(name, {field: record.get(field) for field in keys}, t, n)
                         else:
-                            add(name, record, t, n)
+                            add_extension(name, record, t, n)
                     humboldt_groups.setdefault(group, (signature, survey_key, n))
                     for term in consumed: column_consumption[(t, term)].add(n)
                     withheld_values.extend({'source_table': table.name, 'source_row': n + 1, 'term': term,
@@ -2244,26 +2293,29 @@ def convert(archive, plan, decisions):
                     media_subjects.append({'source_table': table.name, 'source_row': n + 1, 'media_pk': media_key,
                                            'decision': role, 'subject_key': subject, 'subject_basis': 'reviewed_core_attachment' if subject else 'explicitly_unlinked'})
                 elif role == "molecular":
+                    # A row without a sequence (a qPCR/ddPCR result, say) gets no sequence record and no sequence link.
                     sequence = mapped.get("nucleotide-sequence", {}).get("sequence", "")
-                    if not sequence:
-                        raise ConversionError("Every DNA row needs a DNA sequence to be converted.", category='conflict',
-                                              decision_ids=[f'table:{t}'], evidence={'source_table': table.name, 'source_row': n + 1})
-                    sequence_key = _key(archive, 'sequence', sequence)
+                    sequence = sequence if sequence.strip() else ''
+                    sequence_key = _key(archive, 'sequence', sequence) if sequence else None
                     protocol = mapped.get('molecular-protocol', {})
                     protocol_signature = json.dumps(protocol, sort_keys=True)
                     protocol_key = _key(archive, 'protocol', protocol_signature)
-                    if sequence not in sequence_groups:
+                    if sequence and sequence not in sequence_groups:
                         sequence_groups[sequence] = sequence_key
                         add('nucleotide-sequence', {'nucleotideSequence_pk': sequence_key, 'sequence': sequence}, t, n)
-                    else:
+                    elif sequence:
                         trace('nucleotide-sequence', {'nucleotideSequence_pk': sequence_key}, t, n)
                     if protocol_signature not in protocol_groups:
                         protocol_groups[protocol_signature] = protocol_key
                         add('molecular-protocol', {**protocol, 'molecularProtocol_pk': protocol_key}, t, n)
                     else:
                         trace('molecular-protocol', {'molecularProtocol_pk': protocol_key}, t, n)
-                    add("nucleotide-analysis", {"nucleotideAnalysis_pk": _key(archive, "analysis", t, n), "nucleotideSequence_fk": sequence_key,
-                        "molecularProtocol_fk": protocol_key, "event_fk": event_keys[source_id]}, t, n)
+                    analysis = {"nucleotideAnalysis_pk": _key(archive, "analysis", t, n), "molecularProtocol_fk": protocol_key,
+                                "event_fk": event_keys[source_id], **({"nucleotideSequence_fk": sequence_key} if sequence_key else {})}
+                    if source_id in read_counts:
+                        analysis['readCount'] = read_counts[source_id]
+                        copied_read_counts += 1
+                    add("nucleotide-analysis", analysis, t, n)
             except ConversionError:
                 raise
             except ImportFailure as error:
@@ -2383,6 +2435,8 @@ def convert(archive, plan, decisions):
         if target.endswith('verbatimAssertionType'):
             # add() also fills assertionType with the same text wherever none was supplied.
             extra['also_copied_to'] = target[:-len('verbatimAssertionType')] + 'assertionType'
+        if column['table'] == core_index and column['term'] == DWC + 'organismQuantity' and copied_read_counts:
+            extra.update(also_copied_to='nucleotide-analysis.readCount', also_copied_rows=copied_read_counts)
         dispositions.append({"source_table": archive.tables[column["table"]].name, "term": column["term"], "target": target,
                              "disposition": "retained-unmapped" if target == "preserve" else 'derived' if target == 'join' or target.startswith('derived ') else "mapped+retained", "nonempty": column["nonempty"], **extra})
     # Account for each converted occurrence's individualCount (core or extension)
@@ -2450,7 +2504,7 @@ def convert(archive, plan, decisions):
     for group, material in material_groups.items():
         evidence = material_evidence[group]
         if len(evidence) == 1:
-            material['evidenceForOccurrenceID'] = next(iter(evidence))
+            material['evidenceForOccurrence_fk'] = next(iter(evidence))
     # A source *ByID identifies an agent only when it is one absolute IRI. The
     # paired name is descriptive evidence, not an identity key: conflicting or
     # list-shaped names never get selected as a preferred name.
@@ -2544,5 +2598,5 @@ def convert(archive, plan, decisions):
               "limitations": ["Structural validation does not prove semantic equivalence.", "Original files retain unsupported columns and extensions.",
                               "Internal keys identify converted rows; source identifiers are retained separately.",
                               "Material records require review; organism and sampling relationships are not inferred.",
-                              "Multiple occurrences sharing material remain linked in the row crosswalk; this snapshot permits only one evidenceForOccurrenceID per material row."]}
+                              "Multiple occurrences sharing material remain linked in the row crosswalk; this snapshot permits only one evidenceForOccurrence_fk per material row."]}
     return frames, report

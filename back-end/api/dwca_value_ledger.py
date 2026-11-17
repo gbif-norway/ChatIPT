@@ -113,12 +113,14 @@ def build_value_disposition_ledger(plan, report, resources=None):
                     candidate = part.strip()
                     if candidate not in targets:
                         targets.append(candidate)
-        # The same values also fill a second field (assertionType beside verbatimAssertionType).
+        # The same values also fill a second field (assertionType beside verbatimAssertionType),
+        # in every emitted row unless the report counts fewer (readCount beside organismQuantity).
         also = summary.get('also_copied_to')
         if isinstance(also, str) and '.' in also and also not in targets:
             targets.append(also)
         for candidate in targets:
-            output_fields[candidate] += target_counts.get(candidate, emitted_count)
+            output_fields[candidate] += (min(emitted_count, int(summary['also_copied_rows'])) if candidate == also and 'also_copied_rows' in summary
+                                         else target_counts.get(candidate, emitted_count))
         output_resource_names = sorted(traced_resources.get(table_index, ()))
         entry = {
             'source_table_index': table_index,

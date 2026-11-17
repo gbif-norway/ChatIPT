@@ -78,6 +78,9 @@ def media_targets(term, values):
             matches.append(f"{name}.{field['name']}")
     if term == AC + 'furtherInformationURL':
         matches = ['media.furtherInformationURL']
+    # DwC-DP 1.0 also gives media its own owner and license; rights stay together on the usage policy, as before.
+    if len(matches) == 2 and {match.split('.', 1)[0] for match in matches} == {'media', 'usage-policy'}:
+        matches = [match for match in matches if match.startswith('usage-policy.')]
     if len(matches) != 1:
         return [], None
     if matches[0].endswith('IRI') and values and not all_iris:
