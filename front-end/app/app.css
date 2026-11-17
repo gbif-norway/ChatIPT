@@ -143,69 +143,9 @@ code { margin-bottom: 10px; font-size: 0.7em !important; }
 
 .footer { margin: 0 20px; }
 
-.welcome-update-hero {
-    background: color-mix(in srgb, var(--bs-success-bg-subtle) 72%, transparent);
-    border: 1px solid var(--bs-success-border-subtle);
-    border-radius: 12px;
-    margin-bottom: 1rem;
-    padding: 1.25rem;
-}
-
-.welcome-update-hero .lead {
-    font-size: 1.1rem;
-    font-weight: 600;
-}
-
-.welcome-package-flow {
-    align-items: center;
-    display: grid;
-    gap: 0.75rem;
-    grid-template-columns: minmax(100px, 0.8fr) auto minmax(150px, 1.2fr) auto minmax(190px, 1.4fr);
-    margin: 1.25rem 0;
-}
-
-.welcome-flow-node,
-.welcome-flow-output {
-    align-items: center;
-    background: var(--bs-body-bg);
-    border: 1px solid var(--bs-border-color);
-    border-radius: 9px;
-    display: flex;
-    gap: 0.5rem;
-    min-height: 58px;
-    padding: 0.75rem;
-}
-
-.welcome-flow-chatipt {
-    border-color: var(--bs-success);
-    font-weight: 600;
-}
-
-.welcome-flow-arrow {
-    color: var(--bs-success);
-    font-size: 1.2rem;
-    margin: 0;
-}
-
-.welcome-flow-outputs {
-    display: grid;
-    gap: 0.5rem;
-}
-
-.welcome-flow-output {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 0.1rem;
-    min-height: auto;
-}
-
-.welcome-flow-output:first-child {
-    border-color: var(--bs-success);
-}
-
-.welcome-flow-output small {
-    color: var(--bs-secondary-color);
-}
+.whats-new-month + .whats-new-month { margin-top: 1rem; }
+.whats-new-month ul { margin-bottom: 0; padding-left: 1.2rem; }
+.whats-new-month li { padding-bottom: 0.25rem; }
 
 .dataset-overview {
     position: relative;
@@ -282,27 +222,6 @@ code { margin-bottom: 10px; font-size: 0.7em !important; }
         padding: 0 0.25rem 0.5rem;
         position: sticky;
         top: 0;
-    }
-}
-
-@media (max-width: 767.98px) {
-    .welcome-package-flow {
-        grid-template-columns: 1fr;
-    }
-
-    .welcome-flow-arrow {
-        justify-self: center;
-        transform: rotate(90deg);
-    }
-
-    .welcome-flow-outputs {
-        grid-template-columns: 1fr 1fr;
-    }
-}
-
-@media (max-width: 575.98px) {
-    .welcome-flow-outputs {
-        grid-template-columns: 1fr;
     }
 }
 
@@ -520,6 +439,14 @@ code { margin-bottom: 10px; font-size: 0.7em !important; }
     border-radius: 999px;
     line-height: 1.2;
     padding: 0.24rem 0.65rem;
+}
+
+.package-download-menu {
+    max-width: min(22rem, 90vw);
+}
+
+.package-download-menu .dropdown-item {
+    white-space: normal;
 }
 
 .package-explorer-dialog {

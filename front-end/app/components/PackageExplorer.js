@@ -552,7 +552,7 @@ export default function PackageExplorer({
           <div className="modal-header package-explorer-header">
             <div>
               <div className="package-explorer-kicker">{taxonomyOnly ? 'Taxonomy data package' : 'Darwin Core Data Package'}</div>
-              <h5 className="modal-title" id="packageExplorerModalLabel">Explore how your data connects</h5>
+              <h5 className="modal-title" id="packageExplorerModalLabel">How the tables connect</h5>
             </div>
             <button type="button" className="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
@@ -563,7 +563,7 @@ export default function PackageExplorer({
                 <div className="spinner-border text-success" role="status">
                   <span className="visually-hidden">Loading package explorer…</span>
                 </div>
-                <span>Building your package map…</span>
+                <span>Loading…</span>
               </div>
             )}
             {!loading && error && (

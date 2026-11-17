@@ -116,7 +116,6 @@ main > .container { padding-top: 2.5rem; padding-bottom: 3rem; }
 .dropdown-item.active, .dropdown-item:active { background: var(--app-accent); color: var(--app-surface); }
 .modal-content { border-radius: 20px; }
 .table { --bs-table-bg: var(--app-surface); --bs-table-color: var(--app-ink); }
-.eyebrow { display: block; color: var(--app-accent); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.11em; text-transform: uppercase; margin-bottom: 0.75rem; }
 :focus-visible { outline: 3px solid var(--app-accent); outline-offset: 3px; }
 
 /* A familiar sprout, redrawn for a smaller and more legible wordmark. */
@@ -146,7 +145,6 @@ main > .container { padding-top: 2.5rem; padding-bottom: 3rem; }
 .conversion-sidebar { position: sticky; top: 1.5rem; }
 .review-heading { display: flex; align-items: flex-start; gap: 1rem; margin-bottom: 1.5rem; }
 .review-heading h2 { font-size: 1.5rem; font-weight: 650; margin-bottom: 0.7rem; }
-.review-heading .eyebrow { margin-bottom: 0.5rem; }
 .review-heading p { font-size: 0.85rem; margin-bottom: 0; }
 .review-heading > .btn { flex-shrink: 0; max-width: 160px; }
 .choice-card { padding: 1.5rem; }
@@ -196,7 +194,7 @@ main > .container { padding-top: 2.5rem; padding-bottom: 3rem; }
 /* Dashboard and entry points. */
 .dashboard { padding: 0.5rem 0 2rem; }
 .dashboard-heading { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 2rem; }
-.dashboard-heading h1 { font-size: 2rem; font-weight: 650; margin-bottom: 0.6rem; }
+.dashboard-heading h1 { font-size: 2rem; font-weight: 650; margin: 0; }
 .dashboard-heading p { font-size: 0.9rem; margin: 0; color: var(--app-muted); }
 .dashboard-toolbar { display: flex; gap: 1rem; align-items: center; margin-bottom: 1.5rem; }
 .dataset-search { position: relative; max-width: 390px; flex: 1; }
@@ -212,11 +210,17 @@ main > .container { padding-top: 2.5rem; padding-bottom: 3rem; }
 .dataset-card .badge { font-size: 0.65rem; font-weight: 600; border-radius: 6px; padding: 0.4rem 0.5rem; }
 .dataset-card .delete-dataset { --bs-btn-border-color: transparent; --bs-btn-color: var(--app-muted); }
 .empty-datasets { padding: 4rem 2rem; text-align: center; background: var(--app-surface); border: 1px dashed var(--app-border); border-radius: 16px; }
-.empty-datasets > i { font-size: 2.5rem; color: var(--app-accent); }
 .upload-heading { margin: 1.5rem 0 2rem; }
 .upload-heading h1 { font-size: 2rem; }
 .upload-heading p { color: var(--app-muted); max-width: 660px; }
 .upload-page { max-width: 900px; }
+.file-drop-zone { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; padding: 2rem 1rem; text-align: center; border: 1.5px dashed var(--app-border); border-radius: 12px; background: var(--app-bg); color: var(--app-muted); transition: border-color 0.15s, background 0.15s; }
+.file-drop-zone > i { font-size: 1.5rem; color: var(--app-accent); }
+.file-drop-zone.is-dragging { border-color: var(--app-accent); background: var(--app-accent-soft); }
+.file-drop-zone.is-disabled { opacity: 0.6; }
+.file-drop-list { list-style: none; padding: 0; margin: 0.75rem 0 0; display: grid; gap: 0.35rem; }
+.file-drop-list li { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem; border: 1px solid var(--app-border); border-radius: 8px; font-size: 0.85rem; }
+.file-drop-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .chat-composer { background: var(--app-surface) !important; border-color: var(--app-border) !important; border-radius: 16px !important; padding: 1.5rem !important; }
 .chat-composer .btn { white-space: nowrap; }
 

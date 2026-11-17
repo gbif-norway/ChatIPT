@@ -32,7 +32,7 @@ export default function ConversionAutomaticSummary({ state, selected, hidden, di
   const silentGroups = [...new Map(silent.map(line => [line.heading, []])).keys()]
     .map(heading => [heading, silent.filter(line => line.heading === heading)])
   return <section className="automatic-summary card card-body mb-3" aria-labelledby="automatic-summary-heading">
-    <h2 id="automatic-summary-heading" className="h4">Already taken care of</h2>
+    <h2 id="automatic-summary-heading" className="h4">Decided automatically</h2>
     <p className="small text-body-secondary">These choices are based on your files. You can change any of them.</p>
     {groups.map(([family, heading]) => <div key={family} className="automatic-summary-group">
       <h3 className="h6 text-body-secondary">{heading}</h3>

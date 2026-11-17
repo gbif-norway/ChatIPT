@@ -25,7 +25,7 @@ export default function ConversionPlanDiagram({ state, selected }) {
   return <section className="conversion-plan mb-4" aria-labelledby="conversion-plan-heading">
     <h2 className="h5 mb-1" id="conversion-plan-heading">What the conversion will create</h2>
     <p className="small text-body-secondary mb-2">A plan based on your current choices, drawn before anything is converted. Your files → Darwin Core Data Package tables.
-      A dashed line means new child events are created inside existing events. A full copy of your original files is always included in the download.</p>
+      A dashed line means new child events are created inside existing events.</p>
     {targets.length === 0
       ? <p className="small">No table of your files has a Darwin Core Data Package field yet. Make the choices below and the plan will appear here.</p>
       : <>

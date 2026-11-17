@@ -6,9 +6,9 @@ import { useAuth } from '../contexts/AuthContext'
 import { useGbifStatus } from '../contexts/GbifStatusContext'
 import { getStatusMeta } from '../utils/datasetPresentation'
 import { datasetDisplayName, datasetKind } from '../utils/datasetKind.mjs'
-import NewDatasetChooser from './NewDatasetChooser'
+import NewDatasetChooser, { NewDatasetChoices } from './NewDatasetChooser'
 
-export default function DatasetsGrid({ onOpenDataset, onNewDataset, onConvertArchive, onShowWelcome }) {
+export default function DatasetsGrid({ onOpenDataset, onNewDataset, onConvertArchive, onShowWhatsNew }) {
   const [items, setItems] = useState(null)
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -99,14 +99,9 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset, onConvertArc
 
   if (items.length === 0) {
     return (
-      <div className="empty-datasets">
-        <i className="bi bi-flower1" aria-hidden="true" />
-        <h1 className="h3 mt-3">Your data has a story to tell</h1>
-        <p className="text-body-secondary">Start with your own data files, or convert an existing Darwin Core Archive.</p>
-        <button className="btn btn-primary" onClick={() => setChoosing(true)}>
-          <i className="bi bi-plus-lg me-2" aria-hidden="true"></i>New dataset
-        </button>
-        {chooser}
+      <div className="dashboard">
+        <div className="dashboard-heading"><h1>Add your first dataset</h1></div>
+        <NewDatasetChoices onStartOwnData={onNewDataset} onConvertArchive={onConvertArchive} />
       </div>
     )
   }
@@ -119,15 +114,12 @@ export default function DatasetsGrid({ onOpenDataset, onNewDataset, onConvertArc
     <div className="dashboard">
       {chooser}
       <div className="dashboard-heading">
-        <div><span className="eyebrow">Your workspace</span><h1>My datasets</h1>
-        </div>
+        <h1>My datasets</h1>
         <div className="d-flex flex-wrap gap-2">
           <button
             className="btn btn-link"
-            onClick={onShowWelcome}
-            title="See what is new in ChatIPT"
+            onClick={onShowWhatsNew}
           >
-            <i className="bi bi-stars me-1" aria-hidden="true"></i>
             What&apos;s new
           </button>
           <button className="btn btn-primary" onClick={() => setChoosing(true)}>

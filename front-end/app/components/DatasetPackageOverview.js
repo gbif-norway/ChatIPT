@@ -359,17 +359,16 @@ export default function DatasetPackageOverview({ dataset, tables, tablesLoading 
         </div>
         <span className="small text-muted">{sourceSummary}</span>
         {resources.length > 0 && (
-          <>
-            <button
-              type="button"
-              className="btn btn-sm btn-outline-success dataset-overview-explore"
-              onClick={openPackageExplorer}
-            >
-              <i className="bi bi-diagram-3 me-1" aria-hidden="true"></i>
-              Explore package
-            </button>
-          </>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-success dataset-overview-explore"
+            onClick={openPackageExplorer}
+          >
+            <i className="bi bi-diagram-3 me-1" aria-hidden="true"></i>
+            Explore package
+          </button>
         )}
+        <PackageDownloadMenu dataset={dataset} />
       </div>
 
       {resources.length === 0 ? (
@@ -398,6 +397,41 @@ export default function DatasetPackageOverview({ dataset, tables, tablesLoading 
       )}
       {emailNotificationModal}
     </section>
+  )
+}
+
+// Both packages in one place: the DwC-DP is the complete package, the DwC-A is what GBIF takes today.
+function PackageDownloadMenu({ dataset }) {
+  if (!dataset?.dwc_dp_url && !dataset?.dwca_url) return null
+  const final = Boolean(dataset.package_ready || dataset.published_at)
+  return (
+    <div className="dropdown">
+      <button type="button" className="btn btn-sm btn-success dataset-overview-explore dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+        <i className="bi bi-download me-1" aria-hidden="true"></i>
+        Download
+      </button>
+      <ul className="dropdown-menu package-download-menu">
+        {!final && <li><p className="dropdown-item-text small text-muted mb-0">Review is still in progress, so these are drafts.</p></li>}
+        {dataset.dwc_dp_url && (
+          <li>
+            <a className="dropdown-item" href={dataset.dwc_dp_url}>
+              <strong className="d-block">Darwin Core Data Package</strong>
+              <small className="text-body-secondary">The complete dataset, with every linked table</small>
+            </a>
+          </li>
+        )}
+        {dataset.dwca_url && (
+          <li>
+            <a className="dropdown-item" href={dataset.dwca_url}>
+              <strong className="d-block">Darwin Core Archive</strong>
+              <small className="text-body-secondary">The format GBIF publishes today</small>
+            </a>
+          </li>
+        )}
+        <li><hr className="dropdown-divider" /></li>
+        <li><a className="dropdown-item small" href="#publication-packages">How the two packages differ</a></li>
+      </ul>
+    </div>
   )
 }
 

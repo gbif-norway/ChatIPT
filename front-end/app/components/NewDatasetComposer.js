@@ -1,13 +1,13 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import config from '../config.js';
 import { getCsrfToken } from '../utils/csrf.js';
-import { ACCEPT_INPUT_EXTENSIONS, ALLOWED_FILE_EXTENSIONS, isExtensionAllowed } from '../utils/uploadConstraints.js';
-import { formatFileSize, sendUpload, uploadSizeError } from '../utils/uploadSize.mjs';
+import { ALLOWED_FILE_EXTENSIONS, TABLE_FILE_EXTENSIONS, TREE_FILE_EXTENSIONS } from '../utils/uploadConstraints.js';
+import { sendUpload, uploadSizeError } from '../utils/uploadSize.mjs';
 import { useAuth } from '../contexts/AuthContext.js';
-import { useTheme } from '../contexts/ThemeContext.js';
 import { useGbifStatus } from '../contexts/GbifStatusContext.js';
+import FileDropZone from './FileDropZone.js';
 
 const buildDisplayName = (user) => {
   if (!user) {
@@ -33,75 +33,18 @@ const buildDisplayName = (user) => {
 
 const NewDatasetComposer = ({ onDatasetCreated }) => {
   const { user } = useAuth();
-  const { isDark } = useTheme();
   const { paused: gbifPaused } = useGbifStatus();
   const [userInput, setUserInput] = useState('');
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
-  const fileInputRef = useRef(null);
 
   const displayName = useMemo(() => buildDisplayName(user), [user]);
   // All files go in one request, so their total counts against the upload limit.
   const sizeError = useMemo(
-    () => uploadSizeError(selectedFiles.map(({ file }) => file), config.maxUploadMB),
+    () => uploadSizeError(selectedFiles, config.maxUploadMB),
     [selectedFiles]
   );
-
-  const resetFileInput = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
-
-  const handleFilesSelected = (event) => {
-    const files = Array.from(event.target.files || []);
-    if (!files.length) {
-      return;
-    }
-
-    const rejectedNames = [];
-    const nextFiles = [...selectedFiles];
-
-    files.forEach((file) => {
-      if (!isExtensionAllowed(file.name)) {
-        rejectedNames.push(file.name);
-        return;
-      }
-
-      const alreadySelected = nextFiles.some(
-        (item) => item.file.name === file.name && item.file.size === file.size
-      );
-
-      if (!alreadySelected) {
-        nextFiles.push({
-          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          file
-        });
-      }
-    });
-
-    setSelectedFiles(nextFiles);
-    resetFileInput();
-
-    if (rejectedNames.length > 0) {
-      setError(
-        `Unsupported file type: ${rejectedNames.join(', ')}. Allowed types: ${ALLOWED_FILE_EXTENSIONS.join(', ')}`
-      );
-    } else {
-      setError(null);
-    }
-  };
-
-  const removeSelectedFile = (id) => {
-    setSelectedFiles((prev) => prev.filter((file) => file.id !== id));
-  };
-
-  const triggerFileDialog = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
-  };
 
   const handleInputKeyDown = (event) => {
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -136,7 +79,7 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
       }
 
       const formData = new FormData();
-      selectedFiles.forEach(({ file }) => {
+      selectedFiles.forEach((file) => {
         formData.append('files', file);
       });
       if (trimmedInput.length > 0) {
@@ -177,7 +120,6 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
 
       setUserInput('');
       setSelectedFiles([]);
-      resetFileInput();
 
       if (typeof onDatasetCreated === 'function') {
         onDatasetCreated(datasetId);
@@ -195,105 +137,56 @@ const NewDatasetComposer = ({ onDatasetCreated }) => {
     }
   };
 
-  const composerClassName = [
-    'chat-composer border rounded p-3',
-    isDark ? 'bg-dark border-secondary text-light' : 'bg-light'
-  ].join(' ');
-
   return (
     <div className="container p-4 upload-page">
-      <div className="row justify-content-center">
-        <div className="col-lg-9">
-          <header className="upload-heading"><span className="eyebrow">A new beginning</span><h1>Let’s bring your data to life</h1><p>Hello {displayName}. Add your data files or a manuscript, and ChatIPT will guide you from here.</p></header>
+      <header className="upload-heading"><h1>Start from your own data files</h1><p>Hello {displayName}. Add your data files or a manuscript, and ChatIPT will guide you from here.</p></header>
 
-          <form className={composerClassName} onSubmit={handleSubmit}>
-            <div className="d-flex flex-wrap align-items-start gap-2">
-              <button
-                type="button"
-                className="btn btn-outline-secondary"
-                onClick={triggerFileDialog}
-                title="Add data files, phylogenetic tree files, or manuscript PDFs"
-                disabled={isSubmitting}
-              >
-                <i className="bi bi-paperclip" aria-hidden="true"></i>
-                <span>Add files</span>
-              </button>
-              <div className="flex-grow-1">
-                <textarea
-                  rows={2}
-                  className="form-control user-input"
-                  value={userInput}
-                  onChange={(e) => {
-                    setUserInput(e.target.value);
-                    if (error) {
-                      setError(null);
-                    }
-                  }}
-                  onKeyDown={handleInputKeyDown}
-                  placeholder="Add a note for ChatIPT (optional)"
-                  disabled={isSubmitting}
-                  aria-label="Message ChatIPT"
-                />
-              </div>
-              <button type="submit" className="btn btn-primary d-flex align-items-center gap-1" disabled={isSubmitting || Boolean(sizeError) || gbifPaused}>
-                {isSubmitting ? (
-                  <>
-                    <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-                    <span>Uploading…</span>
-                  </>
-                ) : (
-                  <>
-                    <i className="bi bi-send-fill" aria-hidden="true"></i>
-                    <span>Start dataset</span>
-                  </>
-                )}
-              </button>
-            </div>
+      <form className="card card-body gap-3" onSubmit={handleSubmit}>
+        <FileDropZone
+          files={selectedFiles}
+          onChange={(files) => { setSelectedFiles(files); setError(null); }}
+          onRejected={(message) => message && setError(message)}
+          extensions={ALLOWED_FILE_EXTENSIONS}
+          disabled={isSubmitting}
+          hint={`Data files, tree files or manuscript PDFs, up to ${config.maxUploadMB} MB in total.`}
+          details={<>
+            <p className="mb-1">Spreadsheets and tables in any layout: {TABLE_FILE_EXTENSIONS.join(', ')}.</p>
+            <p className="mb-1">Phylogenetic trees: {TREE_FILE_EXTENSIONS.join(', ')}.</p>
+            <p className="mb-0">A manuscript PDF, to fill in the dataset description and pull out any data tables.</p>
+          </>}
+        />
+        <label className="form-label mb-0">Note for ChatIPT (optional)
+          <textarea
+            rows={2}
+            className="form-control mt-1"
+            value={userInput}
+            onChange={(e) => {
+              setUserInput(e.target.value);
+              if (error) {
+                setError(null);
+              }
+            }}
+            onKeyDown={handleInputKeyDown}
+            placeholder="For example, what the data is or how it was collected"
+            disabled={isSubmitting}
+          />
+        </label>
 
-            {selectedFiles.length > 0 && (
-              <div className="d-flex flex-wrap gap-2 mt-3">
-                {selectedFiles.map(({ id, file }) => (
-                  <span
-                    key={id}
-                    className="badge rounded-pill text-bg-secondary d-flex align-items-center gap-2 py-2 px-3"
-                  >
-                    <i className="bi bi-file-earmark-arrow-up" aria-hidden="true"></i>
-                    <span className="text-truncate" style={{ maxWidth: '200px' }}>{file.name}</span>
-                    <span className="opacity-75">{formatFileSize(file.size)}</span>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-outline-light border-0 text-white px-2 py-0"
-                      onClick={() => removeSelectedFile(id)}
-                      aria-label={`Remove ${file.name}`}
-                      disabled={isSubmitting}
-                    >
-                      <i className="bi bi-x-lg" aria-hidden="true"></i>
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
+        {[error, sizeError].filter(Boolean).map((message) => (
+          <div key={message} className="alert alert-danger mb-0" role="alert">
+            {message}
+          </div>
+        ))}
 
-            {[error, sizeError].filter(Boolean).map((message) => (
-              <div key={message} className="text-danger small mt-3" role="alert">
-                {message}
-              </div>
-            ))}
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept={ACCEPT_INPUT_EXTENSIONS}
-              onChange={handleFilesSelected}
-              className="d-none"
-            />
-            <div className="text-muted small mt-3">
-              Tip: use the paperclip to add data files, tree files, or manuscript PDFs, up to {config.maxUploadMB} MB in total.
-            </div>
-          </form>
-        </div>
-      </div>
+        <button type="submit" className="btn btn-primary align-self-start" disabled={isSubmitting || Boolean(sizeError) || gbifPaused}>
+          {isSubmitting ? (
+            <>
+              <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+              Uploading…
+            </>
+          ) : 'Start dataset'}
+        </button>
+      </form>
     </div>
   );
 };

@@ -20,8 +20,8 @@ export default function ConversionTidySummary({ state, send, disabled, paused = 
   const rows = number => `${Number(number || 0).toLocaleString('en-US')} ${Number(number || 0) === 1 ? 'row' : 'rows'}`
 
   return <details className="review-disclosure" open={suggestions.length > 0}>
-    <summary className="fw-semibold">Here’s what we tidied <small className="text-muted fw-normal">{tidySummaryLine(state)}</small></summary>
-    <p className="small text-muted mt-2 mb-2">We cleaned these values automatically so you have fewer questions. Your original files are kept unchanged in the download, and you can undo any change.</p>
+    <summary className="fw-semibold">Tidied values <small className="text-muted fw-normal">{tidySummaryLine(state)}</small></summary>
+    <p className="small text-muted mt-2 mb-2">ChatIPT cleaned these values automatically. You can undo any change.</p>
     {pending && <p className="small text-muted" role="status">{paused
       ? <><i className="bi bi-pause-circle me-2" aria-hidden="true" />Paused until GBIF is working again.</>
       : <><span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />Updating your choices…</>}</p>}

@@ -562,14 +562,14 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     const subject = '(ChatIPT) Request to publish dataset to GBIF production';
     const mailtoTitle = currentDataset.title || fallbackFileName;
     const dwcDpLine = currentDataset.dwc_dp_url ? `\n- Darwin Core Data Package (DwC-DP): ${currentDataset.dwc_dp_url}` : '';
-    const body = `Hello GBIF Norway Helpdesk,\n\nI’m pleased to confirm that my dataset has been successfully published to the GBIF Sandbox for validation. I would like to request its publication to GBIF production.\n\n- Dataset title: ${mailtoTitle}${dwcDpLine}\n- Darwin Core Archive (DwC-A): ${currentDataset.dwca_url}\n- GBIF Sandbox dataset page: ${currentDataset.gbif_url}\n\nPlease let me know if you need any further information or changes before proceeding.\n\nThank you for your assistance.\n\nBest regards,`;
+    const body = `Hello GBIF Norway Helpdesk,\n\nMy dataset is published to the GBIF sandbox. Please publish it to GBIF.\n\n- Dataset title: ${mailtoTitle}${dwcDpLine}\n- Darwin Core Archive (DwC-A): ${currentDataset.dwca_url}\n- GBIF sandbox dataset page: ${currentDataset.gbif_url}\n\nBest regards,`;
     return `mailto:helpdesk@gbif.no?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   })();
 
   const title = currentDataset.title || fallbackFileName;
   const createdAtDisplay = currentDataset.created_at
-    ? new Date(currentDataset.created_at).toLocaleString()
-    : 'Unknown';
+    ? new Date(currentDataset.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+    : 'date unknown';
   const datasetOwner = currentDataset.user_info || user;
   const datasetOwnerName = [datasetOwner?.first_name, datasetOwner?.last_name]
     .filter(Boolean)
@@ -787,6 +787,22 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
 
   const activeTable = tables.find((table) => sameId(table.id, activeTableId)) || null;
 
+  // Secondary actions live in one menu so the header keeps a single main button.
+  const moreActions = [
+    currentDataset.published_at && currentDataset.gbif_url && {
+      label: 'View on GBIF (sandbox)',
+      item: <a className="dropdown-item" href={currentDataset.gbif_url} target="_blank" rel="noopener noreferrer"><i className="bi bi-globe me-2" aria-hidden="true"></i>View on GBIF (sandbox)</a>
+    },
+    (currentDataset.structure_notes || uploadedFiles.length > 0) && {
+      label: 'Uploaded files and notes',
+      item: <button type="button" className="dropdown-item" data-bs-toggle="modal" data-bs-target="#structureNotesModal"><i className="bi bi-files me-2" aria-hidden="true"></i>Uploaded files and notes</button>
+    },
+    currentDataset.can_visualize_tree && {
+      label: 'View phylogenetic tree',
+      item: <button type="button" className="dropdown-item" data-bs-toggle="modal" data-bs-target="#treeVisualizationModal" onClick={handleVisualizeTreeClick}><i className="bi bi-diagram-3 me-2" aria-hidden="true"></i>View phylogenetic tree</button>
+    },
+  ].filter(Boolean);
+
   const getPdfStatusBadge = () => {
     return { label: 'Available to model', className: 'text-bg-success' };
   };
@@ -795,86 +811,47 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
     <div className="container publication-workspace">
       <div className="row mx-auto p-4 no-bottom-margin no-bottom-padding no-left-padding">
         <div className="col-12 alerts-div">
-          <div className="mb-3"><span className="eyebrow">Dataset workspace</span>
+          <div className="dataset-heading mb-3">
             <div className="d-flex flex-wrap align-items-center gap-2">
-              <h1 className="h3 mb-0 me-2">{title || 'Untitled Dataset'}</h1>
+              <h1 className="h3 mb-0 me-1">{title || 'Untitled dataset'}</h1>
               <span className={`badge ${statusMeta.badgeClass}`}>
                 <i className={`bi ${statusMeta.icon} me-1`} aria-hidden="true"></i>
                 {statusMeta.label}
               </span>
-              {(currentDataset.dwc_dp_url || currentDataset.dwca_url) && (
-                <a className="btn btn-warning btn-sm" href="#publication-packages">
-                  <i className="bi bi-box-arrow-down me-1" aria-hidden="true"></i>
-                  Download packages
-                </a>
-              )}
-              {currentDataset.published_at && currentDataset.gbif_url && (
-                <a
-                  className="btn btn-outline-primary btn-sm"
-                  href={currentDataset.gbif_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <i className="bi bi-globe me-1" aria-hidden="true"></i>
-                  View on GBIF (sandbox)
-                </a>
-              )}
-              {(currentDataset.structure_notes || uploadedFiles.length > 0) && (
+              <div className="d-flex gap-2 ms-auto">
                 <button
-                  className="btn btn-outline-secondary btn-sm"
+                  className="btn btn-primary btn-sm"
                   data-bs-toggle="modal"
-                  data-bs-target="#structureNotesModal"
-                  title="View data provenance and structure notes"
+                  data-bs-target="#datasetMetadataModal"
+                  onClick={handleStartMetadataEdit}
                 >
-                  <i className="bi bi-info-circle me-1"></i>
-                  Data Provenance
+                  <i className="bi bi-pencil me-1" aria-hidden="true"></i>
+                  Edit metadata
                 </button>
-              )}
-              <button
-                className="btn btn-primary btn-sm"
-                data-bs-toggle="modal"
-                data-bs-target="#datasetMetadataModal"
-                title="Edit dataset metadata"
-                onClick={handleStartMetadataEdit}
-              >
-                <i className="bi bi-file-earmark-text me-1"></i>
-                Edit metadata
-              </button>
-              {currentDataset.can_visualize_tree && (
-                <button
-                  className="btn btn-outline-primary btn-sm"
-                  data-bs-toggle="modal"
-                  data-bs-target="#treeVisualizationModal"
-                  onClick={handleVisualizeTreeClick}
-                  title="Visualize phylogenetic tree"
-                >
-                  <i className="bi bi-diagram-3 me-1"></i>
-                  Visualise Tree
-                </button>
-              )}
-            </div>
-            <div className="mt-2">
-              <small className="text-muted d-flex flex-wrap align-items-center gap-2">
-                <span className="d-inline-flex align-items-center">
-                  <i className="bi bi-person-circle me-1"></i>
-                  Dataset owner: {datasetOwnerName}
-                </span>
-                {datasetOwner?.orcid_id && (
-                  <a
-                    href={`https://orcid.org/${datasetOwner.orcid_id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-decoration-none text-muted"
-                  >
-                    {datasetOwner.orcid_id}
-                  </a>
+                {moreActions.length > 0 && (
+                  <div className="dropdown">
+                    <button className="btn btn-outline-secondary btn-sm" data-bs-toggle="dropdown" aria-expanded="false" aria-label="More actions" title="More actions">
+                      <i className="bi bi-three-dots" aria-hidden="true"></i>
+                    </button>
+                    <ul className="dropdown-menu dropdown-menu-end">
+                      {moreActions.map((action) => <li key={action.label}>{action.item}</li>)}
+                    </ul>
+                  </div>
                 )}
-                {datasetOwner?.institution && (
-                  <span>{datasetOwner.institution}</span>
-                )}
-                <span className="badge text-bg-secondary">Started dataset at {createdAtDisplay}</span>
-              </small>
+              </div>
             </div>
+            <p className="small text-muted mb-0 mt-1">
+              Started {createdAtDisplay}
+              {currentDataset.user_info && !sameId(currentDataset.user_info.id, user?.id) && (
+                <>
+                  {' · Owner: '}{datasetOwnerName}
+                  {datasetOwner?.orcid_id && (
+                    <>{' · '}<a href={`https://orcid.org/${datasetOwner.orcid_id}`} target="_blank" rel="noopener noreferrer" className="text-muted">{datasetOwner.orcid_id}</a></>
+                  )}
+                  {datasetOwner?.institution && ` · ${datasetOwner.institution}`}
+                </>
+              )}
+            </p>
           </div>
           {currentDataset.description && (
             <p className="mb-3">{currentDataset.description}</p>
@@ -947,10 +924,10 @@ const Dataset = ({ onNewDataset, onBackToDashboard }) => {
           {currentDataset.published_at != null && (
             <div className="message final-message">
               <div className="alert alert-success" role="alert">
-                <strong>🎉 Your dataset has now been published! 🎉</strong>
+                <strong>Published to the GBIF sandbox</strong>
                 <hr />
-                <a href={currentDataset.gbif_url} className="btn btn-outline-primary" role="button" aria-pressed="true" target="_blank" rel="noopener noreferrer">🌐 View on GBIF (sandbox)</a>
-                <a href={productionPublishMailto} className="btn btn-success" role="button" aria-pressed="true">🚀 Request publication to GBIF (production) 🚀</a>
+                <a href={currentDataset.gbif_url} className="btn btn-outline-primary" role="button" aria-pressed="true" target="_blank" rel="noopener noreferrer">View on GBIF (sandbox)</a>
+                <a href={productionPublishMailto} className="btn btn-success" role="button" aria-pressed="true">Request publication to GBIF</a>
               </div>
             </div>
           )}

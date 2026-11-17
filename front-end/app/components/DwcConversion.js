@@ -8,7 +8,8 @@ import { useGbifStatus } from '../contexts/GbifStatusContext'
 import { attentionItems, chatVisible, conflictsFor, optionState, shownRecommendation, unresolvedIssues } from '../utils/conversionReview.mjs'
 import { AGENT_NAMES_ID, automaticSummary, conversionTitle, dedupeNotices, glossaryEntry, isColumnId, localId, makeSelector, shortTerm } from '../utils/conversionPlan.mjs'
 import { focusDecision } from '../utils/focusDecision'
-import { formatFileSize, sendUpload, uploadSizeError } from '../utils/uploadSize.mjs'
+import { sendUpload, uploadSizeError } from '../utils/uploadSize.mjs'
+import { ARCHIVE_FILE_EXTENSIONS } from '../utils/uploadConstraints'
 import ConversionAiDecisions from './ConversionAiDecisions'
 import ConversionAutomaticSummary from './ConversionAutomaticSummary'
 import ConversionChat from './ConversionChat'
@@ -17,6 +18,7 @@ import ConversionNameReview from './ConversionNameReview'
 import ConversionTidySummary from './ConversionTidySummary'
 import ConversionPlanDiagram from './ConversionPlanDiagram'
 import ConversionSteps from './ConversionSteps'
+import FileDropZone from './FileDropZone'
 import PackageExplorer, { openPackageExplorer } from './PackageExplorer'
 import { choicePresentation } from '../utils/conversionCopy.mjs'
 import { ConversionChoiceTitle, ConversionExamples, ConversionHelpTerm } from './ConversionHelp'
@@ -50,17 +52,21 @@ export function ConversionUpload({ onDatasetCreated }) {
     } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
   return <div className="container p-4 upload-page">
-    <header className="upload-heading"><span className="eyebrow">Archive conversion</span><h1>Give your archive a new format</h1>
-      <p>Upload a Darwin Core Archive. We’ll map its fields, help you review any ambiguous choices, and create a checked Data Package.</p></header>
+    <header className="upload-heading"><h1>Convert a Darwin Core Archive</h1>
+      <p>Upload a Darwin Core Archive. ChatIPT will convert its fields, help you review any ambiguous choices, and create a checked Data Package.</p></header>
     <form onSubmit={submit} className="card card-body gap-3">
-      <label className="form-label">Title (optional)<input className="form-control mt-1" value={title} onChange={event => setTitle(event.target.value)} disabled={busy} aria-describedby="conversion-title-help" />
+      <FileDropZone files={files} onChange={next => { setFiles(next); setError('') }} onRejected={message => message && setError(message)}
+        extensions={ARCHIVE_FILE_EXTENSIONS} disabled={busy}
+        hint={`A ZIP archive, or all of the archive’s files selected together. Up to ${config.maxUploadMB} MB.`}
+        details={<>
+          <p className="mb-1">Archives built around events, occurrences or taxa (a species checklist). A checklist on its own produces a taxonomy data package; occurrence records can also be converted to the Data Package standard after you review them.</p>
+          <p className="mb-1">For loose files, include meta.xml and eml.xml if you have them. Without meta.xml, name the main table occurrence.csv, event.csv or taxon.csv.</p>
+          <p className="mb-0">Unzipped, the archive can be up to 200 MB.</p>
+        </>} />
+      <label className="form-label mb-0">Title (optional)<input className="form-control mt-1" value={title} onChange={event => setTitle(event.target.value)} disabled={busy} aria-describedby="conversion-title-help" />
         <span id="conversion-title-help" className="form-text">Leave this blank to use the title in the archive&apos;s metadata, or the file name.</span></label>
-      <label className="form-label">Archive or loose files<input type="file" multiple accept=".zip,.dwca,.csv,.tsv,.txt,.xml" className="form-control mt-1" disabled={busy} onChange={event => setFiles(Array.from(event.target.files || []))} /></label>
-      <p className="small text-body-secondary mb-0">Add a ZIP, or select all the archive&apos;s files together. Include meta.xml and eml.xml if available. For loose tables, name the main table occurrence.csv, event.csv or taxon.csv.</p>
-      {files.length > 0 && <ul>{files.map(file => <li key={file.name}>{file.name} · {formatFileSize(file.size)}</li>)}</ul>}
-      <small className="text-muted">Maximum 200 MB uploaded or expanded. Archives built around events, occurrences or taxa (a species checklist) are accepted. A checklist on its own produces a taxonomy data package; actual occurrence records can also be converted to the Data Package standard after you review them.</small>
-      {[error, sizeError].filter(Boolean).map(message => <div key={message} className="alert alert-danger" role="alert">{message}</div>)}
-      <button className="btn btn-primary align-self-start" disabled={busy || !files.length || Boolean(sizeError) || gbifPaused}>{busy ? 'Uploading…' : 'Inspect my archive'}<i className="bi bi-arrow-right ms-2" aria-hidden="true" /></button>
+      {[error, sizeError].filter(Boolean).map(message => <div key={message} className="alert alert-danger mb-0" role="alert">{message}</div>)}
+      <button className="btn btn-primary align-self-start" disabled={busy || !files.length || Boolean(sizeError) || gbifPaused}>{busy ? 'Uploading…' : 'Inspect my archive'}</button>
     </form>
   </div>
 }
@@ -109,7 +115,7 @@ function ChoiceCard({ item: sourceItem, state, decisions, disabled, onChoose, se
     {number !== undefined && <div className="d-flex align-items-center justify-content-between mb-2"><span className="choice-number mb-0">Question {number}</span>{!state.unresolved?.includes(item.id) && decisions[item.id] && <span className="answer-saved"><i className="bi bi-check-circle me-1" aria-hidden="true" />Answer saved</span>}</div>}
     {item.table !== undefined && <small className="text-muted mb-1">{state.plan.tables[item.table]?.name}</small>}
     <h3 id={`title-${item.id}`} className="choice-title fw-semibold"><ConversionChoiceTitle item={item} text={item.title || shortTerm(item.term)} /></h3>
-    {eventLinks ? <><p className="small mb-2">In a Data Package, these details belong to an <ConversionHelpTerm term="events">event</ConversionHelpTerm>. Choose where to put them, or leave them out.</p><details className="small mb-2"><summary>See what we found in your files</summary><p className="mt-2 mb-0">{reason}</p></details></> : recommendation?.user_question
+    {eventLinks ? <><p className="small mb-2">In a Data Package, these details belong to an <ConversionHelpTerm term="events">event</ConversionHelpTerm>. Choose where to put them, or leave them out.</p><details className="small mb-2"><summary>What ChatIPT found in your files</summary><p className="mt-2 mb-0">{reason}</p></details></> : recommendation?.user_question
       ? <><p className="small mb-2">{recommendation.user_question}</p>{reason && <details className="small mb-2"><summary>More about this question</summary><p className="mt-2 mb-0">{reason}</p></details>}</>
       : reason && <p className="small mb-2">{reason}</p>}
     {item.members && <p className="small mb-2">Applies to {item.count.toLocaleString()} rows that raise the same question (rows {item.sample_rows.join(', ')}{item.count > item.sample_rows.length ? ', …' : ''}).</p>}
@@ -123,7 +129,7 @@ function ChoiceCard({ item: sourceItem, state, decisions, disabled, onChoose, se
         return <div key={option.value}><label className={`choice-option${value === option.value ? ' is-selected' : ''}${suggested ? ' is-suggested' : ''}${!availability.available ? ' is-unavailable' : ''}`}>
           <input type="radio" name={item.id} value={option.value} checked={value === option.value} disabled={disabled || !availability.available}
             onChange={() => onChoose(item.id, option.value, suggested ? { accepted_recommendations: [item.id] } : {})} aria-describedby={!availability.available ? `reason-${item.id}-${index}` : undefined} />
-          <span>{option.label}{suggested && <small className="suggested-label"><i className="bi bi-stars me-1" aria-hidden="true" />Suggested by ChatIPT</small>}
+          <span>{option.label}{suggested && <small className="suggested-label">Suggested</small>}
             {(option.value !== 'preserve' || (isColumnId(item.id) && option.label === glossaryEntry(state, 'preserve')?.label)) && glossaryEntry(state, option.value)?.gloss && <small className="d-block text-body-secondary">{glossaryEntry(state, option.value).gloss}</small>}
             {(option.value !== 'preserve' || (isColumnId(item.id) && option.label === glossaryEntry(state, 'preserve')?.label)) && glossaryEntry(state, option.value)?.consequence && <small className="d-block text-body-secondary">{glossaryEntry(state, option.value).consequence}</small>}
             {item.option_notes?.[option.value] && <small className="d-block"><em>{item.option_notes[option.value]}</em></small>}
@@ -288,7 +294,6 @@ export default function DwcConversion() {
   const notices = dedupeNotices(state, state?.status === 'complete' ? state.report?.warnings || [] : state?.plan?.warnings || [], selected, panelIds)
   return <div className="container conversion-workspace">
     <header className="workspace-heading">
-      <span className="eyebrow"><i className="bi bi-arrow-left-right me-2" aria-hidden="true" />Archive conversion</span>
       <h1>{title}</h1>
       <p className="text-body-secondary mb-0">Darwin Core Archive <i className="bi bi-arrow-right mx-2" aria-hidden="true" /><span className="visually-hidden">to </span>{state?.status === 'complete' && state.report?.output_format === 'taxonomy-data-package' ? 'Taxonomy data package' : 'Darwin Core Data Package'}</p>
     </header>
@@ -349,12 +354,12 @@ export default function DwcConversion() {
     <div className="conversion-main">
     {inReview && <section className="review-section" aria-labelledby="conversion-options-heading">
       <div className="review-heading">
-        <div><span className="eyebrow">Step 3 · Review</span>
-          <h2 id="conversion-options-heading">{outstanding > 0 ? `${outstanding} ${outstanding === 1 ? 'choice' : 'choices'} to finish your conversion` : blockers.length ? 'Check the highlighted choices' : 'You’re ready to convert'}</h2>
-          <p className="text-body-secondary">{outstanding > 0 ? 'Help us understand your data. Choose an answer below; each answer is saved automatically.' : blockers.length ? 'Review the AI choices below before continuing.' : 'Your choices are saved. Review them below or create your package.'}</p>
+        <div>
+          <h2 id="conversion-options-heading">{outstanding > 0 ? `${outstanding} ${outstanding === 1 ? 'choice' : 'choices'} to finish your conversion` : blockers.length ? 'Check the highlighted choices' : 'Ready to convert'}</h2>
+          <p className="text-body-secondary">{outstanding > 0 ? 'Each answer is saved as you choose it.' : blockers.length ? 'Review the AI choices below before continuing.' : 'Your choices are saved. Review them below or create your package.'}</p>
         </div>
         {reviewable > 0 && state.status === 'review' && <button className="btn btn-sm btn-outline-secondary" disabled={startDisabled} onClick={() => perform('review')}>
-          <i className="bi bi-stars me-1" aria-hidden="true" />Review {reviewable} {reviewable === 1 ? 'choice' : 'choices'} with AI
+          Review {reviewable} {reviewable === 1 ? 'choice' : 'choices'} with AI
         </button>}
       </div>
       <ConversionAutomaticSummary state={state} selected={selected} hidden={guidedIds} disabled={disabled} renderChoice={item => <ChoiceCard item={item} asRadios {...cardProps} />} />
@@ -372,7 +377,7 @@ export default function DwcConversion() {
       </details>}
       <details className="review-disclosure conversion-choices">
         <summary><i className="bi bi-sliders me-2" aria-hidden="true" /><span>All mapping choices</span><small>Advanced</small></summary>
-        <p className="small text-body-secondary mt-3">Review or change the choices already made for your data. Anything left out of the Data Package is still in the copy of your original files in the download.</p>
+        <p className="small text-body-secondary mt-3">Review or change the choices already made for your data.</p>
         {(state.plan.issues || []).filter(issue => !needsInput.has(issue.id) && !guidedItems.some(item => item.id === issue.id) && !nameQuestionIds.has(issue.id) && (!retainedIssue(issue) || issue.id === `table:${issue.table}`) && !(state.review?.applied || []).includes(issue.id))
           .map(issue => <ChoiceCard key={issue.id} item={issue} {...cardProps} />)}
         {state.plan.columns.filter(column => !column.review && !guidedItems.some(item => item.id === column.id) && selected(`table:${column.table}`) !== 'preserve').map(column => <div className="row align-items-center my-3" key={column.id} data-decision-id={column.id}><label htmlFor={column.id} className="col-md-6 small">{state.plan.tables[column.table].name} · {shortTerm(column.term)}</label><div className="col-md-6"><select id={column.id} className="form-select form-select-sm" disabled={disabled} value={selected(column.id, column.default)} onChange={event => choose(column.id, event.target.value)}>{column.options.map(option => <option key={option.value} value={option.value}>{option.label}{optionState(state, column.id, option.value).available ? '' : ' (not available with your other choices)'}</option>)}</select></div></div>)}
@@ -389,8 +394,8 @@ export default function DwcConversion() {
       {state.report.output_format === 'taxonomy-data-package' && <p>This is a taxonomy data package containing your checklist and its attached tables. It has none of the standard Darwin Core Data Package tables.</p>}
       {state.report.output_format === 'dwc-dp' && state.report.taxonomy && <p>This Data Package has the standard occurrence tables, plus additional taxonomy tables that preserve your original checklist and its attached tables.</p>}
       <ul>{Object.entries(state.report.resources || {}).map(([name, count]) => <li key={name}>{name}: {count.toLocaleString()} {count === 1 ? 'row' : 'rows'}</li>)}</ul>
-      <p className="small">{state.report.columns?.filter(column => column.disposition === 'retained-unmapped' && column.nonempty).length || 0} columns with data are left out of the Data Package because it has no field for them. They are still in the copy of your original files.</p>
-      {!!state.report.withheld_values?.length && <p className="small">{state.report.withheld_values.length.toLocaleString()} values were left out of the mapped tables because they did not meet the conversion rules. The report explains each one, and your original files still hold them.</p>}
+      <p className="small">{state.report.columns?.filter(column => column.disposition === 'retained-unmapped' && column.nonempty).length || 0} columns with data have no Data Package field, so they are only in the original files.</p>
+      {!!state.report.withheld_values?.length && <p className="small">{state.report.withheld_values.length.toLocaleString()} values were left out of the mapped tables because they did not meet the conversion rules. The report explains each one.</p>}
       {semanticFindings.length > 0 && <details className="small mb-3"><summary>Source values that need a closer look ({semanticFindings.length})</summary>
         <ul className="mt-2">{semanticFindings.map(finding => <li key={finding.source_term}>
           <strong>{shortTerm(finding.source_term)}</strong>: {finding.count.toLocaleString()} values. {finding.guidance}
@@ -407,7 +412,7 @@ export default function DwcConversion() {
         <p className="mb-0">People and organizations listed: {(agentRoles.agents_created?.name || 0).toLocaleString()} by name, {(agentRoles.agents_created?.explicit_id || 0).toLocaleString()} by identifier. Name mentions kept as text only: {(agentRoles.unlinked_name_only || 0).toLocaleString()}. Mentions skipped: {Object.values(agentRoles.skipped || {}).reduce((sum, count) => sum + count, 0).toLocaleString()}.</p>
       </details>}
       {valueLedger.length > 0 && <details className="small mb-3"><summary>Where the values of each column went ({valueLedger.length})</summary>
-        <p className="text-muted mt-2">Counts are of values in your files. A value can be both copied and used to fill another field (for example a scientific name also kept as written). Your download has the full report and a copy of your original files.</p>
+        <p className="text-muted mt-2">Counts are of values in your files. A value can be both copied and used to fill another field (for example a scientific name also kept as written).</p>
         <div className="table-responsive"><table className="table table-sm"><thead><tr><th>Column</th><th>Copied</th><th>Used for another field</th><th>Left out</th><th>Not valid</th><th>Not traced</th></tr></thead><tbody>
           {valueLedger.map(row => <tr key={`${row.source_table_index}:${row.source_column}`}><td>{row.source_table} · {shortTerm(row.source_term)}</td><td>{row.mapped_values.toLocaleString()}</td><td>{row.derived_values.toLocaleString()}</td><td>{row.originals_only_values.toLocaleString()}</td><td>{row.withheld_invalid_values.toLocaleString()}</td><td>{row.unverified_values.toLocaleString()}</td></tr>)}
         </tbody></table></div>
@@ -434,7 +439,7 @@ export default function DwcConversion() {
         <div className="table-responsive"><table className="table table-sm"><thead><tr><th>Source table</th><th>What it is</th><th>Linked to the main table by</th><th>Rows</th><th>Columns</th></tr></thead><tbody>
           {state.plan.tables.map((table, index) => <tr key={index}><td>{table.name}</td><td>{table.core ? 'Main table' : 'Additional table'} · {shortTerm(table.row_type) || 'Unrecognised type'}</td><td>{table.join_basis?.split('/').pop()}</td><td>{table.rows.toLocaleString()}</td><td>{table.columns.length}</td></tr>)}
         </tbody></table></div>
-        <p className="small text-muted">{state.plan.taxonomy ? 'Taxonomy data package; converting occurrence records uses' : 'Target:'} Darwin Core Data Package (DwC-DP) version {state.plan.schema.version}. {state.plan.files.length} original files are kept.</p>
+        <p className="small text-muted">{state.plan.taxonomy ? 'Taxonomy data package; converting occurrence records uses' : 'Target:'} Darwin Core Data Package (DwC-DP) version {state.plan.schema.version}.</p>
       </details>
       {state.status !== 'complete' && <ConversionColumnSummary state={state} selected={selected} />}
     {scientificAudits.map(([index, scientific]) => {
@@ -451,7 +456,7 @@ export default function DwcConversion() {
       <p className="small mb-0">No survey scopes, completeness flags or other values are copied from parent to child or repaired. The package check covers structure and values only. <a href="https://eco.tdwg.org/hierarchy/" target="_blank" rel="noreferrer">TDWG guidance on event hierarchies</a></p>
     </div>})}
     {notices.length > 0 && <div className="alert alert-info">
-      <p className="mb-1">{notices.length} {notices.length === 1 ? 'notice' : 'notices'} about this conversion. The copy of your original files in the download keeps every value; the report explains what could not be converted and which values were left out.</p>
+      <p className="mb-1">{notices.length} {notices.length === 1 ? 'notice' : 'notices'} about this conversion. The report explains what could not be converted and which values were left out.</p>
       <details className="small"><summary>View notices</summary><ul>{notices.map((notice, index) => <li key={`${notice.id}:${index}`}><strong>{notice.title}:</strong> {notice.reason}{notice.id === AGENT_NAMES_ID && inReview && <> <button type="button" className="btn btn-link btn-sm p-0 align-baseline" onClick={() => focusDecision(AGENT_NAMES_ID)}>Change</button></>}</li>)}</ul></details>
     </div>}
       </div>
@@ -459,11 +464,10 @@ export default function DwcConversion() {
     </div>
     <aside className="conversion-sidebar" aria-label="Conversion summary">
       <section className="card card-body conversion-summary">
-        <span className="eyebrow">Your archive</span>
-        <h2 className="h5">A new home for your data</h2>
-        <p className="small text-body-secondary">{state.plan.taxonomy ? 'Your checklist is kept in additional taxonomy tables. Occurrence records, if included, can also fill standard Data Package tables.' : 'We’ll turn your archive into connected tables in a Darwin Core Data Package.'}</p>
+        <h2 className="h5">Your archive</h2>
+        {state.plan.taxonomy && <p className="small text-body-secondary">Your checklist is kept in additional taxonomy tables. Occurrence records, if included, can also fill standard Data Package tables.</p>}
         <ul className="source-file-list">{state.plan.tables.map((table, index) => <li key={index}><i className="bi bi-file-earmark-spreadsheet" aria-hidden="true" /><span><strong>{table.name}</strong><small>{table.rows.toLocaleString()} rows · {table.columns.length} columns</small></span></li>)}</ul>
-        <div className="originals-note"><i className="bi bi-shield-check" aria-hidden="true" /><div><strong>Your original files stay safe</strong><p className="small mb-0">A copy of every original file is included in your download. Anything that can’t be converted is still there, though not in the Data Package itself.</p></div></div>
+        <div className="originals-note"><i className="bi bi-files" aria-hidden="true" /><div><strong>Original files included</strong><p className="small mb-0">The download includes a copy of every original file, so anything that can’t be converted is still there.</p></div></div>
       </section>
       <p className="small text-body-secondary sidebar-help">You can leave and come back at any time. Your saved choices will be here.</p>
     </aside>
