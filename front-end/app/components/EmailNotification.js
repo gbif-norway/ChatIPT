@@ -131,7 +131,7 @@ export default function EmailNotification({ datasetId, isWorking }) {
       disabled={unavailable}
       title={unavailable
         ? 'Email notifications are unavailable on this server.'
-        : 'This can take a while. Get one email when ChatIPT needs you or the package is ready.'}
+        : 'Get one email when ChatIPT needs your input, hits a problem, or your package is ready.'}
     >
       <i className={`bi ${emailNotificationArmed ? 'bi-envelope-check-fill' : 'bi-envelope'} me-1`} aria-hidden="true"></i>
       {emailNotificationArmed ? 'Email notification set' : 'Notify me by email'}

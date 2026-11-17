@@ -22,7 +22,7 @@ export const panelStatus = (status, stageName = '') => {
     case 'failed':
       return { title: stage, detail: 'Something went wrong. See the last message in the chat.', tone: 'danger' }
     default:
-      return { title: stage, detail: 'ChatIPT is working.', tone: 'primary' }
+      return { title: stage, detail: 'ChatIPT is working. This can take some time.', tone: 'primary' }
   }
 }
 

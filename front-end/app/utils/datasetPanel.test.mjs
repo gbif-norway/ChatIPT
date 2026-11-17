@@ -20,7 +20,7 @@ test('the stage is the task of the latest visible agent', () => {
 
 test('the status names the stage while ChatIPT works or waits', () => {
   assert.deepEqual(panelStatus('preparing', 'Data transformation'), {
-    title: 'Data transformation', detail: 'ChatIPT is working.', tone: 'primary',
+    title: 'Data transformation', detail: 'ChatIPT is working. This can take some time.', tone: 'primary',
   })
   assert.equal(panelStatus('needs_input', 'Data validation and refinement').detail, 'Waiting for your reply in the chat.')
   assert.equal(panelStatus('paused', '').title, 'Getting started')
