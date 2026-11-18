@@ -21,7 +21,7 @@ def record(row):
         'preprocessing_note': getattr(row, 'preprocessing_note', ''), 'review_aids': getattr(row, 'review_aids', {}),
     }
     if row.matched_at:
-        result.update(match=row.match, parsed=row.parsed or {})
+        result.update(match=row.match, parsed=row.parsed or {}, col_release=getattr(row, 'col_release', {}))
     return result
 
 
@@ -32,9 +32,19 @@ def snapshot(row):
         return None
     usage = row.decided_usage or {}
     kind = usage.get('decision') or taxon_matching.decided_kind(row)
-    return {**usage, 'decision': kind, 'by': usage.get('by') or 'user',
-            'usageId': usage.get('usageId', usage.get('id')),
-            'at': usage.get('at') or (row.decided_at.isoformat() if row.decided_at else None)}
+    decision = {**usage, 'decision': kind, 'by': usage.get('by') or 'user',
+                'usageId': usage.get('usageId', usage.get('id')),
+                'at': usage.get('at') or (row.decided_at.isoformat() if row.decided_at else None)}
+    release = getattr(row, 'col_release', {}) or {}
+    match = row.match or {}
+    if kind == 'col' and not usage.get('decision') and usage.get('source') == 'gbif_col':
+        # The original review stored the chosen GBIF usage directly. Verify that
+        # it belongs to this saved match before attaching its release.
+        choices = [match.get('usage') or {}, *(match.get('alternatives') or [])]
+        if decision['usageId'] and any(str(choice.get('id')) == str(decision['usageId']) for choice in choices):
+            decision['taxonomicStatus'] = usage.get('status')
+            decision.setdefault('checklist', {key: release.get(key) for key in ('checklistKey', 'alias')})
+    return name_review.with_checklist_release(decision, release, match)
 
 
 def effective_snapshot(row):

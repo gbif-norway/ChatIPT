@@ -397,14 +397,30 @@ class OverlayTests(SimpleTestCase):
     def test_col_decisions_carry_provenance_into_the_report(self):
         col = decision('col', 'Aus bus', 'L.', 'species', source='col', usageId='COL-AUS', matchType='EXACT',
                        checklist={'checklistKey': 'col-key', 'alias': 'COL26.6 XR'}, taxonomicStatus='accepted')
-        _, section = apply(frames(), review({'Aus bus L.': col}))
+        result, section = apply(frames(), review({'Aus bus L.': col}))
         entry = section['entries'][0]
         self.assertEqual((entry['decision'], entry['source'], entry['colUsageId'], entry['checklist']['alias']),
                          ('col', 'col', 'COL-AUS', 'COL26.6 XR'))
         self.assertEqual((section['labels'], section['reviewed'], section['unreviewed'], section['decision_counts']),
                          (3, 1, 2, {'col': 1}))
         self.assertEqual(section['checklist'], RELEASE)
-        self.assertIn('not taxonID', section['policy'])
+        self.assertEqual(result['occurrence']['taxonID'].tolist()[:2], [
+            'https://api.checklistbank.org/dataset/315557/taxon/COL-AUS',
+            'https://api.checklistbank.org/dataset/315557/taxon/COL-AUS',
+        ])
+
+    def test_qualified_groups_and_synonym_usages_do_not_get_concept_ids(self):
+        chosen = decision('col', 'Aus bus', 'L.', 'species', source='col', usageId='COL-AUS',
+                          taxonomicStatus='accepted', checklist=RELEASE, changeKind=None,
+                          nameRules=names.NAME_RULES_VERSION)
+        state = review({'Aus bus L.': chosen})
+        state['labels'][0]['source_qualifiers'] = ['cf.']
+        self.assertNotIn('taxonID', apply(frames(), state)[0]['occurrence'])
+        state['labels'][0].pop('source_qualifiers')
+        for status in ('synonym', 'provisionally accepted'):
+            with self.subTest(status=status):
+                chosen['taxonomicStatus'] = status
+                self.assertNotIn('taxonID', apply(frames(), state)[0]['occurrence'])
 
     def test_unreviewed_labels_and_missing_tables_leave_frames_unchanged(self):
         source = frames()
@@ -445,10 +461,23 @@ class DecisionTests(SimpleTestCase):
         parsed = names.build_decision(record, {'decision': 'parsed'}, self.state())
         self.assertEqual((parsed['source'], parsed['scientificName'], parsed['scientificNameAuthorship']), ('parser', 'Cus dus', '(Smith, 1900)'))
         col = names.build_decision(record, {'decision': 'col'}, self.state(), by='bulk:auto')
-        self.assertEqual((col['usageId'], col['checklist'], col['by'], col['matchType']), ('COL-CUS', {'checklistKey': 'col-key', 'alias': 'COL26.6 XR'},
-                                                                                         'bulk:auto', 'VARIANT'))
+        self.assertEqual((col['usageId'], col['checklist'], col['by'], col['matchType']), (
+            'COL-CUS', {'checklistKey': 'col-key', 'alias': 'COL26.6 XR', 'checklistBankDatasetKey': '315557'},
+            'bulk:auto', 'VARIANT',
+        ))
         other = names.build_decision(record, {'decision': 'alternative', 'usage_id': 'COL-CUS2', 'confirm_coarser': True}, self.state())
         self.assertEqual((other['scientificName'], other['usageId']), ('Cus dux', 'COL-CUS2'))
+
+    def test_a_reviewed_id_uses_the_release_of_its_match(self):
+        record = self.record()
+        later_release = {**RELEASE, 'alias': 'COL26.10 XR', 'checklistBankDatasetKey': '316691'}
+        state = {**self.state(), 'runs': 2}
+        selected = names.build_decision({**record, 'col_release': later_release}, {'decision': 'col'}, state)
+        self.assertEqual(selected['checklist'], later_release)
+        legacy = names.build_decision(record, {'decision': 'col'}, state)
+        self.assertNotIn('checklistBankDatasetKey', legacy['checklist'])
+        legacy['checklist']['alias'] = None
+        self.assertEqual(names.name_review.with_checklist_release(legacy, {**RELEASE, 'alias': None}, record['match']), legacy)
 
     def test_impossible_decisions_are_rejected(self):
         record = self.record()
@@ -700,7 +729,7 @@ class NameDecisionAPITests(NamesCase):
     def test_a_searched_col_name_is_resolved_and_needs_no_second_confirmation(self):
         self.reviewed()
         usage = {'id': 'SEARCHED', 'scientificName': 'Eus major', 'scientificNameAuthorship': 'Smith', 'taxonRank': 'species',
-                 'status': 'accepted', 'classification': {'kingdom': 'Animalia'}}
+                 'status': 'accepted', 'classification': {'kingdom': 'Animalia'}, 'checklistBankDatasetKey': 316691}
         with patch.object(names.taxon_matching, 'resolve_col_usage', return_value=usage) as resolve:
             # Only a confirmed pick is looked up; an unknown id is otherwise refused.
             refused = self.post('names', name_decisions={'Eus sp.': {'decision': 'alternative', 'usage_id': 'SEARCHED'}})
@@ -711,6 +740,7 @@ class NameDecisionAPITests(NamesCase):
         resolve.assert_called_once_with('SEARCHED')
         saved = self.conversion.name_review['decisions']['Eus sp.']
         self.assertEqual((saved['scientificName'], saved['usageId'], saved['taxonRank']), ('Eus major', 'SEARCHED', 'species'))
+        self.assertEqual(saved['checklist'], {'checklistBankDatasetKey': '316691'})
 
     def test_each_name_shows_what_its_decision_writes(self):
         self.reviewed()
@@ -2487,7 +2517,8 @@ class HeldDecisionTests(NamesCase):
         self.inspected()
         self.run_names(match=coarse_match)
         self.post('names', name_decisions={'Cus dus (Smith) Jones 1900': {'decision': 'keep'}, 'Eus sp.': {'decision': 'keep'}})
-        old = decision('col', 'Aus', 'L.', 'genus', source='col', usageId='COL-AUS-GENUS', matchType='HIGHERRANK')
+        old = decision('col', 'Aus', 'L.', 'genus', source='col', usageId='COL-AUS-GENUS', matchType='HIGHERRANK',
+                       taxonomicStatus='accepted', checklist=RELEASE)
         state = self.conversion.name_review
         state['decisions']['Aus bus L.'] = old
         DwcConversion.objects.filter(pk=self.conversion.pk).update(name_review=state)
@@ -2504,6 +2535,7 @@ class HeldDecisionTests(NamesCase):
         self.assertEqual(self.conversion.status, 'complete', self.conversion.error)
         occurrence = Table.objects.get(dataset_id=self.dataset_id, title='occurrence').df.set_index('occurrenceID')
         self.assertEqual(occurrence.loc[['a', 'b'], 'scientificName'].tolist(), ['Aus bus L.', 'Aus bus L.'])
+        self.assertNotIn('taxonID', occurrence)
         self.assertEqual(self.conversion.report['name_review']['unconfirmed_kept'], 1)
 
     def test_stale_bulk_authorship_is_held_and_explained_as_authorship(self):

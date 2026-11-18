@@ -454,6 +454,56 @@ class PublicationErrorHandlingTests(TestCase):
         task = Task.objects.create(name="Publication errors", text="Publish")
         self.agent = Agent.objects.create(dataset=self.dataset, task=task)
 
+    @patch("api.helpers.publish.Minio")
+    @patch("api.helpers.publish.upload_file")
+    def test_taxon_archive_carries_reviewed_concepts_without_changing_core_links(self, upload_mock, minio_mock):
+        link = 'https://api.checklistbank.org/dataset/316691/taxon/65C72'
+        organisms = ['tip-a', 'tip-b', 'tip-c', 'tip-d', 'tip-e', 'tip-f']
+        Table.objects.create(dataset=self.dataset, title='organism',
+                             df=pd.DataFrame({'organism_pk': organisms}))
+        Table.objects.create(dataset=self.dataset, title='identification', df=pd.DataFrame([
+            {'organism_fk': key, 'scientificName': 'Aus bus', 'taxonRank': 'species', 'taxonID': link,
+             'taxonFormula': 'A'}
+            for key in ['tip-a', 'tip-b', 'tip-c']
+        ] + [
+            {'organism_fk': 'tip-c', 'scientificName': 'Aus bus', 'taxonRank': 'species',
+             'taxonID': 'https://api.checklistbank.org/dataset/316691/taxon/OtherId'},
+            {'organism_fk': 'tip-e', 'scientificName': 'Aus bus', 'taxonRank': 'species', 'taxonID': link,
+             'isAcceptedIdentification': False},
+            {'identification_pk': 'tip-f', 'organism_fk': 'tip-a', 'scientificName': 'Aus bus',
+             'taxonRank': 'species', 'taxonID': link},
+        ]))
+        core = Table.objects.create(dataset=self.dataset, title='taxon_projection', df=pd.DataFrame({
+            'taxonID': organisms,
+            'scientificName': ['Aus bus'] * len(organisms),
+            'taxonRank': ['species'] * len(organisms),
+            'taxonConceptID': [None, None, None, 'https://example.org/confirmed-concept', None, None],
+        }))
+        extension = Table.objects.create(dataset=self.dataset, title='trait_projection', df=pd.DataFrame({
+            '_coreid': organisms, 'measurementType': ['habitat'] * len(organisms),
+            'measurementValue': ['wet', 'dry', 'dry', 'wet', 'dry', 'wet'],
+        }))
+        written = {}
+
+        def capture_archive(client, bucket, object_name, local_path):
+            with zipfile.ZipFile(local_path) as archive:
+                written['core'] = list(csv.DictReader(io.StringIO(archive.read('taxon.txt').decode())))
+                extension_name = next(name for name in archive.namelist() if 'measurements_or_facts' in name)
+                written['ext'] = list(csv.reader(io.StringIO(archive.read(extension_name).decode())))[1:]
+
+        upload_mock.side_effect = capture_archive
+        tool = UploadDwCA(
+            agent_id=self.agent.id, core_table_id=core.id, core_type=DarwinCoreCoreType.TAXON,
+            extension_tables=[{'table_id': extension.id, 'extension_type': DarwinCoreExtensionType.MEASUREMENT_OR_FACT,
+                               'core_id_column': '_coreid'}],
+        )
+        result = tool.run()
+        self.assertIn('taxonConceptID for 2 core rows', result)
+        self.assertEqual([row['taxonID'] for row in written['core']], organisms)
+        self.assertEqual([row['taxonConceptID'] for row in written['core']],
+                         [link, link, '', 'https://example.org/confirmed-concept', '', ''])
+        self.assertEqual([row[0] for row in written['ext']], organisms)
+
     @patch("api.agent_tools.discord_bot.send_discord_message")
     @patch("api.agent_tools.upload_dwca")
     def test_dwca_tool_only_suppresses_expected_validation_alerts(self, upload_mock, alert_mock):

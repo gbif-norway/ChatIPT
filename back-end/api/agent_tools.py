@@ -2659,7 +2659,7 @@ class MatchTaxonNames(OpenAIBaseModel):
             rows, finished = taxon_matching.record_matches(
                 agent.dataset,
                 normalize_resource_name(table.title),
-                table.df,
+                taxon_matching.review_source_frame(table),
                 self.verbatim_column,
                 self.context_column,
                 overrides={key: value for key, value in overrides.items() if key in present},
@@ -2771,8 +2771,9 @@ class ApplyTaxonDecisions(OpenAIBaseModel):
     """
     Write the user's reviewed taxon names onto a table: scientificName, scientificNameAuthorship,
     taxonRank and, where the table has columns for them, higher classification and
-    identificationQualifier. Labels still pending review, and labels the user chose to keep
-    unchanged, are left as they are. verbatimIdentification is never modified.
+    identificationQualifier. Where the table supports taxonID, include reviewed Catalogue of Life
+    concept links. Names still pending review stay as they are. Clear generated
+    links whose choices are no longer confirmed. verbatimIdentification is never modified.
     ChatIPT already applies a review when the user finishes it. Use this only when that note says the
     names could not be applied, or to re-apply reviewed names after rebuilding the table.
     Re-export and re-validate the package afterwards.
@@ -2995,6 +2996,7 @@ class UploadDwCA(OpenAIBaseModel):
 
     def run(self):
         from api.models import Agent, Dataset
+        from api.taxon_projection import fill_concept_ids
 
         try:
             agent = Agent.objects.get(id=self.agent_id)
@@ -3082,6 +3084,11 @@ class UploadDwCA(OpenAIBaseModel):
             # DNA Derived Data comes straight from the DwC-DP, so no agent-built table competes with it.
             dna_note = ""
             resources, resource_errors = _dwc_dp_resources_from_mapping(dataset, None)
+            concept_note = ""
+            if self.core_type == DarwinCoreCoreType.TAXON and not resource_errors:
+                filled = fill_concept_ids(core_df, resources)
+                if filled:
+                    concept_note = f"\nPreserved reviewed taxon links in taxonConceptID for {filled:,} core rows."
             analyses = resources.get("nucleotide-analysis")
             if analyses is not None and not analyses.empty:
                 agent_dna_tables = [
@@ -3166,7 +3173,7 @@ class UploadDwCA(OpenAIBaseModel):
             dataset.dwca_url = dwca_url
             dataset.dwca_validation = None
             dataset.save(update_fields=["dwc_core", "dwca_url", "dwca_validation"])
-            return f'DwCA successfully created and uploaded: {dwca_url}{dna_note}'
+            return f'DwCA successfully created and uploaded: {dwca_url}{dna_note}{concept_note}'
         except DwcaExtensionLinkError as e:
             assignments = self.extension_tables or []
             table_issues = []

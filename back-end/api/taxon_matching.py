@@ -764,8 +764,9 @@ def resolve_col_usage(usage_id):
     classification_id = usage_id
     if status and status != "accepted" and (usage.get("accepted") or {}).get("id"):
         classification_id = usage["accepted"]["id"]
+    release_key = usage.get("datasetKey")
     classification = _get_json(
-        "GET", f"{CHECKLISTBANK_API}/dataset/{dataset}/taxon/{classification_id}/classification",
+        "GET", f"{CHECKLISTBANK_API}/dataset/{release_key or dataset}/taxon/{classification_id}/classification",
         deadline=deadline,
     ) or []
     resolved = _usage(
@@ -781,6 +782,8 @@ def resolve_col_usage(usage_id):
     )
     if resolved["taxonRank"] in CLASSIFICATION_RANKS:
         resolved["classification"][resolved["taxonRank"]] = resolved["scientificName"]
+    if release_key:
+        resolved["checklistBankDatasetKey"] = release_key
     return resolved
 
 
@@ -1276,16 +1279,50 @@ def _same_cell(current, new):
     return current == new
 
 
+def _review_row_keys(df, spec):
+    if spec and 'taxonID' in spec.fields and len(spec.primary_key) == 1 and spec.primary_key[0] in df:
+        return df[spec.primary_key[0]].astype('string').fillna('').str.strip()
+    return None
+
+
+def review_source_frame(table):
+    """Exclude IDs previously filled by the review from evidence for a new match."""
+    from api.dwc_dp_specs import get_table_spec, normalize_resource_name
+
+    df = table.df
+    if not table.reviewed_taxon_ids or 'taxonID' not in df:
+        return df
+    try:
+        spec = get_table_spec(normalize_resource_name(table.title))
+    except KeyError:
+        return df
+    row_ids = _review_row_keys(df, spec)
+    if row_ids is None:
+        return df
+    result = df.copy()
+    result['taxonID'] = [
+        None if key and _same_cell(value, table.reviewed_taxon_ids.get(key)) else value
+        for key, value in zip(row_ids, df['taxonID'])
+    ]
+    return result
+
+
+@transaction.atomic
 def apply_decisions(dataset, table, verbatim_column, context_column=None):
-    """Write reviewed names onto a table's rows; unreviewed labels are left unchanged.
+    """Write reviewed names onto a table's rows; unreviewed names are left unchanged.
 
     Name, authorship and rank follow `written_fields`, the rules the conversion's review applies too. An accepted
     COL name also fills blank higher-classification cells and retains uncertainty in taxonFormula or
-    identificationQualifier where supported by the schema. verbatim_column is only read. Returns a summary dict.
+    identificationQualifier where supported by the schema. Reviewed taxon links are tracked by row key so
+    later decisions can replace them while preserving supplied IDs. verbatim_column is only read.
     """
     from django.utils import timezone
+    from api import name_review, taxon_review
     from api.dwc_dp_specs import get_table_spec, normalize_resource_name
-    from api.models import TaxonNameMatch
+    from api.models import Dataset, Table, TaxonNameMatch
+
+    Dataset.objects.select_for_update().only('id').get(pk=dataset.pk)
+    table.refresh_from_db(from_queryset=Table.objects.select_for_update())
 
     source_table = normalize_resource_name(table.title)
     context_column = context_column or ""
@@ -1293,9 +1330,21 @@ def apply_decisions(dataset, table, verbatim_column, context_column=None):
     df = table.df.copy()
     keys = _row_keys(df, verbatim_column, context_column)
     try:
-        schema_fields = set(get_table_spec(source_table).fields)
+        spec = get_table_spec(source_table)
+        schema_fields = set(spec.fields)
     except KeyError:
+        spec = None
         schema_fields = None  # a working table: any Darwin Core term may be written
+
+    row_keys = _review_row_keys(df, spec)
+    row_ids = None
+    generated_ids = dict(table.reviewed_taxon_ids)
+    if row_keys is not None:
+        row_ids = row_keys.mask(row_keys.duplicated(keep=False), '').tolist()
+        current_keys = set(row_keys)
+        generated_ids = {key: value for key, value in generated_ids.items() if key in current_keys}
+    taxon_ids = df['taxonID'].astype(object).tolist() if 'taxonID' in df else [None] * len(df)
+    taxon_ids_changed = False
 
     def writable(column):
         return column in df.columns or schema_fields is None or column in schema_fields
@@ -1306,12 +1355,14 @@ def apply_decisions(dataset, table, verbatim_column, context_column=None):
             positions.setdefault(key, []).append(position)
 
     written = {"rows_updated": 0, "labels_applied": 0, "pending_labels": 0, "pending_rows": 0,
-               "kept_labels": 0, "unmatched_labels": 0, "skipped_columns": set(), "qualifiers_not_written": 0}
+               "kept_labels": 0, "unmatched_labels": 0, "skipped_columns": set(), "qualifiers_not_written": 0,
+               "taxon_ids_written": 0, "taxon_ids_cleared": 0}
     rows = {
         (row.verbatim_label, row.context_key): row
         for row in _scope(dataset, source_table, context_column).filter(record_count__gt=0)
     }
     applied = []
+    applied_id_keys = set()
     for key, row_positions in positions.items():
         row = rows.get(key)
         if row is None:
@@ -1322,9 +1373,9 @@ def apply_decisions(dataset, table, verbatim_column, context_column=None):
             written["pending_rows"] += len(row_positions)
             continue
         written["kept_labels" if row.decision == TaxonNameMatch.Decision.KEEP_ORIGINAL else "labels_applied"] += 1
-        from api import name_review, taxon_review
         source, decision = taxon_review.record(row), taxon_review.effective_snapshot(row)
         outcomes = name_review.decision_fields(source, decision, schema_fields)
+        outcomes.pop('taxonID', None)
         if schema_fields is not None:
             excluded = set(name_review.decision_fields(source, decision)) - set(outcomes)
             if 'taxonFormula' in outcomes:
@@ -1357,12 +1408,49 @@ def apply_decisions(dataset, table, verbatim_column, context_column=None):
                 if not _same_cell(current, new):
                     df.iat[position, column_index] = new
                     changed.add(position)
+        if row_ids is not None:
+            for position in row_positions:
+                row_id = row_ids[position]
+                if not row_id:
+                    continue
+                applied_id_keys.add(row_id)
+                current = taxon_ids[position]
+                previous = generated_ids.pop(row_id, None)
+                if not _is_blank(current) and not _same_cell(current, previous):
+                    continue
+                record = df.iloc[position]
+                qualifier = record.get('identificationQualifier')
+                if name_review.normal(record.get('taxonFormula')).casefold() not in {'', 'a'}:
+                    qualifier = record['taxonFormula']
+                new = (name_review.reviewed_taxon_id(source, decision, qualifier)
+                       if _same_cell(record.get('scientificName'), decision.get('scientificName')) else None)
+                if new:
+                    generated_ids[row_id] = new
+                    written["taxon_ids_written"] += 1
+                if not _same_cell(current, new):
+                    taxon_ids[position] = new
+                    taxon_ids_changed = True
+                    changed.add(position)
         written["rows_updated"] += len(changed)
         applied.append(row.id)
 
-    if applied:
+    # A reopened review can finish with some labels pending, or without a match
+    # for a row that used to have one. Remove only links still owned by the review.
+    for position, row_id in enumerate(row_ids or ()):
+        if not row_id or row_id in applied_id_keys:
+            continue
+        previous = generated_ids.pop(row_id, None)
+        if previous and _same_cell(taxon_ids[position], previous):
+            taxon_ids[position] = None
+            taxon_ids_changed = True
+            written["taxon_ids_cleared"] += 1
+
+    if applied or taxon_ids_changed:
+        if taxon_ids_changed:
+            df['taxonID'] = taxon_ids
         table.df = df
-        table.save()
+        table.reviewed_taxon_ids = generated_ids
+        table.save(update_fields=['df', 'reviewed_taxon_ids'])
         TaxonNameMatch.objects.filter(id__in=applied).update(applied_at=timezone.now())
     written["skipped_columns"] = sorted(written["skipped_columns"])
     return written
@@ -1425,10 +1513,14 @@ def describe_apply_result(result, table):
         f"of table {table.id} (`{table.title}`). {result['kept_labels']:,} labels keep their original name, "
         "split into name and authorship where the GBIF name parser could do so exactly.",
     ]
+    if result.get("taxon_ids_written"):
+        lines.append(f"{result['taxon_ids_written']:,} rows have reviewed Catalogue of Life links in taxonID.")
+    if result.get("taxon_ids_cleared"):
+        lines.append(f"Removed {result['taxon_ids_cleared']:,} earlier review links without a current decision.")
     if result["pending_labels"]:
         lines.append(
             f"{result['pending_labels']:,} labels ({result['pending_rows']:,} rows) are still pending "
-            "review and were left unchanged."
+            "review and kept their current names."
         )
     if result["unmatched_labels"]:
         lines.append(

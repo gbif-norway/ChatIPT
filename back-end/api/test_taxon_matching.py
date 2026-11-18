@@ -1093,6 +1093,49 @@ class FinishReviewApiTests(TestCase):
         self.assertEqual(self.finish().status_code, 409)
         self.assertEqual(ensure_work.call_count, 1)
 
+    def test_finish_reuses_the_saved_release_and_reapply_preserves_supplied_ids(self, ensure_work):
+        self.dinychus.decided_usage = {**self.dinychus.match['usage'], 'source': 'gbif_col'}
+        self.dinychus.col_release = {'checklistKey': 'col-key', 'alias': 'COL XR', 'checklistBankDatasetKey': 316691}
+        self.dinychus.save(update_fields=['decided_usage', 'col_release'])
+        self.table.df['occurrence_pk'] = ['o1', 'o2', 'o3', 'o4']
+        self.table.df['taxonID'] = [None, 'https://example.org/taxon/1', None, None]
+        self.table.save()
+
+        self.assertTrue(self.finish().json()['applied'])
+        self.table.refresh_from_db()
+        link = 'https://api.checklistbank.org/dataset/316691/taxon/DNY'
+        self.assertEqual(self.table.df['taxonID'].tolist()[:2], [link, 'https://example.org/taxon/1'])
+        self.assertEqual(taxon_matching.review_source_frame(self.table)['taxonID'].tolist()[:2],
+                         [None, 'https://example.org/taxon/1'])
+        reviewed = self.table.df.copy()
+        self.table.df = pd.concat([reviewed, reviewed.iloc[[0]]], ignore_index=True)
+        self.table.save()
+        taxon_matching.apply_review(self.dataset, 'occurrence')
+        self.table.refresh_from_db()
+        self.assertEqual(self.table.reviewed_taxon_ids, {'o1': link})
+        self.table.df = reviewed.iloc[::-1].reset_index(drop=True)
+        self.table.save()
+
+        self.dinychus.refresh_from_db()
+        taxon_matching.decide(self.dinychus, TaxonNameMatch.Decision.PENDING)
+        _, pending = taxon_matching.apply_review(self.dataset, 'occurrence')
+        self.assertEqual(pending['taxon_ids_cleared'], 1)
+        self.table.refresh_from_db()
+        self.assertIsNone(self.table.df.set_index('occurrence_pk').loc['o1', 'taxonID'])
+        self.assertEqual(self.table.reviewed_taxon_ids, {})
+        taxon_matching.decide(self.dinychus, TaxonNameMatch.Decision.ACCEPTED)
+        taxon_matching.apply_review(self.dataset, 'occurrence')
+        self.table.refresh_from_db()
+        self.assertEqual(self.table.reviewed_taxon_ids, {'o1': link})
+
+        taxon_matching.decide(self.dinychus, TaxonNameMatch.Decision.CORRECTED, scientific_name='Dinychus testus')
+        taxon_matching.apply_review(self.dataset, 'occurrence')
+        self.table.refresh_from_db()
+        values = self.table.df.set_index('occurrence_pk')['taxonID']
+        self.assertIsNone(values['o1'])
+        self.assertEqual(values['o2'], 'https://example.org/taxon/1')
+        self.assertEqual(self.table.reviewed_taxon_ids, {})
+
     def test_falls_back_to_the_agent_when_the_table_is_ambiguous(self, ensure_work):
         Table.objects.create(dataset=self.dataset, title="occurrence", df=self.table.df.copy())
         response = self.finish()

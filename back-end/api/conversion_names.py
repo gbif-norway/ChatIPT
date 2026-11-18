@@ -7,7 +7,7 @@ through the publication workflow's matcher (api.taxon_matching). Results and the
 and `convert()` itself never calls a service.
 
 Policy: exact same-name matches and resolvable uncertain stems may be accepted automatically. Automatic decisions never write
-a coarser or different taxon; an explicit group choice can. `verbatimIdentification` is unchanged; COL usage ids are report provenance, not taxonID.
+a coarser or different taxon; an explicit group choice can. `verbatimIdentification` is unchanged.
 Reviewed decisions are applied to the converted frames by `apply_name_decisions`, a pure function.
 """
 import logging
@@ -321,8 +321,13 @@ def apply_name_decisions(frames, review_state, source_names):
         # The report still says when every name was too long to check.
         return frames, ({'status': state.get('status'), 'labels': 0, 'checked': 0, 'reviewed': 0, 'unreviewed': 0,
                          'skipped_long': skipped, 'decision_counts': {}, 'names': []} if skipped.get('labels') else None)
-    decisions = state.get('decisions') or {}
     records = {record['label']: record for record in state['labels']}
+    decisions = {}
+    for label, decision in (state.get('decisions') or {}).items():
+        record = records.get(label, {})
+        decisions[label] = name_review.with_checklist_release(
+            decision, name_review.match_release(record, state), record.get('match'),
+        )
     held = unconfirmed(state)
     entries = {label: {'label': label, 'decision': decision['decision'], 'source': decision.get('source'),
                        'scientificName': decision.get('scientificName'), 'scientificNameAuthorship': decision.get('scientificNameAuthorship'),
@@ -354,6 +359,7 @@ def apply_name_decisions(frames, review_state, source_names):
         if not positions:
             continue
         columns = {}
+        formulas = frame['taxonFormula'].tolist() if 'taxonFormula' in frame else None
 
         def column(field):
             if field not in fields:
@@ -392,6 +398,8 @@ def apply_name_decisions(frames, review_state, source_names):
                 for field, outcome in name_review.decision_fields(record, decision, fields, row_qualifier).items():
                     if field in taxon_matching.NAME_FIELDS:
                         continue
+                    if field == 'taxonID' and formulas is not None and normal(formulas[position]).casefold() not in {'', 'a'}:
+                        continue
                     values = column(field)
                     current = values[position]
                     value = row_value(outcome, current, str(text))
@@ -419,7 +427,8 @@ def apply_name_decisions(frames, review_state, source_names):
         'decision_counts': dict(Counter(decision['decision'] for decision in decisions.values())),
         'ranks_replaced': sum(sum(entry['ranksReplaced'].values()) for entry in entries.values()),
         'unconfirmed_kept': len(held),
-        'policy': 'Decisions apply to rows by their own source scientificName text; verbatimIdentification is never changed. Names only are published; COL usage ids are provenance, not taxonID. '
+        'policy': 'Decisions apply to rows by their own source scientificName text; verbatimIdentification is never changed. '
+                  'A reviewed COL usage with accepted status and an unqualified identification can fill a blank DwC-DP taxonID with a release-specific link. '
                   'A decided name is written with its own taxonRank and authorship on occurrence and identification rows alike; replaced ranks are counted. '
                   'A COL name coarser than or different from the supplied name is applied only when the user confirmed it; '
                   'an unconfirmed one keeps the supplied name. '
@@ -493,14 +502,16 @@ def _run(conversion_id, job_id, claim):
         pending = [{'label': record['label'], 'query': _query(record), 'qualifier': record.get('qualifier'),
                     'ids': record.get('source_ids') or {}, 'match': 'match' in record, 'parse': 'parsed' in record}
                    for record in state['labels'] if not checked(record)]
-        release = state.get('col_release') or {}
+        previous_release = state.get('col_release') or {}
     deadline = time.monotonic() + budget_seconds()
     error = None
+    release = {}
     try:
-        if pending and not release:
+        if any(not item['match'] for item in pending):
             release = col_release(deadline)
     except TaxonServiceError as exc:
-        error = exc
+        if not previous_release:
+            error = exc
     for start in range(0, len(pending), CHUNK):
         if error is not None:
             break
@@ -514,6 +525,8 @@ def _run(conversion_id, job_id, claim):
             index = {record['label']: record for record in state['labels']}
             for label, parts in results.items():
                 index[label].update(parts)
+                if 'match' in parts:
+                    index[label]['col_release'] = release
             if release and not state.get('col_release'):
                 state['col_release'] = release
             conversion.save(update_fields=['name_review', 'updated_at'])

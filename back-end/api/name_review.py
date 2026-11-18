@@ -23,9 +23,42 @@ def record_key(record):
     return str(record.get('key', record['label']))
 
 
-def _checklist(state):
+def match_release(record, state):
+    """Prefer the release of this match over the review's display release."""
+    if 'col_release' in record:
+        return record['col_release'] or {}
     release = state.get('col_release') or {}
-    return {'checklistKey': release.get('checklistKey') or taxon_matching.col_checklist_key(), 'alias': release.get('alias')}
+    if state.get('runs', 0) > 1:
+        # Older resumed conversions did not record a release for each match.
+        return {key: value for key, value in release.items() if key != 'checklistBankDatasetKey'}
+    return release
+
+
+def _checklist(record, state):
+    release = match_release(record, state)
+    dataset_key = release.get('checklistBankDatasetKey')
+    return {
+        'checklistKey': release.get('checklistKey') or taxon_matching.col_checklist_key(),
+        'alias': release.get('alias'),
+        **({'checklistBankDatasetKey': str(dataset_key)} if dataset_key else {}),
+    }
+
+
+def with_checklist_release(decision, release, match):
+    """Recover a release key for older decisions from their own saved match."""
+    if not decision or not release or not release.get('checklistBankDatasetKey'):
+        return decision
+    checklist = decision.get('checklist') or {}
+    if checklist.get('checklistBankDatasetKey') or not checklist.get('checklistKey'):
+        return decision
+    if decision.get('decision') != 'col' and not any(
+        str(usage.get('id')) == decision.get('usageId') for usage in (match or {}).get('alternatives', [])
+    ):
+        return decision
+    alias = checklist.get('alias')
+    if not alias or alias != release.get('alias') or checklist['checklistKey'] != release.get('checklistKey'):
+        return decision
+    return {**decision, 'checklist': {**checklist, 'checklistBankDatasetKey': str(release['checklistBankDatasetKey'])}}
 
 DECISIONS = ('parsed', 'col', 'alternative', 'keep', 'empty', 'stem', 'corrected')
 
@@ -772,7 +805,7 @@ def build_decision(record, spec, state, by='user', group_kind=None):
                 raise NameDecisionError(f'"{usage["scientificName"]}" {confirmation}. Confirm it explicitly, or keep your name.')
             snapshot.update(source='col', scientificName=usage['scientificName'], scientificNameAuthorship=usage.get('scientificNameAuthorship'),
                             taxonRank=usage.get('taxonRank'), usageId=usage.get('usageId'), candidates=usage['candidates'],
-                            checklist=_checklist(state), changeKind=None, nameRules=NAME_RULES_VERSION)
+                            checklist=_checklist(record, state), changeKind=None, nameRules=NAME_RULES_VERSION)
             if confirmation:
                 # An explicitly confirmed stem at another or a higher rank ("Anura sp." as COL's order).
                 snapshot.update(rankChange=confirmation, changeKind='coarser' if _stem_rank_too_high(record, usage) else 'rank',
@@ -782,6 +815,7 @@ def build_decision(record, spec, state, by='user', group_kind=None):
                 raise NameDecisionError(f'The name parser could not split "{record["label"]}".')
             snapshot.update(source='parser', scientificName=parsed['canonical'], scientificNameAuthorship=parsed.get('authorship'), taxonRank=parsed.get('rank'))
     elif kind in {'col', 'alternative'}:
+        checklist = _checklist(record, state)
         if kind == 'col':
             usage = match.get('usage')
             # A confirmation names the usage it was shown; COL's pick may have changed since (a new check).
@@ -796,6 +830,9 @@ def build_decision(record, spec, state, by='user', group_kind=None):
                     usage = {**taxon_matching.resolve_col_usage(wanted), 'matchType': None}
                 except TaxonServiceError as exc:
                     raise NameDecisionError(f'Catalogue of Life could not be reached to look up that name: {exc}') from exc
+                release_key = usage.get('checklistBankDatasetKey')
+                if not release_key or str(release_key) != str(checklist.get('checklistBankDatasetKey')):
+                    checklist = {'checklistBankDatasetKey': str(release_key)} if release_key else {}
         if not usage or not usage.get('scientificName'):
             raise NameDecisionError(f'There is no such Catalogue of Life name to accept for "{record["label"]}".')
         match_type = match.get('matchType') if kind == 'col' else usage.get('matchType')
@@ -821,7 +858,7 @@ def build_decision(record, spec, state, by='user', group_kind=None):
                                     f'"{usage["scientificNameAuthorship"]}", not as in your data. Confirm that replacement explicitly, or keep your name.')
         snapshot.update(source='col', scientificName=usage['scientificName'], scientificNameAuthorship=usage.get('scientificNameAuthorship'),
                         taxonRank=usage.get('taxonRank'), usageId=str(usage['id']) if usage.get('id') is not None else None,
-                        taxonomicStatus=usage.get('status'), classification=usage.get('classification') or {}, matchType=match_type, checklist=_checklist(state),
+                        taxonomicStatus=usage.get('status'), classification=usage.get('classification') or {}, matchType=match_type, checklist=checklist,
                         changeKind=found['kind'] if found else None, nameRules=NAME_RULES_VERSION)
         if normal(usage.get('scientificNameAuthorship')) and not authorship_agrees(record, usage):
             snapshot['authorshipReplaced'] = True
@@ -904,6 +941,23 @@ def row_formula(record, decision, qualifier):
 _PREVIEW = object()
 
 
+def reviewed_taxon_id(record, decision, qualifier=_PREVIEW):
+    """The release-specific reference for an unqualified, reviewed COL concept."""
+    if (decision['decision'] not in {'col', 'alternative'} or decision.get('taxonomicStatus') != 'accepted'
+            or not decision.get('scientificName')):
+        return None
+    # GBIF uses IDs ahead of the name. Keep uncertain identifications out of that path.
+    if (qualifier_kind(record) or normal(decision.get('taxonFormula')).casefold() not in {'', 'a'}
+            or (qualifier is not _PREVIEW and normal(qualifier))):
+        return None
+    checklist = decision.get('checklist') or {}
+    dataset = str(checklist.get('checklistBankDatasetKey') or '')
+    usage = str(decision.get('usageId') or '')
+    if re.fullmatch(r'[1-9][0-9]*', dataset) and re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._~-]*', usage):
+        return f'{taxon_matching.CHECKLISTBANK_API}/dataset/{dataset}/taxon/{usage}'
+    return None
+
+
 def decision_fields(record, decision, allowed=None, qualifier=_PREVIEW):
     """The complete write policy for either host, restricted to its target schema.
 
@@ -922,6 +976,10 @@ def decision_fields(record, decision, allowed=None, qualifier=_PREVIEW):
             field = 'taxonFormula' if allowed is not None and 'taxonFormula' in allowed else 'identificationQualifier'
             value = formula if field == 'taxonFormula' else (record.get('qualifier') or formula[2:])
             outcomes[field] = ('yours_or', value)
+    if allowed is not None and 'taxonID' in allowed:
+        taxon_id = reviewed_taxon_id(record, decision, qualifier)
+        if taxon_id:
+            outcomes['taxonID'] = ('yours_or', taxon_id)
     return {field: outcome for field, outcome in outcomes.items() if allowed is None or field in allowed}
 
 
@@ -1015,13 +1073,13 @@ def _article(word):
     return 'an' if str(word)[:1] in 'aeiou' else 'a'
 
 
-def _entry(record, decisions, held=(), classification=None):
+def _entry(record, decisions, held=(), classification=None, release=None):
     """Build one public state entry, including its classification and safe options."""
     parsed, match = record.get('parsed'), record.get('match')
     usage = (match or {}).get('usage') or {}
     choices = col_choices(record)
     main = next((choice for choice in choices if choice['decision'] == 'col'), None)
-    decision = decisions.get(record_key(record))
+    decision = with_checklist_release(decisions.get(record_key(record)), release, match)
     classification = classification or classify(record)
     return {**record, 'checked': checked(record), 'decision': decision,
             # An older decision for a coarser or different COL name: the user's name is kept until it is made again.
@@ -1427,4 +1485,5 @@ def state_section(state, offset=0, limit=PAGE_SIZE, view='all', group=None, q=''
             # Name decisions kept from the previous check when the archive was inspected again.
             'carried': state.get('carried'),
             'page': {'offset': offset, 'limit': limit, 'total': len(shown), 'view': view, 'group': group},
-            'labels': [_entry(record, decisions, held, classified[record_key(record)]) for record in shown[offset:offset + limit]]}
+            'labels': [_entry(record, decisions, held, classified[record_key(record)], match_release(record, state))
+                       for record in shown[offset:offset + limit]]}

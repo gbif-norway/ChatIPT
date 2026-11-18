@@ -1356,6 +1356,8 @@ class Table(models.Model):
     description = models.CharField(max_length=2000, blank=True)
     row_count = models.PositiveBigIntegerField(default=0, editable=False)
     columns = models.JSONField(default=list, editable=False)
+    # Taxon IDs filled by name review, keyed by the authoritative table's primary key.
+    reviewed_taxon_ids = models.JSONField(default=dict, editable=False)
 
     @staticmethod
     def display_columns(raw_columns):
@@ -2949,7 +2951,7 @@ class TaxonNameMatch(models.Model):
 
     The suggestion comes from GBIF's v2 matcher against Catalogue of Life XR. Saved review
     decisions (including safe automatic defaults) are written back; verbatimIdentification is never changed.
-    COL ids are kept here as provenance and are not published.
+    The reviewed COL usage and release are kept here as provenance.
     """
 
     class Decision(models.TextChoices):
